@@ -11,7 +11,7 @@ use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_context_id, RequestIdParsingErr,
+    parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr,
 };
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
@@ -109,7 +109,7 @@ where
             .context_id
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
         let context_id =
-            parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
+            parse_grpc_request_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
 
         Ok(context_id)
     }
@@ -141,7 +141,7 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        let context_id = parse_optional_proto_request_id(
+        let context_id = parse_optional_grpc_request_id(
             &request.into_inner().context_id,
             RequestIdParsingErr::CustodianContextDestruction,
         )?;
@@ -981,7 +981,7 @@ mod tests {
         drop(guarded_pub_storage);
 
         let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault), None);
+            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault));
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);

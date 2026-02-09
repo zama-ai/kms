@@ -6,8 +6,8 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+    parse_grpc_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
@@ -206,15 +206,17 @@ pub async fn get_user_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
-        .map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_RESULT,
-            None,
-            e,
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    let request_id =
+        parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest).map_err(
+            |e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_RESULT,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            },
+        )?;
 
     let (payload, external_signature, extra_data) = retrieve_from_meta_store(
         service.user_dec_meta_store.read().await,
@@ -447,7 +449,7 @@ pub async fn get_public_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(
+    let request_id = parse_grpc_request_id(
         &request.into_inner(),
         RequestIdParsingErr::PublicDecResponse,
     )
@@ -532,11 +534,7 @@ pub async fn get_public_decryption_result_impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{
-        kms::v1::TypedCiphertext,
-        rpc_types::{PubDataType, WrappedPublicKeyOwned},
-        RequestId,
-    };
+    use kms_grpc::{kms::v1::TypedCiphertext, RequestId};
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -545,7 +543,7 @@ pub(crate) mod tests {
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
         },
         util::key_setup::test_tools::{compute_cipher, EncryptionConfig, TestingPlaintext},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+        vault::storage::ram::RamStorage,
     };
 
     // This function will also output a public key and load the server key into memory
@@ -565,21 +563,19 @@ pub(crate) mod tests {
         // We execute in the secure mode, i.e. pretending that the preprocessing is done
         test_standard_keygen(&kms, key_id, &preproc_id, false).await;
 
-        let wrapped_pk = kms
+        let pk = kms
             .crypto_storage
             .inner
             .read_cloned_pk(key_id)
             .await
             .unwrap();
-        let key: tfhe::ServerKey = {
-            let storage = kms.crypto_storage.inner.get_public_storage();
-            let guard = storage.lock().await;
-            read_versioned_at_request_id(&(*guard), key_id, &PubDataType::ServerKey.to_string())
-                .await
-                .unwrap()
-        };
+        let key = kms
+            .crypto_storage
+            .inner
+            .read_cloned_server_key(key_id)
+            .await
+            .unwrap();
         tfhe::set_server_key(key);
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
 
         (kms, pk, verf_key)
     }

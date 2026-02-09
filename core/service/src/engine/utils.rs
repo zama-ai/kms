@@ -1,12 +1,57 @@
-use crate::vault::storage::StorageExt;
+use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
-use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{map_tonic_code_to_metric_err_tag, ERR_ASYNC};
+use std::collections::HashSet;
 use std::fmt::Display;
 use tonic::Status;
+
+/// Sanity check that public key materials can be read from storage.
+///
+/// For each entry, verifies that the public key materials indicated by the
+/// `pub_data_types` can be successfully retrieved from public storage.
+pub async fn sanity_check_public_materials<S>(
+    public_storage: &S,
+    entries: &[(RequestId, HashSet<PubDataType>)],
+) -> anyhow::Result<()>
+where
+    S: StorageReader + Sync,
+{
+    for (id, pub_data_types) in entries {
+        if pub_data_types.contains(&PubDataType::PublicKey) {
+            let _pk = read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
+                public_storage,
+                id,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await?;
+            let _server_key = read_versioned_at_request_id::<_, tfhe::ServerKey>(
+                public_storage,
+                id,
+                &PubDataType::ServerKey.to_string(),
+            )
+            .await?;
+        } else if pub_data_types.contains(&PubDataType::CompressedXofKeySet) {
+            let _xof_keyset =
+                read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
+                    public_storage,
+                    id,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await?;
+        } else {
+            tracing::warn!(
+                "Inconsistent storage state, public component for id={id} not found, \
+                 pub data types only contains {:?}! Please investigate.",
+                pub_data_types
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Query key material availability from private storage
 ///

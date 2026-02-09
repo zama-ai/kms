@@ -10,7 +10,6 @@ import "kms.v1.proto";
 // All insecure RPCs (i.e., the ones that have `Insecure` in the prefix)
 // have the same semantics as the secure ones.
 service CoreServiceEndpoint {
-  rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
@@ -46,13 +45,15 @@ service CoreServiceEndpoint {
 
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
 
-  rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
-
-  rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
-
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
+
+  rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
+
+  rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
+
+  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
 
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 

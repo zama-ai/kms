@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
@@ -5,19 +7,11 @@ use crate::{
             compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
             DSEP_PUBDATA_KEY,
         },
-        threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
-            traits::Resharer,
-        },
+        threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
         utils::MetricedError,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
-    util::{
-        meta_store::{handle_res_mapping, MetaStore},
-        rate_limiter::RateLimiter,
-    },
+    util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id,
@@ -30,13 +24,11 @@ use crate::{
 };
 use itertools::Itertools;
 use kms_grpc::{
-    kms::v1::{
-        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
-    },
+    kms::v1::{Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest},
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     ContextId, EpochId, IdentifierError, RequestId,
 };
-use observability::metrics_names::OP_INITIATE_RESHARING;
+use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::ServerKey;
 use threshold_fhe::{
@@ -87,9 +79,45 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
     };
     let domain_parts = domain.split('.').collect::<Vec<&str>>();
     if domain_parts.len() < 2 {
-        anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
+        tracing::warn!(
+            "Cannot deduce the bucket name from url {:?}. Returning default bucket used in testing",
+            url
+        );
+        Ok("kms".to_owned())
+    } else {
+        Ok(domain_parts[0].to_owned())
     }
-    Ok(domain_parts[0].to_owned())
+}
+
+/// Find the AWS region from an S3 bucket URL.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
+pub(crate) fn find_region_from_s3_url(s3_bucket_url: &String) -> anyhow::Result<String> {
+    let parsed_url = url::Url::parse(s3_bucket_url.as_str())?;
+    let domain = parsed_url
+        .domain()
+        .ok_or(anyhow::anyhow!("Cannot parse domain from URL"))?;
+    let domain_parts: Vec<&str> = domain.split('.').collect();
+    if domain_parts.len() < 4 {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        return Ok("us-east-1".to_owned()); // default region
+    }
+    let dot_com_pos = domain_parts.len() - 1;
+    let expected_s3_pos = dot_com_pos - 3;
+    let expected_region_pos = dot_com_pos - 2;
+    // e.g s3.eu-west-1.amazonaws.com
+    if domain_parts[expected_s3_pos] == "s3" {
+        Ok(domain_parts[expected_region_pos].to_owned())
+    } else {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        Ok("us-east-1".to_owned()) // default region
+    }
 }
 
 /// Split an S3 URL into its base URL and bucket name.
@@ -102,12 +130,18 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
 /// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
 fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
     // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
+    tracing::info!("Splitting S3 url: {}", s3_bucket_url);
     let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
     let mut bucket = parsed_url_and_bucket
         .path()
         .trim_start_matches('/')
         .to_owned();
+
     if bucket.is_empty() {
+        tracing::warn!(
+            "Bucket is empty, attempting to deduce from domain {:?}",
+            parsed_url_and_bucket
+        );
         // e.g BBBBBB.s3.eu-west-1.amazonaws.com, the bucket is part of the domain
         bucket = bucket_from_domain(&parsed_url_and_bucket)?;
         let url = s3_bucket_url
@@ -161,9 +195,10 @@ async fn fetch_public_materials_from_peers<
         // the public storage URL consists of the bucket name and the URL
         // we need to parse this information accordingly
         let (url, bucket) = split_url(&node.public_storage_url)?;
+        let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(Some(url::Url::parse(&url)?)).await?;
+        let s3_client = build_anonymous_s3_client(url::Url::parse(&url)?, region).await?;
         let pub_storage = ro_storage_getter.get_storage(
             s3_client,
             bucket,
@@ -248,8 +283,9 @@ async fn fetch_public_materials_from_peers<
     );
 }
 
+// TODO(https://github.com/zama-ai/kms-internal/issues/2881) for now we do not support compressed keys
 /// Attempt to get and verify the public materials needed for resharing.
-async fn get_verified_public_materials<
+pub(crate) async fn get_verified_public_materials<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
@@ -265,7 +301,7 @@ async fn get_verified_public_materials<
     // obtain the digests
     let expected_public_key_digest = key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
         MetricedError::new(
-            OP_INITIATE_RESHARING,
+            OP_NEW_EPOCH,
             Some(*request_id),
             anyhow::anyhow!("missing digest for public key"),
             tonic::Code::Internal,
@@ -274,7 +310,7 @@ async fn get_verified_public_materials<
 
     let expected_server_key_digest = key_digests.get(&PubDataType::ServerKey).ok_or_else(|| {
         MetricedError::new(
-            OP_INITIATE_RESHARING,
+            OP_NEW_EPOCH,
             Some(*request_id),
             anyhow::anyhow!("missing digest for server key"),
             tonic::Code::Internal,
@@ -312,7 +348,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Key digest verification failed: {}", e),
                     tonic::Code::Internal,
@@ -326,7 +362,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize public key: {}", e),
                     tonic::Code::Internal,
@@ -339,7 +375,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize server key: {}", e),
                     tonic::Code::Internal,
@@ -363,343 +399,12 @@ async fn get_verified_public_materials<
             .await
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to fetch public materials from peers: {}", e),
                     tonic::Code::Internal,
                 )
             })
-        }
-    }
-}
-
-pub struct RealResharer<
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
-> {
-    pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub(crate) session_maker: ImmutableSessionMaker,
-    pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
-    pub tracker: Arc<TaskTracker>,
-    pub rate_limiter: RateLimiter,
-}
-
-#[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Resharer
-    for RealResharer<PubS, PrivS>
-{
-    async fn initiate_resharing(
-        &self,
-        request: Request<InitiateResharingRequest>,
-    ) -> Result<Response<InitiateResharingResponse>, Status> {
-        let inner = request.into_inner();
-
-        tracing::info!(
-            "Received initiate resharing request in context {:?} for Key ID {:?} with request ID {:?}",
-            inner.context_id,
-            inner.key_id,
-            inner.request_id
-        );
-
-        let old_context: ContextId = match &inner.context_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => *DEFAULT_MPC_CONTEXT,
-        };
-
-        // TODO(zama-ai/kms-internal/issues/2788)
-        // grpc messages need to be changed to support both epoch IDs
-        let old_epoch_id: EpochId = match &inner.epoch_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => *DEFAULT_EPOCH_ID,
-        };
-
-        let key_id_to_reshare =
-            parse_optional_proto_request_id(&inner.key_id, RequestIdParsingErr::ReshareRequest)?;
-
-        let preproc_id = parse_optional_proto_request_id(
-            &inner.preproc_id,
-            RequestIdParsingErr::ReshareRequest,
-        )?;
-
-        let request_id = parse_optional_proto_request_id(
-            &inner.request_id,
-            RequestIdParsingErr::ReshareRequest,
-        )?;
-
-        let eip712_domain =
-            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
-                MetricedError::new(
-                    OP_INITIATE_RESHARING,
-                    Some(request_id),
-                    anyhow::anyhow!("EIP712 domain parsing for initiate resharing: {}", e),
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-
-        let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_reshare().await?;
-
-        let crypto_storage = self.crypto_storage.clone();
-
-        // Do the resharing
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::FailedPrecondition,
-                format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            )
-        })?;
-        let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
-
-        // collect key digests
-        let key_digests: HashMap<PubDataType, Vec<u8>> = inner
-            .key_digests
-            .into_iter()
-            .map(|kd| {
-                let key_type = kd
-                    .key_type
-                    .parse::<PubDataType>() // we do not use safe serialize because these are not known by the gateway
-                    .map_err(|e| {
-                        tonic::Status::invalid_argument(format!(
-                            "Invalid PubDataType in key digests: {}",
-                            e
-                        ))
-                    })?;
-                Ok((key_type, kd.digest))
-            })
-            .collect::<Result<HashMap<PubDataType, Vec<u8>>, Status>>()?;
-
-        // use the real instantiation here for ReadOnlyS3StorageGetter
-        let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
-            &crypto_storage,
-            &request_id,
-            &key_id_to_reshare,
-            &old_context, // it should be the old context ID as that's where the public materials are
-            &key_digests,
-            &RealReadOnlyS3StorageGetter {},
-        )
-        .await?;
-
-        // Update status
-        {
-            let mut guarded_meta_store = meta_store.write().await;
-            guarded_meta_store.insert(&request_id).map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!(
-                        "Failed to insert reshare status for request {} : {}",
-                        request_id, e
-                    ),
-                )
-            })?;
-        }
-
-        // Need to move the session_maker inside the task otherwise we'll have lifetime issues
-        let session_maker = self.session_maker.clone();
-        let task = move |_permit| async move {
-            let (session_id_z128, session_id_z64, session_id_reshare) = {
-                (
-                    request_id.derive_session_id_with_counter(0)?,
-                    request_id.derive_session_id_with_counter(1)?,
-                    request_id.derive_session_id_with_counter(2)?,
-                )
-            };
-
-            // First thing, if I have a key, send the public material to everyone else.
-
-            // Require 1 session in Z64 and 1 session in Z128
-            // TODO(zama-ai/kms-internal/issues/2810)
-            // when resharing is fully implemented, we need to use the new context *and* the old context
-            let mut session_z64 = session_maker
-                .make_small_sync_session_z64(session_id_z64, old_context, old_epoch_id)
-                .await?;
-
-            let mut session_z128 = session_maker
-                .make_small_sync_session_z128(session_id_z128, old_context, old_epoch_id)
-                .await?;
-
-            // Figure out how much preprocessing we need
-            // Slightly unclear how we should do that if we don't have the keys
-            // (Could be done from the parameters, but then again we also don't have them right now)
-            // (Note that it's the parties in S2 that need to know how much preprocessing they need,
-            // so this will be an issue also when resharing to a different set of parties)
-            let num_needed_preproc =
-                ResharePreprocRequired::new(session_z64.num_parties(), dkg_params);
-
-            let mut correlated_randomness_z64 = SecureSmallPreprocessing::default()
-                .execute(&mut session_z64, num_needed_preproc.batch_params_64)
-                .await?;
-
-            let mut correlated_randomness_z128 = SecureSmallPreprocessing::default()
-                .execute(&mut session_z128, num_needed_preproc.batch_params_128)
-                .await?;
-
-            // Perform online
-            let mut base_session = session_maker
-                .make_base_session(session_id_reshare, old_context, NetworkMode::Sync)
-                .await?;
-
-            // Read the old keys if they exists, otherwise we enter resharing with no keys
-            let mut mutable_keys = {
-                let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare, &old_epoch_id)
-                    .await
-                    .ok();
-                // Note: the function is supposed to zeroize the keys (hence requires mut access),
-                // so we clone it, cause we can't zeroize storage from here
-                old_fhe_keys_rlock
-                    .as_deref()
-                    .map(|r| r.private_keys.as_ref().clone())
-            };
-
-            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
-                &mut base_session,
-                &mut correlated_randomness_z128,
-                &mut correlated_randomness_z64,
-                &mut mutable_keys,
-                dkg_params,
-            )
-            .await?;
-
-            let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-                fhe_pubkeys.server_key.clone().into_raw_parts();
-
-            // Compute all the info required for storing
-            // using the same IDs and domain as we should've had the
-            // DKG went through successfully
-            let info = match compute_info_standard_keygen(
-                &sk,
-                &DSEP_PUBDATA_KEY,
-                &preproc_id,
-                &key_id_to_reshare,
-                &fhe_pubkeys,
-                &eip712_domain,
-            ) {
-                Ok(info) => info,
-                Err(_) => {
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage
-                        .update(&request_id, Err("Failed to compute key info".to_string()));
-                    anyhow::bail!("Failed to compute key info")
-                }
-            };
-
-            let threshold_fhe_keys = ThresholdFheKeys {
-                private_keys: Arc::new(new_private_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
-                meta_data: info.clone(),
-            };
-
-            // Purge before we can overwrite, use a dummy_meta_store
-            // as this was meant to update the meta store of DKG upon failing
-            let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(1, 1));
-            // Dummy insert to avoid error logs during purge
-            dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
-            crypto_storage
-                .purge_key_material(
-                    &key_id_to_reshare,
-                    &old_epoch_id,
-                    dummy_meta_store.write().await,
-                )
-                .await;
-
-            // HOTFIX(keygen-recovery): Note that this overwrites the private storage
-            // at the given key ID. It's needed as long as reshare shortcuts the
-            // GW, but should be fixed long term.
-            crypto_storage
-                .write_threshold_keys_with_reshare_meta_store(
-                    &request_id,
-                    &key_id_to_reshare,
-                    &old_epoch_id,
-                    threshold_fhe_keys,
-                    fhe_pubkeys,
-                    info.clone(),
-                    Arc::clone(&meta_store),
-                )
-                .await;
-
-            Ok(())
-        };
-        self.tracker.spawn(async move {
-            match task(permit).await {
-                Ok(_) => tracing::info!(
-                    "Resharing completed successfully for request ID {:?} and key ID {:?}",
-                    request_id,
-                    key_id_to_reshare
-                ),
-                Err(e) => tracing::error!(
-                    "Resharing failed for request ID {:?} and key ID {:?}: {}",
-                    request_id,
-                    key_id_to_reshare,
-                    e
-                ),
-            }
-        });
-        Ok(Response::new(InitiateResharingResponse {
-            request_id: Some(request_id.into()),
-        }))
-    }
-
-    async fn get_resharing_result(
-        &self,
-        request: Request<kms_grpc::kms::v1::RequestId>,
-    ) -> Result<Response<ResharingResultResponse>, Status> {
-        let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::ReshareResponse)?;
-
-        let status = {
-            let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-
-        let res = handle_res_mapping(status, &request_id, "Reshare").await?;
-
-        match res {
-            KeyGenMetadata::Current(res) => {
-                tracing::info!(
-                    "Retrieved reshare result for request ID {:?}. Key id is {}",
-                    request_id,
-                    res.key_id
-                );
-
-                // Note: This relies on the ordering of the PubDataType enum
-                // which must be kept stable (in particular, ServerKey must be before PublicKey)
-                let key_digests = res
-                    .key_digest_map
-                    .into_iter()
-                    .sorted_by_key(|x| x.0)
-                    .map(|(key, digest)| KeyDigest {
-                        key_type: key.to_string(),
-                        digest,
-                    })
-                    .collect::<Vec<_>>();
-
-                Ok(Response::new(ResharingResultResponse {
-                    request_id: Some(request_id.into()),
-                    key_id: Some(res.key_id.into()),
-                    preprocessing_id: Some(res.preprocessing_id.into()),
-                    key_digests,
-                    external_signature: res.external_signature,
-                }))
-            }
-            KeyGenMetadata::LegacyV0(_res) => {
-                tracing::error!("Resharing should not return legacy metadata");
-                Err(Status::internal(
-                    "Resharing returned legacy metadata, which should not happen",
-                ))
-            }
         }
     }
 }
@@ -713,19 +418,17 @@ mod tests {
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
-    use crate::engine::threshold::service::resharer::fetch_public_materials_from_peers;
-    use crate::engine::threshold::service::resharer::get_verified_public_materials;
-    use crate::engine::threshold::service::resharer::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
-    use crate::engine::threshold::service::resharer::ERR_SERVER_KEY_DIGEST_MISMATCH;
+    use crate::engine::threshold::service::reshare_utils::fetch_public_materials_from_peers;
+    use crate::engine::threshold::service::reshare_utils::get_verified_public_materials;
+    use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
+    use crate::engine::threshold::service::reshare_utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
-    use crate::vault::storage::store_pk_at_request_id;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::rpc_types::WrappedPublicKey;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
@@ -783,10 +486,11 @@ mod tests {
         ]);
 
         // store the keys in ram storage
-        store_pk_at_request_id(
+        store_versioned_at_request_id(
             &mut ram_storage,
             &key_id,
-            WrappedPublicKey::Compact(&public_key),
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         .unwrap();
@@ -805,7 +509,6 @@ mod tests {
             RamStorage::new(),
             RamStorage::new(),
             None,
-            HashMap::new(),
             HashMap::new(),
         );
 
@@ -989,10 +692,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();
@@ -1044,10 +748,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();
@@ -1075,5 +780,24 @@ mod tests {
             // we should've used the public storage directly, so the counter here should be 0
             assert_eq!(*ro_storage_getter.counter.borrow(), 0);
         }
+    }
+
+    #[test]
+    fn test_find_region() {
+        let url = "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string();
+        let region = super::find_region_from_s3_url(&url).unwrap();
+        assert_eq!(region.as_str(), "eu-west-1");
+
+        let url = "https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+        let region = super::find_region_from_s3_url(&url).unwrap();
+        assert_eq!(region.as_str(), "us-west-1");
+
+        let url = "https://s3.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+        let region = super::find_region_from_s3_url(&url).unwrap();
+        assert_eq!(region.as_str(), "us-east-1");
+
+        let url = "http://dev-s3-mock:9000".to_string();
+        let region = super::find_region_from_s3_url(&url).unwrap();
+        assert_eq!(region.as_str(), "us-east-1");
     }
 }

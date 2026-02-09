@@ -1,23 +1,22 @@
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_KEY;
-use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
+use kms_grpc::kms::v1::PreviousEpochInfo;
 use kms_grpc::kms::v1::{
-    FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
+    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    KeySetAddedInfo, KeySetConfig,
 };
-use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
-};
+use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
-use std::collections::HashMap;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
@@ -123,33 +122,16 @@ impl Client {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reshare_request(
+    pub fn new_epoch_request(
         &self,
-        request_id: &RequestId,
-        key_id: &RequestId,
-        preproc_id: &RequestId,
-        context_id: Option<&ContextId>,
-        epoch_id: Option<&EpochId>,
-        param: Option<FheParameter>,
-        domain: &Eip712Domain,
-        key_digests: &HashMap<PubDataType, Vec<u8>>,
-    ) -> anyhow::Result<InitiateResharingRequest> {
-        let domain = alloy_to_protobuf_domain(domain)?;
-        Ok(InitiateResharingRequest {
-            request_id: Some((*request_id).into()),
-            context_id: context_id.map(|id| (*id).into()),
-            key_id: Some((*key_id).into()),
-            key_parameters: param.unwrap_or_default().into(),
-            domain: Some(domain),
-            preproc_id: Some((*preproc_id).into()),
-            epoch_id: epoch_id.map(|id| (*id).into()),
-            key_digests: key_digests
-                .iter()
-                .map(|(k, v)| kms_grpc::kms::v1::KeyDigest {
-                    key_type: k.to_string(),
-                    digest: v.clone(),
-                })
-                .collect(),
+        to_context_id: &ContextId,
+        to_epoch_id: &EpochId,
+        previous_epoch: Option<PreviousEpochInfo>,
+    ) -> anyhow::Result<NewMpcEpochRequest> {
+        Ok(NewMpcEpochRequest {
+            context_id: Some((*to_context_id).into()),
+            epoch_id: Some((*to_epoch_id).into()),
+            previous_epoch,
         })
     }
 
@@ -160,7 +142,7 @@ impl Client {
         resp: &KeyGenPreprocResult,
     ) -> anyhow::Result<()> {
         let sol_type = PrepKeygenVerification::new(preproc_id);
-        let req_id_from_resp = parse_optional_proto_request_id(
+        let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
         )?;
@@ -216,8 +198,6 @@ impl Client {
                 return Ok(None);
             }
         };
-
-        let WrappedPublicKeyOwned::Compact(public_key) = public_key;
 
         let server_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
@@ -286,8 +266,12 @@ impl Client {
             ));
         }
 
-        let sol_type =
-            KeygenVerification::new(preproc_id, key_id, server_key_digest, public_key_digest);
+        let sol_type = KeygenVerification::new_standard(
+            preproc_id,
+            key_id,
+            server_key_digest,
+            public_key_digest,
+        );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
@@ -302,36 +286,19 @@ impl Client {
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
-        // first we need to read the key type
-        let request_id = parse_optional_proto_request_id(
+    ) -> anyhow::Result<Option<CompactPublicKey>> {
+        let request_id: RequestId = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
-            "getting public key metadata using storage {} with request id {}",
+            "getting compact public key using storage {} with request id {}",
             storage.info(),
             &request_id
         );
-        let pk_type: PublicKeyType = crate::vault::storage::read_versioned_at_request_id(
-            storage,
-            &request_id,
-            &PubDataType::PublicKeyMetadata.to_string(),
-        )
-        .await?;
-        tracing::debug!(
-            "getting wrapped public key using storage {} with request id {}",
-            storage.info(),
-            &request_id
-        );
-        let wrapped_pk = match pk_type {
-            PublicKeyType::Compact => self
-                .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-                .await?
-                .map(WrappedPublicKeyOwned::Compact),
-        };
-        Ok(wrapped_pk)
+        self.retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
+            .await
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
@@ -372,7 +339,7 @@ impl Client {
                 anyhow::anyhow!("Key type {key_type} not found in key generation result")
             })?;
 
-        let request_id = parse_optional_proto_request_id(
+        let request_id = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while retrieving key".to_string()),
         )

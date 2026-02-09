@@ -119,6 +119,7 @@ async fn verify_key_usable_isolated(
             compression: false,
             precompute_sns: true,
         },
+        false,
     )
     .await;
 

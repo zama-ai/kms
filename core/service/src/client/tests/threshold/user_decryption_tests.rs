@@ -486,6 +486,7 @@ pub(crate) async fn user_decryption_threshold(
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
         enc_config,
+        false, // compressed_keys
     )
     .await;
 
@@ -510,6 +511,7 @@ pub(crate) async fn user_decryption_threshold(
                     typed_ciphertexts,
                     &request_id,
                     &key_id.to_string().try_into().unwrap(),
+                    None,
                     None,
                     encryption_scheme,
                 )

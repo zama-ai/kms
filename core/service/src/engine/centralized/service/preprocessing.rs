@@ -4,7 +4,7 @@ use crate::{
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
-        validation::{proto_request_id, validate_preproc_request, RequestIdParsingErr},
+        validation::{parse_grpc_request_id, validate_preproc_request, RequestIdParsingErr},
     },
     util::meta_store::{add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store},
     vault::storage::{Storage, StorageExt},
@@ -145,15 +145,16 @@ pub async fn get_preprocessing_res_impl<
     tracing::warn!(
         "Get key generation preprocessing result called on centralized KMS - no action taken"
     );
-    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
-        .map_err(|e| {
-            MetricedError::new(
-                OP_KEYGEN_PREPROC_RESULT,
-                None,
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+    let request_id =
+        parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_KEYGEN_PREPROC_RESULT,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
     let preproc_data = retrieve_from_meta_store(
         service.preprocessing_meta_store.read().await,

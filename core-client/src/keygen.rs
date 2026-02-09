@@ -1,6 +1,6 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    dummy_domain, CmdConfig, CoreClientConfig, PartialKeyGenPreprocParameters,
+    dummy_domain, CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
     SharedKeyGenParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use aes_prng::AesRng;
@@ -26,7 +26,7 @@ use tonic::transport::Channel;
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_keygen(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -143,13 +143,10 @@ pub(crate) async fn fetch_and_check_keygen(
     );
 
     // Download the generated keys.
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    // TODO: handle compressed keys
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-    let party_ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &request_id.to_string(),
         &key_types,
         cc_conf,
@@ -157,7 +154,7 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = *party_ids.first().unwrap() as usize;
+    let first_party_id = party_confs.first().unwrap().party_id as usize;
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical
@@ -205,7 +202,7 @@ pub(crate) async fn fetch_and_check_keygen(
 }
 
 pub(crate) async fn get_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -214,9 +211,9 @@ pub(crate) async fn get_keygen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -260,20 +257,20 @@ pub(crate) async fn get_keygen_responses(
                     response
                 );
             }
-            (core_id, request_id, response.unwrap().into_inner())
+            (core_conf, request_id, response.unwrap().into_inner())
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
+        let (core_conf, _request_id, resp) = resp?;
+        resp_response_vec.push((core_conf, resp));
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
@@ -294,7 +291,8 @@ pub(crate) fn check_standard_keyset_ext_signature(
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
+    let sol_type =
+        KeygenVerification::new_standard(prep_id, key_id, server_key_digest, public_key_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -310,7 +308,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_preproc(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -363,7 +361,7 @@ pub(crate) async fn do_preproc(
 
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -417,15 +415,15 @@ pub(crate) async fn do_partial_preproc(
 }
 
 pub(crate) async fn get_preproc_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter() {
+    for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -455,17 +453,17 @@ pub(crate) async fn get_preproc_keygen_responses(
                     .await;
             }
 
-            (core_id, request_id, response.unwrap().into_inner())
+            (core_conf, request_id, response.unwrap().into_inner())
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, resp_request_id, resp_res) = resp?;
+        let (core_conf, resp_request_id, resp_res) = resp?;
         assert_eq!(request_id, resp_request_id);
         // any failures that happen will panic here
-        resp_response_vec.push((core_id, resp_res));
+        resp_response_vec.push((core_conf, resp_res));
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)

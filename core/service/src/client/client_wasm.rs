@@ -46,6 +46,12 @@ pub struct Client {
     pub(crate) decryption_mode: DecryptionMode,
 }
 
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client").finish()
+    }
+}
+
 impl Client {
     /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
     /// from a [PublicStorage].

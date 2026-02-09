@@ -42,25 +42,6 @@ import "kms.v1.proto";
 // store issues (e.g., failing to insert), session creation issues, missing PRSS
 // and (de)serialization issues. The caller should not retry in this case.
 service CoreServiceEndpoint {
-  // Initializes the threshold KMS service.
-  //
-  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
-  //
-  // This involves executing the PRSS protocol to generate secret shared correlated randomness.
-  // This is a synchronous call and an successful response suggests the initialization completed.
-  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
-  //
-  // # Parameters
-  // * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
-  //
-  // # Returns a successful response with an empty body.
-  //
-  // # Conditions
-  // ## Pre-condition:
-  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
-  // ## Post-condition:
-  // * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
-  rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   // Start computing the preprocessed material needed for a single key generation.
   //
@@ -285,9 +266,9 @@ service CoreServiceEndpoint {
   // * `new_context` - Struct containing all the data of the request.
   //
   // # Conditions
-  // ## Pre-condition:  
+  // ## Pre-condition:
   // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
-  // ## Post-condition: 
+  // ## Post-condition:
   // * The `context_id` in `request` now represents a new MPC context.
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 
@@ -298,50 +279,81 @@ service CoreServiceEndpoint {
   // * `context_id` - Context ID of the MPC context to destroy.
   //
   // # Conditions
-  // ## Pre-condition:  
+  // ## Pre-condition:
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
-  // ## Post-condition: 
+  // ## Post-condition:
   // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disc.
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
 
-  rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
+  // Creates a new MPC epoch.
+  // This involves executing the PRSS protocol to generate secret shared correlated randomness.
+  // This is a synchronous call and an successful response suggests the initialization completed.
+  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
+  // and if a previous epoch is given, it reshares the key from a previous epoch.
+  //
+  // # Parameters
+  // * `NewMpcEpochRequest` - Struct containing all the data of the request
+  //
+  // #Conditions
+  // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
+  // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
+  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one.
+  //   All epoch creation should perform a resharing except the genesis epoch since DKG has not been done yet.
+  //   If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
+  //
+  rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
 
-  rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
+  // Retrieves the result of an epoch creation (i.e. the reshared key if any)
+  //
+  // # Parameters
+  // * The [`RequestId`] that corresponds to the `epoch_id` of the context we want to check up on.
+  //
+  // # Returns
+  // * If a resharing happened (i.e. `previous_epoch` was set in the `NewMpcEpoch` request) during the epoch creation, this returns the same struct as a GetKeyGenResult request except we exclude the `request_id`.
+  // # Conditions
+  rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
+
+  // Destroys an MPC epoch, by first erasing the PRSS
+  // and if the shares of the secret key.
+  //
+  // # Parameters
+  // # Conditions
+  rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
 
   // Constructs a new custodian context.
   //
   // That is, updates the internal state and configuration files to start using a new custodian context.
   // Internally the KMS will sample a backup key pair and immediately construct a backup based on this.
-  // A new context will automatically be set as the active one. The backups of the old one will not be removed 
-  // until explicitly requested through a call to `DestroyCustodianContext`. 
-  // Still, recovery is currently only possible using the current context. 
+  // A new context will automatically be set as the active one. The backups of the old one will not be removed
+  // until explicitly requested through a call to `DestroyCustodianContext`.
+  // Still, recovery is currently only possible using the current context.
   //
   // # Parameters
   // * `new_context` - Struct containing all the data of the request.
   //
   // # Conditions
-  // ## Pre-condition:  
+  // ## Pre-condition:
   // * The KMS _must_ be setup to use the custodian-based backup mechanism.
   // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
   // * `custodian_nodes` in `new_context` must be present and contain at least 2*`threshold` valid `CustodianSetupMessage`s.
   // * `threshold` in `new_context` must be a positive integer less than the amount of entries in `custodian_nodes`
-  // ## Post-condition: 
+  // ## Post-condition:
   // * The `context_id` in `request` now represents a new custodian context.
-  // * A backup of all private data has been constructed, and secret shared recovery information is persisted in the public storage. 
+  // * A backup of all private data has been constructed, and secret shared recovery information is persisted in the public storage.
   // * The previous backup is still present but cannot be used directly.
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
   // Destroys a custodian context (and its associated backup) by removing it from memory and storage.
-  // This is only possible for a context which is not the currently active one. 
+  // This is only possible for a context which is not the currently active one.
   //
   // # Parameters
   // * `context_id` - Context ID of the MPC context to destroy.
   //
   // # Conditions
-  // ## Pre-condition:  
+  // ## Pre-condition:
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of a custodian context that has been constructed with `NewCustodianContext`.
-  // * `context_id` in `request` must not represent the currently active custodian context. 
-  // ## Post-condition: 
+  // * `context_id` in `request` must not represent the currently active custodian context.
+  // ## Post-condition:
   // * The `context_id` in `request` can no longer be used. Any context data associated with it, that may have existed, including _all backups_ has been purged from both memory and disc.
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 

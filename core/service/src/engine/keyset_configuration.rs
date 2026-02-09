@@ -3,9 +3,9 @@ use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetType};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
-use threshold_fhe::execution::keyset_config as ddec_keyset_config;
+use threshold_fhe::execution::keyset_config::{self as ddec_keyset_config};
 
-use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
+use crate::engine::validation::{parse_grpc_request_id, RequestIdParsingErr};
 
 pub(crate) struct WrappedKeySetConfig(kms_grpc::kms::v1::KeySetConfig);
 
@@ -29,6 +29,10 @@ impl TryFrom<WrappedKeySetConfig> for ddec_keyset_config::KeySetConfig {
                     ddec_keyset_config::StandardKeySetConfig {
                         computation_key_type: WrappedComputeKeyType(compute_key_type).into(),
                         compression_config: WrappedCompressionConfig(compression_type).into(),
+                        compressed_key_config: WrappedCompressedKeyConfig(
+                            inner_config.compressed_key_config,
+                        )
+                        .into(),
                     },
                 ))
             }
@@ -64,8 +68,20 @@ impl From<WrappedCompressionConfig> for ddec_keyset_config::KeySetCompressionCon
     }
 }
 
+/// Wrapper for parsing CompressedKeyConfig from gRPC proto.
+pub(crate) struct WrappedCompressedKeyConfig(i32);
+
+impl From<WrappedCompressedKeyConfig> for ddec_keyset_config::CompressedKeyConfig {
+    fn from(value: WrappedCompressedKeyConfig) -> Self {
+        match value.0 {
+            1 => ddec_keyset_config::CompressedKeyConfig::All,
+            _ => ddec_keyset_config::CompressedKeyConfig::None, // 0 or invalid defaults to None
+        }
+    }
+}
+
 /// Helper structure to represent a valid keyset configuration.
-/// This is used to conviently parse and sanity-check gRPC arugments and for internal function parsing.  
+/// This is used to conviently parse and sanity-check gRPC arugments and for internal function parsing.
 pub struct InternalKeySetConfig {
     keyset_config: ddec_keyset_config::KeySetConfig,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -181,12 +197,12 @@ impl InternalKeySetConfig {
                     added_info.to_keyset_id_decompression_only.to_owned(),
                 ) {
                     (Some(from), Some(to)) => (
-                        parse_proto_request_id(
+                        parse_grpc_request_id(
                             &from,
                             RequestIdParsingErr::Other("invalid from ID".to_string()),
                         )
                         .map_err(|e| anyhow::anyhow!("Failed to parse from ID: {}", e))?,
-                        parse_proto_request_id(
+                        parse_grpc_request_id(
                             &to,
                             RequestIdParsingErr::Other("invalid to ID".to_string()),
                         )
@@ -209,7 +225,7 @@ impl InternalKeySetConfig {
             .as_ref()
             .and_then(|info| info.compression_keyset_id.clone())
         {
-            let key_id = parse_proto_request_id(
+            let key_id = parse_grpc_request_id(
                 &inner,
                 RequestIdParsingErr::Other("invalid compression keyset ID".to_string()),
             )?;
@@ -250,6 +266,7 @@ pub(crate) mod tests {
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
                 keyset_compression_config: KeySetCompressionConfig::Generate as i32,
+                compressed_key_config: 0,
             }),
         };
         let result = InternalKeySetConfig::new(Some(keyset_config), None);
@@ -264,6 +281,7 @@ pub(crate) mod tests {
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
                 keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                compressed_key_config: 0,
             }),
         };
         let result = InternalKeySetConfig::new(Some(keyset_config), None);
@@ -278,6 +296,7 @@ pub(crate) mod tests {
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
                 keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                compressed_key_config: 0,
             }),
         };
         let keyset_added_info = KeySetAddedInfo {
@@ -297,6 +316,7 @@ pub(crate) mod tests {
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
                 keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                compressed_key_config: 0,
             }),
         };
         let keyset_added_info = KeySetAddedInfo {

@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::{
     anyhow_error_and_warn_log,
@@ -20,23 +21,22 @@ use crate::{
             crypto_material::{
                 check_data_exists, check_data_exists_at_epoch, log_storage_success,
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
-                CryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
-            store_context_at_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
-            StorageExt, StorageReaderExt,
+            store_context_at_id, store_versioned_at_request_id, Storage, StorageExt,
+            StorageReaderExt,
         },
         Vault,
     },
 };
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
-    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
 use std::{collections::HashMap, sync::Arc};
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 /// Marker trait for private FHE materials.
@@ -67,10 +67,6 @@ pub struct CryptoMaterialStorage<
     /// Optional backup vault for recovery purposes
     /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
-
-    /// Cache for already generated public keys
-    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
-    pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
     // Cache for current backup key (if it is set)
     // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
     // pub(crate) current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
@@ -92,28 +88,20 @@ where
         public_storage: Arc<Mutex<PubS>>,
         private_storage: Arc<Mutex<PrivS>>,
         backup_vault: Option<Arc<Mutex<Vault>>>,
-        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
     ) -> Self {
         Self {
             public_storage,
             private_storage,
             backup_vault,
-            pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
         }
     }
 
     /// Creates a CryptoMaterialStorage by wrapping the provided storages.
-    pub fn from(
-        public_storage: PubS,
-        private_storage: PrivS,
-        backup_vault: Option<Vault>,
-        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
-    ) -> Self {
+    pub fn from(public_storage: PubS, private_storage: PrivS, backup_vault: Option<Vault>) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
             Arc::new(Mutex::new(private_storage)),
             backup_vault.map(|s| Arc::new(Mutex::new(s))),
-            pk_cache,
         )
     }
 
@@ -234,10 +222,17 @@ where
     pub async fn store_threshold_public_key(
         &self,
         key_id: &RequestId,
-        public_key: WrappedPublicKey<'_>,
+        public_key: &CompactPublicKey,
     ) -> anyhow::Result<()> {
+        tracing::info!("Storing public key");
         let mut pub_storage = self.public_storage.lock().await;
-        store_pk_at_request_id(&mut *pub_storage, key_id, public_key).await
+        store_versioned_at_request_id(
+            &mut *pub_storage,
+            key_id,
+            public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
     }
 
     /// Store threshold public server key
@@ -278,12 +273,12 @@ where
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
-    pub async fn purge_key_material(
+    pub async fn purge_key_material<T: From<KeyGenMetadata> + Clone>(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
         kms_type: KMSType,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
         let mut pub_storage = self.public_storage.lock().await;
@@ -833,12 +828,13 @@ where
 
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
+    #[cfg(test)]
     pub(crate) async fn read_cloned_pk(
         &self,
         req_id: &RequestId,
-    ) -> anyhow::Result<WrappedPublicKeyOwned> {
-        Self::read_cloned_crypto_material::<WrappedPublicKeyOwned, _>(
-            self.pk_cache.clone(),
+    ) -> anyhow::Result<CompactPublicKey> {
+        Self::read_cloned_crypto_material::<CompactPublicKey, _>(
+            Arc::new(RwLock::new(HashMap::new())),
             req_id,
             self.public_storage.clone(),
         )
@@ -847,6 +843,7 @@ where
 
     /// Read the server key
     /// from the public storage backend.
+    #[cfg(test)]
     pub(crate) async fn read_cloned_server_key(
         &self,
         req_id: &RequestId,
@@ -859,13 +856,14 @@ where
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn read_cloned_crypto_material<T, S>(
         cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,
         storage: Arc<Mutex<S>>,
     ) -> anyhow::Result<T>
     where
-        T: CryptoMaterialReader + Clone,
+        T: super::CryptoMaterialReader + Clone,
         S: Storage + Send + Sync + 'static,
     {
         let pub_storage = storage.lock().await;
@@ -1002,6 +1000,15 @@ where
                 .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
         Ok(context_map.into_values().collect())
     }
+
+    /// Read all PRSS info from storage
+    pub async fn read_all_prss_info(
+        &self,
+    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
+    }
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
@@ -1013,7 +1020,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
-            pk_cache: Arc::clone(&self.pk_cache),
         }
     }
 }

@@ -10,11 +10,9 @@ use kms_grpc::{
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
-    named::Named, Versionize,
-};
+use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
+use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
@@ -39,9 +37,13 @@ use tokio::{
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::{
+    pb::health_server::{Health, HealthServer},
+    server::HealthReporter,
+};
 use tonic_tls::rustls::TlsIncoming;
 
+use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -59,20 +61,19 @@ use crate::{
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
-                resharer::RealResharer,
                 session::{ImmutableSessionMaker, SessionMaker},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
             threshold_kms::ThresholdKms,
         },
+        utils::sanity_check_public_materials,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_pk_at_request_id, Storage, StorageExt,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
         },
         Vault,
     },
@@ -80,7 +81,7 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
+    crs_generator::RealCrsGenerator, key_generator::RealKeyGenerator,
     preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
     user_decryptor::RealUserDecryptor,
 };
@@ -89,40 +90,92 @@ use super::{
 #[cfg(feature = "insecure")]
 use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
 
+/// Enum to hold either compressed or uncompressed public key material.
+/// This allows a single ThresholdFheKeys type to support both modes.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PublicKeyMaterialVersioned {
+    V0(PublicKeyMaterial),
+}
+
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(PublicKeyMaterialVersioned)]
+pub enum PublicKeyMaterial {
+    /// Uncompressed keys - ready for immediate use
+    Uncompressed {
+        integer_server_key: Arc<tfhe::integer::ServerKey>,
+        sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    },
+    /// Compressed keys - need decompression before use via XOF seed
+    Compressed {
+        compressed_keyset: Arc<tfhe::xof_key_set::CompressedXofKeySet>,
+        // We store duplicate of the integer keys for easy access, otherwise we'd need to decompress every time
+        integer_server_key: Arc<tfhe::integer::ServerKey>,
+        sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    },
+}
+
+impl PublicKeyMaterial {
+    pub fn new_compressed(
+        compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet,
+    ) -> anyhow::Result<Self> {
+        let compressed_keyset_cloned = compressed_keyset.clone();
+        let (_public_key, server_key) = compressed_keyset_cloned.decompress()?.into_raw_parts();
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+            server_key.into_raw_parts();
+        Ok(Self::Compressed {
+            compressed_keyset: Arc::new(compressed_keyset),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeysV0),
-    V1(ThresholdFheKeys),
+    V1(ThresholdFheKeysV1),
+    V2(ThresholdFheKeys),
 }
 
+/// V2: Unified key storage supporting both compressed and uncompressed keys.
 /// These are the internal key materials (public and private)
 /// that's needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
-    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
 }
 
-/// These are the internal key materials (public and private)
-/// that's needed for decryption, user decryption and verifying a proven input.
+/// V1: Original structure with separate fields for public keys.
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct ThresholdFheKeysV1 {
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    pub meta_data: KeyGenMetadata,
+}
+
+/// V0: Legacy structure with pk_meta_data instead of meta_data.
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct ThresholdFheKeysV0 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
-impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
+impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
-        Ok(ThresholdFheKeys {
+    fn upgrade(self) -> Result<ThresholdFheKeysV1, Self::Error> {
+        Ok(ThresholdFheKeysV1 {
             private_keys: Arc::clone(&self.private_keys),
             integer_server_key: Arc::clone(&self.integer_server_key),
             sns_key: self.sns_key.map(|sns_key| Arc::clone(&sns_key)),
@@ -134,12 +187,66 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
     }
 }
 
+impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+        Ok(ThresholdFheKeys {
+            private_keys: self.private_keys,
+            public_material: PublicKeyMaterial::Uncompressed {
+                integer_server_key: self.integer_server_key,
+                sns_key: self.sns_key,
+                decompression_key: self.decompression_key,
+            },
+            meta_data: self.meta_data,
+        })
+    }
+}
+
 impl ThresholdFheKeys {
-    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
-        match &self.integer_server_key.as_ref().as_ref().atomic_pattern {
+    /// Get the integer server key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_integer_server_key(&self) -> Arc<tfhe::integer::ServerKey> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                integer_server_key, ..
+            } => integer_server_key.clone(),
+            PublicKeyMaterial::Compressed {
+                integer_server_key, ..
+            } => integer_server_key.clone(),
+        }
+    }
+
+    /// Get the SNS key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_sns_key(&self) -> Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed { sns_key, .. } => sns_key.clone(),
+            PublicKeyMaterial::Compressed { sns_key, .. } => sns_key.clone(),
+        }
+    }
+
+    /// Get the decompression key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_decompression_key(
+        &self,
+    ) -> Option<Arc<tfhe::integer::compression_keys::DecompressionKey>> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                decompression_key, ..
+            } => decompression_key.clone(),
+            PublicKeyMaterial::Compressed {
+                decompression_key, ..
+            } => decompression_key.clone(),
+        }
+    }
+
+    pub fn get_key_switching_key(&self) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>> {
+        let integer_server_key = self.get_integer_server_key();
+        match &integer_server_key.as_ref().as_ref().atomic_pattern {
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
                 standard_atomic_pattern_server_key,
-            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            ) => Ok(standard_atomic_pattern_server_key.key_switching_key.clone()),
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
                 anyhow::bail!("No support for KeySwitch32 server key")
             }
@@ -147,6 +254,11 @@ impl ThresholdFheKeys {
                 anyhow::bail!("No support for dynamic atomic pattern server key")
             }
         }
+    }
+
+    /// Check if this ThresholdFheKeys contains compressed keys.
+    pub fn is_compressed(&self) -> bool {
+        matches!(self.public_material, PublicKeyMaterial::Compressed { .. })
     }
 }
 
@@ -157,11 +269,16 @@ impl Named for ThresholdFheKeys {
 impl std::fmt::Debug for ThresholdFheKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ThresholdFheKeys")
-            .field("private_keys", &"ommitted")
-            .field("server_key", &"ommitted")
-            .field("decompression_key", &"ommitted")
-            .field("pk_meta_data", &self.meta_data)
-            .field("ksk", &"ommitted")
+            .field("private_keys", &"omitted")
+            .field(
+                "public_material",
+                &if self.is_compressed() {
+                    "Compressed(omitted)"
+                } else {
+                    "Uncompressed(omitted)"
+                },
+            )
+            .field("meta_data", &self.meta_data)
             .finish()
     }
 }
@@ -176,7 +293,7 @@ pub struct BucketMetaStore {
 
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS, RobustSecurePrssInit>,
+    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -188,12 +305,11 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
-    RealResharer<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS, RobustSecurePrssInit>,
+    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -211,7 +327,6 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
-    RealResharer<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
@@ -229,7 +344,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
-    HealthServer<impl Health>,
+    (HealthReporter, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
@@ -254,7 +369,6 @@ where
         .await?;
 
     let mut public_key_info = HashMap::new();
-    let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -265,12 +379,18 @@ where
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    for ((id, _), info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.meta_data.clone());
 
-        let pk = read_pk_at_request_id(&public_storage, &id).await?;
-        pk_map.insert(id, pk);
+    // Build public_key_info map
+    for ((id, _), info) in &key_info_versioned {
+        public_key_info.insert(*id, info.meta_data.clone());
     }
+
+    // sanity check the public materials
+    let entries: Vec<_> = key_info_versioned
+        .iter()
+        .map(|((id, _), info)| (*id, info.meta_data.pub_data_types()))
+        .collect();
+    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
@@ -408,7 +528,6 @@ where
         public_storage,
         private_storage,
         backup_storage,
-        pk_map,
         key_info_versioned,
     );
 
@@ -423,23 +542,26 @@ where
 
     let (core_service_health_reporter, core_service_health_service) =
         tonic_health::server::health_reporter();
-    let thread_core_health_reporter = core_service_health_reporter.clone();
-    {
-        // We are only serving after initialization
-        thread_core_health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-            .await;
-    }
+    // We are only serving after initialization
+    core_service_health_reporter
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
 
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
     let immutable_session_maker = session_maker.make_immutable();
 
-    let initiator = RealInitiator {
-        private_storage: crypto_storage.get_private_storage(),
+    let tracker = Arc::new(TaskTracker::new());
+    let rate_limiter = RateLimiter::new(rate_limiter_conf);
+
+    let epoch_manager = RealThresholdEpochManager {
+        crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        health_reporter: thread_core_health_reporter.clone(),
-        _init: PhantomData,
         base_kms: base_kms.new_instance().await,
+        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        _init: PhantomData,
+        _reshare: PhantomData,
     };
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
@@ -461,14 +583,14 @@ where
         })?;
 
     // Load existing PRSS from storage and optionally run a new setup with default IDs.
-    if let Err(e) = initiator.init_legacy_prss_from_storage().await {
+    if let Err(e) = epoch_manager.init_legacy_prss_from_storage().await {
         tracing::warn!(
             "Could not read legacy PRSS Setup from private storage {:?}: {}.",
             private_storage_info,
             e
         );
     }
-    if let Err(e) = initiator.init_all_prss_from_storage().await {
+    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
         tracing::warn!(
             "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
             private_storage_info,
@@ -483,14 +605,12 @@ where
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
             private_storage_info,
         );
-        initiator
+        epoch_manager
             .init_prss(&default_context_id, &epoch_id_prss)
             .await?;
     }
 
-    let tracker = Arc::new(TaskTracker::new());
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
-    let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance().await,
@@ -562,19 +682,6 @@ where
         security_module,
     );
 
-    let resharer = RealResharer {
-        base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.clone(),
-        session_maker: immutable_session_maker.clone(),
-        tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
-        // Provide reshare its own meta store, not tracked by the metastore status service
-        // as this is currently a temporary fix.
-        // Also not filled with existing keys as we will use the same key_id as the DKG one
-        // for reshared key (so the meta store has to be empty for that key id)
-        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-    };
-
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
@@ -589,8 +696,9 @@ where
         Arc::clone(&pub_dec_meta_store),
         telemetry_conf.refresh_interval(),
     );
+
     let kms = ThresholdKms::new(
-        initiator,
+        epoch_manager,
         user_decryptor,
         public_decryptor,
         keygenerator,
@@ -602,14 +710,17 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
-        resharer,
         Arc::clone(&tracker),
         immutable_session_maker,
-        thread_core_health_reporter,
+        core_service_health_reporter.clone(),
         abort_handle,
     );
 
-    Ok((kms, core_service_health_service, metastore_status_service))
+    Ok((
+        kms,
+        (core_service_health_reporter, core_service_health_service),
+        metastore_status_service,
+    ))
 }
 
 fn update_threshold_kms_system_metrics(
@@ -687,9 +798,11 @@ mod tests {
 
             let priv_key_set = Self {
                 private_keys: Arc::new(priv_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
+                public_material: PublicKeyMaterial::Uncompressed {
+                    integer_server_key: Arc::new(integer_server_key),
+                    sns_key: sns_key.map(Arc::new),
+                    decompression_key: decompression_key.map(Arc::new),
+                },
                 meta_data: KeyGenMetadata::new(
                     RequestId::zeros(),
                     RequestId::zeros(),

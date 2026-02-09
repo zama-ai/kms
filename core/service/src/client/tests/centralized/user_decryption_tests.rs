@@ -240,7 +240,7 @@ pub(crate) async fn user_decryption_centralized(
     let (kms_server, kms_client, mut internal_client) =
         crate::client::test_tools::centralized_handles(dkg_params, None).await;
     let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, None, enc_config).await;
+        compute_cipher_from_stored_key(None, msg, key_id, None, enc_config, false).await;
 
     // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
     // println!(
@@ -273,6 +273,7 @@ pub(crate) async fn user_decryption_centralized(
                         &request_id,
                         key_id,
                         None,
+                        None,
                         PkeSchemeType::MlKem1024,
                     )
                     .unwrap()
@@ -283,6 +284,7 @@ pub(crate) async fn user_decryption_centralized(
                         typed_ciphertexts,
                         &request_id,
                         key_id,
+                        None,
                         None,
                         PkeSchemeType::MlKem512,
                     )

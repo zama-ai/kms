@@ -225,7 +225,7 @@ pub async fn decryption_threshold(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,
@@ -247,6 +247,7 @@ pub async fn decryption_threshold(
         party_ids_to_crash,
         parallelism,
         None,
+        false, // compressed_keys
     )
     .await;
 }
@@ -263,6 +264,7 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
+    compressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
@@ -277,6 +279,7 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
+        compressed_keys,
     )
     .await
 }
@@ -295,6 +298,7 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
+    compressed_keys: bool,
 ) {
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
@@ -307,6 +311,7 @@ pub async fn run_decryption_threshold_optionally_fail(
             key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
+            compressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {
@@ -337,6 +342,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                     &request_id,
                     context_id,
                     key_id,
+                    None,
                 )
                 .unwrap()
         })

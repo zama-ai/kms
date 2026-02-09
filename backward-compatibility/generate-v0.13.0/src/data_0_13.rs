@@ -34,7 +34,7 @@ use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_13_0::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
-    rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
     RequestId,
 };
@@ -92,7 +92,7 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
     UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
@@ -290,10 +290,6 @@ const SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST: SignedPubDataHandleInternalTest =
         signature: [1, 2, 3],
         external_signature: [4, 5, 6],
     };
-
-const PUBLIC_KEY_TYPE: PublicKeyTypeTest = PublicKeyTypeTest {
-    test_filename: Cow::Borrowed("public_key_type"),
-};
 
 const PUB_DATA_TYPE: PubDataTypeTest = PubDataTypeTest {
     test_filename: Cow::Borrowed("pub_data_type"),
@@ -1528,13 +1524,6 @@ impl KmsGrpcV0_13 {
         TestMetadataKmsGrpc::SignedPubDataHandleInternal(SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST)
     }
 
-    fn gen_public_key_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
-        let public_key_type = PublicKeyType::Compact;
-        store_versioned_test!(&public_key_type, dir, &PUBLIC_KEY_TYPE.test_filename);
-
-        TestMetadataKmsGrpc::PublicKeyType(PUBLIC_KEY_TYPE)
-    }
-
     fn gen_pub_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
         let pub_data_type = PubDataType::DecompressionKey;
         store_versioned_test!(&pub_data_type, dir, &PUB_DATA_TYPE.test_filename);
@@ -1617,7 +1606,6 @@ impl KMSCoreVersion for V0_13 {
 
         vec![
             KmsGrpcV0_13::gen_signed_pub_data_handle_internal(&dir),
-            KmsGrpcV0_13::gen_public_key_type(&dir),
             KmsGrpcV0_13::gen_pub_data_type(&dir),
             KmsGrpcV0_13::gen_priv_data_type(&dir),
         ]
