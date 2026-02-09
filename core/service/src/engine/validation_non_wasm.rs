@@ -12,7 +12,7 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::{CrsGenRequest, InitRequest, KeyGenPreprocRequest, KeyGenRequest};
+use kms_grpc::kms::v1::{CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -70,9 +70,7 @@ pub(crate) enum RequestIdParsingErr {
     KeyGenResponse,
     UserDecResponse,
     PublicDecResponse,
-
-    ReshareRequest,
-    ReshareResponse,
+    EpochResponse,
 
     CustodianContext,
     CustodianContextDestruction,
@@ -123,92 +121,39 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::BackupRecovery => {
                 write!(f, "Invalid new backup recovery result response ID")
             }
-            RequestIdParsingErr::ReshareRequest => {
-                write!(f, "Invalid reshare request ID")
-            }
-            RequestIdParsingErr::ReshareResponse => {
-                write!(f, "Invalid reshare response ID")
+            RequestIdParsingErr::EpochResponse => {
+                write!(f, "Invalid epoch response ID")
             }
         }
     }
 }
 
-// TODO(#2868) Are all these helper methods needed? should some be for metriced error?
-pub(crate) fn optional_proto_request_id(
-    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+pub(crate) fn parse_optional_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    request_id: &'a Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
-) -> anyhow::Result<RequestId> {
-    let req_id = request_id
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("Request ID not present: {id_type}: {request_id:?}"))?;
-    proto_request_id(&req_id, id_type)
+) -> anyhow::Result<O, BoxedStatus> {
+    request_id
+        .as_ref()
+        .map(|id| parse_grpc_request_id(id, id_type.clone()))
+        .transpose()?
+        .ok_or_else(|| {
+            BoxedStatus::from(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("{id_type}: {request_id:?}"),
+            ))
+        })
 }
 
-pub(crate) fn proto_request_id(
-    request_id: &kms_grpc::kms::v1::RequestId,
+pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    request_id: &'a kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
-) -> anyhow::Result<RequestId> {
-    request_id.try_into().map_err(|e| {
-        anyhow::anyhow!(format!(
-            "Invalid request ID: {id_type}: {request_id:?}: {e}"
-        ))
-    })
-}
-
-/// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
-pub(crate) fn parse_optional_proto_request_id(
-    request_id: &Option<kms_grpc::kms::v1::RequestId>,
-    id_type: RequestIdParsingErr,
-) -> Result<RequestId, BoxedStatus> {
-    let req_id = request_id.as_ref().ok_or_else(|| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{id_type}: {request_id:?}"),
-        ))
-    })?;
-
-    parse_proto_request_id(req_id, id_type)
-}
-
-pub(crate) fn parse_proto_request_id(
-    request_id: &kms_grpc::kms::v1::RequestId,
-    id_type: RequestIdParsingErr,
-) -> Result<RequestId, BoxedStatus> {
+) -> Result<O, BoxedStatus> {
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
             format!("{id_type}: {request_id:?}"),
         ))
     })
-}
-
-// TODO we may need to generalize this into other types of IDs
-pub(crate) fn parse_proto_context_id(
-    request_id: &kms_grpc::kms::v1::RequestId,
-    id_type: RequestIdParsingErr,
-) -> Result<ContextId, BoxedStatus> {
-    request_id.try_into().map_err(|_| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{id_type}: {request_id:?}"),
-        ))
-    })
-}
-
-#[allow(clippy::type_complexity)]
-pub fn validate_init_req(
-    req: &InitRequest,
-) -> Result<(ContextId, EpochId), Box<dyn std::error::Error + Send + Sync>> {
-    let epoch_id: EpochId =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::Init)?.into();
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // remove the default context when all of context is ready
-    let context_id: ContextId = match &req.context_id {
-        Some(context_id) => context_id.try_into()?,
-        None => *DEFAULT_MPC_CONTEXT,
-    };
-
-    Ok((context_id, epoch_id))
 }
 
 /// Validates a user decryption request and returns ciphertext, FheType, request digest, client
@@ -235,10 +180,9 @@ pub fn validate_user_decrypt_req(
     Box<dyn std::error::Error + Send + Sync>,
 > {
     let request_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
     let key_id =
-        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?
-            .into();
+        parse_optional_grpc_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
     // TODO(zama-ai/kms-internal/issues/2758)
     // remove the default context when all of context is ready
     let context_id: ContextId = match &req.context_id {
@@ -310,7 +254,7 @@ pub fn validate_public_decrypt_req(
     Box<dyn std::error::Error + Send + Sync>,
 > {
     let req_id: RequestId =
-        optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
 
     tracing::info!(
         request_id = ?req_id,
@@ -328,8 +272,7 @@ pub fn validate_public_decrypt_req(
         None => *DEFAULT_EPOCH_ID,
     };
     let key_id: KeyId =
-        optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?
-            .into();
+        parse_optional_grpc_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?;
 
     if req.ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
@@ -585,7 +528,7 @@ pub(crate) fn validate_preproc_request(
     Eip712Domain,
 )> {
     let req_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
     tracing::info!(
         request_id = ?req_id,
         "Received new preprocessing request"
@@ -630,9 +573,9 @@ pub(crate) fn validate_key_gen_request(
     Eip712Domain,
 )> {
     let req_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
     let preproc_id =
-        parse_optional_proto_request_id(&req.preproc_id, RequestIdParsingErr::PreprocRequest)?;
+        parse_optional_grpc_request_id(&req.preproc_id, RequestIdParsingErr::PreprocRequest)?;
 
     tracing::info!(
         request_id = ?req_id,
@@ -676,7 +619,7 @@ pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
 ) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
     tracing::info!(
         request_id = ?req_id,
@@ -700,8 +643,8 @@ pub(crate) fn validate_crs_gen_request(
     // TODO(zama-ai/kms-internal/issues/2758)
     // remove the default context when all of context is ready
     // context_id is not used at the moment, but we validate it if present
-    let context_id: ContextId = match &req.context_id {
-        Some(context_id) => context_id.try_into()?,
+    let context_id = match &req.context_id {
+        Some(ctx) => parse_grpc_request_id(ctx, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 
@@ -734,6 +677,7 @@ mod tests {
             UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
+        RequestId,
     };
 
     use rand::SeedableRng;
@@ -745,7 +689,7 @@ mod tests {
         },
         engine::{
             base::derive_request_id,
-            validation::{parse_proto_request_id, RequestIdParsingErr},
+            validation::{parse_grpc_request_id, RequestIdParsingErr},
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
             },
@@ -1050,18 +994,24 @@ mod tests {
         let bad_req_id1 = v1::RequestId {
             request_id: ['x'; ID_LENGTH].iter().collect(),
         };
-        assert!(parse_proto_request_id(&bad_req_id1, RequestIdParsingErr::Init).is_err());
+        assert!(
+            parse_grpc_request_id::<RequestId>(&bad_req_id1, RequestIdParsingErr::Init).is_err()
+        );
 
         // wrong length
         let bad_req_id2 = v1::RequestId {
             request_id: ['a'; ID_LENGTH - 1].iter().collect(),
         };
-        assert!(parse_proto_request_id(&bad_req_id2, RequestIdParsingErr::Init).is_err());
+        assert!(
+            parse_grpc_request_id::<RequestId>(&bad_req_id2, RequestIdParsingErr::Init).is_err()
+        );
 
         let good_req_id = v1::RequestId {
             request_id: ['a'; ID_LENGTH].iter().collect(),
         };
-        assert!(parse_proto_request_id(&good_req_id, RequestIdParsingErr::Init).is_err());
+        assert!(
+            parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Init).is_err()
+        );
     }
 
     #[test]

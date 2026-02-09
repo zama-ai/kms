@@ -5,7 +5,7 @@ use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use threshold_fhe::execution::keyset_config::{self as ddec_keyset_config};
 
-use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
+use crate::engine::validation::{parse_grpc_request_id, RequestIdParsingErr};
 
 pub(crate) struct WrappedKeySetConfig(kms_grpc::kms::v1::KeySetConfig);
 
@@ -81,7 +81,7 @@ impl From<WrappedCompressedKeyConfig> for ddec_keyset_config::CompressedKeyConfi
 }
 
 /// Helper structure to represent a valid keyset configuration.
-/// This is used to conviently parse and sanity-check gRPC arugments and for internal function parsing.  
+/// This is used to conviently parse and sanity-check gRPC arugments and for internal function parsing.
 pub struct InternalKeySetConfig {
     keyset_config: ddec_keyset_config::KeySetConfig,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -197,12 +197,12 @@ impl InternalKeySetConfig {
                     added_info.to_keyset_id_decompression_only.to_owned(),
                 ) {
                     (Some(from), Some(to)) => (
-                        parse_proto_request_id(
+                        parse_grpc_request_id(
                             &from,
                             RequestIdParsingErr::Other("invalid from ID".to_string()),
                         )
                         .map_err(|e| anyhow::anyhow!("Failed to parse from ID: {}", e))?,
-                        parse_proto_request_id(
+                        parse_grpc_request_id(
                             &to,
                             RequestIdParsingErr::Other("invalid to ID".to_string()),
                         )
@@ -225,7 +225,7 @@ impl InternalKeySetConfig {
             .as_ref()
             .and_then(|info| info.compression_keyset_id.clone())
         {
-            let key_id = parse_proto_request_id(
+            let key_id = parse_grpc_request_id(
                 &inner,
                 RequestIdParsingErr::Other("invalid compression keyset ID".to_string()),
             )?;

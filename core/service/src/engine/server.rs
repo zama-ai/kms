@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::server::HealthReporter;
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
 use tower_http::trace::TraceLayer;
 use tracing::Span;
@@ -84,6 +85,7 @@ pub async fn run_server<
     kms_service: Arc<S>,
     meta_store_status_service: Arc<M>,
     health_service: HealthServer<impl Health>,
+    health_reporter: HealthReporter,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
     use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
@@ -165,6 +167,10 @@ pub async fn run_server<
             }
         }
     });
+
+    health_reporter
+        .set_serving::<CoreServiceEndpointServer<S>>()
+        .await;
 
     // Run the server with graceful shutdown
     match graceful.await {

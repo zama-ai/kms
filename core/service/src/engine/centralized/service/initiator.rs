@@ -3,14 +3,12 @@ use crate::{
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     vault::storage::{Storage, StorageExt},
 };
 use kms_grpc::{
-    kms::v1::{Empty, InitRequest},
+    kms::v1::{Empty, NewMpcEpochRequest},
     utils::tonic_result::ok_or_tonic_abort,
     ContextId,
 };
@@ -44,12 +42,12 @@ pub async fn init_impl<
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
-    request: Request<InitRequest>,
+    request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let epoch_id = parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+    let epoch_id = parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?;
     let context_id: ContextId = match inner.context_id {
-        Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
+        Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Init)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 
@@ -103,9 +101,10 @@ mod tests {
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
-        let preproc_req = InitRequest {
-            request_id: Some((req_id).into()),
+        let preproc_req = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id.into()),
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -115,21 +114,22 @@ mod tests {
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
-        let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
+        let req_id1 = derive_request_id("test_init_already_exists").unwrap();
 
         // First initialization should succeed
-        let preproc_req1 = InitRequest {
-            request_id: Some(req_id1.into()),
+        let preproc_req1 = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id1.into()),
+            previous_epoch: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
 
         // Second initialization should fail with AlreadyExists
-        let preproc_req2 = InitRequest {
-            request_id: Some(req_id2.into()),
+        let preproc_req2 = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id1.into()),
+            previous_epoch: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -140,9 +140,10 @@ mod tests {
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let preproc_req = InitRequest {
-            request_id: None,
+        let preproc_req = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: None,
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();

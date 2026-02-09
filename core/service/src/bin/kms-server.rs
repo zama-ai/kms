@@ -681,20 +681,21 @@ async fn main_exec() -> anyhow::Result<()> {
                 tracing::warn!("KMS server will connect to peers directly");
             };
             let service_config = core_config.service.clone();
-            let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
-                core_config,
-                public_vault,
-                private_vault,
-                backup_vault,
-                security_module,
-                mpc_listener,
-                base_kms,
-                tls_identity,
-                need_peer_tcp_proxy,
-                false,
-                std::future::pending(),
-            )
-            .await?;
+            let (kms, (health_reporter, health_service), metastore_status_service) =
+                new_real_threshold_kms(
+                    core_config,
+                    public_vault,
+                    private_vault,
+                    backup_vault,
+                    security_module,
+                    mpc_listener,
+                    base_kms,
+                    tls_identity,
+                    need_peer_tcp_proxy,
+                    false,
+                    std::future::pending(),
+                )
+                .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);
             tracing::info!(
                 "Starting threshold KMS server v{}...",
@@ -706,6 +707,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
+                health_reporter,
                 std::future::pending(),
             )
             .await?;
@@ -718,7 +720,7 @@ async fn main_exec() -> anyhow::Result<()> {
             // create the default context if it does not exist
             let sk = (*base_kms.sig_key()?).clone();
             create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
-            let (kms, health_service) = RealCentralizedKms::new(
+            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
                 public_vault,
                 private_vault,
                 backup_vault,
@@ -741,6 +743,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
+                health_reporter,
                 std::future::pending(),
             )
             .await?

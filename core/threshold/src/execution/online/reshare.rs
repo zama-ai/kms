@@ -1071,7 +1071,7 @@ fn take_majority_vote_on_broadcasts<
                 heap.push((count, value));
             }
             if let Some((count, value)) = heap.pop() {
-                tracing::info!(
+                tracing::debug!(
                     "During resharing, party {:?} got {} votes for its {idx}th value ",
                     role_in_s1,
                     count,

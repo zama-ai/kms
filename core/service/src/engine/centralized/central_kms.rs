@@ -462,7 +462,7 @@ pub struct CentralizedKms<
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
     // Health reporter for the the grpc server
-    pub(crate) health_reporter: Arc<RwLock<HealthReporter>>,
+    pub(crate) health_reporter: HealthReporter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
@@ -892,7 +892,10 @@ impl<
         security_module: Option<Arc<SecurityModuleProxy>>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
-    ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {
+    ) -> anyhow::Result<(
+        RealCentralizedKms<PubS, PrivS>,
+        (HealthReporter, HealthServer<impl Health>),
+    )> {
         let key_info: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
                 &private_storage,
@@ -957,9 +960,7 @@ impl<
         backup_operator.update_backup_vault().await?;
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
-        health_reporter
-            .set_serving::<CoreServiceEndpointServer<CentralizedKms<PubS, PrivS, CM, BO>>>()
-            .await;
+
         Ok((
             CentralizedKms {
                 base_kms,
@@ -982,11 +983,11 @@ impl<
                 context_manager,
                 backup_operator,
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
-                health_reporter: Arc::new(RwLock::new(health_reporter)),
+                health_reporter: health_reporter.clone(),
                 tracker: Arc::clone(&tracker),
                 thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             },
-            health_service,
+            (health_reporter, health_service),
         ))
     }
 }
@@ -1036,8 +1037,6 @@ impl<
         let tracker = self.tracker.clone();
         let handle = tokio::task::spawn(async move {
             h_repoter
-                .write()
-                .await
                 .set_not_serving::<CoreServiceEndpointServer<Self>>()
                 .await;
             tracker.close();
