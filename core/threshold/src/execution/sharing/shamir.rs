@@ -207,7 +207,6 @@ where
 /// Maps `values` into [ShamirSharings]s by pairwise adding each of these to each of the `sharings`.
 /// Furthermore, adds a zero-share for each share in `sharings` if there is not supplied enough `values`,
 /// and discard extra shares if too many are given.
-/// __This supposes that sharings is always a source of truth !__
 /// This in turn means that there will be `num_values` shares in `sharings`.
 /// The function is useful to ensure that an indexable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
