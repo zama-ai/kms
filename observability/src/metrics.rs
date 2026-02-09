@@ -607,10 +607,6 @@ impl CoreMetrics {
 
     /// Record the current memory usage into the gauge
     pub fn record_memory_usage(&self, usage: u64) {
-        // Should never be 0
-        if usage == 0 {
-            return;
-        }
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));

@@ -262,10 +262,10 @@ fn unpack_user_decrypt_req(
     ))
 }
 
-/// Validates and unpacks a publi decryption request and returns
+/// Validates and unpacks a public decryption request and returns
 /// the ciphertext, FheType, digest, key_id and request_id if it is valid.
 ///
-/// Observe that validation is limited to checking the structure of the requeset and unpacking parameters into their correct structs.
+/// Observe that validation is limited to checking the structure of the request and unpacking parameters into their correct structs.
 #[allow(clippy::type_complexity)]
 pub(crate) fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,

@@ -123,7 +123,7 @@ where
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
         let inner = request.into_inner().new_context.ok_or_else(|| {
             MetricedError::new(
-                "new_custodian_context",
+                OP_NEW_CUSTODIAN_CONTEXT,
                 None,
                 anyhow::anyhow!("new_context is required in NewCustodianContextRequest"),
                 tonic::Code::InvalidArgument,

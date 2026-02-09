@@ -109,7 +109,7 @@ macro_rules! impl_rate_limiter_for {
     };
 }
 
-/// Seperate macro rule for the methods that may be insecure, as these will can have varied operation tags
+/// Separate macro rule for the methods that may be insecure, as these can have varied operation tags
 macro_rules! impl_rate_limiter_for_possible_insecure {
     ($fn_name:ident, $token_name:ident, $token_str:expr) => {
         pub(crate) async fn $fn_name(
