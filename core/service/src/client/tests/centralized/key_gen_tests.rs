@@ -1,5 +1,7 @@
 use crate::client::client_wasm::Client;
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
+#[cfg(feature = "slow_tests")]
+use crate::client::tests::common::compressed_keygen_config;
+use crate::client::tests::common::{OptKeySetConfigAccessor, TIME_TO_SLEEP_MS};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
@@ -245,19 +247,8 @@ pub async fn run_key_gen_centralized(
     let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
 
     let domain_clone = domain.clone();
-    let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
+    let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult, compressed: bool| {
         let req_id = resp.request_id.clone().unwrap();
-        let (server_key, public_key) = internal_client
-            .retrieve_server_key_and_public_key(
-                &preproc_id,
-                key_req_id,
-                resp,
-                &domain_clone,
-                &pub_storage,
-            )
-            .await
-            .unwrap()
-            .unwrap();
 
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
@@ -270,6 +261,35 @@ pub async fn run_key_gen_centralized(
             .unwrap();
         let client_key = handle.client_key;
 
+        let (server_key, public_key) = if compressed {
+            let compressed_keyset = internal_client
+                .retrieve_compressed_keyset(
+                    &preproc_id,
+                    key_req_id,
+                    &inner_resp,
+                    &domain,
+                    &pub_storage,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            let (public_key, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            (server_key, public_key)
+        } else {
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    &preproc_id,
+                    key_req_id,
+                    resp,
+                    &domain_clone,
+                    &pub_storage,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            (server_key, public_key)
+        };
+
         let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
         assert_eq!(&tag, client_key.tag());
         assert_eq!(&tag, public_key.tag());
@@ -279,8 +299,11 @@ pub async fn run_key_gen_centralized(
     };
 
     match keyset_type {
+        KeySetType::Standard if keyset_config.is_compressed() => {
+            basic_checks(&inner_resp, true).await;
+        }
         KeySetType::Standard => {
-            basic_checks(&inner_resp).await;
+            basic_checks(&inner_resp, false).await;
         }
         KeySetType::DecompressionOnly => {
             // setup storage
@@ -339,4 +362,22 @@ pub async fn run_key_gen_centralized(
             );
         }
     }
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[serial]
+async fn test_compressed_key_gen_centralized() {
+    let request_id = derive_request_id("test_compressed_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    purge(None, None, &request_id, &[None], &[None]).await;
+    let (keyset_config, keyset_added_info) = compressed_keygen_config();
+    key_gen_centralized(
+        &request_id,
+        &epoch_id,
+        FheParameter::Test,
+        keyset_config,
+        keyset_added_info,
+    )
+    .await;
 }

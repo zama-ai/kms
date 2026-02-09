@@ -6,7 +6,9 @@ use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::{TypedCiphertext, TypedPlaintext};
+use kms_grpc::kms::v1::{
+    CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::RequestId;
@@ -19,6 +21,67 @@ use tonic::transport::Channel;
 
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
+
+/// Returns standard keygen config (no compression, no decompression)
+pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (None, None)
+}
+
+/// Returns compressed keygen config with `CompressedKeyConfig::CompressedAll`
+#[cfg(feature = "slow_tests")]
+pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                keyset_compression_config: 0,
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
+        }),
+        None,
+    )
+}
+
+/// Returns decompression-only keygen config
+#[cfg(feature = "slow_tests")]
+pub(crate) fn decompression_keygen_config(
+    from_keyset_id: &RequestId,
+    to_keyset_id: &RequestId,
+) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::DecompressionOnly.into(),
+            standard_keyset_config: None,
+        }),
+        Some(KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
+            to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
+        }),
+    )
+}
+
+/// Trait for accessing keyset config properties on `Option<KeySetConfig>`
+pub(crate) trait OptKeySetConfigAccessor {
+    fn is_compressed(&self) -> bool;
+    fn is_decompression_only(&self) -> bool;
+}
+
+impl OptKeySetConfigAccessor for Option<KeySetConfig> {
+    fn is_compressed(&self) -> bool {
+        self.as_ref().is_some_and(|c| {
+            c.standard_keyset_config.as_ref().is_some_and(|sc| {
+                sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32
+            })
+        })
+    }
+
+    fn is_decompression_only(&self) -> bool {
+        self.as_ref()
+            .is_some_and(|c| c.keyset_type == KeySetType::DecompressionOnly as i32)
+    }
+}
 
 /// Send decryption requests to KMS clients
 ///

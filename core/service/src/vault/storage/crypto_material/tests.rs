@@ -300,7 +300,6 @@ async fn write_threshold_empty_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -319,7 +318,6 @@ async fn write_threshold_empty_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -353,7 +351,6 @@ async fn write_threshold_keys_meta_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -381,7 +378,6 @@ async fn write_threshold_keys_meta_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -411,7 +407,6 @@ async fn write_threshold_keys_failed_storage() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -444,7 +439,6 @@ async fn write_threshold_keys_failed_storage() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;

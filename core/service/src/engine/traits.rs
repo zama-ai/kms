@@ -11,6 +11,7 @@ use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::engine::base::KeyGenMetadata;
 use crate::engine::utils::MetricedError;
 
 use super::base::KmsFheKeyHandles;
@@ -119,4 +120,8 @@ pub trait BackupOperator {
         &self,
         request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
+}
+
+pub trait PrivateKeyMaterialMetadata {
+    fn get_metadata(&self) -> &KeyGenMetadata;
 }

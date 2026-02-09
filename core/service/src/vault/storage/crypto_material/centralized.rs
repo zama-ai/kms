@@ -11,7 +11,10 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use tfhe::{
+    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
+    zk::CompactPkeCrs,
+};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
@@ -226,6 +229,33 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
                 .await;
         }
+    }
+
+    /// Write the compressed key materials (result of a compressed keygen) to storage and cache
+    /// for the centralized KMS.
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
+    ///
+    /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
+    /// Instead of storing separate public_key and server_key, we store the compressed keyset.
+    pub async fn write_centralized_compressed_keys_with_meta_store(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        key_info: KmsFheKeyHandles,
+        compressed_keyset: &CompressedXofKeySet,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) {
+        self.inner
+            .write_compressed_keys_with_dkg_meta_store(
+                key_id,
+                epoch_id,
+                key_info,
+                PrivDataType::FhePrivateKey,
+                compressed_keyset,
+                meta_store,
+                Arc::clone(&self.fhe_keys),
+            )
+            .await
     }
 
     /// Read the key materials for decryption in the centralized case.
