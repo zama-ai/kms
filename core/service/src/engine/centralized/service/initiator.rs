@@ -1,18 +1,14 @@
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
-        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
+        validation::validate_new_mpc_epoch_request,
     },
     util::meta_store::{add_req_to_meta_store, update_req_in_meta_store},
     vault::storage::{Storage, StorageExt},
 };
-use kms_grpc::{
-    kms::v1::{Empty, NewMpcEpochRequest},
-    ContextId, EpochId,
-};
+use kms_grpc::kms::v1::{Empty, NewMpcEpochRequest};
 use observability::metrics_names::OP_NEW_EPOCH;
 use tonic::{Request, Response};
 
@@ -47,28 +43,8 @@ pub async fn init_impl<
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
-    let epoch_id: EpochId =
-        parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Init).map_err(
-            |e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    None,
-                    anyhow::anyhow!("Coudl not parse epoch ID {e}"),
-                    tonic::Code::InvalidArgument,
-                )
-            },
-        )?;
-    let context_id: ContextId = match inner.context_id {
-        Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Init).map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                None,
-                anyhow::anyhow!("Could not parse context ID {e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?,
-        None => *DEFAULT_MPC_CONTEXT,
-    };
+    let (context_id, epoch_id, _previous_epoch_info) =
+        validate_new_mpc_epoch_request(inner).await?;
 
     if !service
         .context_manager

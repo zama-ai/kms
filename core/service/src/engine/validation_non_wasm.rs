@@ -13,7 +13,9 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::{CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest};
+use kms_grpc::kms::v1::{
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
+};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -24,7 +26,7 @@ use kms_grpc::{
 };
 use kms_grpc::{KeyId, RequestId};
 use observability::metrics_names::{
-    OP_KEYGEN_PREPROC_REQUEST, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::keyset_config::KeySetConfig;
@@ -57,9 +59,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
-    #[allow(unused)]
     Epoch,
-    Init,
 
     CrsGenRequest,
     PreprocRequest,
@@ -87,7 +87,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Epoch => write!(f, "Invalid epoch ID"),
-            RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
             RequestIdParsingErr::KeyGenRequest => write!(f, "Invalid key generation request ID"),
@@ -784,6 +783,31 @@ fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     }
 }
 
+pub(crate) async fn validate_new_mpc_epoch_request(
+    req: NewMpcEpochRequest,
+) -> Result<(ContextId, EpochId, Option<PreviousEpochInfo>), MetricedError> {
+    unpack_new_mpc_epoch_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_NEW_EPOCH,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+fn unpack_new_mpc_epoch_req(
+    req: NewMpcEpochRequest,
+) -> anyhow::Result<(ContextId, EpochId, Option<PreviousEpochInfo>)> {
+    let context_id = match req.context_id {
+        Some(context_id) => parse_grpc_request_id(&context_id, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId =
+        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
+    Ok((context_id, epoch_id, req.previous_epoch))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1114,7 +1138,7 @@ mod tests {
             request_id: ['x'; ID_LENGTH].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&bad_req_id1, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&bad_req_id1, RequestIdParsingErr::Epoch).is_err()
         );
 
         // wrong length
@@ -1122,14 +1146,14 @@ mod tests {
             request_id: ['a'; ID_LENGTH - 1].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&bad_req_id2, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&bad_req_id2, RequestIdParsingErr::Epoch).is_err()
         );
 
         let good_req_id = v1::RequestId {
             request_id: ['a'; ID_LENGTH].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Epoch).is_err()
         );
     }
 
