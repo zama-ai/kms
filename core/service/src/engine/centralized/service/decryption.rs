@@ -37,18 +37,7 @@ pub async fn user_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_user_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+    let permit = service.rate_limiter.start_user_decrypt().await?;
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -257,18 +246,7 @@ pub async fn public_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_pub_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+    let permit = service.rate_limiter.start_pub_decrypt().await?;
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS

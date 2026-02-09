@@ -1,3 +1,7 @@
+use crate::engine::utils::MetricedError;
+use observability::metrics_names::{
+    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -73,29 +77,63 @@ impl Default for RateLimiter {
 }
 
 macro_rules! impl_rate_limiter_for {
-    ($fn_name:ident, $token_name:ident, $token_str:expr) => {
+    ($fn_name:ident, $token_name:ident, $token_str:expr, $op_tag_str:expr) => {
         /// Create a rate limiting permit for the $token_name request.
         /// If the result is an error, then it means there are no more
         /// resource to support the $token_name request.
         /// The resource is returned when the permit is dropped.
         ///
-        /// If there's an error, we return `ResourceExhausted`.
-        pub(crate) async fn $fn_name(
-            &self,
-        ) -> Result<OwnedSemaphorePermit, kms_grpc::utils::tonic_result::BoxedStatus> {
+        /// If there's an error, we return `ResourceExhausted` `MetricedError`.
+        pub(crate) async fn $fn_name(&self) -> Result<OwnedSemaphorePermit, MetricedError> {
             let num_tokens = self.config.$token_name;
             let cloned_bucket = Arc::clone(&self.bucket);
 
             let permit = cloned_bucket
                 .try_acquire_many_owned(num_tokens)
                 .map_err(|e| {
-                    tonic::Status::resource_exhausted(format!(
-                        "not enough tokens in bucket for {}, need {} from {}: {}",
-                        $token_str,
-                        num_tokens,
-                        self.bucket.available_permits(),
-                        e
-                    ))
+                    MetricedError::new(
+                        $op_tag_str,
+                        None,
+                        anyhow::anyhow!(
+                            "not enough tokens in bucket for {}, need {} from {}: {}",
+                            $token_str,
+                            num_tokens,
+                            self.bucket.available_permits(),
+                            e
+                        ),
+                        tonic::Code::ResourceExhausted,
+                    )
+                })?;
+            Ok(permit)
+        }
+    };
+}
+
+/// Seperate macro rule for the methods that may be insecure, as these will can have varied operation tags
+macro_rules! impl_rate_limiter_for_possible_insecure {
+    ($fn_name:ident, $token_name:ident, $token_str:expr) => {
+        pub(crate) async fn $fn_name(
+            &self,
+            op_tag_str: &'static str,
+        ) -> Result<OwnedSemaphorePermit, MetricedError> {
+            let num_tokens = self.config.$token_name;
+            let cloned_bucket = Arc::clone(&self.bucket);
+
+            let permit = cloned_bucket
+                .try_acquire_many_owned(num_tokens)
+                .map_err(|e| {
+                    MetricedError::new(
+                        op_tag_str,
+                        None,
+                        anyhow::anyhow!(
+                            "not enough tokens in bucket for {}, need {} from {}: {}",
+                            $token_str,
+                            num_tokens,
+                            self.bucket.available_permits(),
+                            e
+                        ),
+                        tonic::Code::ResourceExhausted,
+                    )
                 })?;
             Ok(permit)
         }
@@ -118,17 +156,28 @@ impl RateLimiter {
     // without using nightly or introducing extra dependencies,
     // so we we need to repeat XXX in (start_XXX, XXX).
     // We also cannot interpret an identifier as a &str expression.
-    impl_rate_limiter_for!(start_pub_decrypt, pub_decrypt, "pub_decrypt");
-    impl_rate_limiter_for!(start_user_decrypt, user_decrypt, "user_decrypt");
-    impl_rate_limiter_for!(start_crsgen, crsgen, "crsgen");
-    impl_rate_limiter_for!(start_preproc, preproc, "preproc");
-    impl_rate_limiter_for!(start_keygen, keygen, "keygen");
-    impl_rate_limiter_for!(start_new_epoch, new_epoch, "new_epoch");
+    impl_rate_limiter_for!(
+        start_pub_decrypt,
+        pub_decrypt,
+        "pub_decrypt",
+        OP_PUBLIC_DECRYPT_REQUEST
+    );
+    impl_rate_limiter_for!(
+        start_user_decrypt,
+        user_decrypt,
+        "user_decrypt",
+        OP_USER_DECRYPT_REQUEST
+    );
+    impl_rate_limiter_for!(start_new_epoch, new_epoch, "new_epoch", OP_NEW_EPOCH);
+    impl_rate_limiter_for!(start_preproc, preproc, "preproc", OP_KEYGEN_PREPROC_REQUEST);
+    impl_rate_limiter_for_possible_insecure!(start_crsgen, crsgen, "crsgen");
+    impl_rate_limiter_for_possible_insecure!(start_keygen, keygen, "keygen");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use observability::metrics_names::OP_CRS_GEN_REQUEST;
 
     #[tokio::test]
     async fn test_rate_limiting_1() {
@@ -157,7 +206,7 @@ mod tests {
             );
         }
         let rl2 = &rl.clone();
-        let permit2 = rl2.start_crsgen().await.unwrap();
+        let permit2 = rl2.start_crsgen(OP_CRS_GEN_REQUEST).await.unwrap();
         {
             assert_eq!(
                 rl2.bucket.available_permits(),

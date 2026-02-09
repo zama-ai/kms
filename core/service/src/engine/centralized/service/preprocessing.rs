@@ -50,14 +50,7 @@ pub async fn preprocessing_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let _permit = service.rate_limiter.start_preproc().await.map_err(|e| {
-        MetricedError::new(
-            OP_KEYGEN_PREPROC_REQUEST,
-            None,
-            e,
-            tonic::Code::ResourceExhausted,
-        )
-    })?;
+    let _permit = service.rate_limiter.start_preproc().await?;
     let mut timer = METRICS
         .time_operation(OP_KEYGEN_PREPROC_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG)

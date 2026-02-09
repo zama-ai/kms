@@ -48,11 +48,7 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
-    let permit = service
-        .rate_limiter
-        .start_crsgen()
-        .await
-        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+    let permit = service.rate_limiter.start_crsgen(op_tag).await?;
     let mut timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())

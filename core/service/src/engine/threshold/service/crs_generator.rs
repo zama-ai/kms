@@ -97,11 +97,7 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        let permit = self
-            .rate_limiter
-            .start_crsgen()
-            .await
-            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+        let permit = self.rate_limiter.start_crsgen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 

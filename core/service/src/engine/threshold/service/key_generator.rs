@@ -404,11 +404,7 @@ impl<
         };
         // Acquire the serial lock to make sure no other keygen is running concurrently
         let _guard = self.serial_lock.lock().await;
-        let permit = self
-            .rate_limiter
-            .start_keygen()
-            .await
-            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+        let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 

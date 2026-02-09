@@ -777,9 +777,7 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_new_epoch().await.map_err(|e| {
-            MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::ResourceExhausted)
-        })?;
+        let permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
         // the request ID of the init request is the epoch ID for PRSS and shares

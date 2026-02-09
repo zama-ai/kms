@@ -49,11 +49,7 @@ pub async fn key_gen_impl<
     } else {
         OP_KEYGEN_REQUEST
     };
-    let permit = service
-        .rate_limiter
-        .start_keygen()
-        .await
-        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+    let permit = service.rate_limiter.start_keygen(op_tag).await?;
     // TODO add serial lock to have similar flow to threshold case
     // Acquire the serial lock to make sure no other keygen is running concurrently
     // let _guard = service.serial_lock.lock().await;

@@ -313,14 +313,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_preproc().await.map_err(|e| {
-            MetricedError::new(
-                OP_KEYGEN_PREPROC_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+        let permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
         let (request_id, context_id, epoch_id, dkg_params, keyset_config, eip712_domain) =
