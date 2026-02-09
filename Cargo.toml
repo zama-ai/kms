@@ -131,7 +131,7 @@ itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 10
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
 lazy_static = "=1.5.0"  # Lazy static initialization - LOW RISK: rust-lang-nursery, 100M+ downloads
 minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
-ml-kem = { version = "=0.2.1", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
+ml-kem = { version = "=0.2.2", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
