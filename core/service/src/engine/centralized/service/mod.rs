@@ -54,7 +54,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let core_config: CoreConfig = init_conf("config/default_centralized").unwrap();
+        let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
         let (kms, _health_service) = RealCentralizedKms::new(
             core_config,
             public_storage,
