@@ -1283,7 +1283,9 @@ mod tests {
     };
     use rand::rngs::OsRng;
     use threshold_fhe::{
-        execution::online::preprocessing::dummy::DummyPreprocessing,
+        execution::{
+            online::preprocessing::dummy::DummyPreprocessing, small_execution::prss::PRSSSetup,
+        },
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
@@ -1364,10 +1366,16 @@ mod tests {
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-        let epoch_id = *DEFAULT_EPOCH_ID;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            &epoch_id,
+            base_kms.new_rng().await,
+        );
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),
