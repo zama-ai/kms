@@ -35,7 +35,7 @@ pub trait RoleTrait:
     ) -> bool;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RoleKind {
     SingleSet(Role),
     TwoSet(TwoSetsRole),
