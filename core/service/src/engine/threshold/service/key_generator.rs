@@ -81,7 +81,7 @@ use super::BucketMetaStore;
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
 // It's ok to have a big enum here since the way this type is used is only temporary.
 #[allow(clippy::large_enum_variant)]
-enum KeyGenDkgResult {
+enum ThresholdKeyGenResult {
     /// Standard keygen result with full public key set
     Uncompressed(
         FhePubKeySet,
@@ -1047,7 +1047,7 @@ impl<
                                 ddec_keyset_config::CompressedKeyConfig::None,
                             ) => initialize_key_material(&mut base_session, params, req_id.into())
                                 .await
-                                .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk)),
+                                .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
                             _ => {
                                 // TODO insecure keygen from existing compression key is not supported
                                 update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),OP_STANDARD_KEYGEN);
@@ -1072,7 +1072,7 @@ impl<
                     ) => {
                         KG::keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
                             .await
-                            .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk))
+                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
                     // Standard keygen with existing compression keys
                     (
@@ -1090,7 +1090,7 @@ impl<
                             preproc_handle.as_mut(),
                         )
                         .await
-                        .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk))
+                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
                     // Compressed keygen (only supported with Generate compression config)
                     (
@@ -1100,7 +1100,7 @@ impl<
                     ) => {
                         KG::compressed_keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
                             .await
-                            .map(|(compressed_keyset, sk)| KeyGenDkgResult::Compressed(compressed_keyset, sk))
+                            .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
                     }
                     // Compressed keygen with UseExisting is not supported
                     // In theory it is easy to add but we do not need this feature for now
@@ -1132,7 +1132,7 @@ impl<
 
         // Handle both compressed and uncompressed keygen results
         match dkg_result {
-            KeyGenDkgResult::Uncompressed(pub_key_set, private_keys) => {
+            ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
                 //Compute all the info required for storing
                 let info = match compute_info_standard_keygen(
                     &sk,
@@ -1196,7 +1196,7 @@ impl<
                     )
                     .await;
             }
-            KeyGenDkgResult::Compressed(compressed_keyset, private_keys) => {
+            ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
                 //Compute info for compressed keygen
                 let info = match compute_info_compressed_keygen(
                     &sk,

@@ -303,7 +303,6 @@ impl Client {
             }
         };
 
-        // reviewer: should we consider using a different DSEP?
         let compressed_keyset_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
 

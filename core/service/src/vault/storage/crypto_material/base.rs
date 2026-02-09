@@ -379,10 +379,6 @@ where
             }
             tracing::info!("Finished storing compressed key for Key Id {key_id}.");
         } else {
-            tracing::warn!(
-                "Failed to ensure existence of compressed {kms_type} key material for Key with ID: {}",
-                key_id
-            );
             self.purge_key_material(key_id, epoch_id, kms_type, guarded_meta_storage)
                 .await;
         }

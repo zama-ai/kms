@@ -254,7 +254,7 @@ fn generate_compressed_fhe_keys(
             seeder.seed().0.to_le_bytes().to_vec()
         }
     };
-    let security_bits = 128;
+    let security_bits = params.get_params_basics_handle().get_sec() as u32;
     let tag = key_id.into();
 
     // if the pmax value is not set, e.g., for test parameters, we do not do the HW check

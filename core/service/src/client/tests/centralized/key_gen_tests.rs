@@ -247,19 +247,8 @@ pub async fn run_key_gen_centralized(
     let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
 
     let domain_clone = domain.clone();
-    let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
+    let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult, compressed: bool| {
         let req_id = resp.request_id.clone().unwrap();
-        let (server_key, public_key) = internal_client
-            .retrieve_server_key_and_public_key(
-                &preproc_id,
-                key_req_id,
-                resp,
-                &domain_clone,
-                &pub_storage,
-            )
-            .await
-            .unwrap()
-            .unwrap();
 
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
@@ -272,20 +261,7 @@ pub async fn run_key_gen_centralized(
             .unwrap();
         let client_key = handle.client_key;
 
-        let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
-        assert_eq!(&tag, client_key.tag());
-        assert_eq!(&tag, public_key.tag());
-        assert_eq!(&tag, server_key.tag());
-
-        crate::client::key_gen::tests::check_conformance(server_key, client_key);
-    };
-
-    match keyset_type {
-        KeySetType::Standard if keyset_config.is_compressed() => {
-            // Handle compressed keyset
-            let req_id = inner_resp.request_id.clone().unwrap();
-
-            // Retrieve and verify the compressed keyset with full EIP712 signature verification
+        let (server_key, public_key) = if compressed {
             let compressed_keyset = internal_client
                 .retrieve_compressed_keyset(
                     &preproc_id,
@@ -297,31 +273,37 @@ pub async fn run_key_gen_centralized(
                 .await
                 .unwrap()
                 .unwrap();
-
-            // Read the client key from private storage
-            let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data_at_epoch(
-                    &req_id.clone().try_into().unwrap(),
-                    epoch_id,
-                    &PrivDataType::FhePrivateKey.to_string(),
+            let (public_key, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            (server_key, public_key)
+        } else {
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    &preproc_id,
+                    key_req_id,
+                    resp,
+                    &domain_clone,
+                    &pub_storage,
                 )
                 .await
+                .unwrap()
                 .unwrap();
-            let client_key = handle.client_key;
+            (server_key, public_key)
+        };
 
-            // Verify tags match
-            let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
-            assert_eq!(&tag, client_key.tag());
+        let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
+        assert_eq!(&tag, client_key.tag());
+        assert_eq!(&tag, public_key.tag());
+        assert_eq!(&tag, server_key.tag());
 
-            // Decompress the keyset and verify conformance
-            let (public_key, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
-            assert_eq!(&tag, public_key.tag());
-            assert_eq!(&tag, server_key.tag());
+        crate::client::key_gen::tests::check_conformance(server_key, client_key);
+    };
 
-            crate::client::key_gen::tests::check_conformance(server_key, client_key);
+    match keyset_type {
+        KeySetType::Standard if keyset_config.is_compressed() => {
+            basic_checks(&inner_resp, true).await;
         }
         KeySetType::Standard => {
-            basic_checks(&inner_resp).await;
+            basic_checks(&inner_resp, false).await;
         }
         KeySetType::DecompressionOnly => {
             // setup storage
