@@ -1,6 +1,7 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{preproc_proto_to_keyset_config, InternalKeySetConfig};
+use crate::engine::utils::MetricedError;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -22,6 +23,9 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use kms_grpc::{KeyId, RequestId};
+use observability::metrics_names::{
+    OP_KEYGEN_PREPROC_REQUEST, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+};
 use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -156,14 +160,40 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Validates a user decryption request and returns ciphertext, FheType, request digest, client
+/// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
+/// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
+/// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
 #[allow(clippy::type_complexity)]
-pub fn validate_user_decrypt_req(
+pub(crate) fn validate_user_decrypt_req(
+    req: &UserDecryptionRequest,
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        Vec<u8>,
+        UnifiedPublicEncKey,
+        alloy_primitives::Address,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        alloy_sol_types::Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_user_decrypt_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
     (
@@ -233,14 +263,36 @@ pub fn validate_user_decrypt_req(
     ))
 }
 
-/// Validates a public decryption request and unpacks and returns
+/// Validates and unpacks a publi decryption request and returns
 /// the ciphertext, FheType, digest, key_id and request_id if it is valid.
 ///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
+/// Observe that validation is limited to checking the structure of the requeset and unpacking parameters into their correct structs.
 #[allow(clippy::type_complexity)]
-pub fn validate_public_decrypt_req(
+pub(crate) fn validate_public_decrypt_req(
+    req: &PublicDecryptionRequest,
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_public_decrypt_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_public_decrypt_req(
     req: &PublicDecryptionRequest,
 ) -> Result<
     (
@@ -517,7 +569,32 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_preproc_request(
+    req: KeyGenPreprocRequest,
+) -> Result<
+    (
+        RequestId,
+        ContextId,
+        EpochId,
+        DKGParams,
+        KeySetConfig,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_preproc_request(req).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_preproc_request(
     req: KeyGenPreprocRequest,
 ) -> anyhow::Result<(
     RequestId,
@@ -561,7 +638,33 @@ pub(crate) fn validate_preproc_request(
     ))
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_key_gen_request(
+    req: KeyGenRequest,
+    op_tag: &'static str,
+) -> Result<
+    (
+        RequestId,
+        RequestId,
+        ContextId,
+        EpochId,
+        DKGParams,
+        InternalKeySetConfig,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_key_gen_request(req).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+fn unpack_key_gen_request(
     req: KeyGenRequest,
 ) -> anyhow::Result<(
     RequestId,
@@ -615,7 +718,23 @@ pub(crate) fn validate_key_gen_request(
     ))
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_crs_gen_request(
+    req: CrsGenRequest,
+    op_tag: &'static str,
+) -> Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain), MetricedError> {
+    unpack_crs_gen_request(req).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_crs_gen_request(
     req: CrsGenRequest,
 ) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
@@ -697,9 +816,9 @@ mod tests {
     };
 
     use super::{
-        validate_public_decrypt_meta_data, validate_public_decrypt_req,
-        validate_public_decrypt_responses_against_request, validate_user_decrypt_req,
-        verify_max_num_bits, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
+        validate_public_decrypt_responses_against_request, verify_max_num_bits,
+        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -738,7 +857,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequestBadKeyId.to_string()));
@@ -755,7 +874,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
@@ -775,7 +894,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
@@ -792,7 +911,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS));
@@ -809,7 +928,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain) = unpack_public_decrypt_req(&req).unwrap();
         }
     }
 
@@ -860,7 +979,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequestBadKeyId.to_string()));
@@ -879,7 +998,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
@@ -901,7 +1020,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
@@ -920,7 +1039,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS));
@@ -940,7 +1059,7 @@ mod tests {
                 epoch_id: None,
             };
             assert!(
-                validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
+                unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
                     "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum"
                 )
             );
@@ -965,7 +1084,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains("Error deserializing")); // the error message that is returned from trying to decode the bad encoding
@@ -984,7 +1103,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req).is_ok());
+            assert!(unpack_user_decrypt_req(&req).is_ok());
         }
     }
 

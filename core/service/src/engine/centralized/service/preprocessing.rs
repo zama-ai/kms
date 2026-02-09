@@ -65,14 +65,7 @@ pub async fn preprocessing_impl<
     let inner = request.into_inner();
 
     let (req_id, context_id, epoch_id, dkg_param, _key_set_config, eip712_domain) =
-        validate_preproc_request(inner).map_err(|e| {
-            MetricedError::new(
-                OP_KEYGEN_PREPROC_REQUEST,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        validate_preproc_request(inner)?;
     let metric_tags = vec![
         (TAG_CONTEXT_ID, context_id.as_str()),
         (TAG_EPOCH_ID, epoch_id.as_str()),

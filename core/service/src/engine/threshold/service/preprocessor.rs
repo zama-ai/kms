@@ -38,7 +38,10 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, BaseKmsStruct},
-        threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
+        threshold::{
+            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            traits::KeyGenPreprocessor,
+        },
         utils::MetricedError,
         validation::{parse_grpc_request_id, validate_preproc_request, RequestIdParsingErr},
     },
@@ -321,38 +324,21 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
         let (request_id, context_id, epoch_id, dkg_params, keyset_config, eip712_domain) =
-            validate_preproc_request(request).map_err(|e| {
-                MetricedError::new(
-                    OP_KEYGEN_PREPROC_REQUEST,
-                    None,
-                    e, // Validation error
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-        // Find the role of the current server for the given context and implicitely validate the context exists
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            MetricedError::new(
-                OP_KEYGEN_PREPROC_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!("Context {context_id} not found: {e}"),
-                tonic::Code::NotFound,
-            )
-        })?;
+            validate_preproc_request(request)?;
+        let my_role = validate_context_and_epoch(
+            OP_KEYGEN_PREPROC_REQUEST,
+            &self.session_maker,
+            Some(request_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
             (TAG_CONTEXT_ID, context_id.as_str()),
             (TAG_EPOCH_ID, epoch_id.as_str()),
         ];
         timer.tags(metric_tags);
-
-        if !self.session_maker.epoch_exists(&epoch_id).await {
-            return Err(MetricedError::new(
-                OP_KEYGEN_PREPROC_REQUEST,
-                Some(request_id),
-                format!("Epoch {epoch_id} not found"),
-                tonic::Code::NotFound,
-            ));
-        }
 
         // Add preprocessing to metastore and fail in case it is already present
         add_req_to_meta_store(

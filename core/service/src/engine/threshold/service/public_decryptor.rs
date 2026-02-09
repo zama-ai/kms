@@ -53,7 +53,10 @@ use crate::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
-        threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
+        threshold::{
+            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            traits::PublicDecryptor,
+        },
         traits::BaseKms,
         utils::MetricedError,
         validation::{
@@ -295,24 +298,15 @@ impl<
 
         // Check and extract the parameters from the request in a separate thread
         let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) =
-            validate_public_decrypt_req(&inner).map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    None,
-                    e,
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-
-        // Find the role of the current server and validate the context exists
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::NotFound,
-            )
-        })?;
+            validate_public_decrypt_req(&inner)?;
+        let my_role = validate_context_and_epoch(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            &self.session_maker,
+            Some(req_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),

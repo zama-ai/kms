@@ -55,7 +55,10 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
+            service::{
+                session::{validate_context_and_epoch, ImmutableSessionMaker},
+                PublicKeyMaterial, ThresholdFheKeys,
+            },
             traits::KeyGenerator,
         },
         utils::MetricedError,
@@ -412,6 +415,7 @@ impl<
         // Note: We increase the request counter only in launch_dkg
         // so we don't increase the error counter here either
         let inner = request.into_inner();
+        let params = inner.params;
         let (
             req_id,
             preproc_id,
@@ -420,20 +424,15 @@ impl<
             _dkg_params,
             internal_keyset_config,
             eip712_domain,
-        ) = validate_key_gen_request(inner.clone()).map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-        // Find the role of the current server and validate the context exists
-        let my_role = self
-            .session_maker
-            .my_role(&context_id)
-            .await
-            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::NotFound))?;
+        ) = validate_key_gen_request(inner, op_tag)?;
+        let my_role = validate_context_and_epoch(
+            op_tag,
+            &self.session_maker,
+            Some(req_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
             (TAG_KEY_ID, req_id.to_string()),
@@ -448,7 +447,7 @@ impl<
                 self.preproc_buckets.read().await,
                 req_id,
                 preproc_id,
-                inner.params,
+                params,
                 insecure,
             )
             .await?;
@@ -460,10 +459,8 @@ impl<
         )?;
 
         tracing::info!(
-            "Keygen starting with request_id={:?}, keyset_config={:?}, keyset_added_info={:?}, insecure={}",
-            inner.request_id,
-            inner.keyset_config,
-            inner.keyset_added_info,
+            "Keygen starting with request_id={:?}, insecure={}",
+            req_id,
             insecure
         );
 

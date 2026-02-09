@@ -73,24 +73,14 @@ pub async fn key_gen_impl<
         dkg_params,
         internal_keyset_config,
         eip712_domain,
-    ) = validate_key_gen_request(inner.clone()).map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            None,
-            e, // Validation error
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    ) = validate_key_gen_request(inner, op_tag)?;
     let metric_tags = vec![
         (TAG_KEY_ID, req_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
         (TAG_EPOCH_ID, epoch_id.to_string()),
     ];
     timer.tags(metric_tags.clone());
-    tracing::info!(
-        "centralized key-gen with request id: {:?}",
-        inner.request_id
-    );
+    tracing::info!("centralized key-gen with request id: {:?}", req_id);
 
     if !service
         .context_manager

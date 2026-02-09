@@ -350,7 +350,7 @@ mod tests {
         );
         assert_eq!(
             core_to_core_net.max_opened_inactive_sessions_per_party,
-            Some(2000)
+            Some(100)
         );
     }
 
