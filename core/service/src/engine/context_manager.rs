@@ -136,14 +136,11 @@ where
             inner.custodian_nodes.len()
         );
 
-        self.inner_new_custodian_context(inner).await.map_err(|e| {
-            MetricedError::new(
-                OP_NEW_CUSTODIAN_CONTEXT,
-                None, // TODO
-                e,
-                tonic::Code::Internal,
-            )
-        })?;
+        self.inner_new_custodian_context(inner.clone())
+            .await
+            .map_err(|e| {
+                MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
+            })?;
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))

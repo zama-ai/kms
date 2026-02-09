@@ -198,18 +198,12 @@ pub enum AwsKmsKeySpec {
 pub fn init_conf<'a, T: Serialize + Deserialize<'a> + std::fmt::Debug>(
     config_file: &str,
 ) -> anyhow::Result<T> {
-    match Settings::builder()
+    Settings::builder()
         .path(config_file)
         .env_prefix("KMS_CORE")
         .build()
         .init_conf()
-    {
-        Ok(config) => {
-            METRICS.record_config_file(&config)?;
-            Ok(config)
-        }
-        Err(e) => Err(e.into()),
-    }
+        .map_err(|e| e.into())
 }
 
 /// Initialize and validate the configuration from the given file and initialize tracing.
@@ -227,6 +221,9 @@ pub async fn init_conf_kms_core_telemetry<
             .build()
     });
     let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
+    let _ = METRICS
+        .record_config_file(&full_config)
+        .inspect_err(|e| tracing::error!("Failed to record config file in metrics: {}", e));
     Ok((full_config, tracer_provider, meter_provider))
 }
 

@@ -114,7 +114,6 @@ impl<T: Clone> MetaStore<T> {
     /// 2. there is enough time to retrieve an element before it is removed. This timespan is the time it takes to process [min_cache] elements.
     ///
     /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
-    // TODO should this be hidden outside the MetaStore to ensure that the metriced methods are used?
     pub fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
         if self.exists(request_id) {
             return Err(anyhow::anyhow!(
