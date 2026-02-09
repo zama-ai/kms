@@ -81,7 +81,7 @@ where
                 MetricedError::new(
                     OP_KEY_MATERIAL_AVAILABILITY,
                     None,
-                    anyhow::anyhow!("Failed to query threshold FHE keys: {}", e),
+                    anyhow::anyhow!("Failed to query centralized FHE keys: {}", e),
                     tonic::Code::Internal,
                 )
             })?,
