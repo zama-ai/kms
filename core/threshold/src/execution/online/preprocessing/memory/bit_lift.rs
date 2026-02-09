@@ -23,6 +23,18 @@ pub struct InMemoryBitLiftPreprocessing<const EXTENSION_DEGREE: usize> {
     base_preproc_z64: InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
 }
 
+impl<const EXTENSION_DEGREE: usize> InMemoryBitLiftPreprocessing<EXTENSION_DEGREE> {
+    pub fn new(
+        available_bits: Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+        base_preproc_z64: InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    ) -> Self {
+        Self {
+            bit_preproc: InMemoryBitPreprocessing { available_bits },
+            base_preproc_z64,
+        }
+    }
+}
+
 impl<const EXTENSION_DEGREE: usize> TriplePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
     for InMemoryBitLiftPreprocessing<EXTENSION_DEGREE>
 where

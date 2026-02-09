@@ -1,6 +1,15 @@
 use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::structure_traits::{ErrorCorrect, Ring};
+use crate::algebra::galois_rings::common::Monomials;
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
+use crate::execution::config::BatchParams;
+use crate::execution::online::bit_lift::{BitLift, SecureBitLift};
+use crate::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
+use crate::execution::online::preprocessing::memory::bit_lift::InMemoryBitLiftPreprocessing;
+use crate::execution::online::preprocessing::{BasePreprocessing, BitPreprocessing};
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
+use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
 use crate::execution::sharing::share::Share;
+use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 #[cfg(feature = "testing")]
 use crate::execution::tfhe_internals::parameters::DKGParams;
@@ -9,8 +18,8 @@ use crate::{
     algebra::galois_rings::common::ResiduePoly,
     execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
 };
-use serde::{Deserialize, Serialize};
 
+use serde::{Deserialize, Serialize};
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
@@ -54,6 +63,136 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
         Option<CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>>,
     pub glwe_sns_compression_key_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
     pub parameters: ClassicPBSParameters,
+}
+
+impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
+    fn num_bits_to_lift(&self) -> usize {
+        let mut count = 0;
+        if let LweSecretKeyShareEnum::Z64(key) = &self.lwe_encryption_secret_key_share {
+            count += key.data.len();
+        }
+
+        if let LweSecretKeyShareEnum::Z64(key) = &self.lwe_compute_secret_key_share {
+            count += key.data.len();
+        }
+
+        if let GlweSecretKeyShareEnum::Z64(key) = &self.glwe_secret_key_share {
+            count += key.data.len();
+        }
+
+        if let Some(CompressionPrivateKeySharesEnum::Z64(key)) =
+            &self.glwe_secret_key_share_compression
+        {
+            count += key.post_packing_ks_key.data.len();
+        }
+
+        count
+    }
+
+    /// NOTE: Requires at least 2 sessions
+    pub async fn lift_to_z128_integrated<
+        Ses64: SmallSessionHandles<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+        Ses128: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    >(
+        self,
+        session_z64: &mut Ses64,
+        session_z128: &mut Ses128,
+    ) -> anyhow::Result<Self>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Monomials,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
+        let num_bits_to_lift = self.num_bits_to_lift();
+
+        let triples_z64 = SecureSmallPreprocessing::default()
+            .execute(
+                session_z64,
+                BatchParams {
+                    triples: num_bits_to_lift,
+                    randoms: 0,
+                },
+            )
+            .await?;
+
+        let mut triples_randoms_z128 = SecureSmallPreprocessing::default()
+            .execute(
+                session_z128,
+                BatchParams {
+                    triples: num_bits_to_lift,
+                    randoms: num_bits_to_lift,
+                },
+            )
+            .await?;
+
+        let bits_z128 = SecureBitGenEven::gen_bits_even(
+            num_bits_to_lift,
+            &mut triples_randoms_z128,
+            session_z128,
+        )
+        .await?;
+
+        let mut preproc = InMemoryBitLiftPreprocessing::new(bits_z128, triples_z64);
+
+        Self::lift_to_z128_online(self, session_z128, &mut preproc).await
+    }
+
+    // Note, could be done in one round, but it's a bit nicer written
+    // this way (do we care ?)
+    async fn lift_to_z128_online<
+        Ses: BaseSessionHandles,
+        P: BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
+            + BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
+            + Send
+            + ?Sized,
+    >(
+        mut self,
+        session: &mut Ses,
+        preproc: &mut P,
+    ) -> anyhow::Result<Self>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Monomials,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        if let LweSecretKeyShareEnum::Z64(key) = self.lwe_encryption_secret_key_share {
+            self.lwe_encryption_secret_key_share = LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                data: SecureBitLift::execute(key.data, preproc, session).await?,
+            });
+        }
+
+        if let LweSecretKeyShareEnum::Z64(key) = self.lwe_compute_secret_key_share {
+            self.lwe_compute_secret_key_share = LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                data: SecureBitLift::execute(key.data, preproc, session).await?,
+            });
+        }
+
+        if let GlweSecretKeyShareEnum::Z64(key) = self.glwe_secret_key_share {
+            self.glwe_secret_key_share = GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                data: SecureBitLift::execute(key.data, preproc, session).await?,
+                polynomial_size: key.polynomial_size,
+            });
+        }
+
+        if let Some(CompressionPrivateKeySharesEnum::Z64(key)) =
+            self.glwe_secret_key_share_compression
+        {
+            self.glwe_secret_key_share_compression = Some(CompressionPrivateKeySharesEnum::Z128(
+                CompressionPrivateKeyShares {
+                    post_packing_ks_key: GlweSecretKeyShare {
+                        data: SecureBitLift::execute(
+                            key.post_packing_ks_key.data,
+                            preproc,
+                            session,
+                        )
+                        .await?,
+                        polynomial_size: key.post_packing_ks_key.polynomial_size,
+                    },
+                    params: key.params,
+                },
+            ));
+        }
+
+        Ok(self)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Version)]
