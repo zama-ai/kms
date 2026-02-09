@@ -1,7 +1,6 @@
 use super::share::Share;
 use crate::algebra::poly::Poly;
 use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingWithExceptionalSequence};
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::error::error_handler::anyhow_error_and_warn_log;
 use crate::execution::runtime::party::Role;
 use itertools::EitherOrBoth::{Both, Left, Right};
@@ -206,58 +205,38 @@ where
 }
 
 /// Maps `values` into [ShamirSharings]s by pairwise adding each of these to each of the `sharings`.
-/// Furthermore, adds a zero-share for each share in `sharings` if there is not supplied enough `values`.
+/// Furthermore, adds a zero-share for each share in `sharings` if there is not supplied enough `values`,
+/// and discard extra shares if too many are given.
+/// __This supposes that sharings is always a source of truth !__
 /// This in turn means that there will be `num_values` shares in `sharings`.
 /// The function is useful to ensure that an indexable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
     sharings: &mut [ShamirSharings<Z>],
-    values: Vec<Z>,
+    mut values: Vec<Z>,
     num_values: usize,
     party_id: Role,
-) -> anyhow::Result<()> {
-    if sharings.len() != num_values {
-        return Err(anyhow_error_and_log(format!(
-            "Number of sharings {} is not the expected amount {} from party {}",
-            sharings.len(),
-            num_values,
-            party_id
-        )));
-    }
-    if sharings.len() < values.len() {
-        return Err(anyhow_error_and_log(format!(
-            "Number of sharings {} is not {} as expected from party {}.",
-            sharings.len(),
+) {
+    if values.len() < num_values {
+        tracing::warn!(
+            "Received {} values from party {} but expected {}. Filling with 0s",
             values.len(),
+            party_id,
+            num_values
+        );
+    } else if values.len() > num_values {
+        tracing::warn!(
+            "Received more values than expected from party {}. Ignoring extra values.",
             party_id
-        )));
+        );
     }
-    let sharing_len = sharings.len();
-    let values_len = values.len();
-    let pair = values.into_iter().zip_longest(sharings.iter_mut());
-    for cur in pair {
-        match cur {
-            Both(v, sharing) => {
-                sharing.add_share(Share::new(party_id, v));
-            }
-            Left(_v) => {
-                // If a share is missing, we panic since we already checked the lengths in the start of the method
-                panic!(
-                    "There are {sharing_len} shares, but {values_len} values. There should not be more values than shares from party {party_id}."
-                );
-            }
-            Right(sharing) => {
-                // If a value is missing, then add a zero-share in liu of the value
-                tracing::warn!(
-                    "Received {} shares from {} but expected {}. Filling with 0s",
-                    values_len,
-                    party_id,
-                    num_values
-                );
-                sharing.add_share(Share::new(party_id, Z::ZERO));
-            }
-        }
+
+    values.resize(num_values, Z::ZERO);
+
+    // Use zip_eq as we just resized the values received to the expected length
+    let pair = values.into_iter().zip_eq(sharings.iter_mut());
+    for (v, sharing) in pair {
+        sharing.add_share(Share::new(party_id, v));
     }
-    Ok(())
 }
 
 /// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares

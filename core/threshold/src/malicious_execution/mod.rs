@@ -15,6 +15,7 @@ pub mod large_execution {
     pub mod malicious_vss;
 }
 pub mod online {
+    pub mod malicious_bit_lift;
     pub mod malicious_gen_bits;
     pub mod malicious_reshare;
     pub mod preprocessing {

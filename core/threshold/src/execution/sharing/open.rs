@@ -500,7 +500,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                         values,
                         num_secrets,
                         party_id,
-                    )?;
+                    );
                     collected_shares += 1;
                 } else if let Err(e) = data {
                     tracing::warn!(

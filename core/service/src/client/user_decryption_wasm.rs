@@ -483,7 +483,7 @@ impl Client {
                     cur_blocks,
                     num_values,
                     Role::indexed_from_one(payload.party_id as usize),
-                )?;
+                );
             }
             let sharings = opt_sharings.unwrap();
             // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
@@ -676,7 +676,7 @@ impl Client {
                             cur_blocks,
                             num_shares,
                             Role::indexed_from_one(cur_resp.party_id as usize),
-                        )?;
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(

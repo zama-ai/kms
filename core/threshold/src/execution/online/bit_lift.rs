@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use itertools::Itertools;
 use tonic::async_trait;
 
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
-        galois_rings::common::{pack_residue_poly, Monomials, ResiduePoly},
+        galois_rings::common::{Monomials, ResiduePoly},
         structure_traits::{ErrorCorrect, FromU128},
     },
     execution::{
@@ -18,10 +17,11 @@ use crate::{
         runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
     },
+    ProtocolDescription,
 };
 
 #[async_trait]
-pub trait BitLift {
+pub trait BitLift: Send + Sync + Clone + ProtocolDescription {
     /// Lifts a vector of bits shared over a galois extension of Z64 into a vector of bits shared over a galois estension of Z128
     /// # Arguments
     /// * `secret_bit_vector` - Vector of bits shared over a galois extension of Z64
@@ -48,7 +48,15 @@ pub trait BitLift {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect;
 }
 
+#[derive(Default, Clone)]
 pub struct SecureBitLift;
+
+impl ProtocolDescription for SecureBitLift {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{indent}-SecureBitLift")
+    }
+}
 
 #[async_trait]
 impl BitLift for SecureBitLift {
@@ -74,64 +82,34 @@ impl BitLift for SecureBitLift {
 
         // Copy of the randoms bits, except modswitched to Z64 (reminiscent of "dabits")
         // note that they are still the same bits as in Z128
-        let random_bits_z64 = random_bits_z128
-            .iter()
-            .map(|b| Share::new(b.owner(), b.value().to_residuepoly64()))
-            .collect::<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>>();
-
-        // Pack bits and inputs into every coef of the extension ring
-        let packed_secret_bits = Arc::new(
-            pack_residue_poly(
-                &(secret_bit_vector
-                    .into_iter()
-                    .map(|s| s.value())
-                    .collect::<Vec<_>>()),
-            )
-            .into_iter()
-            .map(|x| Share::new(session.my_role(), x))
-            .collect_vec(),
+        let random_bits_z64 = Arc::new(
+            random_bits_z128
+                .iter()
+                .map(|b| Share::new(b.owner(), b.value().to_residuepoly64()))
+                .collect::<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>>(),
         );
 
-        let packed_random_bits_z64 = Arc::new(
-            pack_residue_poly(
-                &(random_bits_z64
-                    .into_iter()
-                    .map(|s| s.value())
-                    .collect::<Vec<_>>()),
-            )
-            .into_iter()
-            .map(|x| Share::new(session.my_role(), x))
-            .collect_vec(),
-        );
+        let secret_bit_vector = Arc::new(secret_bit_vector);
 
-        // NOTE: This won't work because we need to pack the Z::TWO over all the extension coeffs
-        // due to packing above
-        // i.e. have to reimplement XOR here for the packed case
-        let masked_packed_secret_bits = Bits::xor_list_secret_secret(
-            Arc::clone(&packed_secret_bits),
-            Arc::clone(&packed_random_bits_z64),
+        let masked_secret_bits = Bits::xor_list_secret_secret(
+            Arc::clone(&secret_bit_vector),
+            Arc::clone(&random_bits_z64),
             preproc,
             session,
         )
         .await?;
 
         // Open the masked bits
-        let opened_masked_bits_z64 = open_list(&masked_packed_secret_bits, session).await?;
+        let opened_masked_bits_z64 = open_list(&masked_secret_bits, session).await?;
 
         // Lift all the results to Z128 and transform to shares
-        let opened_masked_packed_bits_z128 = opened_masked_bits_z64
+        let opened_masked_bits_z128 = opened_masked_bits_z64
             .into_iter()
             .map(
                 |s| ResiduePoly::<Z128, EXTENSION_DEGREE> {
                     coefs: s.coefs.map(|c| Z128::from_u128(c.0 as u128)),
                 }, // Lift to Z128
             )
-            .collect::<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>();
-
-        // Unpack
-        let opened_masked_bits_z128 = opened_masked_packed_bits_z128
-            .into_iter()
-            .flat_map(|packed_poly| packed_poly.coefs.map(ResiduePoly::from_scalar))
             .collect::<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>();
 
         // Remove the mask by xoring, xor secret clear is only available for vec of vec
@@ -145,4 +123,153 @@ impl BitLift for SecureBitLift {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use itertools::Itertools;
+
+    use crate::{
+        algebra::{
+            base_ring::{Z128, Z64},
+            galois_rings::common::{Monomials, ResiduePoly},
+            structure_traits::ErrorCorrect,
+        },
+        execution::{
+            online::{
+                bit_lift::{BitLift, SecureBitLift},
+                preprocessing::{dummy::DummyPreprocessing, BitPreprocessing},
+                triple::open_list,
+            },
+            runtime::sessions::large_session::LargeSession,
+            sharing::share::Share,
+        },
+        malicious_execution::online::malicious_bit_lift::{
+            BitLiftAddError, BitLiftDrop, BitLiftWrongAmountTooFew, BitLiftWrongAmountTooMany,
+        },
+        networking::NetworkMode,
+        tests::helper::tests::{
+            execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        },
+    };
+
+    async fn test_bit_lift<const EXTENSION_DEGREE: usize, MaliciousBitLift: BitLift>(
+        params: TestingParameters,
+        num_bits: usize,
+        malicious_bit_lift: MaliciousBitLift,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Monomials,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        let mut task_honest = |mut session: LargeSession| async move {
+            let mut prep = DummyPreprocessing::new(42, &session);
+
+            // Pull out some random bits mod Z64 that we will lift
+            let bits_to_lift: Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>> =
+                prep.next_bit_vec(num_bits).unwrap();
+
+            assert_eq!(bits_to_lift.len(), num_bits);
+
+            let opened_bits_z64 = open_list(&bits_to_lift, &session).await.unwrap();
+
+            let lifted_bits = SecureBitLift::execute(bits_to_lift, &mut prep, &mut session)
+                .await
+                .unwrap();
+
+            let opened_bits_z128 = open_list(&lifted_bits, &session).await.unwrap();
+
+            assert_eq!(
+                opened_bits_z64.len(),
+                opened_bits_z128.len(),
+                "Number of opened bits should be the same before and after lifting"
+            );
+
+            for (b64, (idx, b128)) in opened_bits_z64
+                .iter()
+                .zip_eq(opened_bits_z128.iter().enumerate())
+            {
+                let b64_scalar = b64.to_scalar().unwrap().0;
+                // Sanity check we indeed started with bits
+                assert!(
+                    b64_scalar == 0 || b64_scalar == 1,
+                    "Input {idx} was not actually a bit, got {}",
+                    b64_scalar
+                );
+
+                assert_eq!(
+                    b64_scalar,
+                    b128.to_scalar().unwrap().0 as u64,
+                    "Lifted bit {idx} is not the same as original bit, expected {}, got {}",
+                    b64_scalar,
+                    b128.to_scalar().unwrap().0
+                );
+            }
+            Ok::<(), ()>(())
+        };
+
+        let mut task_malicious =
+            |mut session: LargeSession, _malicious_bitlift: MaliciousBitLift| async move {
+                let mut prep = DummyPreprocessing::new(42, &session);
+
+                // Pull out some random bits mod Z64 that we will lift
+                let bits_to_lift: Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>> =
+                    prep.next_bit_vec(num_bits).unwrap();
+
+                assert_eq!(bits_to_lift.len(), num_bits);
+
+                let _opened_bits_z64 = open_list(&bits_to_lift, &session).await;
+
+                let lifted_bits = MaliciousBitLift::execute(bits_to_lift, &mut prep, &mut session)
+                    .await
+                    .unwrap();
+
+                let _opened_bits_z128 = open_list(&lifted_bits, &session).await;
+
+                Ok::<(), ()>(())
+            };
+
+        let (results_honest, _results_malicious) =
+            execute_protocol_large_w_disputes_and_malicious::<
+                _,
+                _,
+                _,
+                _,
+                _,
+                ResiduePoly<Z64, EXTENSION_DEGREE>,
+                EXTENSION_DEGREE,
+            >(
+                &params,
+                &params.dispute_pairs,
+                &params.malicious_roles,
+                malicious_bit_lift,
+                NetworkMode::Async,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            )
+            .await;
+        assert_eq!(
+            results_honest.len(),
+            params.num_parties - params.malicious_roles.len()
+        );
+        assert!(results_honest.iter().all(|res| res.1.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let params = TestingParameters::init(4, 1, &[], &[], &[], false, None);
+        test_bit_lift::<4, _>(params, 10, SecureBitLift).await;
+    }
+
+    #[rstest::rstest]
+    async fn malicious_lift<B: BitLift + 'static>(
+        #[values(
+            BitLiftDrop,
+            BitLiftWrongAmountTooMany,
+            BitLiftWrongAmountTooFew,
+            BitLiftAddError
+        )]
+        malicious_bit_lift: B,
+    ) {
+        // Note: Malicious strategies above to do not depend on a "role to lie to"
+        let params = TestingParameters::init(4, 1, &[2], &[], &[], false, None);
+        test_bit_lift::<4, _>(params, 10, malicious_bit_lift).await;
+    }
+}

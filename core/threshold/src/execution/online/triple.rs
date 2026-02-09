@@ -131,6 +131,10 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     .await
 }
 
+// TODO: Calls to this should be replaced by calls to RobustOpen protocol.
+// This would be more consistent with the rest of the codebase and
+// allow for easier testing of malicious strategies.
+
 /// Opens a single secret
 pub async fn open<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: Share<Z>,
