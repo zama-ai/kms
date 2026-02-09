@@ -215,6 +215,13 @@ pub fn fill_indexed_shares<Z: Ring>(
     num_values: usize,
     party_id: Role,
 ) {
+    // If sharings is not of the expected length it means
+    // it was poorly initialized, and that is a bug
+    assert_eq!(
+        sharings.len(),
+        num_values,
+        "Number of sharings must be equal to the number of values to add."
+    );
     if values.len() < num_values {
         tracing::warn!(
             "Received {} values from party {} but expected {}. Filling with 0s",
