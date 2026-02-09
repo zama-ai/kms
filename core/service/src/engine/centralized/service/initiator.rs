@@ -80,7 +80,7 @@ pub async fn init_impl<
             return Err(MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(context_id.into()),
-                "Initialization already complete`".to_string(),
+                "Initialization already complete".to_string(),
                 tonic::Code::AlreadyExists,
             ));
         }
