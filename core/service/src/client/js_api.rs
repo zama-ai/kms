@@ -293,7 +293,9 @@ pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Cli
     Client {
         server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
         client_address: transcript.client_address,
-        client_sk: transcript.client_sk.clone(),
+        // NOTE: instead of using transcript.client_sk, it will be None in practice
+        // because wasm clients do not store the signing key, that should be stored in wallets.
+        client_sk: None,
         params: transcript.params,
         decryption_mode: DecryptionMode::default(),
     }
@@ -600,7 +602,6 @@ pub fn process_user_decryption_resp(
     } else {
         client.insecure_process_user_decryption_resp(
             &agg_resp,
-            &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
         )
     };
