@@ -89,7 +89,8 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         count
     }
 
-    /// NOTE: Requires at least 2 sessions
+    /// Perform the required offline phase to lift the keys from Z64 to Z128,
+    /// and then calls [`Self::lift_to_z128_online`] to perform the online phase of the lifting.
     pub async fn lift_to_z128_integrated<
         Ses64: SmallSessionHandles<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         Ses128: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -136,8 +137,7 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         Self::lift_to_z128_online(self, session_z128, &mut preproc).await
     }
 
-    // Note, could be done in one round, but it's a bit nicer written
-    // this way (do we care ?)
+    /// Lift the keys from Z64 to Z128 by performing secure bit lifting using the provided correlated randomness.
     async fn lift_to_z128_online<
         Ses: BaseSessionHandles,
         P: BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
@@ -567,5 +567,234 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
             glwe_sns_compression_key_as_lwe: None,
             parameters,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+    use tokio::task::JoinSet;
+
+    use crate::{
+        algebra::{
+            base_ring::{Z128, Z64},
+            galois_rings::{
+                common::ResiduePoly,
+                degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+            },
+            structure_traits::Ring,
+        },
+        execution::{
+            online::triple::open_list,
+            runtime::{
+                sessions::small_session::{SmallSession128, SmallSession64},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+            },
+            sharing::share::Share,
+            tfhe_internals::{
+                parameters::BC_PARAMS_SNS,
+                private_keysets::{
+                    CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
+                    PrivateKeySet,
+                },
+                test_feature::initialize_key_material,
+            },
+        },
+        networking::NetworkMode,
+        session_id::SessionId,
+    };
+
+    fn mod_switch_private_keys_to_z64<const EXTENSION_DEGREE: usize>(
+        key: PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> PrivateKeySet<EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        PrivateKeySet {
+            lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(
+                key.lwe_encryption_secret_key_share.convert_to_z64(),
+            ),
+            lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(
+                key.lwe_compute_secret_key_share.convert_to_z64(),
+            ),
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(
+                key.glwe_secret_key_share.convert_to_z64(),
+            ),
+            glwe_secret_key_share_sns_as_lwe: key.glwe_secret_key_share_sns_as_lwe,
+            glwe_secret_key_share_compression: key.glwe_secret_key_share_compression.map(
+                |compression| CompressionPrivateKeySharesEnum::Z64(compression.convert_to_z64()),
+            ),
+            glwe_sns_compression_key_as_lwe: key.glwe_sns_compression_key_as_lwe,
+            parameters: key.parameters,
+        }
+    }
+
+    // Note this fn is very much tailored for the test below
+    // We first push all the Z64 keys in the same vector and all the Z128 keys in another vector, then we open them separately and concatenate the results.
+    // This way when we open before and after and concatenate the result, we should have equality
+    // because the test first switch all the keys that can live in Z64 to Z64, then lift all of them to Z128, so the order of the keys in the vectors is the same before and after lifting.
+    #[allow(clippy::type_complexity)]
+    fn private_key_to_vecs<const EXTENSION_DEGREE: usize>(
+        key: PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> (
+        Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
+        Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    ) {
+        let mut z64_vec = Vec::new();
+        let mut z128_vec = Vec::new();
+
+        let PrivateKeySet {
+            lwe_encryption_secret_key_share,
+            lwe_compute_secret_key_share,
+            glwe_secret_key_share,
+            glwe_secret_key_share_sns_as_lwe,
+            glwe_secret_key_share_compression,
+            glwe_sns_compression_key_as_lwe,
+            parameters: _,
+        } = key;
+
+        if let LweSecretKeyShareEnum::Z64(lwe_enc_key) = lwe_encryption_secret_key_share {
+            z64_vec.extend(lwe_enc_key.data);
+        } else if let LweSecretKeyShareEnum::Z128(lwe_enc_key) = lwe_encryption_secret_key_share {
+            z128_vec.extend(lwe_enc_key.data);
+        }
+
+        if let LweSecretKeyShareEnum::Z64(lwe_comp_key) = lwe_compute_secret_key_share {
+            z64_vec.extend(lwe_comp_key.data);
+        } else if let LweSecretKeyShareEnum::Z128(lwe_comp_key) = lwe_compute_secret_key_share {
+            z128_vec.extend(lwe_comp_key.data);
+        }
+
+        if let GlweSecretKeyShareEnum::Z64(glwe_key) = glwe_secret_key_share {
+            z64_vec.extend(glwe_key.data);
+        } else if let GlweSecretKeyShareEnum::Z128(glwe_key) = glwe_secret_key_share {
+            z128_vec.extend(glwe_key.data);
+        }
+
+        if let Some(compression) = glwe_secret_key_share_compression {
+            if let CompressionPrivateKeySharesEnum::Z64(compression) = compression {
+                z64_vec.extend(compression.post_packing_ks_key.data);
+            } else if let CompressionPrivateKeySharesEnum::Z128(compression) = compression {
+                z128_vec.extend(compression.post_packing_ks_key.data);
+            }
+        };
+
+        if let Some(k) = glwe_secret_key_share_sns_as_lwe {
+            z128_vec.extend(k.data)
+        }
+
+        if let Some(k) = glwe_sns_compression_key_as_lwe {
+            z128_vec.extend(k.data)
+        }
+        (z64_vec, z128_vec)
+    }
+
+    #[tokio::test]
+    async fn lift_private_keyset() {
+        let task = |mut session_z64: SmallSession64<4>, mut session_z128: SmallSession128<4>| async move {
+            let (_, my_keys) = initialize_key_material::<_, 4>(
+                &mut session_z64,
+                BC_PARAMS_SNS,
+                tfhe::Tag::default(),
+            )
+            .await
+            .unwrap();
+
+            let my_keys_z64 = mod_switch_private_keys_to_z64(my_keys);
+
+            let (z64_vec_before, z128_vec_before) = private_key_to_vecs(my_keys_z64.clone());
+
+            let my_keys_lifted = my_keys_z64
+                .lift_to_z128_integrated(&mut session_z64, &mut session_z128)
+                .await
+                .unwrap();
+
+            let (z64_vec_after, z128_vec_after) = private_key_to_vecs(my_keys_lifted);
+
+            assert_eq!(z64_vec_after.len(), 0);
+
+            let mut vec_before = open_list(&z64_vec_before, &session_z64)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| v.to_scalar().unwrap().0 as u128)
+                .collect::<Vec<_>>();
+
+            vec_before.extend(
+                open_list(&z128_vec_before, &session_z128)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| v.to_scalar().unwrap().0),
+            );
+
+            let vec_after = open_list(&z128_vec_after, &session_z128)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| v.to_scalar().unwrap().0)
+                .collect::<Vec<_>>();
+
+            println!(
+                "Total length of key vectors: before = {}, after = {}",
+                vec_before.len(),
+                vec_after.len()
+            );
+            // Need to reconstruct both the old and new keyset and check they are indeed the same
+            assert_eq!(vec_before, vec_after);
+            assert!(vec_after.iter().all(|x| *x == 0 || *x == 1));
+            true
+        };
+
+        let num_parties = 4;
+        let threshold = 1;
+
+        // Creating a test runtime with sessions in extension ring Z64 and Z128
+        // Note: Could be moved to helper.rs if we ever need such a setting in other tests
+        let roles = generate_fixed_roles(num_parties);
+
+        let test_runtime_z64 = DistributedTestRuntime::<
+            ResiduePolyF4Z64,
+            _,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
+
+        let test_runtime_z128 = DistributedTestRuntime::<
+            ResiduePolyF4Z128,
+            _,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
+
+        let session_id_z64 = SessionId::from(1);
+        let session_id_z128 = SessionId::from(2);
+
+        let mut tasks = JoinSet::new();
+        for party in roles {
+            let session_z64 = test_runtime_z64
+                .small_session_for_party(
+                    session_id_z64,
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64 + 64)),
+                )
+                .await;
+            let session_z128 = test_runtime_z128
+                .small_session_for_party(
+                    session_id_z128,
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64 + 128)),
+                )
+                .await;
+            tasks.spawn(task(session_z64, session_z128));
+        }
+
+        let mut res = Vec::new();
+        while let Some(out) = tasks.join_next().await {
+            res.push(out.unwrap());
+        }
+
+        assert_eq!(res.len(), num_parties);
+        assert!(res.into_iter().all(|x| x));
     }
 }
