@@ -91,8 +91,8 @@ use backward_compatibility::{
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
+    PrivDataTypeTest, PrivateKeySetTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest,
+    PubDataTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
     UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
@@ -120,7 +120,7 @@ macro_rules! store_versioned_auxiliary {
     };
 }
 
-fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
+pub fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
     DKGParamsSnS {
         regular_params: convert_dkg_params_regular(value.regular_params),
         sns_params: convert_sns_parameters(value.sns_params),
@@ -273,6 +273,14 @@ const SHARE_128_TEST: ShareTest = ShareTest {
 const RELEASE_PCR_VALUES_TEST: ReleasePCRValuesTest = ReleasePCRValuesTest {
     test_filename: Cow::Borrowed("release_pcr_values"),
     state: 64,
+};
+
+const PRIVATE_KEY_SET_TEST: PrivateKeySetTest = PrivateKeySetTest {
+    test_filename: Cow::Borrowed("private_key_set"),
+    amount: 2,
+    threshold: 1,
+    role_i: 1,
+    dkg_parameters_sns: TEST_DKG_PARAMS_SNS,
 };
 
 // KMS test
@@ -1501,6 +1509,29 @@ impl DistributedDecryptionV0_13 {
 
         TestMetadataDD::ReleasePCRValues(RELEASE_PCR_VALUES_TEST)
     }
+
+    fn gen_private_key_set(dir: &PathBuf) -> TestMetadataDD {
+        let role = Role::indexed_from_one(PRIVATE_KEY_SET_TEST.role_i);
+        let mut base_session = get_networkless_base_session_for_parties(
+            PRIVATE_KEY_SET_TEST.amount,
+            PRIVATE_KEY_SET_TEST.threshold,
+            role,
+        );
+        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
+            PRIVATE_KEY_SET_TEST.dkg_parameters_sns,
+        ));
+
+        let rt = Runtime::new().unwrap();
+        let (_, private_key_set) = rt.block_on(async {
+            initialize_key_material(&mut base_session, dkg_params, Tag::default())
+                .await
+                .unwrap()
+        });
+
+        store_versioned_test!(&private_key_set, dir, &PRIVATE_KEY_SET_TEST.test_filename);
+
+        TestMetadataDD::PrivateKeySet(PRIVATE_KEY_SET_TEST)
+    }
 }
 
 struct KmsGrpcV0_13;
@@ -1597,6 +1628,7 @@ impl KMSCoreVersion for V0_13 {
             DistributedDecryptionV0_13::gen_share_128(&dir),
             DistributedDecryptionV0_13::gen_prf_key(&dir),
             DistributedDecryptionV0_13::gen_release_pcr_values(&dir),
+            DistributedDecryptionV0_13::gen_private_key_set(&dir),
         ]
     }
 

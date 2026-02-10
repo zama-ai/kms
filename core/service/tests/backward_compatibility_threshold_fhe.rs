@@ -11,11 +11,12 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, PrfKeyTest, PrssSetTest, ReleasePCRValuesTest, ShareTest, TestMetadataDD,
-    TestType, Testcase,
+    PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
+    TestMetadataDD, TestType, Testcase,
 };
 use rand::{RngCore, SeedableRng};
 use std::{env, path::Path};
+use tfhe::Tag;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
@@ -30,10 +31,12 @@ use threshold_fhe::{
             prf::{PRSSConversions, PrfKey},
             prss::{PRSSSetup, PrssSet, PrssSetV0},
         },
+        tfhe_internals::{private_keysets::PrivateKeySet, test_feature::initialize_key_material},
     },
     networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
+use tokio::runtime::Runtime;
 
 use crate::common::load_and_unversionize_auxiliary;
 
@@ -250,6 +253,16 @@ fn test_release_pcr_values(
     }
 }
 
+fn test_private_key_gen(
+    dir: &Path,
+    test: &PrivateKeySetTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let _original_versionized: PrivateKeySet<4> = load_and_unversionize(dir, test, format)?;
+
+    Ok(test.success(format))
+}
+
 struct ThresholdFhe;
 impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
@@ -269,6 +282,9 @@ impl TestedModule for ThresholdFhe {
             Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
             Self::Metadata::ReleasePCRValues(test) => {
                 test_release_pcr_values(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrivateKeySet(test) => {
+                test_private_key_gen(test_dir.as_ref(), test, format).into()
             }
         }
     }

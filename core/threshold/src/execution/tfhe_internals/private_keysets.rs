@@ -89,6 +89,30 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         count
     }
 
+    pub fn lift_to_z64(self) -> Self
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        PrivateKeySet {
+            lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(
+                self.lwe_encryption_secret_key_share.convert_to_z64(),
+            ),
+            lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(
+                self.lwe_compute_secret_key_share.convert_to_z64(),
+            ),
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(
+                self.glwe_secret_key_share.convert_to_z64(),
+            ),
+            glwe_secret_key_share_sns_as_lwe: self.glwe_secret_key_share_sns_as_lwe,
+            glwe_secret_key_share_compression: self.glwe_secret_key_share_compression.map(
+                |compression| CompressionPrivateKeySharesEnum::Z64(compression.convert_to_z64()),
+            ),
+            glwe_sns_compression_key_as_lwe: self.glwe_sns_compression_key_as_lwe,
+            parameters: self.parameters,
+        }
+    }
+
     /// Perform the required offline phase to lift the keys from Z64 to Z128,
     /// and then calls [`Self::lift_to_z128_online`] to perform the online phase of the lifting.
     pub async fn lift_to_z128_integrated<
@@ -458,23 +482,6 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
             GlweSecretKeyShareEnum::Z128(inner) => Ok(inner),
         }
     }
-}
-
-#[cfg(test)]
-impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
-    pub(crate) fn unsafe_cast_to_z64(self) -> GlweSecretKeyShare<Z64, EXTENSION_DEGREE> {
-        match self {
-            GlweSecretKeyShareEnum::Z64(inner) => inner,
-            GlweSecretKeyShareEnum::Z128(_) => panic!("not z64"),
-        }
-    }
-
-    pub(crate) fn unsafe_cast_to_z128(self) -> GlweSecretKeyShare<Z128, EXTENSION_DEGREE> {
-        match self {
-            GlweSecretKeyShareEnum::Z64(_) => panic!("not z128"),
-            GlweSecretKeyShareEnum::Z128(inner) => inner,
-        }
-    }
 
     // It's always possible to convert a Z128 key to Z64 by locally reducing mod 2^64
     pub fn convert_to_z64(self) -> GlweSecretKeyShare<Z64, EXTENSION_DEGREE>
@@ -495,6 +502,23 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
                     polynomial_size: inner.polynomial_size,
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
+    pub(crate) fn unsafe_cast_to_z64(self) -> GlweSecretKeyShare<Z64, EXTENSION_DEGREE> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => inner,
+            GlweSecretKeyShareEnum::Z128(_) => panic!("not z64"),
+        }
+    }
+
+    pub(crate) fn unsafe_cast_to_z128(self) -> GlweSecretKeyShare<Z128, EXTENSION_DEGREE> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(_) => panic!("not z128"),
+            GlweSecretKeyShareEnum::Z128(inner) => inner,
         }
     }
 
@@ -605,32 +629,6 @@ mod test {
         session_id::SessionId,
     };
 
-    fn mod_switch_private_keys_to_z64<const EXTENSION_DEGREE: usize>(
-        key: PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> PrivateKeySet<EXTENSION_DEGREE>
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    {
-        PrivateKeySet {
-            lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(
-                key.lwe_encryption_secret_key_share.convert_to_z64(),
-            ),
-            lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(
-                key.lwe_compute_secret_key_share.convert_to_z64(),
-            ),
-            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(
-                key.glwe_secret_key_share.convert_to_z64(),
-            ),
-            glwe_secret_key_share_sns_as_lwe: key.glwe_secret_key_share_sns_as_lwe,
-            glwe_secret_key_share_compression: key.glwe_secret_key_share_compression.map(
-                |compression| CompressionPrivateKeySharesEnum::Z64(compression.convert_to_z64()),
-            ),
-            glwe_sns_compression_key_as_lwe: key.glwe_sns_compression_key_as_lwe,
-            parameters: key.parameters,
-        }
-    }
-
     // Note this fn is very much tailored for the test below
     // We first push all the Z64 keys in the same vector and all the Z128 keys in another vector, then we open them separately and concatenate the results.
     // This way when we open before and after and concatenate the result, we should have equality
@@ -702,7 +700,7 @@ mod test {
             .await
             .unwrap();
 
-            let my_keys_z64 = mod_switch_private_keys_to_z64(my_keys);
+            let my_keys_z64 = my_keys.lift_to_z64();
 
             let (z64_vec_before, z128_vec_before) = private_key_to_vecs(my_keys_z64.clone());
 

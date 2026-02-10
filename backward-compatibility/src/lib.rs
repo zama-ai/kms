@@ -415,6 +415,29 @@ impl TestType for ReleasePCRValuesTest {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrivateKeySetTest {
+    pub test_filename: Cow<'static, str>,
+    pub amount: usize,
+    pub threshold: u8,
+    pub role_i: usize,
+    pub dkg_parameters_sns: parameters::DKGParamsSnSTest,
+}
+
+impl TestType for PrivateKeySetTest {
+    fn module(&self) -> String {
+        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrivateKeySet".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // Distributed Decryption test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ThresholdFheKeysTest {
@@ -883,6 +906,7 @@ pub enum TestMetadataDD {
     PrfKey(PrfKeyTest),
     Share(ShareTest),
     ReleasePCRValues(ReleasePCRValuesTest),
+    PrivateKeySet(PrivateKeySetTest),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
