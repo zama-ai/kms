@@ -656,6 +656,14 @@ pub struct ResultParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct KeyGenResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    #[clap(long, default_value_t = false)]
+    pub compressed: bool,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct RecoveryInitParameters {
     /// Indicator as to whether the KMS should overwrite a possible existing ephemeral key
     /// If false, the call will be indempotent, if true, this will not be the case
@@ -743,7 +751,7 @@ pub enum CCCommand {
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
-    KeyGenResult(ResultParameters),
+    KeyGenResult(KeyGenResultParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
     InsecureKeyGenResult(ResultParameters),
     Encrypt(CipherParameters),
@@ -1567,8 +1575,6 @@ pub async fn execute_cmd(
 
             //NOTE: We assume the request comes from the core client too
             //which (for now) uses the dummy_domain
-            // NOTE: KeyGenResult queries existing results, so we pass false for compressed
-            // since we don't know what type of keys were generated.
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
@@ -1578,7 +1584,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
-                false,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]

@@ -239,59 +239,42 @@ impl AsyncTestContext for DockerComposeThresholdCustodianTest {
     }
 }
 
-async fn insecure_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
+async fn insecure_key_gen<T: DockerComposeManager>(
+    ctx: &T,
+    test_path: &Path,
+    compressed: bool,
+) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
+    let shared_args = if compressed {
+        SharedKeyGenParameters {
+            keyset_type: Some(KeySetType::Standard),
+            compressed: true,
+            context_id: None,
+            epoch_id: None,
+        }
+    } else {
+        SharedKeyGenParameters::default()
+    };
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
-        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
-            shared_args: SharedKeyGenParameters::default(),
-        }),
+        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }),
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
         download_all: false,
     };
 
-    println!("Doing insecure key-gen");
+    println!("Doing insecure key-gen (compressed: {compressed})");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure key-gen done");
+    println!("Insecure key-gen done (compressed: {compressed})");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
-        _ => panic!("Error doing insecure keygen"),
+        _ => panic!("Error doing insecure keygen (compressed: {compressed})"),
     };
 
     key_id.to_string()
-}
-
-async fn insecure_compressed_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
-    let path_to_config = ctx.root_path().join(ctx.config_path());
-    let config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
-            shared_args: SharedKeyGenParameters {
-                keyset_type: Some(KeySetType::Standard),
-                compressed: true,
-                context_id: None,
-                epoch_id: None,
-            },
-        }),
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-        download_all: false,
-    };
-
-    println!("Doing insecure compressed key-gen");
-    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure compressed key-gen done");
-
-    assert_eq!(key_gen_results.len(), 1);
-    match key_gen_results.first().unwrap() {
-        (Some(value), _) => value.to_string(),
-        _ => panic!("Error doing insecure compressed keygen"),
-    }
 }
 
 async fn crs_gen<T: DockerComposeManager>(
@@ -358,35 +341,46 @@ async fn real_preproc_and_keygen(
     test_path: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
+    compressed: bool,
 ) -> (String, String) {
     let preproc_id = real_preproc(config_path, test_path, context_id, epoch_id)
         .await
         .unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
+    let shared_args = if compressed {
+        SharedKeyGenParameters {
+            keyset_type: Some(KeySetType::Standard),
+            compressed: true,
+            context_id,
+            epoch_id,
+        }
+    } else {
+        SharedKeyGenParameters {
+            keyset_type: None,
+            compressed: false,
+            context_id,
+            epoch_id,
+        }
+    };
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
-            shared_args: SharedKeyGenParameters {
-                keyset_type: None,
-                compressed: false,
-                context_id,
-                epoch_id,
-            },
+            shared_args,
         }),
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
         download_all: false,
     };
-    println!("Doing key-gen");
+    println!("Doing key-gen (compressed: {compressed})");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Key-gen done");
+    println!("Key-gen done (compressed: {compressed})");
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
-        _ => panic!("Error doing keygen"),
+        _ => panic!("Error doing keygen (compressed: {compressed})"),
     };
 
     (key_id.to_string(), preproc_id.unwrap().to_string())
@@ -451,9 +445,12 @@ async fn test_template<T: DockerComposeManager>(
                     request_id: req_id.unwrap(),
                 })
             }
-            CCCommand::KeyGen(_key_gen_parameters) => CCCommand::KeyGenResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
+            CCCommand::KeyGen(ref key_gen_parameters) => {
+                CCCommand::KeyGenResult(KeyGenResultParameters {
+                    request_id: req_id.unwrap(),
+                    compressed: key_gen_parameters.shared_args.compressed,
+                })
+            }
             CCCommand::InsecureKeyGen(_insecure_key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(ResultParameters {
                     request_id: req_id.unwrap(),
@@ -949,7 +946,7 @@ async fn test_centralized_insecure(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -1033,7 +1030,7 @@ async fn test_threshold_insecure(ctx: &DockerComposeThresholdDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -1318,8 +1315,8 @@ async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeTh
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1332,8 +1329,8 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTe
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder, None, None),
-        real_preproc_and_keygen(&config_path, keys_folder, None, None),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None, false),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None, false),
     ])
     .await;
 }
@@ -1442,7 +1439,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
     let context_path = temp_dir.path().join("mpc_context.bin");
     let config_path = ctx.root_path().join(ctx.config_path());
     // do insecure keygen
-    let key_id = insecure_key_gen(ctx, test_path).await;
+    let key_id = insecure_key_gen(ctx, test_path, false).await;
 
     // create and store mpc context
     let context_id =
@@ -1503,6 +1500,7 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
         test_path,
         Some(context_id),
         Some(epoch_id),
+        false,
     )
     .await;
 }
@@ -1565,6 +1563,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
             test_path,
             Some(context_id),
             Some(epoch_id),
+            false,
         )
         .await;
 
@@ -1645,6 +1644,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         test_path,
         Some(context_id_set_1),
         Some(epoch_id_set_1),
+        false,
     )
     .await;
 
@@ -1777,8 +1777,8 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1804,7 +1804,7 @@ async fn test_centralized_insecure_compressed_keygen(ctx: &DockerComposeCentrali
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_compressed_key_gen(ctx, keys_folder).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, true).await;
     assert!(!key_id.is_empty());
 }
 
@@ -1815,6 +1815,19 @@ async fn test_threshold_insecure_compressed_keygen(ctx: &DockerComposeThresholdT
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_compressed_key_gen(ctx, keys_folder).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, true).await;
     assert!(!key_id.is_empty());
+}
+
+#[test_context(DockerComposeThresholdTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTest) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let config_path = config_path_from_context(ctx);
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true).await;
+    assert_ne!(key_id_1, key_id_2);
 }
