@@ -661,15 +661,15 @@ mod tests {
             assert!(version.digests.contains(&hex::decode("9393789A").unwrap()));
         }
         {
-            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+            let version: anyhow::Result<SoftwareVersion> = SoftwareVersion::new_from_json(
                 "{\"semantic_version\": \"1.2.3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A==\"]}",
             );
             assert!(version.is_err()); // Not hex digest
-            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+            let version: anyhow::Result<SoftwareVersion> = SoftwareVersion::new_from_json(
                 "{\"semantic_version\": \"1.2.s3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A\"]}",
             );
             assert!(version.is_err()); // Not not a patch number
-            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+            let version: anyhow::Result<SoftwareVersion> = SoftwareVersion::new_from_json(
                 "{\"dsemantic_version\": \"1.2.s3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A\"]}",
             );
             assert!(version.is_err()); // Spelling error in semantic version
