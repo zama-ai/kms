@@ -112,6 +112,7 @@ Other command line options are:
  - `-l`/`--logs`: print debug logs to stdout and also write a timestamped `.log` file
  - `--max-iter`: the maximum number of retries for retrieving a computation result from the KMS
  - `-a`/`--expect-all-responses`: if set, the tool waits for a response from all KMS cores. If not set, the tool continues once it has received the minimum amount of required responses, depending on the operation.
+ - `-d`/`--download-all`: if set, the tool downloads the generated keys/CRSes from all KMS cores, rather than only from a single core.
  - `-h`/`--help`: show the CLI help
 
 ## Backup and restore
@@ -358,8 +359,13 @@ Upon success, both the command to request to generate a key _and_ the command to
 Secure key-generation (see [below](#secure-key-generation)) requires a pre-processing step, that can be triggered via the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> preproc-key-gen
+$ cargo run -- -f <path-to-toml-config-file> preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
+
+Optional arguments:
+ - `--context-id <CONTEXT_ID>`: the context ID to use for the preprocessing. Defaults to the default context if not specified.
+ - `--epoch-id <EPOCH_ID>`: the epoch ID to use for the preprocessing. Defaults to the default epoch if not specified.
+
 Note that this will generate large amounts of preprocessing data, which is expensive and very time-consuming (read: many hours(!) of computation on a powerful machine with many cores).
 
 It is also possible to fetch the status of a preprocessing for key generation through its `REQUEST_ID` using the following command:
@@ -375,8 +381,13 @@ One can thus specify the percentage of the offline phase that should run, as wel
 Partial preprocessing can be triggered via the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing]
+$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
+
+Optional arguments:
+ - `--store-dummy-preprocessing`: add this flag if the insecure dummy preprocessing should stored, to be used in a key gen.
+ - `--context-id <CONTEXT_ID>`: the context ID to use for the preprocessing. Defaults to the default context if not specified.
+ - `--epoch-id <EPOCH_ID>`: the epoch ID to use for the preprocessing. Defaults to the default epoch if not specified.
 
 
 #### Secure Key-Generation
@@ -443,11 +454,11 @@ $ cargo run -- -f <path-to-toml-config-file> custodian-backup-restore
 ```
 
 Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
-After restoring you *must* reboot the KMS server before the restored data can be used. 
+After restoring you *must* reboot the KMS server before the restored data can be used.
 
-This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then when the new node wish to take over, they will use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed. 
+This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then when the new node wish to take over, they will use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed.
 
-WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used. 
+WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used.
 
 #### Arguments
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
@@ -534,12 +545,16 @@ Arguments required for the public/user decryption command are:
 
 Optional command line options for the public/user decryption command are:
  - `-b`/`--batch-size <BATCH_SIZE>`: the batch size of values to decrypt (default: `1`). This will run the operation on `BATCH_SIZE` copies of the same message.
- - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in parallel. This will run `NUM_REQUESTS` copies of the same request (each with a different `REQUEST_ID`)
+ - `-n`/`--num-requests <NUM_REQUESTS>`: the number of requests that are sent in total. This will create `NUM_REQUESTS` copies of the same request (each with a different `REQUEST_ID`)
  - `--no-compression` / `--nc`: Disables ciphertext compression, resulting in the transmission of larger uncompressed ciphertexts (default: False = compression enabled)
  - `--no-precompute-sns` / `--ns`: Disables precomputation of the switch and squash on the core client. Setting this flag causes transmission of smaller ciphertexts and runs the SnS computation on the cores. (default: False = SnS precomputation enabled)
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
+ - `--context-id <CONTEXT_ID>`: optionally specify the context ID to use for the decryption. Defaults to the default context if not specified.
+ - `--epoch-id <EPOCH_ID>`: optionally specify the epoch ID to use for the decryption. Defaults to the default epoch if not specified.
+ - `-i`/`--inter-request-delay-ms <DELAY>`: delay in milliseconds between consecutive decrypt requests (default: `0`, i.e. no waiting between requests)
+ - `-p`/`--parallel-requests <NUM>`: number of requests to be sent in parallel before waiting `<DELAY>` specified with `-i` (default: `0`, i.e. all requests are sent at once)
 
- __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>` and `-n`/`--num-requests <NUM_REQUESTS>` are supported.
+ __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>`, `-n`/`--num-requests <NUM_REQUESTS>`, `--inter-request-delay-ms <DELAY>`, and `-p`/`--parallel-requests <NUM>` are supported.
 
 ### Custodian context
 
