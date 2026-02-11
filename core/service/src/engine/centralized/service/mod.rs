@@ -22,7 +22,7 @@ pub use preprocessing::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+    use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
     use crate::engine::context::{NodeInfo, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::vault::storage::store_versioned_at_request_id;
@@ -34,7 +34,6 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
     use kms_grpc::rpc_types::PrivDataType;
-    use tfhe::safe_serialization::safe_serialize;
 
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
@@ -69,13 +68,7 @@ mod tests {
             public_storage_prefix: None,
             extra_verification_keys: vec![],
         };
-        let mut software_version = Vec::new();
-        safe_serialize(
-            &SoftwareVersion::current(),
-            &mut software_version,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
+        let software_version = SoftwareVersion::current().to_json().unwrap();
         kms.context_manager
             .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
                 new_context: Some(MpcContext {

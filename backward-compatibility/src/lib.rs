@@ -710,6 +710,7 @@ pub struct SoftwareVersionTest {
     pub minor: u32,
     pub patch: u32,
     pub tag: Cow<'static, str>,
+    pub digests: Vec<Vec<u8>>,
 }
 
 impl TestType for SoftwareVersionTest {

@@ -534,9 +534,13 @@ message MpcContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // A software version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
+  // Software version information stored in a JSON string. 
+  // Format as: {"semantic_version": "1.2.3-alpha", digests: ["ABF2872DF3333333333", "9393789A"]}
+  // That is, the JSON must have a "semantic_version" field and a "digests" field which is a list of hex encoded digests.
+  // The semantic version must contain a version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
   // If minor upgrades/downgrades are not permitted then a digest of the binaries to run should also be included.
-  bytes software_version = 3;
+  // There must be at least one element in the digests list.
+  string software_version = 3;
 
   // The corruption threshold for this context.
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.

@@ -1,13 +1,11 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
 
+use std::collections::BTreeSet;
+
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-    Versionize,
-};
+use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
 
@@ -38,12 +36,13 @@ pub struct SoftwareVersion {
     pub minor: u32,
     pub patch: u32,
     pub tag: Option<String>,
+    pub digests: BTreeSet<Vec<u8>>,
 }
 
 impl SoftwareVersion {
     pub fn current() -> Self {
         let version = env!("CARGO_PKG_VERSION");
-        Self::from(version)
+        Self::new_from_semantic_version(version, BTreeSet::new())
     }
 }
 
@@ -73,9 +72,10 @@ impl std::fmt::Display for SoftwareVersion {
     }
 }
 
-impl From<&str> for SoftwareVersion {
-    fn from(s: &str) -> Self {
-        let parts: Vec<&str> = s.split('-').collect();
+impl SoftwareVersion {
+    /// Use a semantic version string like "1.2.3-alpha" to create a SoftwareVersion
+    pub fn new_from_semantic_version(semantic_str: &str, digests: BTreeSet<Vec<u8>>) -> Self {
+        let parts: Vec<&str> = semantic_str.split('-').collect();
         let version_parts: Vec<&str> = parts[0].split('.').collect();
         let major = version_parts
             .first()
@@ -99,8 +99,66 @@ impl From<&str> for SoftwareVersion {
             minor,
             patch,
             tag,
+            digests,
         }
     }
+
+    /// Use a JSON string like: {"semantic_version": "1.2.3-alpha", digests: ["ABF2872DF3", "9393789A"]} to create a SoftwareVersion
+    /// That is, the JSON must have a "semantic_version" field and a "digests" field which is a list of hex encoded digests.
+    pub fn new_from_json(software_version_json: &str) -> anyhow::Result<Self> {
+        if software_version_json.len() > SAFE_SER_SIZE_LIMIT as usize {
+            return Err(anyhow::anyhow!(
+                "Software version string exceeds safe size limit of {} bytes",
+                SAFE_SER_SIZE_LIMIT
+            ));
+        }
+        let json_version: JsonSoftwareVersion = serde_json::from_str(software_version_json)
+            .map_err(|e| {
+                anyhow::anyhow!("Deserialization of software version from JSON failed: {e}")
+            })?;
+        let digests = json_version
+            .digests
+            .into_iter()
+            .map(|d| {
+                hex::decode(d.trim().to_ascii_lowercase())
+                    .map_err(|e| anyhow::anyhow!("Hex decoding failed: {e}"))
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let semantic_version = SoftwareVersion::new_from_semantic_version(
+            json_version.semantic_version.as_str(),
+            digests,
+        );
+        Ok(semantic_version)
+    }
+
+    /// Convert the SoftwareVersion to a JSON string. The JSON will have a "semantic_version" field and a "digests" field which is a list of hex encoded digests.
+    pub fn to_json(&self) -> anyhow::Result<String> {
+        let json_version = JsonSoftwareVersion {
+            semantic_version: self.to_string(),
+            digests: self
+                .digests
+                .iter()
+                .map(hex::encode)
+                .collect::<BTreeSet<_>>(),
+        };
+        let res = serde_json::to_string(&json_version).map_err(|e| {
+            anyhow::anyhow!("Serialization of software version to JSON failed: {e}")
+        })?;
+        if res.len() > SAFE_SER_SIZE_LIMIT as usize {
+            return Err(anyhow::anyhow!(
+                "Software version string exceeds safe size limit of {} bytes",
+                SAFE_SER_SIZE_LIMIT
+            ));
+        }
+        Ok(res)
+    }
+}
+
+/// Helper struct for deserializing the JSON representation of SoftwareVersion
+#[derive(Serialize, Deserialize)]
+struct JsonSoftwareVersion {
+    semantic_version: String,
+    digests: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
@@ -315,9 +373,7 @@ impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::MpcContext) -> anyhow::Result<Self> {
-        let mut buf = std::io::Cursor::new(&value.software_version);
-        let software_version = safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow::anyhow!("Deserialization of software version failed: {e}"))?;
+        let software_version = SoftwareVersion::new_from_json(&value.software_version)?;
         Ok(ContextInfo {
             mpc_nodes: value
                 .mpc_nodes
@@ -347,13 +403,7 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
-        let mut software_version = Vec::new();
-        safe_serialize(
-            &value.software_version,
-            &mut software_version,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| anyhow::anyhow!("Serialization of software version failed: {e}"))?;
+        let software_version = value.software_version.to_json()?;
         Ok(kms_grpc::kms::v1::MpcContext {
             mpc_nodes: value
                 .mpc_nodes
@@ -394,8 +444,14 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: Some("alpha".to_string()),
+            digests: BTreeSet::from(["11".as_bytes().to_vec(), "22".as_bytes().to_vec()]),
         };
         assert_eq!(version.to_string(), "1.2.3-alpha");
+        assert_eq!(
+            version.digests,
+            // Order should not matter
+            BTreeSet::from(["11".as_bytes().to_vec(), "22".as_bytes().to_vec()])
+        );
     }
 
     #[test]
@@ -405,6 +461,7 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: None,
+            digests: BTreeSet::new(),
         };
         assert_eq!(version.to_string(), "1.2.3");
     }
@@ -416,12 +473,14 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: Some("alpha".to_string()),
+            digests: BTreeSet::from(["11".as_bytes().to_vec(), "22".as_bytes().to_vec()]),
         };
         let version2 = SoftwareVersion {
             major: 1,
             minor: 2,
             patch: 3,
             tag: Some("alpha".to_string()),
+            digests: BTreeSet::from(["22".as_bytes().to_vec(), "11".as_bytes().to_vec()]),
         };
         assert_eq!(version1, version2);
     }
@@ -433,12 +492,15 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: Some("alpha".to_string()),
+            digests: BTreeSet::from(["33".as_bytes().to_vec()]),
         };
         let version2 = SoftwareVersion {
             major: 1,
             minor: 2,
             patch: 4,
             tag: Some("alpha".to_string()),
+            // Digests does not affect comparison
+            digests: BTreeSet::from(["11".as_bytes().to_vec(), "22".as_bytes().to_vec()]),
         };
         assert!(version2 > version1);
     }
@@ -450,12 +512,14 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: None,
+            digests: BTreeSet::new(),
         };
         let version2 = SoftwareVersion {
             major: 1,
             minor: 3,
             patch: 0,
             tag: None,
+            digests: BTreeSet::new(),
         };
         assert!(version2 > version1);
     }
@@ -467,12 +531,14 @@ mod tests {
             minor: 3,
             patch: 12,
             tag: None,
+            digests: BTreeSet::new(),
         };
         let version2 = SoftwareVersion {
             major: 2,
             minor: 0,
             patch: 0,
             tag: None,
+            digests: BTreeSet::new(),
         };
         assert!(version2 > version1);
     }
@@ -484,12 +550,14 @@ mod tests {
             minor: 2,
             patch: 3,
             tag: Some("alpha".to_string()),
+            digests: BTreeSet::new(),
         };
         let version2 = SoftwareVersion {
             major: 1,
             minor: 2,
             patch: 3,
             tag: Some("beta".to_string()),
+            digests: BTreeSet::new(),
         };
 
         // This is a bit tricky, as the tag does not affect the ordering,
@@ -534,6 +602,7 @@ mod tests {
                 minor: 0,
                 patch: 0,
                 tag: None,
+                digests: BTreeSet::new(),
             },
             threshold: 1,
             pcr_values: vec![],
@@ -557,20 +626,53 @@ mod tests {
     }
 
     #[test]
-    fn parse_software_version() {
+    fn parse_software_semantic_version() {
         {
-            let version = SoftwareVersion::from("1.2.3-alpha");
+            let version =
+                SoftwareVersion::new_from_semantic_version("1.2.3-alpha", BTreeSet::new());
             assert_eq!(version.major, 1);
             assert_eq!(version.minor, 2);
             assert_eq!(version.patch, 3);
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
         {
-            let version = SoftwareVersion::from("zzz");
+            let version = SoftwareVersion::new_from_semantic_version("zzz", BTreeSet::new());
             assert_eq!(version.major, 0);
             assert_eq!(version.minor, 0);
             assert_eq!(version.patch, 0);
             assert_eq!(version.tag, None);
+        }
+    }
+
+    #[test]
+    fn parse_software_json_version() {
+        {
+            let version = SoftwareVersion::new_from_json(
+                "{\"semantic_version\": \"1.2.3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A\"]}",
+            )
+            .unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+            assert!(version
+                .digests
+                .contains(&hex::decode("ABF2872DF3").unwrap()));
+            assert!(version.digests.contains(&hex::decode("9393789A").unwrap()));
+        }
+        {
+            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+                "{\"semantic_version\": \"1.2.3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A==\"]}",
+            );
+            assert!(version.is_err()); // Not hex digest
+            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+                "{\"semantic_version\": \"1.2.s3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A\"]}",
+            );
+            assert!(version.is_err()); // Not not a patch number
+            let version: Result<SoftwareVersion, serde_json::Error> = serde_json::from_str(
+                "{\"dsemantic_version\": \"1.2.s3-alpha\", \"digests\": [\"ABF2872DF3\", \"9393789A\"]}",
+            );
+            assert!(version.is_err()); // Spelling error in semantic version
         }
     }
 

@@ -5,8 +5,6 @@
 //!
 
 mod common;
-use common::{load_and_unversionize, load_and_unversionize_auxiliary};
-
 use aes_prng::AesRng;
 use backward_compatibility::{
     data_dir,
@@ -21,6 +19,7 @@ use backward_compatibility::{
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
     UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
+use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::{
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
@@ -64,7 +63,7 @@ use kms_lib::{
 use rand::RngCore;
 use rand::SeedableRng;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env,
     path::Path,
     sync::Arc,
@@ -618,6 +617,7 @@ fn test_context_info(
         minor: 11,
         patch: 12,
         tag: None,
+        digests: BTreeSet::from([vec![123u8; 32]]),
     };
     let pcr_values = ReleasePCRValues {
         pcr0: vec![0_u8; 32],
@@ -693,6 +693,7 @@ fn test_software_version(
         } else {
             Some(test.tag.to_string())
         },
+        digests: test.digests.clone().into_iter().collect(),
     };
 
     if original_versionized != new_versionized {

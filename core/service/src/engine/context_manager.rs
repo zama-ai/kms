@@ -68,6 +68,11 @@ where
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
+        if new_context.software_version.digests.is_empty() {
+            return Err(Status::invalid_argument(
+                "At least one digest must be provided in the new context constructed through gRPC",
+            ));
+        }
         // verify new context
         let my_role = self.extract_my_role_from_context(&new_context).await?;
 
@@ -916,7 +921,10 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        collections::BTreeSet,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
     use crate::{
@@ -1027,6 +1035,7 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
+                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1113,6 +1122,7 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
+                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1431,6 +1441,7 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
+                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1525,6 +1536,7 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
+                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1605,6 +1617,9 @@ mod tests {
                     minor: 1,
                     patch: 0,
                     tag: None,
+                    digests: BTreeSet::from([
+                        hex::decode("00112233445566778899aabbccddeeff").unwrap()
+                    ]),
                 },
                 threshold: 0,
                 pcr_values: vec![],
