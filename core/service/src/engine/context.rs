@@ -640,12 +640,15 @@ mod tests {
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
         {
-            let version =
-                SoftwareVersion::new_from_semantic_version("zzz", BTreeSet::new()).unwrap();
-            assert_eq!(version.major, 0);
+            let version = SoftwareVersion::new_from_semantic_version("1", BTreeSet::new()).unwrap();
+            assert_eq!(version.major, 1);
             assert_eq!(version.minor, 0);
             assert_eq!(version.patch, 0);
             assert_eq!(version.tag, None);
+        }
+        {
+            let version = SoftwareVersion::new_from_semantic_version("zzz", BTreeSet::new());
+            assert!(version.is_err());
         }
     }
 
