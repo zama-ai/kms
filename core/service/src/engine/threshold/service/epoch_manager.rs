@@ -54,9 +54,7 @@ use threshold_fhe::{
             offline::{Preprocessing, SecureSmallPreprocessing},
             prss::{PRSSInit, PRSSSetup},
         },
-        tfhe_internals::{
-            parameters::DKGParams, private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
-        },
+        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
     },
     networking::NetworkMode,
 };
@@ -69,10 +67,11 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
-            compute_info_standard_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
+            compute_info_compressed_keygen, compute_info_standard_keygen, retrieve_parameters,
+            KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::service::{
-            reshare_utils::get_verified_public_materials,
+            reshare_utils::{get_verified_public_materials, VerifiedPublicMaterial},
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
             PublicKeyMaterial, ThresholdFheKeys,
         },
@@ -489,52 +488,93 @@ impl<
         ))
     }
 
-    /// Stores the reshared keys and updates the meta store
+    /// Stores the reshared keys and updates the meta store.
+    /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
-        fhe_pubkeys: &FhePubKeySet,
+        verified_material: VerifiedPublicMaterial,
         new_private_keyset: PrivateKeySet<4>,
     ) -> anyhow::Result<()> {
-        let info = match compute_info_standard_keygen(
-            sk,
-            &DSEP_PUBDATA_KEY,
-            &verified_previous_epoch.preproc_id,
-            &verified_previous_epoch.key_id,
-            fhe_pubkeys,
-            &verified_previous_epoch.eip712_domain,
-        ) {
-            Ok(info) => info,
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
+        match verified_material {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                let info = match compute_info_standard_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    &verified_previous_epoch.preproc_id,
+                    &verified_previous_epoch.key_id,
+                    &fhe_pubkeys,
+                    &verified_previous_epoch.eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
+                    }
+                };
+
+                let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                    fhe_pubkeys.server_key.clone().into_raw_parts();
+
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(new_private_keyset),
+                    public_material: PublicKeyMaterial::Uncompressed {
+                        integer_server_key: Arc::new(integer_server_key),
+                        sns_key: sns_key.map(Arc::new),
+                        decompression_key: decompression_key.map(Arc::new),
+                    },
+                    meta_data: info,
+                };
+
+                crypto_storage
+                    .write_threshold_keys_with_epoch_meta_store(
+                        &verified_previous_epoch.key_id,
+                        &new_epoch_id,
+                        threshold_fhe_keys,
+                        fhe_pubkeys,
+                        meta_store,
+                    )
+                    .await;
             }
-        };
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                let info = match compute_info_compressed_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    &verified_previous_epoch.preproc_id,
+                    &verified_previous_epoch.key_id,
+                    &compressed_keyset,
+                    &verified_previous_epoch.eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to compute compressed key info: {}",
+                            e
+                        ));
+                    }
+                };
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-            fhe_pubkeys.server_key.clone().into_raw_parts();
+                let public_material = PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
 
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: Arc::new(new_private_keyset),
-            public_material: PublicKeyMaterial::Uncompressed {
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
-            },
-            meta_data: info,
-        };
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(new_private_keyset),
+                    public_material,
+                    meta_data: info,
+                };
 
-        crypto_storage
-            .write_threshold_keys_with_epoch_meta_store(
-                &verified_previous_epoch.key_id,
-                &new_epoch_id,
-                threshold_fhe_keys,
-                fhe_pubkeys.clone(),
-                meta_store,
-            )
-            .await;
+                crypto_storage
+                    .write_threshold_keys_with_epoch_meta_store_compressed(
+                        &verified_previous_epoch.key_id,
+                        &new_epoch_id,
+                        threshold_fhe_keys,
+                        &compressed_keyset,
+                        meta_store,
+                    )
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -547,7 +587,7 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
+        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
             &epoch_id_as_request_id,
             &verified_previous_epoch.key_id,
@@ -605,7 +645,7 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                &fhe_pubkeys,
+                verified_material,
                 new_private_keyset,
             )
             .await
@@ -623,7 +663,7 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
+        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
             &epoch_id_as_request_id,
             &verified_previous_epoch.key_id,
@@ -684,7 +724,7 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                &fhe_pubkeys,
+                verified_material,
                 new_private_keyset,
             )
             .await
