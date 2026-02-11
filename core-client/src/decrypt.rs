@@ -57,7 +57,10 @@ fn check_external_decryption_signature(
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for response in responses {
-        let payload = response.payload.as_ref().unwrap();
+        let payload = response
+            .payload
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing payload in decryption response"))?;
         check_ext_pt_signature(
             &response.external_signature,
             &payload.plaintexts,
@@ -79,7 +82,14 @@ fn check_external_decryption_signature(
 
     let tp_expected = TestingPlaintext::try_from(expected_answer)?;
     for result in results {
-        assert_eq!(tp_expected, TestingPlaintext::try_from(result).unwrap());
+        let tp_result = TestingPlaintext::try_from(result)?;
+        if tp_expected != tp_result {
+            anyhow::bail!(
+                "decryption result mismatch: expected {:?}, got {:?}",
+                tp_expected,
+                tp_result
+            );
+        }
     }
 
     tracing::info!("Decryption response successfully processed.");
@@ -152,13 +162,30 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 
             let mut req_response_vec = Vec::new();
             while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
+                match inner {
+                    Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+                    Ok(Err(e)) => {
+                        tracing::warn!("Public decrypt request to a core failed: {e}");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Public decrypt request task panicked: {e}");
+                    }
+                }
             }
-            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+            if req_response_vec.len() < num_expected_responses {
+                anyhow::bail!(
+                    "Only {}/{} public decrypt requests succeeded, need at least {}",
+                    req_response_vec.len(),
+                    num_parties,
+                    num_expected_responses
+                );
+            }
 
             tracing::info!(
-                "{:?} ###! Sent all public decrypt requests. Since start {:?}",
+                "{:?} ###! Sent {}/{} public decrypt requests successfully. Since start {:?}",
                 req_id.as_str(),
+                req_response_vec.len(),
+                num_parties,
                 start.elapsed()
             );
 
@@ -259,16 +286,33 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 });
             }
 
-            // make sure all requests have been sent
+            // make sure enough requests have been sent
             let mut req_response_vec = Vec::new();
             while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
+                match inner {
+                    Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+                    Ok(Err(e)) => {
+                        tracing::warn!("User decrypt request to a core failed: {e}");
+                    }
+                    Err(e) => {
+                        tracing::warn!("User decrypt request task panicked: {e}");
+                    }
+                }
             }
-            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+            if req_response_vec.len() < num_expected_responses {
+                anyhow::bail!(
+                    "Only {}/{} user decrypt requests succeeded, need at least {}",
+                    req_response_vec.len(),
+                    num_parties,
+                    num_expected_responses
+                );
+            }
 
             tracing::info!(
-                "{:?} ###! Sent all user decrypt requests. Since start {:?}",
+                "{:?} ###! Sent {}/{} user decrypt requests successfully. Since start {:?}",
                 req_id.as_str(),
+                req_response_vec.len(),
+                num_parties,
                 start.elapsed()
             );
 
@@ -297,27 +341,49 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                         ))
                         .await;
                         // do at most max_iter retries
-                        assert!(
-                            ctr < max_iter,
-                            "timeout while waiting for user decryption after {max_iter} retries."
-                        );
+                        if ctr >= max_iter {
+                            anyhow::bail!(
+                                "timeout while waiting for user decryption after {max_iter} retries."
+                            );
+                        }
                         ctr += 1;
                         response = cur_client
                             .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                             .await;
                     }
-                    (req_id_clone, response.unwrap().into_inner())
+                    let resp = response.map_err(|e| {
+                        anyhow::anyhow!("user decryption response failed: {e}")
+                    })?;
+                    Ok((req_id_clone, resp.into_inner()))
                 });
             }
 
             // collect responses (at least num_expected_responses)
             let mut resp_response_vec = Vec::new();
             while let Some(resp) = resp_tasks.join_next().await {
-                resp_response_vec.push(resp.unwrap().1);
+                match resp {
+                    Ok(Ok((_req_id, inner))) => {
+                        resp_response_vec.push(inner);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("A core failed to return user decryption result: {e}");
+                    }
+                    Err(e) => {
+                        tracing::warn!("User decryption response task panicked: {e}");
+                    }
+                }
                 // break this loop and continue with the rest of the processing if we have enough responses
                 if resp_response_vec.len() >= num_expected_responses {
                     break;
                 }
+            }
+            if resp_response_vec.len() < num_expected_responses {
+                anyhow::bail!(
+                    "Only got {}/{} user decryption responses, need at least {}",
+                    resp_response_vec.len(),
+                    num_parties,
+                    num_expected_responses
+                );
             }
 
             tracing::info!(
@@ -429,26 +495,48 @@ pub(crate) async fn get_public_decrypt_responses(
                 ))
                 .await;
                 // do at most max_iter retries
-                assert!(
-                    ctr < max_iter,
-                    "timeout while waiting for public decryption after {max_iter} retries."
-                );
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for public decryption from core {:?} after {max_iter} retries.",
+                        core_conf
+                    );
+                }
                 ctr += 1;
                 response = cur_client
                     .get_public_decryption_result(tonic::Request::new(request_id.into()))
                     .await;
             }
-            (core_conf, request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("public decryption response from core {:?} failed: {e}", core_conf)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_conf, _req_id, resp) = resp?;
-        resp_response_vec.push((core_conf, resp));
+        match resp {
+            Ok(Ok((core_conf, _req_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return public decryption result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Public decryption response task panicked: {e}");
+            }
+        }
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} public decryption responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
     }
 
     tracing::info!(
@@ -466,18 +554,19 @@ pub(crate) async fn get_public_decrypt_responses(
 
     //If an expected answer is provided, then consider it,
     //otherwise consider the first answer
-    let ptxt = expected_answer.unwrap_or_else(|| {
-        resp_response_vec
+    let ptxt = match expected_answer {
+        Some(pt) => pt,
+        None => resp_response_vec
             .first()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
             .payload
             .as_ref()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
             .plaintexts
             .first()
-            .unwrap()
-            .clone()
-    });
+            .ok_or_else(|| anyhow::anyhow!("no plaintexts in first decryption response"))?
+            .clone(),
+    };
 
     let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
         let domain_msg = decryption_request.domain.as_ref().unwrap();
@@ -493,10 +582,10 @@ pub(crate) async fn get_public_decrypt_responses(
         //If the decryption request isn't provided we assume it was dummy domains and handles
         let num_handles = resp_response_vec
             .first()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
             .payload
             .as_ref()
-            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
             .plaintexts
             .len();
         (dummy_domain(), vec![dummy_handle(); num_handles])
@@ -516,8 +605,7 @@ pub(crate) async fn get_public_decrypt_responses(
         &external_handles,
         &domain,
         kms_addrs,
-    )
-    .unwrap();
+    )?;
 
     tracing::info!(
         "{:?} ###! Verified public decypt responses. Since start {:?}",
