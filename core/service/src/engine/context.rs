@@ -40,7 +40,7 @@ pub struct SoftwareVersion {
 }
 
 impl SoftwareVersion {
-    pub fn current() -> Self {
+    pub fn current() -> anyhow::Result<Self> {
         let version = env!("CARGO_PKG_VERSION");
         Self::new_from_semantic_version(version, BTreeSet::new())
     }
@@ -74,33 +74,37 @@ impl std::fmt::Display for SoftwareVersion {
 
 impl SoftwareVersion {
     /// Use a semantic version string like "1.2.3-alpha" to create a SoftwareVersion
-    pub fn new_from_semantic_version(semantic_str: &str, digests: BTreeSet<Vec<u8>>) -> Self {
+    pub fn new_from_semantic_version(
+        semantic_str: &str,
+        digests: BTreeSet<Vec<u8>>,
+    ) -> anyhow::Result<Self> {
         let parts: Vec<&str> = semantic_str.split('-').collect();
         let version_parts: Vec<&str> = parts[0].split('.').collect();
-        let major = version_parts
-            .first()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        let minor = version_parts
-            .get(1)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        let patch = version_parts
-            .get(2)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let major = match version_parts.first() {
+            Some(v) => v.parse()?,
+            None => anyhow::bail!("Invalid semantic version string: missing major version"),
+        };
+        let minor = match version_parts.get(1) {
+            Some(v) => v.parse()?,
+            None => 0,
+        };
+        let patch = match version_parts.get(2) {
+            Some(p) => p.parse()?,
+            None => 0,
+        };
+        // .and_then(|v| v.parse()?).unwrap_or(0);
         let tag = if parts.len() > 1 {
             Some(parts[1].to_string())
         } else {
             None
         };
-        SoftwareVersion {
+        Ok(SoftwareVersion {
             major,
             minor,
             patch,
             tag,
             digests,
-        }
+        })
     }
 
     /// Use a JSON string like: {"semantic_version": "1.2.3-alpha", digests: ["ABF2872DF3", "9393789A"]} to create a SoftwareVersion
@@ -127,7 +131,7 @@ impl SoftwareVersion {
         let semantic_version = SoftwareVersion::new_from_semantic_version(
             json_version.semantic_version.as_str(),
             digests,
-        );
+        )?;
         Ok(semantic_version)
     }
 
@@ -629,14 +633,15 @@ mod tests {
     fn parse_software_semantic_version() {
         {
             let version =
-                SoftwareVersion::new_from_semantic_version("1.2.3-alpha", BTreeSet::new());
+                SoftwareVersion::new_from_semantic_version("1.2.3-alpha", BTreeSet::new()).unwrap();
             assert_eq!(version.major, 1);
             assert_eq!(version.minor, 2);
             assert_eq!(version.patch, 3);
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
         {
-            let version = SoftwareVersion::new_from_semantic_version("zzz", BTreeSet::new());
+            let version =
+                SoftwareVersion::new_from_semantic_version("zzz", BTreeSet::new()).unwrap();
             assert_eq!(version.major, 0);
             assert_eq!(version.minor, 0);
             assert_eq!(version.patch, 0);

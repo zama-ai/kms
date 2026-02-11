@@ -68,7 +68,7 @@ mod tests {
             public_storage_prefix: None,
             extra_verification_keys: vec![],
         };
-        let software_version = SoftwareVersion::current().to_json().unwrap();
+        let software_version = SoftwareVersion::current().unwrap().to_json().unwrap();
         kms.context_manager
             .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
                 new_context: Some(MpcContext {

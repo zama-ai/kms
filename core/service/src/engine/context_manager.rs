@@ -68,11 +68,6 @@ where
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
-        if new_context.software_version.digests.is_empty() {
-            return Err(Status::invalid_argument(
-                "At least one digest must be provided in the new context constructed through gRPC",
-            ));
-        }
         // verify new context
         let my_role = self.extract_my_role_from_context(&new_context).await?;
 
@@ -337,7 +332,7 @@ pub async fn create_default_centralized_context_in_storage<
             extra_verification_keys: vec![],
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: 0,
         pcr_values: vec![],
     };
@@ -442,7 +437,7 @@ pub async fn ensure_default_threshold_context_in_storage<
     let context_info = ContextInfo {
         mpc_nodes,
         context_id,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: threshold_config.threshold as u32,
         pcr_values: pcr_values.unwrap_or_default(),
     };

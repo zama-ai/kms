@@ -189,7 +189,7 @@ pub async fn create_test_context_info_from_core_config(
     let new_context = ContextInfo {
         mpc_nodes,
         context_id,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: *threshold as u32,
         pcr_values: first_pcr_values.to_vec(),
     };
