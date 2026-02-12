@@ -19,13 +19,11 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
-use crate::testing::utils::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::{delete_all_at_request_id, StorageReader, StorageReaderExt};
-use kms_grpc::kms::v1::{Empty, FheParameter, TypedCiphertext};
+use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
-use std::path::Path;
 use tonic::transport::Channel;
 
 /// Helper to generate key using isolated client (insecure mode - still requires preprocessing)
@@ -98,40 +96,6 @@ async fn key_gen_isolated(
     Ok(())
 }
 
-/// Helper to verify key restoration by encrypting a test message.
-///
-/// This function verifies that the key material exists and is usable by
-/// successfully encrypting a message. If the key was not properly restored,
-/// `compute_cipher_from_stored_key` will fail.
-async fn verify_key_usable_isolated(
-    material_dir: &Path,
-    key_id: &RequestId,
-    msg: TestingPlaintext,
-) -> Result<TypedCiphertext> {
-    use crate::testing::utils::compute_cipher_from_stored_key;
-
-    let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-        Some(material_dir),
-        msg,
-        key_id,
-        None, // storage_prefix - use default
-        EncryptionConfig {
-            compression: false,
-            precompute_sns: true,
-        },
-        false,
-    )
-    .await;
-
-    // Return the ciphertext to prove key material is usable
-    Ok(TypedCiphertext {
-        ciphertext: ct,
-        fhe_type: fhe_type as i32,
-        ciphertext_format: ct_format.into(),
-        external_handle: vec![],
-    })
-}
-
 /// Test centralized DKG backup and restore flow.
 ///
 /// Generates two FHE keys, deletes them from private storage, restores from backup,
@@ -187,19 +151,37 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     let resp = client.restore_from_backup(tonic::Request::new(req)).await?;
     tracing::info!("Backup restore response: {:?}", resp);
 
-    // Verify key restoration by encrypting a test message
-    let _ct1 = verify_key_usable_isolated(
-        material_dir.path(),
-        &key_id_1,
-        TestingPlaintext::U8(u8::MAX),
-    )
-    .await?;
-    let _ct2 = verify_key_usable_isolated(
-        material_dir.path(),
-        &key_id_2,
-        TestingPlaintext::U8(u8::MAX),
-    )
-    .await?;
+    // Verify key restoration by performing full decryption (matching original)
+    {
+        use crate::util::key_setup::test_tools::{EncryptionConfig as EC, TestingPlaintext as TP};
+
+        let pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
+        let client_storage =
+            FileStorage::new(Some(material_dir.path()), StorageType::CLIENT, None)?;
+        let pub_storage_map = std::collections::HashMap::from([(1, pub_storage)]);
+        let mut internal_client = crate::client::client_wasm::Client::new_client(
+            client_storage,
+            pub_storage_map,
+            &crate::consts::TEST_PARAM,
+            None,
+        )
+        .await?;
+
+        crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized(
+            &client,
+            &mut internal_client,
+            &key_id_1,
+            None,
+            vec![TP::U8(u8::MAX)],
+            EC {
+                compression: false,
+                precompute_sns: true,
+            },
+            1,
+            Some(material_dir.path()),
+        )
+        .await;
+    }
 
     drop(client);
     server.assert_shutdown().await;

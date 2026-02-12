@@ -24,8 +24,8 @@ use kms_grpc::kms::v1::FheParameter;
 
 /// Test insecure threshold DKG with Test parameters.
 ///
-/// Generates a threshold FHE key using insecure mode (no preprocessing) with
-/// Test parameters across 4 parties. Verifies key generation succeeded on all parties.
+/// Mirrors the original: boots servers with PRSS, generates key using insecure mode,
+/// verifies key generation succeeded on all parties.
 ///
 /// **Requires:** `insecure` feature flag
 /// **Run with:** `cargo test --lib --features insecure,testing test_insecure_dkg_isolated`
