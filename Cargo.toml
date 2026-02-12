@@ -98,7 +98,6 @@ aws-smithy-runtime-api = { version = "=1.10.0" }  # AWS Smithy runtime API - LOW
 aws-smithy-types = { version = "=1.3.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
-base64 = "=0.22.1"  # Base64 encoding - HIGH RISK: Individual maintainer (marshallpierce), despite 718M downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
@@ -154,8 +153,6 @@ proc-macro2 = "=1.0.101"  # Proc macro utilities - MEDIUM RISK: Reputable indivi
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintainers (AltSysrq, Centril), test-only dependency
 prost = "=0.13.5"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
-prost-build = "=0.13.5"  # Protocol Buffers build - LOW RISK: tokio-rs team
-prost-types = "=0.13.5"  # Protocol Buffers types - LOW RISK: tokio-rs team
 quote = "=1.0.40"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.5"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
 rasn = "=0.20.2"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
@@ -167,7 +164,6 @@ reqwest = { version = "=0.12.22", default-features = false, features = ["json", 
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.4", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
-schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
 serde = { version = "1.0.226", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.145"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
