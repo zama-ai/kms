@@ -14,7 +14,7 @@
 //! ## Test Coverage
 //!
 //! **Centralized Mode Tests:**
-//! - `k8s_test_centralized_insecure` - Keygen + decryption workflow
+//! - `k8s_test_centralized_insecure` - Keygen + CRS generation
 //! - `full_gen_tests_default_k8s_centralized_sequential_crs` - Sequential CRS generation
 //!
 //! ## Architecture

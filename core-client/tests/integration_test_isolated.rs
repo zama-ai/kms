@@ -8,12 +8,13 @@
 //!
 //! ## Test Coverage
 //!
-//! **Default Tests (7 tests, parallel execution)**:
+//! **Default Tests (9 tests, parallel execution)**:
 //! - Centralized (4): keygen, CRS, backup/restore, custodian backup
-//! - Threshold (3): concurrent CRS, backup/restore, custodian backup
+//! - Threshold (5): sequential CRS, concurrent CRS, Default CRS, backup/restore, custodian backup
 //!
-//! **PRSS Tests (5 tests, K8s CI only, sequential execution)**:
-//! - Threshold: keygen, preprocessing, MPC context init, MPC context switch, reshare
+//! **PRSS Tests (7 tests, K8s CI only, sequential execution)**:
+//! - Threshold: keygen, sequential preprocessing, concurrent preprocessing,
+//!   Default preprocessing, MPC context init, MPC context switch, reshare
 //! - Disabled locally due to PRSS networking requirements
 //! - Enable: `cargo test --features k8s_tests,testing -- --test-threads=1`
 //!
