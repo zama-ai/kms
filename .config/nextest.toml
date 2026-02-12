@@ -1,13 +1,20 @@
-# Require nextest 0.9.48+ for test-groups support
-[nextest]
-required-version = "0.9.48"
+nextest-version = { required = "0.9.48" }
 
-# Docker-based integration tests must run sequentially because they share
-# Docker Compose infrastructure with fixed container names.
-# The #[serial(docker)] attribute only works within a single process,
-# but nextest runs each test in a separate process.
+# Sequential execution groups for tests sharing infrastructure.
+# nextest runs each test in a separate process, so #[serial] attributes alone are insufficient.
 [test-groups]
-docker-integration = { max-threads = 1 }
+docker-integration = { max-threads = 1 }  # Docker Compose with fixed container names
+k8s-integration    = { max-threads = 1 }  # Shared KMS pods in Kind cluster
+
+# =============================================================================
+# CI profile: used for PR checks
+# =============================================================================
+# Skips slow tests in integration_test_isolated (nightly-only):
+#   - full_gen_tests_default*
+#   - nightly_tests_threshold_sequential_crs
+#   - test_threshold_concurrent_crs
+[profile.ci]
+default-filter = 'not (binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
 [profile.ci.junit]
 path = "junit.xml"
@@ -15,5 +22,27 @@ store-success-output = true
 store-failure-output = true
 
 [[profile.ci.overrides]]
-filter = "binary(integration_test)"
+filter = "binary(=integration_test)"       # exact match — excludes integration_test_isolated
 test-group = "docker-integration"
+
+[[profile.ci.overrides]]
+filter = "binary(/^kubernetes_test_/)"
+test-group = "k8s-integration"
+
+# =============================================================================
+# CI-nightly profile: used for scheduled builds — runs ALL tests
+# =============================================================================
+[profile.ci-nightly]
+
+[profile.ci-nightly.junit]
+path = "junit.xml"
+store-success-output = true
+store-failure-output = true
+
+[[profile.ci-nightly.overrides]]
+filter = "binary(=integration_test)"
+test-group = "docker-integration"
+
+[[profile.ci-nightly.overrides]]
+filter = "binary(/^kubernetes_test_/)"
+test-group = "k8s-integration"

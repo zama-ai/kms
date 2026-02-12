@@ -463,7 +463,7 @@ impl TestMaterialManager {
                         key_id,
                     )
                     .await?;
-                    self.copy_key_files(
+                    self.copy_epoch_key_files(
                         &source_priv,
                         &dest_priv,
                         &PrivDataType::FhePrivateKey.to_string(),
@@ -504,7 +504,7 @@ impl TestMaterialManager {
                     key_id,
                 )
                 .await?;
-                self.copy_key_files(
+                self.copy_epoch_key_files(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::FhePrivateKey.to_string(),
@@ -637,6 +637,58 @@ impl TestMaterialManager {
                 "Source file does not exist, skipping: {}",
                 source_file.display()
             );
+        }
+
+        Ok(())
+    }
+
+    /// Copy epoch-based key files (e.g., FhePrivateKey which is stored at {root}/{key_type}/{epoch_id}/{key_id})
+    async fn copy_epoch_key_files(
+        &self,
+        source_dir: &Path,
+        dest_dir: &Path,
+        key_type: &str,
+        key_id: &str,
+    ) -> Result<()> {
+        let source_type_dir = source_dir.join(key_type);
+        let dest_type_dir = dest_dir.join(key_type);
+
+        if !source_type_dir.exists() {
+            tracing::warn!(
+                "Source directory does not exist, skipping copy: {}",
+                source_type_dir.display()
+            );
+            return Ok(());
+        }
+
+        // Iterate through epoch subdirectories
+        let mut entries = fs::read_dir(&source_type_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let epoch_path = entry.path();
+            if epoch_path.is_dir() {
+                let epoch_name = entry.file_name();
+                let source_file = epoch_path.join(key_id);
+                let dest_epoch_dir = dest_type_dir.join(&epoch_name);
+                let dest_file = dest_epoch_dir.join(key_id);
+
+                if source_file.exists() {
+                    fs::create_dir_all(&dest_epoch_dir).await?;
+                    fs::copy(&source_file, &dest_file).await.with_context(|| {
+                        format!(
+                            "Failed to copy {} from {} to {}",
+                            key_type,
+                            source_file.display(),
+                            dest_file.display()
+                        )
+                    })?;
+                    tracing::debug!(
+                        "Copied epoch-based key {} from {} to {}",
+                        key_id,
+                        source_file.display(),
+                        dest_file.display()
+                    );
+                }
+            }
         }
 
         Ok(())

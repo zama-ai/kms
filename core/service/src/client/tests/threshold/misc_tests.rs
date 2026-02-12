@@ -1,3 +1,10 @@
+// DEPRECATED: Isolated equivalents in `misc_tests_isolated.rs`
+// - test_threshold_health_endpoint_availability → test_threshold_health_endpoint_availability_isolated
+// - test_threshold_close_after_drop → test_threshold_close_after_drop_isolated
+// - test_threshold_shutdown → test_threshold_shutdown_isolated
+// - test_ratelimiter → test_ratelimiter_isolated
+// TODO: Remove after migration complete.
+
 use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };

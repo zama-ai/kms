@@ -58,6 +58,7 @@ validator.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 cc-tests-utils = { path = "./tests-utils" }
+futures.workspace = true
 # Self-import for integration tests
 kms-core-client = { workspace = true, features = ["testing"] }
 serial_test.workspace = true
@@ -70,4 +71,7 @@ tonic-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
+# Enable PRSS-dependent tests that require sequential execution and stable networking
+# These tests are designed for K8s CI environments
+k8s_tests = []
 testing = []

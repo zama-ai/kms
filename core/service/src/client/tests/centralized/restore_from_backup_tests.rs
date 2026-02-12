@@ -1,3 +1,8 @@
+// DEPRECATED: Isolated equivalents in `restore_from_backup_tests_isolated.rs`
+// - test_insecure_central_dkg_backup → test_insecure_central_dkg_backup_isolated
+// - test_insecure_central_autobackup_after_deletion → test_insecure_central_autobackup_after_deletion_isolated
+// TODO: Remove after migration complete.
+
 use crate::{
     client::tests::centralized::{
         crs_gen_tests::crs_gen_centralized, key_gen_tests::key_gen_centralized,
