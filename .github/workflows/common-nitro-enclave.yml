@@ -119,6 +119,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
+          driver-opts: version=28.0.4
           platforms: linux/amd64
 
       - name: Login to GitHub Container Registry
@@ -165,10 +166,10 @@ jobs:
           echo "EIF_OUTPUT_DIR=${WORKSPACE}/${WORKING_DIRECTORY}/eif-output" >> "$GITHUB_ENV"
 
       - name: Create EIF file
-        uses: maus007/docker-run-action-fork@5ddaad0f7eedd03f64e412b1931852bd3031b273  # v1
+        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
         with:
           image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
-          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output # zizmor: ignore[template-injection]
+          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{ env.DOCKER_SOCK_PATH}}:/var/run/docker.sock # zizmor: ignore[template-injection]
           run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
