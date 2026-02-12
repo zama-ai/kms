@@ -108,7 +108,7 @@ jobs:
       # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
       - name: Install jq
         run: |
-          yum install jq
+          yum install jq -y
 
       - name: Set EIF output dir
         env:
