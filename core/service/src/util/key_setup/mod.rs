@@ -195,7 +195,10 @@ where
             {
                 Ok(exists) => exists,
                 Err(e) => {
-                    tracing::warn!("Failed to check VerfAddress existence: {}, will attempt regeneration", e);
+                    tracing::warn!(
+                        "Failed to check VerfAddress existence: {}, will attempt regeneration",
+                        e
+                    );
                     false
                 }
             };
@@ -225,7 +228,10 @@ where
             {
                 Ok(exists) => exists,
                 Err(e) => {
-                    tracing::warn!("Failed to check VerfKey existence: {}, will attempt regeneration", e);
+                    tracing::warn!(
+                        "Failed to check VerfKey existence: {}, will attempt regeneration",
+                        e
+                    );
                     false
                 }
             };
