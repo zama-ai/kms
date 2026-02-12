@@ -317,13 +317,29 @@ pub async fn setup_threshold_with_custom_peers<
         };
 
         // Update peer addresses with actual allocated ports using the server index mapping
+        assert_eq!(
+            peer_server_indices.len(),
+            peers.len(),
+            "setup_threshold_with_custom_peers misconfiguration: \
+             peer_server_indices.len() = {} but peers.len() = {} for server id {:?}",
+            peer_server_indices.len(),
+            peers.len(),
+            my_id
+        );
         let mut updated_peers = peers.clone();
         for (peer_idx, peer) in updated_peers.iter_mut().enumerate() {
-            if peer_idx < peer_server_indices.len() {
-                let server_idx = peer_server_indices[peer_idx];
-                peer.port = mpc_ports[server_idx];
-                peer.address = ip_addr.to_string();
-            }
+            let server_idx = peer_server_indices[peer_idx];
+            assert!(
+                server_idx < num_servers,
+                "setup_threshold_with_custom_peers misconfiguration: \
+                 peer_server_indices[{}] = {} is out of range [0, {}) for server id {:?}",
+                peer_idx,
+                server_idx,
+                num_servers,
+                my_id
+            );
+            peer.port = mpc_ports[server_idx];
+            peer.address = ip_addr.to_string();
         }
 
         // create channels that will trigger core/threshold shutdown
