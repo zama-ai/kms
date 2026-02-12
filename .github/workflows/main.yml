@@ -285,7 +285,7 @@ jobs:
                     # Threshold tests: includes PRSS tests (sequential execution via #[serial])
           # Centralized tests: basic keygen, CRS, backup/restore workflows
           # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
-          MATRIX="${MATRIX}{\"args-tests\":\"--features testing -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\"},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"--features testing,k8s_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\"},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
@@ -363,7 +363,7 @@ jobs:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and full_gen_tests_*)
-      args-tests: '--features testing -- --skip k8s_ --skip isolated_test_example'
+      args-tests: '--features testing,k8s_tests -- --skip k8s_ --skip isolated_test_example'
       nextest-profile: 'ci-nightly'
       app-cache-dir: 'kms-core-client'
       runs-on: '32cpu-linux-x64'
