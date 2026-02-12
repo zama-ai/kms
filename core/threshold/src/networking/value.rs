@@ -131,35 +131,51 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::PubKeySet(_pk) => f.debug_tuple("PubKeySet").field(&"...").finish(),
+            NetworkValue::PubKeySet(_pk) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
             #[cfg(feature = "experimental")]
-            NetworkValue::PubBgvKeySet(_pk) => f.debug_tuple("PubBgvKeySet").field(&"...").finish(),
+            NetworkValue::PubBgvKeySet(_pk) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::Crs(_crs) => f.debug_tuple("Crs").field(&"...").finish(),
+            NetworkValue::Crs(_crs) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::DecompressionKey(_) => {
-                f.debug_tuple("DecompressionKey").field(&"...").finish()
+            NetworkValue::DecompressionKey(_) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::SnsCompressionKey(_) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::CompressedXofKeySet(_) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
+            NetworkValue::RingValue(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
+            NetworkValue::VecRingValue(v) => {
+                f.debug_tuple(self.network_type_name()).field(v).finish()
             }
-            #[cfg(any(test, feature = "testing"))]
-            NetworkValue::SnsCompressionKey(_) => {
-                f.debug_tuple("SnsCompressionKey").field(&"...").finish()
-            }
-            #[cfg(any(test, feature = "testing"))]
-            NetworkValue::CompressedXofKeySet(_) => {
-                f.debug_tuple("CompressedXofKeySet").field(&"...").finish()
-            }
-            NetworkValue::RingValue(v) => f.debug_tuple("RingValue").field(v).finish(),
-            NetworkValue::VecRingValue(v) => f.debug_tuple("VecRingValue").field(v).finish(),
             NetworkValue::VecPairRingValue(v) => {
-                f.debug_tuple("VecPairRingValue").field(v).finish()
+                f.debug_tuple(self.network_type_name()).field(v).finish()
             }
-            NetworkValue::Send(v) => f.debug_tuple("Send").field(v).finish(),
-            NetworkValue::EchoBatch(v) => f.debug_tuple("EchoBatch").field(v).finish(),
-            NetworkValue::VoteBatch(v) => f.debug_tuple("VoteBatch").field(v).finish(),
-            NetworkValue::AgreeRandom(v) => f.debug_tuple("AgreeRandom").field(v).finish(),
-            NetworkValue::Bot => f.write_str("Bot"),
-            NetworkValue::Empty => f.write_str("Empty"),
-            NetworkValue::Round1VSS(v) => f.debug_tuple("Round1VSS").field(v).finish(),
+            NetworkValue::Send(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
+            NetworkValue::EchoBatch(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
+            NetworkValue::VoteBatch(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
+            NetworkValue::AgreeRandom(v) => {
+                f.debug_tuple(self.network_type_name()).field(v).finish()
+            }
+            NetworkValue::Bot => f.write_str(self.network_type_name()),
+            NetworkValue::Empty => f.write_str(self.network_type_name()),
+            NetworkValue::Round1VSS(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
         }
     }
 }
@@ -198,30 +214,30 @@ impl<Z: Ring> NetworkValue<Z> {
 }
 
 impl<Z: Eq + Zero> NetworkValue<Z> {
-    pub fn network_type_name(&self) -> String {
+    pub fn network_type_name(&self) -> &str {
         match self {
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::PubKeySet(_) => "PubKeySet".to_string(),
+            NetworkValue::PubKeySet(_) => "PubKeySet",
             #[cfg(feature = "experimental")]
-            NetworkValue::PubBgvKeySet(_) => "PubBgvKeySet".to_string(),
+            NetworkValue::PubBgvKeySet(_) => "PubBgvKeySet",
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::Crs(_) => "Crs".to_string(),
+            NetworkValue::Crs(_) => "Crs",
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::DecompressionKey(_) => "DecompressionKey".to_string(),
+            NetworkValue::DecompressionKey(_) => "DecompressionKey",
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::SnsCompressionKey(_) => "SnsCompressionKey".to_string(),
+            NetworkValue::SnsCompressionKey(_) => "SnsCompressionKey",
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::CompressedXofKeySet(_) => "CompressedXofKeySet".to_string(),
-            NetworkValue::RingValue(_) => "RingValue".to_string(),
-            NetworkValue::VecRingValue(_) => "VecRingValue".to_string(),
-            NetworkValue::VecPairRingValue(_) => "VecPairRingValue".to_string(),
-            NetworkValue::Send(_) => "Send".to_string(),
-            NetworkValue::EchoBatch(_) => "EchoBatch".to_string(),
-            NetworkValue::VoteBatch(_) => "VoteBatch".to_string(),
-            NetworkValue::AgreeRandom(_) => "AgreeRandom".to_string(),
-            NetworkValue::Bot => "Bot".to_string(),
-            NetworkValue::Empty => "Empty".to_string(),
-            NetworkValue::Round1VSS(_) => "Round1VSS".to_string(),
+            NetworkValue::CompressedXofKeySet(_) => "CompressedXofKeySet",
+            NetworkValue::RingValue(_) => "RingValue",
+            NetworkValue::VecRingValue(_) => "VecRingValue",
+            NetworkValue::VecPairRingValue(_) => "VecPairRingValue",
+            NetworkValue::Send(_) => "Send",
+            NetworkValue::EchoBatch(_) => "EchoBatch",
+            NetworkValue::VoteBatch(_) => "VoteBatch",
+            NetworkValue::AgreeRandom(_) => "AgreeRandom",
+            NetworkValue::Bot => "Bot",
+            NetworkValue::Empty => "Empty",
+            NetworkValue::Round1VSS(_) => "Round1VSS",
         }
     }
 }
