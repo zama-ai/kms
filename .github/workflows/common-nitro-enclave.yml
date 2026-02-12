@@ -105,15 +105,10 @@ jobs:
       volumes:
         - ${{ github.workspace }}/${{ inputs.working-directory }}/eif-output:/output
     steps:
-      - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          persist-credentials: false
-
       # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
       - name: Install jq
         run: |
-          sudo apt update && sudo apt -y install jq
+          sudo yum install jq
 
       - name: Set EIF output dir
         env:
