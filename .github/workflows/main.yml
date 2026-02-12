@@ -44,6 +44,7 @@ jobs:
       changes-backward-compatibility: ${{ steps.filter.outputs.backward-compatibility }}
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
+      changes-core-client-k8s-tests: ${{ steps.filter.outputs.core-client-k8s-tests }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
@@ -64,10 +65,14 @@ jobs:
             ci:
               - '.github/workflows/**'
             core-client:
-              - 'core-client/**'
+              - 'core-client/src/**'
+              - 'core-client/config/**'
+              - 'core-client/tests-utils/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            core-client-k8s-tests:
+              - 'core-client/tests/kubernetes_test_*'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -350,7 +355,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: github.event_name == 'schedule'
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core-client'
