@@ -186,13 +186,14 @@ where
 
         // Even if signing keys exist, VerfAddress and VerfKey might not
         if let Some(sk) = temp.get(req_id) {
+            let pk = sk.verf_key();
+
             // Regenerate VerfAddress if missing
             if !pub_storage
                 .data_exists(req_id, &PubDataType::VerfAddress.to_string())
                 .await
                 .unwrap_or(false)
             {
-                let pk = sk.verf_key();
                 let ethereum_address = pk.address();
                 if let Err(store_err) = store_text_at_request_id(
                     pub_storage,
@@ -217,7 +218,6 @@ where
                 .await
                 .unwrap_or(false)
             {
-                let pk = sk.verf_key();
                 if let Err(store_err) = store_versioned_at_request_id(
                     pub_storage,
                     req_id,

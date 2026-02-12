@@ -67,42 +67,12 @@ pub async fn regenerate_central_keys(
         priv_storage.root_dir().display()
     );
 
-    // Delete the entire SigningKey directory to force complete regeneration
-    let signing_key_dir = priv_storage.root_dir().join("SigningKey");
-    if signing_key_dir.exists() {
-        if let Err(e) = tokio::fs::remove_dir_all(&signing_key_dir).await {
-            tracing::warn!("Failed to remove SigningKey directory: {}", e);
-        } else {
-            tracing::info!(
-                "Removed SigningKey directory: {}",
-                signing_key_dir.display()
-            );
-        }
-    }
+    // Delete all signing-related directories to force complete regeneration
+    remove_dir_if_exists(priv_storage.root_dir().join("SigningKey")).await;
+    remove_dir_if_exists(pub_storage.root_dir().join("VerfKey")).await;
+    remove_dir_if_exists(pub_storage.root_dir().join("VerfAddress")).await;
 
-    // Also delete VerfKey and VerfAddress directories
-    let verf_key_dir = pub_storage.root_dir().join("VerfKey");
-    if verf_key_dir.exists() {
-        if let Err(e) = tokio::fs::remove_dir_all(&verf_key_dir).await {
-            tracing::warn!("Failed to remove VerfKey directory: {}", e);
-        } else {
-            tracing::info!("Removed VerfKey directory: {}", verf_key_dir.display());
-        }
-    }
-
-    let verf_address_dir = pub_storage.root_dir().join("VerfAddress");
-    if verf_address_dir.exists() {
-        if let Err(e) = tokio::fs::remove_dir_all(&verf_address_dir).await {
-            tracing::warn!("Failed to remove VerfAddress directory: {}", e);
-        } else {
-            tracing::info!(
-                "Removed VerfAddress directory: {}",
-                verf_address_dir.display()
-            );
-        }
-    }
-
-    // Now regenerate signing keys (VerfKey, VerfAddress, SigningKey)
+    // Regenerate signing keys (VerfKey, VerfAddress, SigningKey)
     let generated = ensure_central_server_signing_keys_exist(
         pub_storage,
         priv_storage,
@@ -110,10 +80,6 @@ pub async fn regenerate_central_keys(
         true, // deterministic
     )
     .await;
-    tracing::info!(
-        "regenerate_central_keys: ensure_central_server_signing_keys_exist returned {}",
-        generated
-    );
 
     if !generated {
         return Err(anyhow::anyhow!(
@@ -121,16 +87,20 @@ pub async fn regenerate_central_keys(
         ));
     }
 
-    // Clear existing public FHE keys to force regeneration with correct RequestIds
-    let _ = pub_storage
-        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
-        .await;
-    let _ = pub_storage
-        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
-        .await;
+    // Delete all FHE key artifacts to force clean regeneration.
+    // ensure_central_keys_exist short-circuits on existing PublicKey, but we also
+    // remove ServerKey and FhePrivateKey to avoid stale data from a previous run.
+    for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
+        let _ = pub_storage
+            .delete_data(key_id, &PubDataType::PublicKey.to_string())
+            .await;
+        let _ = pub_storage
+            .delete_data(key_id, &PubDataType::ServerKey.to_string())
+            .await;
+    }
 
     // Regenerate FHE keys
-    ensure_central_keys_exist(
+    if !ensure_central_keys_exist(
         pub_storage,
         priv_storage,
         TEST_PARAM,
@@ -140,9 +110,21 @@ pub async fn regenerate_central_keys(
         true, // deterministic
         true, // write_privkey
     )
-    .await;
+    .await
+    {
+        return Err(anyhow::anyhow!("Failed to generate central FHE keys"));
+    }
 
     Ok(())
+}
+
+/// Remove a directory if it exists, logging the outcome.
+async fn remove_dir_if_exists(path: std::path::PathBuf) {
+    match tokio::fs::remove_dir_all(&path).await {
+        Ok(()) => tracing::info!("Removed directory: {}", path.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // nothing to remove
+        Err(e) => tracing::warn!("Failed to remove {}: {}", path.display(), e),
+    }
 }
 
 /// Convert Eip712Domain to Eip712DomainMsg for gRPC requests
