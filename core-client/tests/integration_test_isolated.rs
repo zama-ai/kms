@@ -1190,7 +1190,7 @@ async fn crs_gen_isolated(
     test_path: &Path,
     insecure_crs_gen: bool,
 ) -> Result<String> {
-    crs_gen_isolated_with_params(config_path, test_path, insecure_crs_gen, 16, 200).await
+    crs_gen_isolated_with_params(config_path, test_path, insecure_crs_gen, 2048, 200).await
 }
 
 /// CRS generation with configurable max_num_bits and max_iter.
@@ -1233,13 +1233,21 @@ async fn crs_gen_isolated_with_params(
 }
 
 /// Helper to run integration test commands via CLI (isolated version)
+///
+/// Mirrors the Docker-based `integration_test_commands` in integration_test.rs:
+/// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
+/// - Encrypt to file + PublicDecrypt/UserDecrypt from file
+/// - SnS precompute variants (no_precompute_sns=false)
 async fn integration_test_commands_isolated(
     config_path: &Path,
     keys_folder: &Path,
     key_id: String,
 ) -> Result<()> {
     let key_id = KeyId::from_str(&key_id)?;
+    let ctxt_path = keys_folder.join("test_encrypt_cipher.txt");
+    let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
 
+    // Commands without SnS precompute (no_precompute_sns=true)
     let commands = vec![
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1251,9 +1259,9 @@ async fn integration_test_commands_isolated(
             epoch_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            parallel_requests: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1265,24 +1273,257 @@ async fn integration_test_commands_isolated(
             epoch_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            parallel_requests: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x6F".to_string(),
+            data_type: FheType::Euint8,
+            no_compression: true,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 3,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x6F".to_string(),
+            data_type: FheType::Euint8,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 3,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xFFFF".to_string(),
+            data_type: FheType::Euint16,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::Encrypt(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: Some(ctxt_path.clone()),
+            inter_request_delay_ms: 0,
+        }),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_path.clone(),
+            batch_size: 1,
+            num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_path.clone(),
+            batch_size: 1,
+            num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
     ];
 
-    for command in commands {
+    // Commands with SnS precompute (no_precompute_sns=false)
+    let commands_for_sns_precompute = vec![
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x1".to_string(),
+            data_type: FheType::Ebool,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 2,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x78".to_string(),
+            data_type: FheType::Euint8,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 2,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x1".to_string(),
+            data_type: FheType::Ebool,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x6F".to_string(),
+            data_type: FheType::Euint8,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::Encrypt(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            context_id: None,
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: Some(ctxt_with_sns_path.clone()),
+            inter_request_delay_ms: 0,
+        }),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_with_sns_path.clone(),
+            batch_size: 1,
+            num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+        })),
+        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_with_sns_path.clone(),
+            batch_size: 1,
+            num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+        })),
+    ];
+
+    let all_commands = [commands, commands_for_sns_precompute].concat();
+
+    for command in all_commands {
         let config = CmdConfig {
             file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
-            command,
+            command: command.clone(),
             logs: true,
-            max_iter: 200,
+            max_iter: 500,
             expect_all_responses: true,
             download_all: false,
         };
-        execute_cmd(&config, keys_folder)
+
+        let results = execute_cmd(&config, keys_folder)
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        // Validate result count matches expected requests
+        match &command {
+            CCCommand::PublicDecrypt(cipher_arguments)
+            | CCCommand::UserDecrypt(cipher_arguments) => {
+                let num_expected_results = cipher_arguments.get_num_requests();
+                assert_eq!(results.len(), num_expected_results);
+            }
+            _ => {}
+        }
     }
 
     Ok(())
