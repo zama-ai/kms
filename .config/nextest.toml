@@ -1,18 +1,27 @@
 nextest-version = { required = "0.9.48" }
 
-# Sequential execution groups for tests sharing infrastructure.
-# nextest runs each test in a separate process, so #[serial] attributes alone are insufficient.
+# =============================================================================
+# Test Groups — enforce sequential execution for tests sharing infrastructure
+# =============================================================================
+# nextest runs each test in a separate process, so #[serial] attributes alone
+# are insufficient to prevent parallel execution across binaries.
 [test-groups]
-docker-integration = { max-threads = 1 }  # Docker Compose with fixed container names
-k8s-integration    = { max-threads = 1 }  # Shared KMS pods in Kind cluster
+# Docker Compose tests (integration_test binary) share fixed container names
+# and ports — running them in parallel would cause port/name conflicts.
+docker-integration = { max-threads = 1 }
+# K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
+# cluster — concurrent requests would interfere with each other.
+k8s-integration    = { max-threads = 1 }
 
 # =============================================================================
-# CI profile: used for PR checks
+# CI profile: used for PR checks (fast feedback)
 # =============================================================================
-# Skips slow tests in integration_test_isolated (nightly-only):
-#   - full_gen_tests_default*
+# Excludes slow tests from integration_test_isolated that only run nightly:
+#   - full_gen_tests_default*           (uses real/Default FHE params — very slow)
 #   - nightly_tests_threshold_sequential_crs
 #   - test_threshold_concurrent_crs
+# Note: K8s tests with "default" in their name are lightweight (insecure params)
+# and always run — the filter only targets the integration_test_isolated binary.
 [profile.ci]
 default-filter = 'not (binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
@@ -21,10 +30,14 @@ path = "junit.xml"
 store-success-output = true
 store-failure-output = true
 
+# Serialize Docker Compose tests: "binary(=integration_test)" is an exact match,
+# so it does NOT affect integration_test_isolated (which runs in parallel).
 [[profile.ci.overrides]]
-filter = "binary(=integration_test)"       # exact match — excludes integration_test_isolated
+filter = "binary(=integration_test)"
 test-group = "docker-integration"
 
+# Serialize all K8s test binaries (kubernetes_test_threshold*,
+# kubernetes_test_centralized*) — they share the same Kind cluster pods.
 [[profile.ci.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
@@ -32,6 +45,9 @@ test-group = "k8s-integration"
 # =============================================================================
 # CI-nightly profile: used for scheduled builds — runs ALL tests
 # =============================================================================
+# No default-filter: includes the slow tests that the ci profile skips.
+# The serialization overrides below are identical to ci — Docker and K8s tests
+# still need sequential execution regardless of profile.
 [profile.ci-nightly]
 
 [profile.ci-nightly.junit]
@@ -39,10 +55,12 @@ path = "junit.xml"
 store-success-output = true
 store-failure-output = true
 
+# Serialize Docker Compose tests (same as ci profile).
 [[profile.ci-nightly.overrides]]
 filter = "binary(=integration_test)"
 test-group = "docker-integration"
 
+# Serialize K8s tests (same as ci profile).
 [[profile.ci-nightly.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
