@@ -29,7 +29,7 @@ use kms_0_13_0::engine::base::{
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_13_0::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use kms_0_13_0::engine::threshold::service::session::PRSSSetupCombined;
-use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
+use kms_0_13_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
 use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_13_0::{
@@ -42,11 +42,11 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_4::safe_serialization::safe_serialize;
-use tfhe_1_4::shortint::parameters::{
+use tfhe_1_5_1::safe_serialization::safe_serialize;
+use tfhe_1_5_1::shortint::parameters::{
     LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
 };
-use tfhe_1_4::{
+use tfhe_1_5_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -63,7 +63,7 @@ use tfhe_1_4::{
     },
     ServerKey, Tag,
 };
-use tfhe_versionable_0_6::Upgrade;
+use tfhe_versionable_0_7::Upgrade;
 use threshold_fhe_0_13_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe_0_13_0::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_13_0::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -92,9 +92,9 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
+    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
     UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
     UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
     KMS_MODULE_NAME,
@@ -172,7 +172,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -185,7 +185,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -588,7 +588,7 @@ impl KmsV0_13 {
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
         let pub_key_digest =
             safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-        let sol_type = KeygenVerification::new(
+        let sol_type = KeygenVerification::new_standard(
             &preprocessing_id,
             &key_id,
             server_key_digest.clone(),
@@ -1229,12 +1229,15 @@ impl KmsV0_13 {
             &THRESHOLD_FHE_KEYS_TEST.decompression_key_filename,
         );
 
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: std::sync::Arc::new(private_key_set),
+        let public_material = PublicKeyMaterial::Uncompressed {
             integer_server_key: std::sync::Arc::new(integer_server_key),
             sns_key: sns_key.map(std::sync::Arc::new),
-            meta_data: kms_0_13_0::engine::base::KeyGenMetadata::LegacyV0(info),
             decompression_key: decompression_key.map(std::sync::Arc::new),
+        };
+        let threshold_fhe_keys = ThresholdFheKeys {
+            private_keys: std::sync::Arc::new(private_key_set),
+            public_material,
+            meta_data: kms_0_13_0::engine::base::KeyGenMetadata::LegacyV0(info),
         };
 
         store_versioned_test!(

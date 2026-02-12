@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tfhe_versionable_0_6::Versionize as Versionize_0_6;
+use tfhe_versionable_0_7::Versionize as Versionize_0_7;
 
 use backward_compatibility::{
     data_dir, dir_for_version,
@@ -88,7 +88,7 @@ macro_rules! define_store_versioned_test_fn {
         }
     };
 }
-define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_6);
+define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_7);
 
 /// Stores the auxiliary data in `dir`, encoded in bincode, using the right tfhe-versionable version
 macro_rules! define_store_versioned_auxiliary_fn {
@@ -113,7 +113,7 @@ macro_rules! define_store_versioned_auxiliary_fn {
         }
     };
 }
-define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_6);
+define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_7);
 
 pub fn store_metadata<Meta, P>(new_data: &Vec<Meta>, path: P)
 where

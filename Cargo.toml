@@ -107,7 +107,7 @@ cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LO
 cfg-if = "=1.0.4"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
 ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
-config = "=0.15.18"  # Configuration management - LOW RISK: rust-cli org (team maintained)
+config = "=0.15.19"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.34"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
@@ -167,7 +167,7 @@ rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cr
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.4", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
-serde = { version = "1.0.226", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
+serde = { version = "1.0.228", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.145"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
 serial_test = "=3.2.0"  # Serial test execution - HIGH RISK: Individual maintainer (palfrey), test-only dependency
