@@ -90,13 +90,13 @@
 //!     // Setup: Returns (TempDir, ServerHandle, PathBuf)
 //!     let (material_dir, _server, config_path) =
 //!         setup_isolated_centralized_cli_test("my_test").await?;
-//!     
+//!
 //!     // Run CLI commands using config_path
 //!     let output = Command::new(env!("CARGO_BIN_EXE_kms-core-client"))
 //!         .args(["--config", config_path.to_str().unwrap()])
 //!         .args(["your-command"])
 //!         .output()?;
-//!     
+//!
 //!     assert!(output.status.success());
 //!     Ok(())
 //! }
@@ -110,7 +110,7 @@
 //!     // Setup: Returns (TempDir, HashMap<u32, ServerHandle>, PathBuf)
 //!     let (material_dir, _servers, config_path) =
 //!         setup_isolated_threshold_cli_test_default("my_test", 4).await?;
-//!     
+//!
 //!     // CLI automatically communicates with all 4 parties via config
 //!     // Run your test commands here
 //!     Ok(())
@@ -156,7 +156,7 @@
 //!     // Setup with PRSS enabled
 //!     let (material_dir, _servers, config_path) =
 //!         setup_isolated_threshold_cli_test_with_prss("my_test", 4).await?;
-//!     
+//!
 //!     // Run PRSS operations (keygen, preprocessing, etc.)
 //!     Ok(())
 //! }
