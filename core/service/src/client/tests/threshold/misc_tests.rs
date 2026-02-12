@@ -404,7 +404,6 @@ async fn nightly_test_complete_session_notification() {
             key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            false,
         )
         .await;
 
@@ -428,14 +427,7 @@ async fn nightly_test_complete_session_notification() {
         let request_id = derive_request_id(&format!("TEST_COMPLETE_SESSION{j}")).unwrap();
 
         let req = internal_client
-            .public_decryption_request(
-                cts.clone(),
-                &dummy_domain(),
-                &request_id,
-                None,
-                key_id,
-                None,
-            )
+            .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, None, key_id)
             .unwrap();
 
         // Either send the request, or skip the party if it's in
