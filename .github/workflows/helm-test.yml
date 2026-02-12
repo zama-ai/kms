@@ -46,5 +46,5 @@ jobs:
       - name: Run chart-testing (lint)
         if: steps.list-changed.outputs.changed == 'true'
         env:
-          TARGET_BRANCH: ${{ github.base_ref }}
+          TARGET_BRANCH: ${{ github.base_ref || github.event.before || 'main' }}
         run: ct lint --config ./ci/ct.yaml --target-branch "${TARGET_BRANCH}"
