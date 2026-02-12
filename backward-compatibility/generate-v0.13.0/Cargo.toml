@@ -1,0 +1,60 @@
+[package]
+name = "backward-compatibility-generate-v0-13-0"
+version = "0.13.0"
+publish = false
+authors = ["Zama"]
+edition = "2021"
+license = "BSD-3-Clause-Clear"
+
+[dependencies]
+# Import the base backward-compatibility crate for shared types and utilities
+backward-compatibility = { path = ".." }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", tag = "v0.13.0-rc.2" }
+
+# NOTE: Some dependencies below are duplicated from ../Cargo.toml
+# This is intentional - these crates are excluded from the workspace for isolation.
+# Each generator may need different versions to match its target KMS version.
+
+# This is a list of kms-core versions we will generate data for. This list will grow over time.
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", tag = "v0.13.0-rc.2"}
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", tag = "v0.13.0-rc.2"}
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", tag = "v0.13.0-rc.2", features = [
+    "testing",
+] }
+
+# Dependencies for the 0.13 version
+# Note: these dependencies should match the versions used by the KMS and distributed decryption
+# modules as much as possible to avoid serialization differences
+cfg-if_1_0_3 = { package = "cfg-if", version = "=1.0.3" }
+tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.7.0" }
+tfhe_1_5_1 = { package = "tfhe", version = "1.5.1", features = [
+    "shortint",
+] }
+alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }
+alloy-primitives-1_4_1 = { package = "alloy-primitives", version = "=1.4.1" }
+
+# Common dependencies
+itertools = "=0.14.0"
+# Note: This serde version is used for metadata types imported from backward-compatibility crate.
+# The old KMS types (kms_0_11) will use their own serde 1.0.210 from their dependency tree.
+# Both serde versions coexist in the same binary - this is intentional and correct!
+serde = { version = "=1.0.226", features = ["derive"] }
+# bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.12.2)
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
+bincode = { version = "=2.0.1", features = ["serde"] }
+aes-prng = "=0.2.1"
+rand = "=0.8.5"
+ron = { version = "=0.10.1", features = ["integer128"] }
+tokio = { version = "=1.46.1", features = ["full"] }
+
+[[bin]]
+name = "backward-compatibility-generate-v0-13-0"
+
+[patch.crates-io]
+attestation-doc-validation = { git = 'https://github.com/mkmks/attestation-doc-validation.git', branch = 'timestamps' }
+rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
+rustls = { git = 'https://github.com/mkmks/rustls.git', rev = '2e446f859fc4488d12f3bdd3c23578320649d02d' }
+rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
+rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', rev = '9ae056039fc1929cc7a3fc3036b71e50d82f2fe6' }
+tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }
