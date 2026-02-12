@@ -88,19 +88,89 @@ jobs:
             echo "tag=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           fi
 
+  create-eif:
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      packages: read # Required to pull docker images
+    needs: determine-tag
+    outputs:
+      eif_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
+      eif_pcr1: ${{ steps.eif.outputs.eif_pcr1 }}
+      eif_pcr2: ${{ steps.eif.outputs.eif_pcr2 }}
+    name: common-nitro-enclave/create-eif
+    runs-on: 'ubuntu-latest'
+    container:
+      image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217
+      volumes:
+        - ${{ github.workspace }}/${{ inputs.working-directory }}/eif-output:/output
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
+      - name: Install jq
+        run: |
+          sudo apt update && sudo apt -y install jq
+
+      - name: Set EIF output dir
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          echo "EIF_OUTPUT_DIR=${WORKSPACE}/${WORKING_DIRECTORY}/eif-output" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create EIF file
+        run: |
+            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
+            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
+            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+
+      - name: Export EIF measurements
+        id: eif
+        env:
+          EIF_OUTPUT_DIR: ${{ env.EIF_OUTPUT_DIR }}
+        run: |
+          EIF_MEASUREMENT_PCR0=$(jq -r '.Measurements.PCR0' "$EIF_OUTPUT_DIR/eif-info.txt")
+          EIF_MEASUREMENT_PCR1=$(jq -r '.Measurements.PCR1' "$EIF_OUTPUT_DIR/eif-info.txt")
+          EIF_MEASUREMENT_PCR2=$(jq -r '.Measurements.PCR2' "$EIF_OUTPUT_DIR/eif-info.txt")
+          {
+            echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}"
+            echo "eif_pcr1=${EIF_MEASUREMENT_PCR1}"
+            echo "eif_pcr2=${EIF_MEASUREMENT_PCR2}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload EIF artifacts
+        uses: actions/upload-artifact@8f95767b17a36f2eb6294583efc9d5554b0b2e69 # v4.6.0
+        with:
+          name: eif-output
+          path: ${{ env.EIF_OUTPUT_DIR }}
+          retention-days: 1
+
   build-and-push-enclave:
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to publish packages
       packages: write # Required to publish packages
       id-token: write # Required for OIDC token generation
-    needs: determine-tag
+    needs: [determine-tag, create-eif]
     outputs:
       image: ${{ steps.push.outputs.image }}
       digest: ${{ steps.push.outputs.digest }}
-      enclave_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
-      enclave_pcr1: ${{ steps.eif.outputs.eif_pcr1 }}
-      enclave_pcr2: ${{ steps.eif.outputs.eif_pcr2 }}
+      enclave_pcr0: ${{ needs.create-eif.outputs.eif_pcr0 }}
+      enclave_pcr1: ${{ needs.create-eif.outputs.eif_pcr1 }}
+      enclave_pcr2: ${{ needs.create-eif.outputs.eif_pcr2 }}
     name: common-nitro-enclave/build-and-push-enclave
     runs-on: 'ubuntu-latest'
     steps:
@@ -153,11 +223,6 @@ jobs:
         run: |
           echo "DOCKER_TAG_IMAGE=${REF_NAME}" >> "$GITHUB_ENV"
 
-      # Our self-hosted runner AMI doesn't ship jq which we need during EIF build
-      - name: Install jq
-        run: |
-          sudo apt update && sudo apt -y install jq
-
       - name: Set EIF output dir
         env:
           WORKSPACE: ${{ github.workspace }}
@@ -165,31 +230,11 @@ jobs:
         run: |
           echo "EIF_OUTPUT_DIR=${WORKSPACE}/${WORKING_DIRECTORY}/eif-output" >> "$GITHUB_ENV"
 
-      - name: Create EIF file
-        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
+      - name: Download EIF artifacts
+        uses: actions/download-artifact@41d8c69dc83cf578477de7c9ce6b9a2e1c2b0d78 # v4.4.2
         with:
-          image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
-          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{ env.DOCKER_SOCK_PATH}}:/var/run/docker.sock # zizmor: ignore[template-injection]
-          run: |
-            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
-            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
-            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
-
-      - name: Export EIF measurements
-        id: eif
-        env:
-          EIF_OUTPUT_DIR: ${{ env.EIF_OUTPUT_DIR }}
-        run: |
-          EIF_MEASUREMENT_PCR0=$(jq -r '.Measurements.PCR0' "$EIF_OUTPUT_DIR/eif-info.txt")
-          EIF_MEASUREMENT_PCR1=$(jq -r '.Measurements.PCR1' "$EIF_OUTPUT_DIR/eif-info.txt")
-          EIF_MEASUREMENT_PCR2=$(jq -r '.Measurements.PCR2' "$EIF_OUTPUT_DIR/eif-info.txt")
-          {
-            echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}"
-            echo "eif_pcr1=${EIF_MEASUREMENT_PCR1}"
-            echo "eif_pcr2=${EIF_MEASUREMENT_PCR2}"
-          } >> "$GITHUB_OUTPUT"
+          name: eif-output
+          path: ${{ env.EIF_OUTPUT_DIR }}
 
       - name: Docker Build and Push Enclave Image
         id: push
@@ -212,9 +257,9 @@ jobs:
           cache-to: type=gha,mode=max
           labels: |
             zama.kms.version=${{ needs.determine-tag.outputs.docker_tag }}
-            zama.kms.eif_pcr0=${{ steps.eif.outputs.eif_pcr0 }}
-            zama.kms.eif_pcr1=${{ steps.eif.outputs.eif_pcr1 }}
-            zama.kms.eif_pcr2=${{ steps.eif.outputs.eif_pcr2 }}
+            zama.kms.eif_pcr0=${{ needs.create-eif.outputs.eif_pcr0 }}
+            zama.kms.eif_pcr1=${{ needs.create-eif.outputs.eif_pcr1 }}
+            zama.kms.eif_pcr2=${{ needs.create-eif.outputs.eif_pcr2 }}
 
       - name: Export image name
         id: export-image
