@@ -1195,7 +1195,7 @@ mod tests {
             verified_material,
             VerifiedPublicMaterial::Compressed(_)
         ));
-        // we should've used the public storage directly, so the counter here should be 0
+        // we should've used my own storage directly, so the counter here should be 0
         assert_eq!(*ro_storage_getter.counter.borrow(), 0);
     }
 
