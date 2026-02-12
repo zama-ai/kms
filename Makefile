@@ -51,7 +51,7 @@ generate-backward-compatibility-v0.11.1:
 	cd backward-compatibility/generate-v0.11.1 && cargo run --release --locked
 
 generate-backward-compatibility-v0.13.0:
-	cd backward-compatibility/generate-v0.13.0 && cargo run --release
+	cd backward-compatibility/generate-v0.13.0 && cargo run --release --locked
 
 generate-backward-compatibility-v0.13.1:
 	cd backward-compatibility/generate-v0.13.1 && cargo run --release
