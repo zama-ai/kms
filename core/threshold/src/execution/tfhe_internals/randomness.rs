@@ -180,7 +180,6 @@ impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         n_child: usize,
         mask_bytes: usize,
     ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
-        // We try to fork the generators
         let mask_iter = self.gen.par_try_fork(n_child, mask_bytes)?;
         // We return a proper iterator.
         Ok(mask_iter.map(|gen| Self { gen }))

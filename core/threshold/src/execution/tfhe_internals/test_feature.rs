@@ -196,7 +196,6 @@ struct RawKeyContainers {
 /// the keyset and distribute the secret key vectors. If we used empty vectors,
 /// the other parties would continue to transfer_pk and would panic because they
 /// would receive something different from a PK.
-// TODO: This needs to be refactored to avoid this hack.
 fn extract_key_containers(
     keyset: Option<&KeySet>,
     params: DKGParams,
@@ -511,7 +510,10 @@ where
 
 /// This is an insecure way to initialize the key materials in a distributed setting.
 /// Party 1 generates the full keyset and shares the private keys with all other parties.
-pub async fn initialize_key_material<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
+pub async fn insecure_initialize_key_material<
+    S: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
     session: &mut S,
     params: DKGParams,
     tag: tfhe::Tag,
@@ -602,7 +604,7 @@ where
         let (client_key, compressed_xof_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
             config,
             private_seed_bytes,
-            128, // security bits
+            params_basic_handle.get_sec() as u32,
             max_norm_hwt,
             tag,
         )

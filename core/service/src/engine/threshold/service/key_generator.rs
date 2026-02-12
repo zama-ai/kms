@@ -11,9 +11,10 @@ use observability::{
     metrics,
     metrics_names::{
         OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN_REQUEST,
-        OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST,
-        OP_KEYGEN_RESULT, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID,
-        TAG_PARTY_ID,
+        OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_COMPRESSED_KEYGEN,
+        OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT,
+        OP_STANDARD_COMPRESSED_KEYGEN, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID,
+        TAG_KEY_ID, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -105,7 +106,7 @@ use threshold_fhe::execution::runtime::sessions::session_parameters::GenericPara
 use threshold_fhe::execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares,
     glwe_key::GlweSecretKeyShare,
-    test_feature::{initialize_compressed_key_material, initialize_key_material},
+    test_feature::{initialize_compressed_key_material, insecure_initialize_key_material},
 };
 
 pub struct RealKeyGenerator<
@@ -246,16 +247,26 @@ impl<
             &preproc_handle_w_mode,
             internal_keyset_config.keyset_config(),
         ) {
-            (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_STANDARD_KEYGEN
-            }
+            (
+                PreprocHandleWithMode::Secure(_),
+                ddec_keyset_config::KeySetConfig::Standard(inner),
+            ) => match inner.compressed_key_config {
+                ddec_keyset_config::CompressedKeyConfig::None => OP_STANDARD_KEYGEN,
+                ddec_keyset_config::CompressedKeyConfig::All => OP_STANDARD_COMPRESSED_KEYGEN,
+            },
             (
                 PreprocHandleWithMode::Secure(_),
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_DECOMPRESSION_KEYGEN,
-            (PreprocHandleWithMode::Insecure, ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_INSECURE_STANDARD_KEYGEN
-            }
+            (
+                PreprocHandleWithMode::Insecure,
+                ddec_keyset_config::KeySetConfig::Standard(inner),
+            ) => match inner.compressed_key_config {
+                ddec_keyset_config::CompressedKeyConfig::None => OP_INSECURE_STANDARD_KEYGEN,
+                ddec_keyset_config::CompressedKeyConfig::All => {
+                    OP_INSECURE_STANDARD_COMPRESSED_KEYGEN
+                }
+            },
             (
                 PreprocHandleWithMode::Insecure,
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
@@ -342,6 +353,7 @@ impl<
                         opt_compression_key_id,
                         eip712_domain_copy,
                         permit,
+                        op_tag,
                     )
                     .await
                 }
@@ -1021,6 +1033,7 @@ impl<
         compression_key_id: Option<RequestId>,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
+        op_tag: &'static str,
     ) {
         let _permit = permit;
         let start = Instant::now();
@@ -1047,9 +1060,13 @@ impl<
                                 ddec_keyset_config::KeySetCompressionConfig::Generate,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
                                 ddec_keyset_config::CompressedKeyConfig::None,
-                            ) => initialize_key_material(&mut base_session, params, req_id.into())
-                                .await
-                                .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                            ) => insecure_initialize_key_material(
+                                &mut base_session,
+                                params,
+                                req_id.into(),
+                            )
+                            .await
+                            .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
                             // Insecure compressed keygen
                             (
                                 ddec_keyset_config::KeySetCompressionConfig::Generate,
@@ -1066,7 +1083,7 @@ impl<
                             }),
                             _ => {
                                 // insecure keygen from existing compression key is not supported
-                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),OP_STANDARD_KEYGEN);
+                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),  op_tag);
                                 return;
                             }
                         },
@@ -1140,7 +1157,7 @@ impl<
                     &mut meta_store.write().await,
                     req_id,
                     format!("Standard key generation failed: {e}"),
-                    OP_STANDARD_KEYGEN,
+                    op_tag,
                 );
                 return;
             }
@@ -1166,7 +1183,7 @@ impl<
                             format!(
                                 "Computation of meta data in standard key generation failed: {e}"
                             ),
-                            OP_STANDARD_KEYGEN,
+                            op_tag,
                         );
                         return;
                     }
@@ -1230,7 +1247,7 @@ impl<
                             format!(
                                 "Computation of meta data in standard compressed key generation failed: {e}"
                             ),
-                            OP_STANDARD_KEYGEN,
+                            op_tag,
                         );
                         return;
                     }
@@ -1247,7 +1264,7 @@ impl<
                                 &mut meta_store.write().await,
                                 req_id,
                                 format!("Failed to create compressed keyset: {e}"),
-                                OP_STANDARD_KEYGEN,
+                                op_tag,
                             );
                             return;
                         }

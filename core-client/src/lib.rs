@@ -753,7 +753,7 @@ pub enum CCCommand {
     KeyGen(KeyGenParameters),
     KeyGenResult(KeyGenResultParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
-    InsecureKeyGenResult(ResultParameters),
+    InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     PublicDecrypt(CipherArguments),
@@ -1607,8 +1607,6 @@ pub async fn execute_cmd(
 
             //NOTE: We assume the request comes from the core client too
             //which (for now) uses the dummy_domain
-            // NOTE: InsecureKeyGenResult queries existing results, so we pass false for compressed
-            // since we don't know what type of keys were generated.
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
@@ -1618,7 +1616,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
-                false,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]

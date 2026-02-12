@@ -131,11 +131,11 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::PubKeySet(pk) => f.debug_tuple("PubKeySet").field(pk).finish(),
+            NetworkValue::PubKeySet(_pk) => f.debug_tuple("PubKeySet").field(&"...").finish(),
             #[cfg(feature = "experimental")]
-            NetworkValue::PubBgvKeySet(pk) => f.debug_tuple("PubBgvKeySet").field(pk).finish(),
+            NetworkValue::PubBgvKeySet(_pk) => f.debug_tuple("PubBgvKeySet").field(&"...").finish(),
             #[cfg(any(test, feature = "testing"))]
-            NetworkValue::Crs(crs) => f.debug_tuple("Crs").field(crs).finish(),
+            NetworkValue::Crs(_crs) => f.debug_tuple("Crs").field(&"...").finish(),
             #[cfg(any(test, feature = "testing"))]
             NetworkValue::DecompressionKey(_) => {
                 f.debug_tuple("DecompressionKey").field(&"...").finish()
