@@ -1524,6 +1524,67 @@ async fn integration_test_commands_isolated(
             }
             _ => {}
         }
+
+        // Also test the get result commands
+        let req_id = results[0].0;
+
+        let get_res_command = match command {
+            CCCommand::PreprocKeyGen(_) => {
+                CCCommand::PreprocKeyGenResult(ResultParameters {
+                    request_id: req_id.unwrap(),
+                })
+            }
+            CCCommand::KeyGen(_) => CCCommand::KeyGenResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
+            CCCommand::InsecureKeyGen(_) => {
+                CCCommand::InsecureKeyGenResult(ResultParameters {
+                    request_id: req_id.unwrap(),
+                })
+            }
+            CCCommand::PublicDecrypt(_) => {
+                CCCommand::PublicDecryptResult(ResultParameters {
+                    request_id: req_id.unwrap(),
+                })
+            }
+            CCCommand::CrsGen(_) => CCCommand::CrsGenResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
+            CCCommand::InsecureCrsGen(_) => {
+                CCCommand::InsecureCrsGenResult(ResultParameters {
+                    request_id: req_id.unwrap(),
+                })
+            }
+            _ => CCCommand::DoNothing(NoParameters {}),
+        };
+
+        let expect_result = !matches!(&get_res_command, CCCommand::DoNothing(_));
+
+        if expect_result {
+            let config = CmdConfig {
+                file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+                command: get_res_command,
+                logs: true,
+                max_iter: 500,
+                expect_all_responses: true,
+                download_all: false,
+            };
+
+            // We query result on a single request id, so should get a single result
+            let mut results_bis = execute_cmd(&config, keys_folder)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            assert_eq!(results_bis.len(), 1);
+            let (sid_bis, result_bis) = results_bis.remove(0);
+
+            for (sid, result) in results {
+                if sid_bis == sid {
+                    assert_eq!(result_bis, result);
+                }
+            }
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 
     Ok(())
