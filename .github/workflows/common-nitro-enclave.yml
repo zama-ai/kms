@@ -101,7 +101,7 @@ jobs:
     name: common-nitro-enclave/create-eif
     runs-on: 'ubuntu-latest'
     container:
-      image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217
+      image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
       volumes:
         - ${{ github.workspace }}/${{ inputs.working-directory }}/eif-output:/output
     steps:
@@ -152,7 +152,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload EIF artifacts
-        uses: actions/upload-artifact@8f95767b17a36f2eb6294583efc9d5554b0b2e69 # v4.6.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eif-output
           path: ${{ env.EIF_OUTPUT_DIR }}
