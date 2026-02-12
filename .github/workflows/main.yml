@@ -358,7 +358,7 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
@@ -366,6 +366,7 @@ jobs:
       args-tests: '--features testing -- --skip k8s_ --skip isolated_test_example'
       nextest-profile: 'ci-nightly'
       app-cache-dir: 'kms-core-client'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
