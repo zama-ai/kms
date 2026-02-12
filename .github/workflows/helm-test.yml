@@ -46,5 +46,14 @@ jobs:
       - name: Run chart-testing (lint)
         if: steps.list-changed.outputs.changed == 'true'
         env:
-          TARGET_BRANCH: ${{ github.base_ref || github.event.before || 'main' }}
-        run: ct lint --config ./ci/ct.yaml --target-branch "${TARGET_BRANCH}"
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          # For PRs, use base_ref (can be main or release/*)
+          # For push events, extract branch name from github.ref
+          if [ -n "${GITHUB_BASE_REF}" ]; then
+            TARGET_BRANCH="${GITHUB_BASE_REF}"
+          else
+            TARGET_BRANCH="${GITHUB_REF_NAME}"
+          fi
+          ct lint --config ./ci/ct.yaml --target-branch "${TARGET_BRANCH}"
