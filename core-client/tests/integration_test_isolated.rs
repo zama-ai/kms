@@ -2604,10 +2604,6 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-/// Full generation test - threshold sequential preprocessing and keygen with Default FHE params
-/// Uses partial preprocessing (1%) with store_dummy_preprocessing to test the full pipeline
-/// without generating the full 785M bits. This exercises the same code paths as full preprocessing
-/// but completes in reasonable time.
 #[cfg(feature = "k8s_tests")]
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
@@ -2944,8 +2940,8 @@ async fn test_threshold_reshare() -> Result<()> {
     println!("Resharing result: {:?}", resharing_result);
     assert_eq!(resharing_result.len(), 2);
 
-    // The second element should be the key id
-    assert_eq!(resharing_result[1].0.unwrap(), key_id);
+    // The second element is the previous epoch_id used for reshare
+    assert_eq!(resharing_result[1].0.unwrap(), epoch_id.into());
 
     println!("✅ Threshold reshare test completed successfully");
     Ok(())
