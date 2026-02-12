@@ -350,7 +350,6 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    # Only run on scheduled (nightly) builds
     if: github.event_name == 'schedule'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
@@ -358,6 +357,7 @@ jobs:
       package-name: 'kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and full_gen_tests_*)
       args-tests: '--features testing -- --skip k8s_ --skip isolated_test_example'
+      nextest-profile: 'ci-nightly'
       app-cache-dir: 'kms-core-client'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

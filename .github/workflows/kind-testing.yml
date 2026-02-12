@@ -359,14 +359,16 @@ jobs:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+          NEXTEST_PROFILE: ${{ github.event_name == 'schedule' && 'ci-nightly' || 'ci' }}
         run: |
           #============================================================
           # Here we run the tests and capture exit code
           #============================================================
           #
-          # cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
-          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --features testing --profile ci --no-fail-fast
+          set +e
+          cargo nextest run --test 'kubernetes_test_'"${DEPLOYMENT_TYPE}"'*' --features k8s_tests,testing --profile "${NEXTEST_PROFILE}" --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
+          set -e
 
           # Collect logs after tests complete
           chmod +x ci/scripts/deploy.sh
@@ -377,7 +379,7 @@ jobs:
             --collect-logs
 
       - name: Copy Test Results
-        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
+        if: always() && !cancelled()
         run: |
           if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
@@ -393,7 +395,7 @@ jobs:
         shell: bash
 
       - name: Upload Test Results
-        if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
+        if: always() && !cancelled() && env.EXIT_CODE == 0
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}

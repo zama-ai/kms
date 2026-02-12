@@ -120,8 +120,8 @@ pub async fn setup_threshold_no_client<
         ) = tokio::sync::oneshot::channel();
         mpc_shutdown_txs.push(mpc_core_tx);
         // Make a configuration based on the default, but customized with the needed changes for the test setup
-        let mut core_config: CoreConfig =
-            init_conf("config/default_1.toml").expect("config must parse");
+        let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
+        let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
             listen_port: mpc_conf[i - 1].port,
@@ -223,6 +223,224 @@ pub async fn setup_threshold_no_client<
         await_server_ready(threshold_service_name, mpc_confs[i - 1].port).await;
         // Observe that we don't check that the core server is ready here. The reason is that it depends on whether PRSS has been executed or loaded from disc.
         // Thus if requests are send to the core without PRSS being executed, then a failure will happen.
+    }
+    server_handles
+}
+
+/// Setup threshold servers with per-server peer configuration.
+///
+/// This function allows each server to have its own peer list, enabling party resharing tests
+/// where different servers participate in different MPC contexts.
+///
+/// # Arguments
+/// * `server_configs` - Vec of (my_id, threshold, peers, peer_server_indices) for each server
+///   - `my_id`: The MPC party ID this server will act as
+///   - `threshold`: The threshold value for this server
+///   - `peers`: The peer configuration (party_id will be used as-is)
+///   - `peer_server_indices`: Maps each peer index to the physical server index for port lookup
+/// * `pub_storage` - Public storage for each server
+/// * `priv_storage` - Private storage for each server
+/// * `vaults` - Optional backup vaults for each server
+/// * `run_prss` - Whether to run PRSS initialization
+/// * `rate_limiter_conf` - Optional rate limiter configuration
+/// * `decryption_mode` - Optional decryption mode
+///
+/// # Example
+/// ```ignore
+/// // Setup 6 servers for party resharing:
+/// // - Context 1: servers 0-3 (indices) as parties 1-4
+/// // - Context 2: servers 4,5,2,3 (indices) as parties 1,2,3,4
+/// let peers_ctx1 = vec![peer1, peer2, peer3, peer4];
+/// let peers_ctx2 = vec![peer1, peer2, peer3, peer4]; // Same party IDs, different physical servers
+/// let server_configs = vec![
+///     (1, 1, peers_ctx1.clone(), vec![0, 1, 2, 3]),  // Server 0: party 1, peers at servers 0,1,2,3
+///     (2, 1, peers_ctx1.clone(), vec![0, 1, 2, 3]),  // Server 1: party 2
+///     (3, 1, peers_ctx1.clone(), vec![0, 1, 2, 3]),  // Server 2: party 3
+///     (4, 1, peers_ctx1.clone(), vec![0, 1, 2, 3]),  // Server 3: party 4
+///     (1, 1, peers_ctx2.clone(), vec![4, 5, 2, 3]),  // Server 4: party 1, peers at servers 4,5,2,3
+///     (2, 1, peers_ctx2.clone(), vec![4, 5, 2, 3]),  // Server 5: party 2
+/// ];
+/// ```
+pub async fn setup_threshold_with_custom_peers<
+    PubS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
+>(
+    server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)>, // (my_id, threshold, peers, peer_server_indices)
+    pub_storage: Vec<PubS>,
+    priv_storage: Vec<PrivS>,
+    vaults: Vec<Option<Vault>>,
+    run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+    decryption_mode: Option<DecryptionMode>,
+) -> HashMap<u32, ServerHandle> {
+    let mut handles = Vec::new();
+    tracing::info!("Spawning servers with custom peer configs...");
+    let num_servers = server_configs.len();
+    let ip_addr = DEFAULT_URL.parse().unwrap();
+    let service_listeners = get_listeners_random_free_ports(&ip_addr, num_servers)
+        .await
+        .unwrap();
+    let mpc_listeners = get_listeners_random_free_ports(&ip_addr, num_servers)
+        .await
+        .unwrap();
+
+    let service_ports: Vec<u16> = service_listeners
+        .iter()
+        .map(|listener_and_port| listener_and_port.1)
+        .collect_vec();
+    let mpc_ports: Vec<u16> = mpc_listeners
+        .iter()
+        .map(|listener_and_port| listener_and_port.1)
+        .collect_vec();
+
+    tracing::info!("service ports: {:?}", service_ports);
+    tracing::info!("MPC ports: {:?}", mpc_ports);
+
+    // use NoiseFloodSmall unless some other DecryptionMode was set as parameter
+    let decryption_mode = decryption_mode.unwrap_or_default();
+
+    // a vector of sender that will trigger shutdown of core/threshold servers
+    let mut mpc_shutdown_txs = Vec::new();
+
+    for (
+        idx,
+        ((my_id, threshold, peers, peer_server_indices), (mpc_listener, _mpc_port), cur_vault),
+    ) in itertools::izip!(server_configs.iter(), mpc_listeners.into_iter(), vaults).enumerate()
+    {
+        let cur_pub_storage = pub_storage[idx].to_owned();
+        let cur_priv_storage = priv_storage[idx].to_owned();
+        let service_config = ServiceEndpoint {
+            listen_address: ip_addr.to_string(),
+            listen_port: service_ports[idx],
+            timeout_secs: 60u64,
+            grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
+        };
+
+        // Update peer addresses with actual allocated ports using the server index mapping
+        let mut updated_peers = peers.clone();
+        for (peer_idx, peer) in updated_peers.iter_mut().enumerate() {
+            if peer_idx < peer_server_indices.len() {
+                let server_idx = peer_server_indices[peer_idx];
+                peer.port = mpc_ports[server_idx];
+                peer.address = ip_addr.to_string();
+            }
+        }
+
+        // create channels that will trigger core/threshold shutdown
+        let (mpc_core_tx, mpc_core_rx): (
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        ) = tokio::sync::oneshot::channel();
+        mpc_shutdown_txs.push(mpc_core_tx);
+
+        let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
+        let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+        let threshold_party_config = ThresholdPartyConf {
+            listen_address: ip_addr.to_string(),
+            listen_port: mpc_ports[idx],
+            threshold: *threshold,
+            dec_capacity: DEC_CAPACITY,
+            min_dec_cache: MIN_DEC_CACHE,
+            my_id: Some(*my_id),
+            preproc_redis: None,
+            num_sessions_preproc: Some(5),
+            tls: None,
+            peers: Some(updated_peers),
+            core_to_core_net: None,
+            decryption_mode,
+        };
+        core_config.threshold = Some(threshold_party_config);
+        core_config.rate_limiter_conf = rate_limiter_conf.clone();
+
+        let my_id_copy = *my_id;
+        let server_idx = idx; // Track the physical server index
+        handles.push(tokio::spawn(async move {
+            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+
+            let server = new_real_threshold_kms(
+                core_config,
+                cur_pub_storage,
+                cur_priv_storage,
+                cur_vault,
+                None,
+                mpc_listener,
+                base_kms,
+                None,
+                false,
+                run_prss,
+                mpc_core_rx.map(drop),
+            )
+            .await;
+            (server_idx, my_id_copy, server, service_config)
+        }));
+    }
+    assert_eq!(handles.len(), num_servers);
+
+    tracing::info!("Client waiting for servers...");
+    let mut servers = Vec::with_capacity(num_servers);
+    for cur_handle in handles {
+        let (server_idx, my_id, kms_server_res, service_config) =
+            cur_handle.await.expect("Server failed to start");
+        match kms_server_res {
+            Ok((kms_server, health_service, _metastore_status_service)) => servers.push((
+                server_idx,
+                my_id,
+                kms_server,
+                service_config,
+                health_service,
+            )),
+            Err(e) => {
+                panic!("Failed to start server {my_id} (index {server_idx}) with error {e:?}")
+            }
+        }
+    }
+
+    tracing::info!("Servers initialized. Starting servers...");
+    let mut server_handles = HashMap::new();
+    for (
+        (
+            (server_idx, _my_id, cur_server, service_config, (health_reporter, cur_health_service)),
+            cur_mpc_shutdown,
+        ),
+        (service_listener, _service_port),
+    ) in servers
+        .into_iter()
+        .zip_eq(mpc_shutdown_txs)
+        .zip_eq(service_listeners.into_iter())
+    {
+        let cur_arc_server = Arc::new(cur_server);
+        let arc_server_clone = Arc::clone(&cur_arc_server);
+        let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            run_server(
+                service_config,
+                service_listener,
+                cur_arc_server,
+                Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
+                    None, None, None, None, None, None,
+                )),
+                cur_health_service,
+                health_reporter,
+                server_shutdown_rx.map(drop),
+            )
+            .await
+            .expect("Failed to start threshold server");
+        });
+        // Use server_idx+1 as the key (1-indexed physical server ID)
+        server_handles.insert(
+            (server_idx + 1) as u32,
+            ServerHandle::new_threshold(
+                arc_server_clone,
+                service_ports[server_idx],
+                mpc_ports[server_idx],
+                server_shutdown_tx,
+                cur_mpc_shutdown,
+            ),
+        );
+        // Wait until MPC server is ready
+        let threshold_service_name = <GrpcServer as NamedService>::NAME;
+        await_server_ready(threshold_service_name, mpc_ports[server_idx]).await;
     }
     server_handles
 }

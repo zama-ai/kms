@@ -1,3 +1,8 @@
+// DEPRECATED: This module is being replaced by `integration_test_isolated.rs`
+// which uses isolated test material and doesn't require Docker Compose.
+// See commits: 169aa799 (threshold isolated), adefdf6b (centralized isolated)
+// TODO: Remove after full migration to isolated tests is complete.
+
 use assert_cmd::Command;
 use cc_tests_utils::{DockerCompose, KMSMode};
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
@@ -313,6 +318,7 @@ async fn real_preproc(
     test_path: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
+    max_iter: usize,
 ) -> anyhow::Result<Option<RequestId>> {
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),
@@ -321,7 +327,7 @@ async fn real_preproc(
             epoch_id,
         }),
         logs: true,
-        max_iter: 200,
+        max_iter,
         expect_all_responses: true,
         download_all: false,
     };
@@ -342,8 +348,9 @@ async fn real_preproc_and_keygen(
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
     compressed: bool,
+    max_iter: usize,
 ) -> (String, String) {
-    let preproc_id = real_preproc(config_path, test_path, context_id, epoch_id)
+    let preproc_id = real_preproc(config_path, test_path, context_id, epoch_id, max_iter)
         .await
         .unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
@@ -369,7 +376,7 @@ async fn real_preproc_and_keygen(
             shared_args,
         }),
         logs: true,
-        max_iter: 200,
+        max_iter,
         expect_all_responses: true,
         download_all: false,
     };
@@ -1333,8 +1340,8 @@ async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeTh
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1347,8 +1354,8 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTe
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder, None, None, false),
-        real_preproc_and_keygen(&config_path, keys_folder, None, None, false),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200),
     ])
     .await;
 }
@@ -1519,6 +1526,7 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
         Some(context_id),
         Some(epoch_id),
         false,
+        200,
     )
     .await;
 }
@@ -1582,6 +1590,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
             Some(context_id),
             Some(epoch_id),
             false,
+            200,
         )
         .await;
 
@@ -1594,6 +1603,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
             test_path,
             Some(context_id),
             Some(epoch_id),
+            200,
         )
         .await
         .unwrap_err();
@@ -1663,6 +1673,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         Some(context_id_set_1),
         Some(epoch_id_set_1),
         false,
+        200,
     )
     .await;
 
@@ -1811,8 +1822,8 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1861,7 +1872,7 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true, 200).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true, 200).await;
     assert_ne!(key_id_1, key_id_2);
 }

@@ -1,3 +1,7 @@
+// DEPRECATED: Isolated equivalent in `kubernetes_test_centralized_isolated.rs`
+// The new tests use feature-gated `k8s_tests` and improved test infrastructure.
+// TODO: Remove after K8s CI fully migrates to isolated tests.
+
 use kms_core_client::*;
 use std::path::Path;
 use std::path::PathBuf;
