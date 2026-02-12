@@ -91,6 +91,7 @@ impl BitLift for SecureBitLift {
 
         let secret_bit_vector = Arc::new(secret_bit_vector);
 
+        // Masking the secret bit vector with random bits in MPC
         let masked_secret_bits = Bits::xor_list_secret_secret(
             Arc::clone(&secret_bit_vector),
             Arc::clone(&random_bits_z64),
@@ -99,10 +100,8 @@ impl BitLift for SecureBitLift {
         )
         .await?;
 
-        // Open the masked bits
         let opened_masked_bits_z64 = open_list(&masked_secret_bits, session).await?;
 
-        // Lift all the results to Z128 and transform to shares
         let opened_masked_bits_z128 = opened_masked_bits_z64
             .into_iter()
             .map(
