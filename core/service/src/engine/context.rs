@@ -89,7 +89,6 @@ impl SoftwareVersion {
             Some(p) => p.parse()?,
             None => 0,
         };
-        // .and_then(|v| v.parse()?).unwrap_or(0);
         let tag = if parts.len() > 1 {
             Some(parts[1].to_string())
         } else {

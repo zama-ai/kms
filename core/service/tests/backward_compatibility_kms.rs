@@ -64,7 +64,6 @@ use rand::RngCore;
 use rand::SeedableRng;
 use std::{
     collections::{BTreeMap, HashMap},
-    env,
     path::Path,
     sync::Arc,
 };
@@ -1194,11 +1193,11 @@ impl TestedModule for KMS {
 
 #[test]
 fn test_backward_compatibility_kms() {
-    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_version =SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<KMS>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<KMS>(&base_data_dir, &pkg_version.to_string());
 
     for r in results.iter() {
         if r.is_failure() {
