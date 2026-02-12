@@ -200,6 +200,7 @@
 use anyhow::Result;
 use futures::future::join_all;
 use kms_core_client::*;
+use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
 use kms_lib::client::test_tools::ServerHandle;
@@ -252,21 +253,21 @@ use kms_lib::util::key_setup::test_tools::{
 async fn setup_isolated_centralized_cli_test(
     test_name: &str,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, false, false, "Test").await
+    setup_isolated_centralized_cli_test_impl(test_name, false, false, FheParameter::Test).await
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing with backup vault
 async fn setup_isolated_centralized_cli_test_with_backup(
     test_name: &str,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, false, "Test").await
+    setup_isolated_centralized_cli_test_impl(test_name, true, false, FheParameter::Test).await
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing with custodian backup vault
 async fn setup_isolated_centralized_cli_test_with_custodian_backup(
     test_name: &str,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    setup_isolated_centralized_cli_test_impl(test_name, true, true, "Test").await
+    setup_isolated_centralized_cli_test_impl(test_name, true, true, FheParameter::Test).await
 }
 
 /// Generate CLI config file for centralized KMS
@@ -289,7 +290,7 @@ async fn setup_isolated_centralized_cli_test_with_custodian_backup(
 fn generate_centralized_cli_config(
     material_dir: &TempDir,
     server: &ServerHandle,
-    fhe_params: &str,
+    fhe_params: FheParameter,
 ) -> Result<PathBuf> {
     let config_path = material_dir.path().join("client_config.toml");
     // Canonicalize the path to resolve symlinks (e.g., /var -> /private/var on macOS)
@@ -300,24 +301,23 @@ fn generate_centralized_cli_config(
 kms_type = "centralized"
 num_majority = 1
 num_reconstruct = 1
-fhe_params = "{}"
+fhe_params = "{fhe_params:?}"
 
 [storage]
 pub_storage_type = "file"
 priv_storage_type = "file"
 client_storage_type = "file"
-file_storage_path = "{}"
+file_storage_path = "{path}"
 
 [[cores]]
 party_id = 1
-address = "localhost:{}"
-s3_endpoint = "file://{}"
+address = "localhost:{port}"
+s3_endpoint = "file://{path}"
 object_folder = "PUB"
 "#,
-        fhe_params,
-        canonical_path.display(),
-        server.service_port,
-        canonical_path.display()
+        fhe_params = fhe_params,
+        path = canonical_path.display(),
+        port = server.service_port,
     );
     write(&config_path, config_content)?;
     Ok(config_path)
@@ -328,7 +328,7 @@ async fn setup_isolated_centralized_cli_test_impl(
     test_name: &str,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
-    fhe_params: &str,
+    fhe_params: FheParameter,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
     // Use builder pattern with full feature support
     let mut builder = CentralizedTestEnv::builder().with_test_name(test_name);
@@ -378,8 +378,15 @@ async fn setup_isolated_threshold_cli_test(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, false, false, false, "Test")
-        .await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        false,
+        false,
+        false,
+        FheParameter::Test,
+    )
+    .await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing WITHOUT pre-loaded PRSS material.
@@ -401,7 +408,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
         false,
         false,
         false,
-        "Test",
+        FheParameter::Test,
         Some(kms_lib::testing::material::TestMaterialSpec::threshold_signing_only(party_count)),
     )
     .await
@@ -444,7 +451,15 @@ async fn setup_isolated_threshold_cli_test_with_prss(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, true, false, false, "Test").await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        true,
+        false,
+        false,
+        FheParameter::Test,
+    )
+    .await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with backup vault
@@ -456,7 +471,15 @@ async fn setup_isolated_threshold_cli_test_with_backup(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, false, "Test").await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        false,
+        true,
+        false,
+        FheParameter::Test,
+    )
+    .await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with custodian backup vault
@@ -468,7 +491,15 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, true, "Test").await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        false,
+        true,
+        true,
+        FheParameter::Test,
+    )
+    .await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters
@@ -498,8 +529,15 @@ async fn setup_isolated_threshold_cli_test_default(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, false, false, false, "Default")
-        .await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        false,
+        false,
+        false,
+        FheParameter::Default,
+    )
+    .await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters and PRSS enabled
@@ -512,8 +550,15 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
-    setup_isolated_threshold_cli_test_impl(test_name, party_count, true, false, false, "Default")
-        .await
+    setup_isolated_threshold_cli_test_impl(
+        test_name,
+        party_count,
+        true,
+        false,
+        false,
+        FheParameter::Default,
+    )
+    .await
 }
 
 /// Generate CLI config files for threshold KMS
@@ -532,26 +577,24 @@ fn generate_threshold_cli_config(
     material_dir: &kms_lib::testing::material::TestMaterialHandle,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
-    fhe_params: &str,
+    fhe_params: FheParameter,
 ) -> Result<PathBuf> {
     let config_path = material_dir.path().join("client_config.toml");
+    let majority = party_count / 2 + 1;
     let mut config_content = format!(
         r#"
 kms_type = "threshold"
-num_majority = {}
-num_reconstruct = {}
-fhe_params = "{}"
+num_majority = {majority}
+num_reconstruct = {majority}
+fhe_params = "{fhe_params:?}"
 
 [storage]
 pub_storage_type = "file"
 priv_storage_type = "file"
 client_storage_type = "file"
-file_storage_path = "{}"
+file_storage_path = "{path}"
 "#,
-        (party_count / 2 + 1),
-        (party_count / 2 + 1),
-        fhe_params,
-        material_dir.path().display()
+        path = material_dir.path().display()
     );
 
     // Create minimal server config files for each party (needed for MPC context creation)
@@ -665,7 +708,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     run_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
-    fhe_params: &str,
+    fhe_params: FheParameter,
 ) -> Result<(
     kms_lib::testing::material::TestMaterialHandle,
     HashMap<u32, ServerHandle>,
@@ -690,7 +733,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
     run_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
-    fhe_params: &str,
+    fhe_params: FheParameter,
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
 ) -> Result<(
     kms_lib::testing::material::TestMaterialHandle,
@@ -1010,22 +1053,23 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
     }
 
     // Generate CLI config for context 1 (servers 1,2,3,4)
+    let fhe_params = FheParameter::Test;
     let config_path_1234 = material_dir.path().join("client_config_1234.toml");
     let mut config_content_1234 = format!(
         r#"
 kms_type = "threshold"
 num_majority = 2
 num_reconstruct = 3
-fhe_params = "Test"
+fhe_params = "{fhe_params:?}"
 decryption_mode = "NoiseFloodSmall"
 
 [storage]
 pub_storage_type = "file"
 priv_storage_type = "file"
 client_storage_type = "file"
-file_storage_path = "{}"
+file_storage_path = "{path}"
 "#,
-        material_dir.path().display()
+        path = material_dir.path().display()
     );
 
     for i in 1..=4 {
@@ -1058,16 +1102,16 @@ config_path = "{}"
 kms_type = "threshold"
 num_majority = 2
 num_reconstruct = 3
-fhe_params = "Test"
+fhe_params = "{fhe_params:?}"
 decryption_mode = "NoiseFloodSmall"
 
 [storage]
 pub_storage_type = "file"
 priv_storage_type = "file"
 client_storage_type = "file"
-file_storage_path = "{}"
+file_storage_path = "{path}"
 "#,
-        material_dir.path().display()
+        path = material_dir.path().display()
     );
 
     // Map: MPC party_id -> physical server_id
