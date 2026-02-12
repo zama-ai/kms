@@ -63,7 +63,7 @@ use kms_lib::{
 use rand::RngCore;
 use rand::SeedableRng;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     env,
     path::Path,
     sync::Arc,
@@ -617,7 +617,6 @@ fn test_context_info(
         minor: 11,
         patch: 12,
         tag: None,
-        digests: BTreeSet::from([vec![123u8; 32]]),
     };
     let pcr_values = ReleasePCRValues {
         pcr0: vec![0_u8; 32],
@@ -693,7 +692,6 @@ fn test_software_version(
         } else {
             Some(test.tag.to_string())
         },
-        digests: test.digests.clone().into_iter().collect(),
     };
 
     if original_versionized != new_versionized {

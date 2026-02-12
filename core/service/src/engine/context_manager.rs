@@ -916,11 +916,6 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeSet,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
     use super::*;
     use crate::{
         backup::{
@@ -956,6 +951,7 @@ mod tests {
         RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
     use tonic::Request;
 
@@ -1030,7 +1026,6 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
-                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1117,7 +1112,6 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
-                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1436,7 +1430,6 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
-                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1531,7 +1524,6 @@ mod tests {
                 minor: 1,
                 patch: 0,
                 tag: None,
-                digests: BTreeSet::from([hex::decode("00112233445566778899aabbccddeeff").unwrap()]),
             },
             threshold: 0,
             pcr_values: vec![],
@@ -1612,9 +1604,6 @@ mod tests {
                     minor: 1,
                     patch: 0,
                     tag: None,
-                    digests: BTreeSet::from([
-                        hex::decode("00112233445566778899aabbccddeeff").unwrap()
-                    ]),
                 },
                 threshold: 0,
                 pcr_values: vec![],
