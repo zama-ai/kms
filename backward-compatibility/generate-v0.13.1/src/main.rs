@@ -4,7 +4,7 @@ use backward_compatibility::{
     data_dir, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, Testcase,
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME, PRNG_SEED,
 };
-use backward_compatibility_generate_v0_13_0::{
+use backward_compatibility_generate_v0_13_1::{
     data_0_13::V0_13,
     generate::{store_metadata, KMSCoreVersion},
 };

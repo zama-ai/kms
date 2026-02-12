@@ -1,6 +1,6 @@
 [
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_64",
@@ -11,7 +11,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_128",
@@ -22,7 +22,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: PrssSet((
             test_filename: "prss_set_64",
@@ -34,7 +34,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: PrssSet((
             test_filename: "prss_set_128",
@@ -46,7 +46,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: Share((
             test_filename: "share_64",
@@ -56,7 +56,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: Share((
             test_filename: "share_128",
@@ -66,7 +66,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: PrfKey((
             test_filename: "prf_key",
@@ -74,7 +74,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.13.0",
+        kms_core_version_min: "0.13.1",
         kms_core_module: "threshold-fhe",
         metadata: ReleasePCRValues((
             test_filename: "release_pcr_values",
