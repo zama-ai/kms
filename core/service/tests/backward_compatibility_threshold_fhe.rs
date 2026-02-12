@@ -16,7 +16,6 @@ use backward_compatibility::{
 };
 use rand::{RngCore, SeedableRng};
 use std::{env, path::Path};
-use tfhe::Tag;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
@@ -31,12 +30,11 @@ use threshold_fhe::{
             prf::{PRSSConversions, PrfKey},
             prss::{PRSSSetup, PrssSet, PrssSetV0},
         },
-        tfhe_internals::{private_keysets::PrivateKeySet, test_feature::initialize_key_material},
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
     networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
-use tokio::runtime::Runtime;
 
 use crate::common::load_and_unversionize_auxiliary;
 
