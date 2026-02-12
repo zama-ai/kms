@@ -1529,32 +1529,24 @@ async fn integration_test_commands_isolated(
         let req_id = results[0].0;
 
         let get_res_command = match command {
-            CCCommand::PreprocKeyGen(_) => {
-                CCCommand::PreprocKeyGenResult(ResultParameters {
-                    request_id: req_id.unwrap(),
-                })
-            }
+            CCCommand::PreprocKeyGen(_) => CCCommand::PreprocKeyGenResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
             CCCommand::KeyGen(_) => CCCommand::KeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
             }),
-            CCCommand::InsecureKeyGen(_) => {
-                CCCommand::InsecureKeyGenResult(ResultParameters {
-                    request_id: req_id.unwrap(),
-                })
-            }
-            CCCommand::PublicDecrypt(_) => {
-                CCCommand::PublicDecryptResult(ResultParameters {
-                    request_id: req_id.unwrap(),
-                })
-            }
+            CCCommand::InsecureKeyGen(_) => CCCommand::InsecureKeyGenResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
+            CCCommand::PublicDecrypt(_) => CCCommand::PublicDecryptResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
             CCCommand::CrsGen(_) => CCCommand::CrsGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
             }),
-            CCCommand::InsecureCrsGen(_) => {
-                CCCommand::InsecureCrsGenResult(ResultParameters {
-                    request_id: req_id.unwrap(),
-                })
-            }
+            CCCommand::InsecureCrsGen(_) => CCCommand::InsecureCrsGenResult(ResultParameters {
+                request_id: req_id.unwrap(),
+            }),
             _ => CCCommand::DoNothing(NoParameters {}),
         };
 
