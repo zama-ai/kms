@@ -125,11 +125,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create EIF file
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_TAG: ${{ needs.determine-tag.outputs.docker_tag }}
         run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
-            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
+            echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
+            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${IMAGE_NAME}:${IMAGE_TAG} # zizmor: ignore[template-injection]
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${IMAGE_NAME}:${IMAGE_TAG} --name ${IMAGE_NAME} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
             nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
 
       - name: Export EIF measurements
