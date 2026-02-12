@@ -189,11 +189,17 @@ where
             let pk = sk.verf_key();
 
             // Regenerate VerfAddress if missing
-            if !pub_storage
+            let verf_address_exists = match pub_storage
                 .data_exists(req_id, &PubDataType::VerfAddress.to_string())
                 .await
-                .unwrap_or(false)
             {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!("Failed to check VerfAddress existence: {}, will attempt regeneration", e);
+                    false
+                }
+            };
+            if !verf_address_exists {
                 let ethereum_address = pk.address();
                 if let Err(store_err) = store_text_at_request_id(
                     pub_storage,
@@ -213,11 +219,17 @@ where
             }
 
             // Regenerate VerfKey if missing
-            if !pub_storage
+            let verf_key_exists = match pub_storage
                 .data_exists(req_id, &PubDataType::VerfKey.to_string())
                 .await
-                .unwrap_or(false)
             {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!("Failed to check VerfKey existence: {}, will attempt regeneration", e);
+                    false
+                }
+            };
+            if !verf_key_exists {
                 if let Err(store_err) = store_versioned_at_request_id(
                     pub_storage,
                     req_id,
@@ -714,10 +726,10 @@ where
                 "Threshold server signing keys",
             );
             // Even if signing keys exist, CA certificates and VerfAddress might not
-            if let Some(sk) = temp.get(&SIGNING_KEY_ID) {
+            if let Some(sk) = temp.get(request_id) {
                 // Regenerate VerfAddress if missing
                 if !pub_storages[i - 1]
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .data_exists(request_id, &PubDataType::VerfAddress.to_string())
                     .await?
                 {
                     let pk = sk.verf_key();
@@ -746,7 +758,7 @@ where
 
                 // Regenerate VerfKey if missing
                 if !pub_storages[i - 1]
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                    .data_exists(request_id, &PubDataType::VerfKey.to_string())
                     .await?
                 {
                     let pk = sk.verf_key();
@@ -773,7 +785,7 @@ where
 
                 // Regenerate CA certificate if missing
                 if !pub_storages[i - 1]
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
+                    .data_exists(request_id, &PubDataType::CACert.to_string())
                     .await?
                 {
                     ensure_ca_cert_exists(

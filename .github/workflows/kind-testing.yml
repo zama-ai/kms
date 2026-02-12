@@ -380,15 +380,18 @@ jobs:
 
       - name: Copy Test Results
         if: always() && !cancelled()
+        env:
+          NEXTEST_PROFILE: ${{ github.event_name == 'schedule' && 'ci-nightly' || 'ci' }}
         run: |
-          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
-            echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
-            ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
+          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/${NEXTEST_PROFILE}"
+          if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "Files found in ${NEXTEST_OUT}"
+            ls -R "${NEXTEST_OUT}"
             echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
-            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+            cp -Lpr "${NEXTEST_OUT}"/junit.xml /tmp/junit.xml
             echo "EXIT_CODE=0" >> "$GITHUB_ENV"
           else
-            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            echo "No junit test files found in ${NEXTEST_OUT}"
             echo "EXIT_CODE=1" >> "$GITHUB_ENV"
             exit 0
           fi
