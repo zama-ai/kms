@@ -451,9 +451,10 @@ async fn test_template<T: DockerComposeManager>(
                     compressed: key_gen_parameters.shared_args.compressed,
                 })
             }
-            CCCommand::InsecureKeyGen(_insecure_key_gen_parameters) => {
-                CCCommand::InsecureKeyGenResult(ResultParameters {
+            CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
+                CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
+                    compressed: key_gen_parameters.shared_args.compressed,
                 })
             }
             CCCommand::PublicDecrypt(_cipher_arguments) => {
