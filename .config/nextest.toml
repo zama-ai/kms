@@ -12,6 +12,10 @@ docker-integration = { max-threads = 1 }
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
 k8s-integration    = { max-threads = 1 }
+# Heavy default-param keygen tests spin up 4 threshold parties each doing full
+# DKG with production parameters. Running Docker + isolated variants in parallel
+# causes resource contention (8 parties on 32 cores) leading to MPC hangs.
+heavy-default-keygen = { max-threads = 1 }
 
 # =============================================================================
 # CI profile: used for PR checks (fast feedback)
@@ -64,3 +68,8 @@ test-group = "docker-integration"
 [[profile.ci-nightly.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
+
+# Serialize heavy default-param keygen across Docker and isolated binaries.
+[[profile.ci-nightly.overrides]]
+filter = "test(=full_gen_tests_default_threshold_sequential_preproc_keygen)"
+test-group = "heavy-default-keygen"
