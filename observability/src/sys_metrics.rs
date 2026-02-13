@@ -1,24 +1,18 @@
 use crate::metrics::METRICS;
-use std::{ffi::OsStr, fs, time::Duration};
+use std::{cmp::max, ffi::OsStr, fs, time::Duration};
 use sysinfo::{
-    CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
-    MINIMUM_CPU_UPDATE_INTERVAL,
+    ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, MINIMUM_CPU_UPDATE_INTERVAL,
 };
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
-    let specifics = RefreshKind::nothing()
-        .with_cpu(CpuRefreshKind::nothing())
-        .with_memory(MemoryRefreshKind::nothing().with_ram())
-        .with_processes(ProcessRefreshKind::nothing().with_memory().with_cpu());
-    let mut system = sysinfo::System::new_with_specifics(specifics);
+    let mut system = sysinfo::System::new_with_specifics(RefreshKind::everything());
 
     let num_cpus = system.cpus().len();
-    let total_ram = system.total_memory();
     // Set this info once and for all
     METRICS.record_total_cpus(num_cpus as u64);
+    let total_ram = system.total_memory();
     METRICS.record_total_memory(total_ram);
-
     let free_ram = system.free_memory();
     tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
         num_cpus, total_ram, free_ram);
@@ -28,33 +22,32 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     tokio::spawn(async move {
         let mut last_rx_bytes = 0u64;
         let mut last_tx_bytes = 0u64;
+        // Ensure CPU averate is accurate by sleeping initially as recommended by sysinfo documentation
+        tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
         loop {
+            // Refresh to be able to get accurate reading
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::everything(),
+            );
             // Update CPU metrics
-            system.refresh_specifics(specifics);
             let cpus_load_avg = System::load_average().one / num_cpus as f64;
-
             tracing::debug!("CPU Load Average over all cores within 1 min {cpus_load_avg}");
-
             METRICS.record_cpu_load(cpus_load_avg);
 
-            // Update memory metrics
-            METRICS.record_memory_usage(system.used_memory());
-
-            // Update process-specific metrics
             if let Ok(pid) = sysinfo::get_current_pid() {
-                // Refresh CPU usage to be able to get accurate reading
-                system.refresh_processes_specifics(
-                    ProcessesToUpdate::Some(&[pid]),
-                    true,
-                    ProcessRefreshKind::nothing().with_cpu(),
-                );
-                tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
                 if let Some(process) = system.process(pid) {
                     METRICS.record_process_memory_usage(process.memory());
                     // CPU usage is a percentage (0.0 to 100.0) per core
                     METRICS.record_process_cpu_usage(process.cpu_usage() as f64);
                 }
+            } else {
+                tracing::error!("Could not get current PID and hence cannot refresh process CPU usage for accurate reading. This may lead to inaccurate CPU usage metrics.");
             }
+
+            // Update memory metrics
+            METRICS.record_memory_usage(system.used_memory());
 
             // Update network metrics
             networks.refresh(true);
@@ -87,7 +80,8 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let socat_count = get_socat_file_descriptor_count(&system);
             METRICS.record_socat_file_descriptors(socat_count);
 
-            tokio::time::sleep(refresh_interval).await;
+            // Ensure we sleep at least the time needed to accurately update CPU usage, as recommended by sysinfo documentation
+            tokio::time::sleep(max(refresh_interval, MINIMUM_CPU_UPDATE_INTERVAL)).await;
         }
     });
 

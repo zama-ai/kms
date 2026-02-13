@@ -614,10 +614,6 @@ impl CoreMetrics {
 
     /// Record the current process CPU usage into the gauge
     pub fn record_process_cpu_usage(&self, usage: f64) {
-        // Should never be 0
-        if usage == 0.0 {
-            return;
-        }
         self.process_cpu_usage_gauge
             .metric
             .record(usage, &self.process_cpu_usage_gauge.with_tags(&[]));
