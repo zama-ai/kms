@@ -28,10 +28,17 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let amount_parties = 4;
 
     // Boot servers WITHOUT PRSS (run_prss=false is the default)
+    // Use a custom material spec that excludes PrssSetup so no PRSS data
+    // is loaded from storage at startup (init_all_prss_from_storage would
+    // otherwise load pre-generated PRSS, making decryption succeed).
+    let mut no_prss_spec = TestMaterialSpec::threshold_basic(amount_parties);
+    no_prss_spec.required_keys.remove(&KeyType::PrssSetup);
+
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)
         .with_threshold(1)
+        .with_material_spec(no_prss_spec)
         .build()
         .await?;
 
