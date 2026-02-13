@@ -1,6 +1,5 @@
 use opentelemetry::metrics::{Counter, Gauge, Histogram};
 use opentelemetry::{global, KeyValue};
-use serde::Serialize;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -53,9 +52,6 @@ impl<T> TaggedMetric<T> {
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
 pub struct CoreMetrics {
-    // Configuration
-    configuration_gauge: TaggedMetric<Gauge<u64>>, // Gauge whose label will contain the configuration info as json
-
     // Counters
     request_counter: TaggedMetric<Counter<u64>>,
     error_counter: TaggedMetric<Counter<u64>>,
@@ -111,8 +107,6 @@ impl CoreMetrics {
             .with_unit("version")
             .build()
             .record(1, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
-        // Config
-        let config_metric: Cow<'static, str> = format!("{}_config", config.prefix).into();
 
         // Store metric names as static strings
         let operations: Cow<'static, str> = format!("{}_operations", config.prefix).into();
@@ -155,14 +149,6 @@ impl CoreMetrics {
         let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
         let memory_usage_metric: Cow<'static, str> =
             format!("{}_memory_usage", config.prefix).into();
-
-        let config_metric = meter
-            .u64_gauge(config_metric)
-            .with_description("KMS configuration information")
-            .with_unit("config")
-            .build();
-        // Set a placeholder
-        config_metric.record(0, &[]);
 
         let request_counter = meter
             .u64_counter(operations)
@@ -349,7 +335,6 @@ impl CoreMetrics {
         memory_gauge.record(0, &[]);
 
         Self {
-            configuration_gauge: TaggedMetric::new(config_metric),
             request_counter: TaggedMetric::new(request_counter),
             error_counter: TaggedMetric::new(error_counter),
             network_rx_counter: TaggedMetric::new(network_rx_counter),
@@ -414,22 +399,6 @@ impl CoreMetrics {
         self.network_tx_counter
             .metric
             .add(bytes, &self.network_tx_counter.with_tags(&[]));
-    }
-
-    pub fn record_config_file<T: Serialize + std::fmt::Debug>(
-        &self,
-        config: &T,
-    ) -> anyhow::Result<()> {
-        // Note that json is NOT deterministic and canonical by default.
-        // We could import the serde_json_canonicalizer crate to ensure this if needed,
-        // however, since we know all the KMS use the same software version with pinned we expect the
-        // same serialization output for the same config.
-        let config_json = serde_json::to_string(config)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize configuration: {:?}", e))?;
-        self.configuration_gauge
-            .metric
-            .record(1, &[KeyValue::new("config", config_json)]);
-        Ok(())
     }
 
     // Histogram methods

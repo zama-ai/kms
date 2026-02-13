@@ -3,7 +3,6 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
-    metrics::METRICS,
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
@@ -221,9 +220,6 @@ pub async fn init_conf_kms_core_telemetry<
             .build()
     });
     let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
-    let _ = METRICS
-        .record_config_file(&full_config)
-        .inspect_err(|e| tracing::error!("Failed to record config file in metrics: {}", e));
     Ok((full_config, tracer_provider, meter_provider))
 }
 
