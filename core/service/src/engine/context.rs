@@ -76,10 +76,13 @@ impl SoftwareVersion {
         // Remove any leading "v" if present, since some versions might be prefixed with "v" (e.g., "v1.2.3")
         let parsed_str = parsed_str.strip_prefix("v").unwrap_or(parsed_str);
         let parts: Vec<&str> = parsed_str.split('-').collect();
-        if parts.len() > 2 {
-            anyhow::bail!("Invalid semantic version string: too many '-' characters");
-        }
-        let version_parts: Vec<&str> = parts[0].split('.').collect();
+        let tag = if parts.len() > 1 {
+            // Only care about the first '-' since the tag can also contain '-' characters, e.g., "1.2.3-alpha-1"
+            Some(parts[1..].join("-"))
+        } else {
+            None
+        };
+        let version_parts = parts[0].split('.').collect::<Vec<&str>>();
         let major = match version_parts.first() {
             Some(v) => v.parse()?,
             None => anyhow::bail!("Invalid semantic version string: missing major version"),
@@ -91,11 +94,6 @@ impl SoftwareVersion {
         let patch = match version_parts.get(2) {
             Some(p) => p.parse()?,
             None => 0,
-        };
-        let tag = if parts.len() > 1 {
-            Some(parts[1].to_string())
-        } else {
-            None
         };
         Ok(SoftwareVersion {
             major,
@@ -589,6 +587,14 @@ mod tests {
             assert_eq!(version.patch, 3);
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
+        // Parsing double `-` in tag
+        {
+            let version = SoftwareVersion::new("1.2.3-alpha-beta").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha-beta".to_string()));
+        }
         // Non existing minor parts default to 0
         {
             let version = SoftwareVersion::new("1").unwrap();
@@ -599,11 +605,6 @@ mod tests {
         }
         {
             let version = SoftwareVersion::new("zzz");
-            assert!(version.is_err());
-        }
-        // Double `-` should be rejected
-        {
-            let version = SoftwareVersion::new("1.2.3-alpha-beta");
             assert!(version.is_err());
         }
     }
