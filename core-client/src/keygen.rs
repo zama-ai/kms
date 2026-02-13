@@ -108,9 +108,24 @@ pub(crate) async fn do_keygen(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Keygen request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Keygen request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} keygen requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
 
     // get all responses
     let resp_response_vec = get_keygen_responses(
@@ -150,12 +165,13 @@ pub(crate) async fn fetch_and_check_keygen(
     download_all: bool,
     compressed: bool,
 ) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
+    if responses.len() < num_expected_responses {
+        anyhow::bail!(
+            "Expected at least {} keygen responses, but got only {}",
+            num_expected_responses,
+            responses.len()
+        );
+    }
 
     // Download the generated keys.
     let key_types = if compressed {
@@ -172,7 +188,10 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = party_confs.first().unwrap().party_id as usize;
+    let first_party_id = party_confs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no party configs returned from fetch_public_elements"))?
+        .party_id as usize;
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical
@@ -192,10 +211,13 @@ pub(crate) async fn fetch_and_check_keygen(
             let resp_req_id: RequestId = response.request_id.try_into()?;
             tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
 
-            assert_eq!(
-                request_id, resp_req_id,
-                "Request ID of response does not match the transaction"
-            );
+            if request_id != resp_req_id {
+                anyhow::bail!(
+                    "Request ID of keygen response ({}) does not match the request ({})",
+                    resp_req_id,
+                    request_id
+                );
+            }
 
             let external_signature = response.external_signature;
             let prep_id = response.preprocessing_id.ok_or_else(|| {
@@ -231,10 +253,13 @@ pub(crate) async fn fetch_and_check_keygen(
             let resp_req_id: RequestId = response.request_id.try_into()?;
             tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
 
-            assert_eq!(
-                request_id, resp_req_id,
-                "Request ID of response does not match the transaction"
-            );
+            if request_id != resp_req_id {
+                anyhow::bail!(
+                    "Request ID of keygen response ({}) does not match the request ({})",
+                    resp_req_id,
+                    request_id
+                );
+            }
 
             let external_signature = response.external_signature;
             let prep_id = response.preprocessing_id.ok_or_else(|| {
@@ -298,7 +323,12 @@ pub(crate) async fn get_keygen_responses(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                assert!(ctr < max_iter, "timeout while waiting for keygen after {max_iter} retries (insecure: {insecure})");
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for keygen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -315,18 +345,38 @@ pub(crate) async fn get_keygen_responses(
                     response
                 );
             }
-            (core_conf, request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("keygen response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_conf, _request_id, resp) = resp?;
-        resp_response_vec.push((core_conf, resp));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return keygen result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Keygen response task panicked: {e}");
+            }
+        }
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} keygen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
     }
     resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
@@ -429,9 +479,23 @@ pub(crate) async fn do_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner??.into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Preproc request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Preproc request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_parties {
+        anyhow::bail!(
+            "Only {}/{} preproc requests succeeded",
+            req_response_vec.len(),
+            num_parties,
+        );
+    }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
@@ -485,9 +549,23 @@ pub(crate) async fn do_partial_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner??.into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Partial preproc request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Partial preproc request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_parties {
+        anyhow::bail!(
+            "Only {}/{} partial preproc requests succeeded",
+            req_response_vec.len(),
+            num_parties,
+        );
+    }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
@@ -526,31 +604,49 @@ pub(crate) async fn get_preproc_keygen_responses(
                 ))
                 .await;
                 // do at most max_iter retries
-                assert!(
-                    ctr < max_iter,
-                    "timeout while waiting for preprocessing after {max_iter} retries."
-                );
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for preprocessing from party {:?} after {max_iter} retries.",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
                 response = client
                     .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                     .await;
             }
 
-            (core_conf, request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("preprocessing response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_conf, resp_request_id, resp_res) = resp?;
-        assert_eq!(request_id, resp_request_id);
-        // any failures that happen will panic here
-        resp_response_vec.push((core_conf, resp_res));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return preprocessing result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Preprocessing response task panicked: {e}");
+            }
+        }
+    }
+    if resp_response_vec.len() < core_endpoints.len() {
+        anyhow::bail!(
+            "Only got {}/{} preprocessing responses",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+        );
     }
     resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
         .collect();
-    assert_eq!(resp_response_vec.len(), core_endpoints.len());
     Ok(resp_response_vec)
 }
