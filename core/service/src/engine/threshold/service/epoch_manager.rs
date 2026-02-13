@@ -713,6 +713,7 @@ impl<
         let mut priv_storage_guard = priv_storage.lock().await;
 
         // Delete all data stored under this epoch for the given private data type
+        // first find all data IDs
         let data_ids = priv_storage_guard
             .all_data_ids_at_epoch(epoch_id, &priv_data_type.to_string())
             .await
@@ -725,9 +726,12 @@ impl<
                 )
             })?;
 
-        // At this point we're committed to deleting the epoch, so do not return if there's an error
+        // At this point we're committed to deleting the epoch, so do not return if there's an error,
+        // but track the first error to report back to the caller.
+        let mut first_error: Option<anyhow::Error> = None;
+
         for data_id in &data_ids {
-            match delete_at_request_and_epoch_id(
+            if let Err(e) = delete_at_request_and_epoch_id(
                 &mut (*priv_storage_guard),
                 data_id,
                 epoch_id,
@@ -735,32 +739,41 @@ impl<
             )
             .await
             {
-                Err(e) => {
-                    tracing::error!(
-                        "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
-                        &priv_data_type
-                    )
+                tracing::error!(
+                    "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
+                    &priv_data_type
+                );
+                if first_error.is_none() {
+                    first_error = Some(e);
                 }
-                Ok(_) => { /* do nothing */ }
             }
         }
 
         // Delete the PRSS setup data (stored under epoch_id as a request_id)
-        match delete_at_request_id(
+        if let Err(e) = delete_at_request_id(
             &mut (*priv_storage_guard),
             &(*epoch_id).into(),
             &PrivDataType::PrssSetupCombined.to_string(),
         )
         .await
         {
-            Err(e) => {
-                tracing::error!("Error deleting PrssSetupCombined epoch ID {epoch_id}: {e:?}")
+            tracing::error!("Error deleting PrssSetupCombined epoch ID {epoch_id}: {e:?}");
+            if first_error.is_none() {
+                first_error = Some(e);
             }
-            Ok(_) => { /* do nothing */ }
         }
 
-        // Remove the epoch from the session maker
+        // Remove the epoch from the session maker regardless of deletion errors
         session_maker.remove_epoch(epoch_id).await;
+
+        if let Some(e) = first_error {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                e,
+                tonic::Code::Internal,
+            ));
+        }
 
         tracing::info!("Epoch {} destroyed successfully", epoch_id);
         Ok(Response::new(Empty {}))
