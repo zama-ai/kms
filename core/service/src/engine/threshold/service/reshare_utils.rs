@@ -412,7 +412,6 @@ pub(crate) async fn get_verified_public_materials<
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::BTreeSet;
     use std::collections::HashMap;
 
     use crate::engine::base::safe_serialize_hash_element_versioned;

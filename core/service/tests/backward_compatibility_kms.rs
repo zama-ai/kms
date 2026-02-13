@@ -1193,7 +1193,7 @@ impl TestedModule for KMS {
 
 #[test]
 fn test_backward_compatibility_kms() {
-    let pkg_version =SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
+    let pkg_version = SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 

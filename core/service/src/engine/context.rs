@@ -71,11 +71,14 @@ impl SoftwareVersion {
     /// Use a semantic version string like "1.2.3-alpha" to create a SoftwareVersion
     pub fn new(semantic_str: &str) -> anyhow::Result<Self> {
         let parsed_str = semantic_str.trim().to_ascii_lowercase();
-        // Remove any leading "v" if present, since some versions might be prefixed with "v" (e.g., "v1.2.3")
-        let parsed_str = parsed_str.strip_prefix("v").unwrap_or(&parsed_str);
         // Remove any leading "v." if present (e.g., "v.1.2.3")
-        let parsed_str = parsed_str.strip_prefix("v.").unwrap_or(parsed_str);
+        let parsed_str = parsed_str.strip_prefix("v.").unwrap_or(&parsed_str);
+        // Remove any leading "v" if present, since some versions might be prefixed with "v" (e.g., "v1.2.3")
+        let parsed_str = parsed_str.strip_prefix("v").unwrap_or(parsed_str);
         let parts: Vec<&str> = parsed_str.split('-').collect();
+        if parts.len() > 2 {
+            anyhow::bail!("Invalid semantic version string: too many '-' characters");
+        }
         let version_parts: Vec<&str> = parts[0].split('.').collect();
         let major = match version_parts.first() {
             Some(v) => v.parse()?,
@@ -564,6 +567,13 @@ mod tests {
             assert_eq!(version.patch, 3);
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
+        {
+            let version = SoftwareVersion::new(" 1.2.3-ALPHA ").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
         // Version prefix is ignored
         {
             let version = SoftwareVersion::new("v1.2.3-alpha").unwrap();
@@ -589,6 +599,11 @@ mod tests {
         }
         {
             let version = SoftwareVersion::new("zzz");
+            assert!(version.is_err());
+        }
+        // Double `-` should be rejected
+        {
+            let version = SoftwareVersion::new("1.2.3-alpha-beta");
             assert!(version.is_err());
         }
     }
