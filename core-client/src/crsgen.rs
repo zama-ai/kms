@@ -71,9 +71,24 @@ pub(crate) async fn do_crsgen(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("CRS gen request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Error in CRS gen request: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} CRS gen requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
 
     // get all responses
     let resp_response_vec = get_crsgen_responses(
@@ -111,12 +126,13 @@ pub(crate) async fn fetch_and_check_crsgen(
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
+    if responses.len() < num_expected_responses {
+        anyhow::bail!(
+            "Expected at least {} CRS gen responses, but got only {}",
+            num_expected_responses,
+            responses.len()
+        );
+    }
 
     // Download the generated CRS.
     let party_confs = fetch_public_elements(
@@ -132,7 +148,12 @@ pub(crate) async fn fetch_and_check_crsgen(
         .cores
         .iter()
         .find(|c| c == &&party_confs[0])
-        .unwrap();
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "core client config not found for party {:?} in CRS gen",
+                party_confs[0].party_id
+            )
+        })?;
 
     // Even if we did not download all CRSes, we still check that they are identical
     // by checking all signatures against the first downloaded CRS.
@@ -147,16 +168,29 @@ pub(crate) async fn fetch_and_check_crsgen(
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
-
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
+        tracing::info!(
+            "Received CrsGenResult with request ID {}. Signature:{}. Digest:{}",
+            resp_req_id,
+            hex::encode(&response.crs_digest),
+            hex::encode(&response.external_signature)
         );
-        let external_signature = response.external_signature;
 
-        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+        if request_id != resp_req_id {
+            anyhow::bail!(
+                "Request ID of CRS gen response ({}) does not match the request ({})",
+                resp_req_id,
+                request_id
+            );
+        }
+
+        check_crsgen_ext_signature(
+            &crs,
+            &request_id,
+            &response.external_signature,
+            &domain,
+            kms_addrs,
+        )
+        .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of CRS successful.");
     }
@@ -197,7 +231,12 @@ pub(crate) async fn get_crsgen_responses(
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 // do at most max_iter retries
-                assert!(ctr < max_iter, "timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for CRS gen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -211,18 +250,38 @@ pub(crate) async fn get_crsgen_responses(
 
                 tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
             }
-            (core_conf,request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("CRS gen response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_conf, _request_id, resp) = resp?;
-        resp_response_vec.push((core_conf, resp));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return CRS gen result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Error in CRS gen response: {e}");
+            }
+        }
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} CRS gen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
     }
     resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
