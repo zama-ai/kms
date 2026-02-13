@@ -49,14 +49,27 @@ pub(crate) async fn do_keygen(
 
     //NOTE: If we do not use dummy_domain here, then
     //this needs changing too in the KeyGenResult command.
-    let keyset_config =
-        shared_config
-            .keyset_type
-            .clone()
-            .map(|x| kms_grpc::kms::v1::KeySetConfig {
-                keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
-                standard_keyset_config: None,
-            });
+    let keyset_config = if shared_config.compressed || shared_config.keyset_type.is_some() {
+        Some(kms_grpc::kms::v1::KeySetConfig {
+            keyset_type: shared_config
+                .keyset_type
+                .clone()
+                .map(|x| kms_grpc::kms::v1::KeySetType::from(x) as i32)
+                .unwrap_or(kms_grpc::kms::v1::KeySetType::Standard as i32),
+            standard_keyset_config: if shared_config.compressed {
+                Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                    compute_key_type: 0,          // CPU
+                    keyset_compression_config: 0, // Generate
+                    compressed_key_config: kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll
+                        .into(),
+                })
+            } else {
+                None
+            },
+        })
+    } else {
+        None
+    };
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         &preproc_id,
@@ -118,6 +131,7 @@ pub(crate) async fn do_keygen(
         domain,
         resp_response_vec,
         cmd_conf.download_all,
+        shared_config.compressed,
     )
     .await?;
 
@@ -134,6 +148,7 @@ pub(crate) async fn fetch_and_check_keygen(
     domain: Eip712Domain,
     responses: Vec<KeyGenResult>,
     download_all: bool,
+    compressed: bool,
 ) -> anyhow::Result<()> {
     assert!(
         responses.len() >= num_expected_responses,
@@ -143,8 +158,11 @@ pub(crate) async fn fetch_and_check_keygen(
     );
 
     // Download the generated keys.
-    // TODO: handle compressed keys
-    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
+    let key_types = if compressed {
+        vec![PubDataType::CompressedXofKeySet]
+    } else {
+        vec![PubDataType::PublicKey, PubDataType::ServerKey]
+    };
 
     let party_confs = fetch_public_elements(
         &request_id.to_string(),
@@ -160,43 +178,83 @@ pub(crate) async fn fetch_and_check_keygen(
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    let public_key =
-        load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix).await;
-    let server_key: ServerKey = load_material_from_pub_storage(
-        Some(destination_prefix),
-        &request_id,
-        PubDataType::ServerKey,
-        pub_storage_prefix,
-    )
-    .await;
-
-    for response in responses {
-        let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
-
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
-        );
-
-        let external_signature = response.external_signature;
-        let prep_id = response.preprocessing_id.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No preprocessing ID in keygen response, cannot verify external signature"
+    if compressed {
+        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
+            load_material_from_pub_storage(
+                Some(destination_prefix),
+                &request_id,
+                PubDataType::CompressedXofKeySet,
+                pub_storage_prefix,
             )
-        })?;
-        check_standard_keyset_ext_signature(
-            &public_key,
-            &server_key,
-            &prep_id.try_into()?,
-            &request_id,
-            &external_signature,
-            &domain,
-            kms_addrs,
-        )
-        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+            .await;
 
-        tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+        for response in responses {
+            let resp_req_id: RequestId = response.request_id.try_into()?;
+            tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
+
+            assert_eq!(
+                request_id, resp_req_id,
+                "Request ID of response does not match the transaction"
+            );
+
+            let external_signature = response.external_signature;
+            let prep_id = response.preprocessing_id.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No preprocessing ID in keygen response, cannot verify external signature"
+                )
+            })?;
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                &prep_id.try_into()?,
+                &request_id,
+                &external_signature,
+                &domain,
+                kms_addrs,
+            )
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+
+            tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+        }
+    } else {
+        let public_key =
+            load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix)
+                .await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            Some(destination_prefix),
+            &request_id,
+            PubDataType::ServerKey,
+            pub_storage_prefix,
+        )
+        .await;
+
+        for response in responses {
+            let resp_req_id: RequestId = response.request_id.try_into()?;
+            tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
+
+            assert_eq!(
+                request_id, resp_req_id,
+                "Request ID of response does not match the transaction"
+            );
+
+            let external_signature = response.external_signature;
+            let prep_id = response.preprocessing_id.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No preprocessing ID in keygen response, cannot verify external signature"
+                )
+            })?;
+            check_standard_keyset_ext_signature(
+                &public_key,
+                &server_key,
+                &prep_id.try_into()?,
+                &request_id,
+                &external_signature,
+                &domain,
+                kms_addrs,
+            )
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+
+            tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+        }
     }
     Ok(())
 }
@@ -301,6 +359,31 @@ pub(crate) fn check_standard_keyset_ext_signature(
     } else {
         Err(anyhow::anyhow!(
             "External signature verification failed for keygen as it does not contain the right address!"
+        ))
+    }
+}
+
+/// Check external signature for compressed keyset
+pub(crate) fn check_compressed_keyset_ext_signature(
+    compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let keyset_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+
+    let sol_type = KeygenVerification::new_compressed(prep_id, key_id, keyset_digest);
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
+
+    // check that the address is in the list of known KMS addresses
+    if kms_addrs.contains(&addr) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "External signature verification failed for compressed keygen"
         ))
     }
 }
