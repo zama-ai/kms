@@ -133,7 +133,7 @@ where
     // Load existing metadata
     let existing_content = fs::read_to_string(path).unwrap();
     let mut combined_data: Vec<Meta> =
-        ron::from_str(&existing_content).unwrap_or_else(|_| Vec::new());
+        ron::from_str(&existing_content).expect("Failed to deserialize existing metadata");
 
     // Append new entries
     combined_data.extend_from_slice(new_data);

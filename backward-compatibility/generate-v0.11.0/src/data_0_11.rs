@@ -29,7 +29,7 @@ use threshold_fhe_0_11_0::{
 use kms_0_11_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11_0::{
     kms::v1::TypedPlaintext,
-    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PubDataType, SignedPubDataHandleInternal},
 };
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
@@ -60,7 +60,7 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
+    PubDataTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
     ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
     KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
