@@ -7,6 +7,7 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
@@ -115,6 +116,12 @@ pub struct KmsFheKeyHandles {
     pub public_key_info: KeyGenMetadata,
 }
 
+impl PrivateKeyMaterialMetadata for KmsFheKeyHandles {
+    fn get_metadata(&self) -> &KeyGenMetadata {
+        &self.public_key_info
+    }
+}
+
 impl Named for KmsFheKeyHandles {
     /// Returns the type name for versioning and serialization
     const NAME: &'static str = "KmsFheKeyHandles";
@@ -146,6 +153,40 @@ impl KmsFheKeyHandles {
             preproc_id,
             key_id,
             keyset,
+            eip712_domain,
+        )?;
+
+        Ok(KmsFheKeyHandles {
+            client_key,
+            decompression_key,
+            public_key_info,
+        })
+    }
+
+    /// Computes key handles for compressed public key materials with signatures.
+    ///
+    /// This is similar to [`Self::new`] but for compressed keys using
+    /// [`CompressedXofKeySet`] instead of [`FhePubKeySet`].
+    ///
+    /// # Important
+    /// - Only use with freshly generated compressed keys
+    /// - Not suitable for existing keys due to versioning constraints
+    /// - Version upgrades will invalidate signatures
+    pub fn new_compressed(
+        sig_key: &PrivateSigKey,
+        client_key: FhePrivateKey,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        compressed_keyset: &CompressedXofKeySet,
+        decompression_key: Option<DecompressionKey>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
+    ) -> anyhow::Result<Self> {
+        let public_key_info = compute_info_compressed_keygen(
+            sig_key,
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            preproc_id,
+            key_id,
+            compressed_keyset,
             eip712_domain,
         )?;
 
@@ -1175,7 +1216,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,
@@ -1220,7 +1261,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,
@@ -1292,7 +1333,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,

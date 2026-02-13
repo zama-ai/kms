@@ -278,6 +278,85 @@ impl Client {
         Ok(Some((server_key, public_key)))
     }
 
+    /// Retrieve a compressed keyset based on the result from storage.
+    /// This method retrieves the `CompressedXofKeySet`, verifies its digest matches
+    /// the one in `key_gen_result.key_digests`, and verifies the EIP712 signature.
+    pub async fn retrieve_compressed_keyset<R: StorageReader>(
+        &self,
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        key_gen_result: &KeyGenResult,
+        domain: &Eip712Domain,
+        storage: &R,
+    ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
+        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
+            .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
+            .await?
+        {
+            Some(keyset) => keyset,
+            None => {
+                tracing::warn!(
+                    "Compressed keyset not found with request ID {:?}",
+                    key_gen_result.request_id
+                );
+                return Ok(None);
+            }
+        };
+
+        let compressed_keyset_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
+
+        let expected_digest = key_gen_result
+            .key_digests
+            .iter()
+            .find(|kd| kd.key_type == PubDataType::CompressedXofKeySet.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Compressed keyset digest not found in key generation result for key ID {}",
+                    key_id
+                )
+            })?;
+
+        if compressed_keyset_digest != *expected_digest.digest {
+            return Err(anyhow::anyhow!(
+                "Computed compressed keyset digest {} does not match expected digest {}",
+                hex::encode(&compressed_keyset_digest),
+                hex::encode(&expected_digest.digest),
+            ));
+        }
+
+        let actual_preproc_id: RequestId = some_or_err(
+            key_gen_result.preprocessing_id.clone(),
+            "Key generation result does not contain a preprocessing ID".to_string(),
+        )?
+        .try_into()?;
+
+        let actual_key_id: RequestId = some_or_err(
+            key_gen_result.request_id.clone(),
+            "Key generation result does not contain a request ID".to_string(),
+        )?
+        .try_into()?;
+
+        if *preproc_id != actual_preproc_id {
+            return Err(anyhow::anyhow!(
+                "Preprocessing ID in key generation result does not match the provided preprocessing ID"
+            ));
+        }
+
+        if *key_id != actual_key_id {
+            return Err(anyhow::anyhow!(
+                "Key ID in key generation result does not match the provided key ID"
+            ));
+        }
+
+        let sol_type =
+            KeygenVerification::new_compressed(preproc_id, key_id, compressed_keyset_digest);
+
+        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+
+        Ok(Some(compressed_keyset))
+    }
+
     /// Retrieve and validate a public key based on the result from storage.
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key

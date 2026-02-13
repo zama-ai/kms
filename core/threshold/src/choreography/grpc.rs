@@ -1149,7 +1149,7 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
-                    0,
+                    0, // Dummy value, not used in local keygen
                     role_assignment,
                     NetworkMode::Sync,
                     request.seed,
@@ -2754,8 +2754,10 @@ where
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params, tag)
-        .await
+    crate::execution::tfhe_internals::test_feature::insecure_initialize_key_material(
+        session, params, tag,
+    )
+    .await
 }
 
 #[cfg(not(feature = "testing"))]

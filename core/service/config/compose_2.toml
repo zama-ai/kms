@@ -85,10 +85,10 @@ network_timeout_bk = 300
 network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
 session_update_interval_secs = 60
-session_cleanup_interval_secs = 3600
-discard_inactive_sessions_interval = 900
+session_cleanup_interval_secs = 86400 # 1 day
+discard_inactive_sessions_interval = 900 # 15 min
 max_waiting_time_for_message_queue = 60
-max_opened_inactive_sessions_per_party = 100
+max_opened_inactive_sessions_per_party = 2000
 
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"

@@ -557,6 +557,7 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
+/// This should match the KeySetType in the protofile
 #[derive(ValueEnum, Debug, Clone, Default)]
 pub enum KeySetType {
     #[default]
@@ -577,6 +578,9 @@ impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
 pub struct SharedKeyGenParameters {
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
+    /// Generate compressed keys using XOF-seeded compression
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
     // TODO(#2799)
     // #[command(flatten)]
     // pub keyset_added_info: Option<KeySetAddedInfo>,
@@ -649,6 +653,14 @@ pub struct NewTestingMpcContextFileParameters {
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct KeyGenResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    #[clap(long, default_value_t = false)]
+    pub compressed: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -739,9 +751,9 @@ pub enum CCCommand {
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
-    KeyGenResult(ResultParameters),
+    KeyGenResult(KeyGenResultParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
-    InsecureKeyGenResult(ResultParameters),
+    InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     PublicDecrypt(CipherArguments),
@@ -1572,6 +1584,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -1603,6 +1616,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]

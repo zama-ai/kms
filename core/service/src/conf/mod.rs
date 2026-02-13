@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(core_to_core_net.network_timeout_bk_sns, 1200);
         assert_eq!(core_to_core_net.max_en_decode_message_size, 2147483648);
         assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
-        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(3600));
+        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
         assert_eq!(
             core_to_core_net.discard_inactive_sessions_interval,
             Some(900)
@@ -343,7 +343,7 @@ mod tests {
         );
         assert_eq!(
             core_to_core_net.max_opened_inactive_sessions_per_party,
-            Some(100)
+            Some(2000)
         );
     }
 

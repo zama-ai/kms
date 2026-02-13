@@ -728,10 +728,7 @@ mod tests {
         consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
-        engine::{
-            base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-            threshold::service::session::SessionMaker,
-        },
+        engine::threshold::service::session::SessionMaker,
         vault::storage::ram,
     };
 
@@ -867,16 +864,6 @@ mod tests {
         )
         .unwrap();
 
-        let dummy_prep_id = RequestId::new_random(rng);
-        let info = compute_info_standard_keygen(
-            &sk,
-            &DSEP_PUBDATA_KEY,
-            &dummy_prep_id,
-            &key_id,
-            &fhe_key_set,
-            &dummy_domain(),
-        )
-        .unwrap();
         let mut key_store = MetaStore::new_unlimited();
         key_store.insert(&key_id).unwrap();
         // key_store.update(&key_id, Ok(info.clone())).unwrap();
@@ -895,7 +882,6 @@ mod tests {
                 &epoch_id,
                 threshold_fhe_keys,
                 fhe_key_set,
-                info,
                 Arc::clone(&key_meta_store),
             )
             .await;

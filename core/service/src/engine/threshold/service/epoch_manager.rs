@@ -525,7 +525,7 @@ impl<
                 sns_key: sns_key.map(Arc::new),
                 decompression_key: decompression_key.map(Arc::new),
             },
-            meta_data: info.clone(),
+            meta_data: info,
         };
 
         crypto_storage
@@ -534,7 +534,6 @@ impl<
                 &new_epoch_id,
                 threshold_fhe_keys,
                 fhe_pubkeys.clone(),
-                info,
                 meta_store,
             )
             .await;

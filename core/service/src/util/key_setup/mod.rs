@@ -437,7 +437,7 @@ where
     let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
-        StandardKeySetConfig::default(),
+        StandardKeySetConfig::default().compression_config,
         None,
         key_id,
         &INSECURE_PREPROCESSING_ID,
@@ -454,7 +454,7 @@ where
     let (fhe_pub_keys_2, key_info_2) = match generate_fhe_keys(
         &sk,
         dkg_params,
-        StandardKeySetConfig::default(),
+        StandardKeySetConfig::default().compression_config,
         None,
         other_key_id,
         &INSECURE_PREPROCESSING_ID,

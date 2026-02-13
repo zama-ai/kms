@@ -1,41 +1,30 @@
 use crate::anyhow_error_and_log;
-#[cfg(feature = "non-wasm")]
 use crate::backup::operator::RecoveryValidationMaterial;
 #[cfg(feature = "non-wasm")]
 use crate::conf::CoreConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::attestation::SecurityModuleProxy;
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
-#[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
-#[cfg(feature = "non-wasm")]
 use crate::engine::context_manager::CentralizedContextManager;
-#[cfg(feature = "non-wasm")]
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 #[cfg(feature = "non-wasm")]
 use crate::engine::utils::sanity_check_public_materials;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
-#[cfg(feature = "non-wasm")]
 use crate::grpc::metastore_status_service::CustodianMetaStore;
-#[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
-#[cfg(feature = "non-wasm")]
 use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
@@ -44,24 +33,16 @@ use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
 };
-#[cfg(feature = "non-wasm")]
 use crate::vault::{storage::Storage, Vault};
 use aes_prng::AesRng;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::identifiers::EpochId;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::PubDataType;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
@@ -72,35 +53,35 @@ use std::{fmt, panic};
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
 use tfhe::safe_serialization::safe_deserialize;
-#[cfg(feature = "non-wasm")]
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
-#[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::{
     ClientKey, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
 };
 use tfhe::{FheTypes, ServerKey};
-#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::keyset_config::CompressedKeyConfig;
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-#[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
-#[cfg(feature = "non-wasm")]
+/// Result enum for centralized keygen supporting both compressed and uncompressed keys.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum CentralizedKeyGenResult {
+    Uncompressed(FhePubKeySet, KmsFheKeyHandles),
+    Compressed(CompressedXofKeySet, KmsFheKeyHandles),
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
@@ -113,7 +94,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     epoch_id: &EpochId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
+) -> anyhow::Result<CentralizedKeyGenResult>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -133,17 +114,40 @@ where
         None => None,
     };
 
+    match keyset_config.computation_key_type {
+        threshold_fhe::execution::keyset_config::ComputeKeyType::Cpu => {
+            // Do nothing.
+            // We just put a match statement here
+            // so that the compiler will complain if a new variant
+            // is introduced.
+        }
+    }
+
     rayon::spawn_fifo(move || {
-        let out = generate_fhe_keys(
-            &sk_copy,
-            params,
-            keyset_config,
-            existing_key_handle,
-            &key_id_copy,
-            &preproc_id_copy,
-            seed,
-            &eip712_domain,
-        );
+        let out = match keyset_config.compressed_key_config {
+            CompressedKeyConfig::None => generate_fhe_keys(
+                &sk_copy,
+                params,
+                keyset_config.compression_config,
+                existing_key_handle,
+                &key_id_copy,
+                &preproc_id_copy,
+                seed,
+                &eip712_domain,
+            )
+            .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
+            CompressedKeyConfig::All => generate_compressed_fhe_keys(
+                &sk_copy,
+                params,
+                keyset_config.compression_config,
+                existing_key_handle,
+                &key_id_copy,
+                &preproc_id_copy,
+                seed,
+                &eip712_domain,
+            )
+            .map(|(keyset, handles)| CentralizedKeyGenResult::Compressed(keyset, handles)),
+        };
         let _ = send.send(out);
     });
     recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
@@ -155,7 +159,6 @@ where
 /// Since this function takes one epoch_id,
 /// it implies the two keys must come from the same epoch,
 /// if it's not the case this function will not work.
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_decompression_keys<PubS, PrivS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     epoch_id: &EpochId,
@@ -202,7 +205,6 @@ where
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -230,11 +232,78 @@ pub(crate) async fn async_generate_crs(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(feature = "non-wasm")]
+fn generate_compressed_fhe_keys(
+    sk: &PrivateSigKey,
+    params: DKGParams,
+    keyset_config: KeySetCompressionConfig,
+    _existing_key_handle: Option<KmsFheKeyHandles>,
+    key_id: &RequestId,
+    preproc_id: &RequestId,
+    seed: Option<Seed>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
+    match keyset_config {
+        KeySetCompressionConfig::Generate => { /* ok */ }
+        KeySetCompressionConfig::UseExisting => {
+            anyhow::bail!(
+                "Generating compressed fhe keys from existing shares is not supported yet"
+            )
+        }
+    }
+    let config = params.to_tfhe_config();
+    let private_seed_bytes = match seed {
+        Some(seed) => seed.0.to_le_bytes().to_vec(),
+        None => {
+            // Sample a random seed using the tfhe seeder
+            let mut seeder = tfhe::core_crypto::seeders::new_seeder();
+            seeder.seed().0.to_le_bytes().to_vec()
+        }
+    };
+    let security_bits = params.get_params_basics_handle().get_sec() as u32;
+    let tag = key_id.into();
+
+    // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
+    // and use a pmax=1 which should allow for any HW.
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+
+    // unwrap is ok here because parameters should always have a correct pmax
+    let max_norm_hwt =
+        tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+
+    let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
+        config,
+        private_seed_bytes,
+        security_bits,
+        max_norm_hwt,
+        tag,
+    )?;
+
+    let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
+    let server_key_parts = server_key.into_raw_parts();
+    let decompression_key = server_key_parts.3.clone();
+
+    let handles = KmsFheKeyHandles::new_compressed(
+        sk,
+        client_key,
+        key_id,
+        preproc_id,
+        &compressed_keyset,
+        decompression_key,
+        eip712_domain,
+    )?;
+
+    Ok((compressed_keyset, handles))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
-    keyset_config: StandardKeySetConfig,
+    keyset_config: KeySetCompressionConfig,
     existing_key_handle: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
@@ -243,7 +312,7 @@ pub fn generate_fhe_keys(
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let tag = key_id.into();
-        let client_key = match keyset_config.compression_config {
+        let client_key = match keyset_config {
             KeySetCompressionConfig::Generate => generate_client_fhe_key(params, tag, seed),
             KeySetCompressionConfig::UseExisting => {
                 match existing_key_handle {
@@ -297,7 +366,6 @@ pub fn generate_fhe_keys(
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<Seed>) -> ClientKey {
     use tfhe::prelude::Tagged;
 
@@ -311,7 +379,6 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
 }
 
 /// compute the CRS in the centralized KMS.
-#[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &DKGParams,
@@ -344,7 +411,6 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 }
 
 // We only need to derive (de)serialize for test, which is why they're under a cfg_attr.
-#[cfg(feature = "non-wasm")]
 #[cfg_attr(test, derive(Serialize, serde::Deserialize))]
 pub struct CentralizedKmsKeys {
     pub key_info: HashMap<RequestId, KmsFheKeyHandles>,
@@ -364,7 +430,6 @@ pub(crate) struct CentralizedTestingKeys {
     pub(crate) server_keys: Vec<PublicSigKey>,
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Debug, Clone)]
 pub struct CentralizedPreprocBucket {
     pub(crate) external_signature: Vec<u8>,
@@ -374,7 +439,6 @@ pub struct CentralizedPreprocBucket {
 /// Centralized KMS where keys are stored in a local file
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
-#[cfg(feature = "non-wasm")]
 pub struct CentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -408,7 +472,6 @@ pub struct CentralizedKms<
     pub(crate) tracker: Arc<TaskTracker>,
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
-#[cfg(feature = "non-wasm")]
 pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
     PubS,
     PrivS,
@@ -417,7 +480,6 @@ pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
 >;
 
 /// Perform asynchronous decryption and serialize the result
-#[cfg(feature = "non-wasm")]
 pub fn central_public_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -454,7 +516,6 @@ pub fn central_public_decrypt<
 }
 
 /// Perform asynchronous user decryption and serialize the result
-#[cfg(feature = "non-wasm")]
 #[allow(clippy::too_many_arguments)]
 pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
@@ -529,7 +590,6 @@ pub async fn async_user_decrypt<
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -542,7 +602,6 @@ impl<
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -771,7 +830,6 @@ fn unsafe_decrypt(
     Ok(res)
 }
 
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -825,7 +883,6 @@ impl<
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -950,7 +1007,6 @@ impl<
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -1006,7 +1062,6 @@ impl<
 }
 
 #[allow(clippy::let_underscore_future)]
-#[cfg(feature = "non-wasm")]
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
@@ -1225,7 +1280,7 @@ pub(crate) mod tests {
         let (pub_fhe_keys, key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &RequestId::from_str(key_id).unwrap(),
             &preproc_id,
@@ -1240,7 +1295,7 @@ pub(crate) mod tests {
         let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &RequestId::from_str(other_key_id).unwrap(),
             &preproc_id,
@@ -1293,7 +1348,7 @@ pub(crate) mod tests {
         assert!(generate_fhe_keys(
             &sig_sk,
             DEFAULT_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,
@@ -1301,6 +1356,54 @@ pub(crate) mod tests {
             &domain,
         )
         .is_ok());
+    }
+
+    #[test]
+    fn test_generate_compressed_fhe_keys() {
+        use super::generate_compressed_fhe_keys;
+        use kms_grpc::rpc_types::PubDataType;
+        use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
+
+        let mut rng = AesRng::seed_from_u64(100);
+        let domain = dummy_domain();
+        let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
+        let seed = Some(Seed(42));
+
+        let result = generate_compressed_fhe_keys(
+            &sig_sk,
+            TEST_PARAM,
+            KeySetCompressionConfig::Generate,
+            None,
+            &key_id,
+            &preproc_id,
+            seed,
+            &domain,
+        );
+
+        assert!(result.is_ok(), "Compressed key generation should succeed");
+        let (compressed_keyset, handles) = result.unwrap();
+
+        // Verify the handles contain the correct key type
+        match &handles.public_key_info {
+            crate::engine::base::KeyGenMetadata::Current(inner) => {
+                assert!(
+                    inner
+                        .key_digest_map
+                        .contains_key(&PubDataType::CompressedXofKeySet),
+                    "Should contain CompressedXofKeySet digest"
+                );
+            }
+            _ => panic!("Expected Current variant of KeyGenMetadata"),
+        }
+
+        // Verify the compressed keyset can be decompressed
+        let decompressed = compressed_keyset.decompress();
+        assert!(
+            decompressed.is_ok(),
+            "Compressed keyset should be decompressible"
+        );
     }
 
     #[tokio::test]

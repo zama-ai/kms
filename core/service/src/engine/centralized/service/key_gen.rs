@@ -1,7 +1,8 @@
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{compute_info_decompression_keygen, KeyGenMetadata, DSEP_PUBDATA_KEY};
 use crate::engine::centralized::central_kms::{
-    async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKms,
+    async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKeyGenResult,
+    CentralizedKms,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -306,7 +307,7 @@ pub(crate) async fn key_gen_background<
                 }
             };
 
-            let (fhe_key_set, key_info) = match async_generate_fhe_keys(
+            let keygen_result = match async_generate_fhe_keys(
                 &sk,
                 crypto_storage.clone(),
                 params,
@@ -320,7 +321,7 @@ pub(crate) async fn key_gen_background<
             )
             .await
             {
-                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                Ok(result) => result,
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
                         &mut meta_store.write().await,
@@ -332,15 +333,30 @@ pub(crate) async fn key_gen_background<
                 }
             };
 
-            crypto_storage
-                .write_centralized_keys_with_meta_store(
-                    req_id,
-                    epoch_id,
-                    key_info,
-                    fhe_key_set,
-                    meta_store,
-                )
-                .await;
+            match keygen_result {
+                CentralizedKeyGenResult::Uncompressed(fhe_key_set, key_info) => {
+                    crypto_storage
+                        .write_centralized_keys_with_meta_store(
+                            req_id,
+                            epoch_id,
+                            key_info,
+                            fhe_key_set,
+                            meta_store,
+                        )
+                        .await;
+                }
+                CentralizedKeyGenResult::Compressed(compressed_keyset, key_info) => {
+                    crypto_storage
+                        .write_centralized_compressed_keys_with_meta_store(
+                            req_id,
+                            epoch_id,
+                            key_info,
+                            &compressed_keyset,
+                            meta_store,
+                        )
+                        .await;
+                }
+            }
 
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
