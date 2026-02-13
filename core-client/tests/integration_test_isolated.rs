@@ -1532,12 +1532,18 @@ async fn integration_test_commands_isolated(
             CCCommand::PreprocKeyGen(_) => CCCommand::PreprocKeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
             }),
-            CCCommand::KeyGen(_) => CCCommand::KeyGenResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
-            CCCommand::InsecureKeyGen(_) => CCCommand::InsecureKeyGenResult(ResultParameters {
-                request_id: req_id.unwrap(),
-            }),
+            CCCommand::KeyGen(ref key_gen_parameters) => {
+                CCCommand::KeyGenResult(KeyGenResultParameters {
+                    request_id: req_id.unwrap(),
+                    compressed: key_gen_parameters.shared_args.compressed,
+                })
+            }
+            CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
+                CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
+                    request_id: req_id.unwrap(),
+                    compressed: key_gen_parameters.shared_args.compressed,
+                })
+            }
             CCCommand::PublicDecrypt(_) => CCCommand::PublicDecryptResult(ResultParameters {
                 request_id: req_id.unwrap(),
             }),
@@ -1850,6 +1856,7 @@ async fn real_preproc_and_keygen_with_context_isolated(
             preproc_id: preproc_id.unwrap(),
             shared_args: SharedKeyGenParameters {
                 keyset_type: None,
+                compressed: false,
                 context_id,
                 epoch_id,
             },
@@ -1913,6 +1920,7 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
             preproc_id,
             shared_args: SharedKeyGenParameters {
                 keyset_type: None,
+                compressed: false,
                 context_id,
                 epoch_id,
             },
