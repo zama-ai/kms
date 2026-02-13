@@ -93,30 +93,13 @@ impl Client {
     pub fn insecure_process_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let sig_sk = match &self.client_sk {
-            Some(sk) => sk,
-            None => {
-                return Err(anyhow_error_and_log(
-                    "missing client signing key".to_string(),
-                ));
-            }
-        };
-        let receiver_id = self.client_address.to_vec();
-        let client_keys = UnifiedUnsigncryptionKey {
-            sender_verf_key: &sig_sk.verf_key(),
-            decryption_key: dec_key,
-            encryption_key: enc_key,
-            receiver_id: &receiver_id,
-        };
-
         // The same logic is used in `process_user_decryption_resp`.
         if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
-            self.insecure_centralized_user_decryption_resp(agg_resp, &client_keys)
+            self.insecure_centralized_user_decryption_resp(agg_resp, dec_key)
         } else {
-            self.insecure_threshold_user_decryption_resp(agg_resp, &client_keys)
+            self.insecure_threshold_user_decryption_resp(agg_resp, dec_key)
         }
     }
 
@@ -215,7 +198,7 @@ impl Client {
     fn insecure_centralized_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedUnsigncryptionKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -225,7 +208,7 @@ impl Client {
             out.push(
                 crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
                     &ct.signcrypted_ciphertext,
-                    client_keys,
+                    dec_key,
                 )?,
             )
         }
@@ -409,14 +392,14 @@ impl Client {
     fn insecure_threshold_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedUnsigncryptionKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                self.insecure_threshold_user_decryption_resp_z64(agg_resp, client_keys)
+                self.insecure_threshold_user_decryption_resp_z64(agg_resp, dec_key)
             }
             DecryptionMode::NoiseFloodSmall => {
-                self.insecure_threshold_user_decryption_resp_z128(agg_resp, client_keys)
+                self.insecure_threshold_user_decryption_resp_z128(agg_resp, dec_key)
             }
             e => Err(anyhow_error_and_log(format!(
                 "Unsupported decryption mode: {e}"
@@ -427,7 +410,7 @@ impl Client {
     #[allow(clippy::type_complexity)]
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedUnsigncryptionKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
@@ -479,7 +462,7 @@ impl Client {
                 )?;
                 let shares = insecure_decrypt_ignoring_signature(
                     &payload.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
-                    client_keys,
+                    dec_key,
                 )?;
 
                 let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
@@ -543,10 +526,10 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedUnsigncryptionKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
+            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, dec_key)?;
 
         let mut out = vec![];
 
@@ -585,10 +568,10 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedUnsigncryptionKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
-            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
+            Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
 
         let mut out = vec![];
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {

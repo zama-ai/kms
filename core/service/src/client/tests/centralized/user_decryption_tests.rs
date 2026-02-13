@@ -452,7 +452,7 @@ pub(crate) async fn user_decryption_centralized(
                         "d8da6bf26964af9d7eed9e03e53415d37aa96045"
                     ))]));
             internal_client
-                .insecure_process_user_decryption_resp(&responses, enc_pk, enc_sk)
+                .insecure_process_user_decryption_resp(&responses, enc_sk)
                 .unwrap()
         };
 

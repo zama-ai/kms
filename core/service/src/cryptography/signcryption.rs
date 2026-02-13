@@ -690,17 +690,17 @@ fn check_format_and_signature(
 /// TODO hide behind flag for insecure function?
 pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
-    client_keys: &UnifiedUnsigncryptionKey,
+    dec_key: &UnifiedPrivateEncKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
     // LEGACY should be using safe_deserialization from tfhe-rs
     let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = match &client_keys.decryption_key {
-        UnifiedPrivateEncKey::MlKem512(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &client_keys.0)?
+    let decrypted_plaintext = match dec_key {
+        UnifiedPrivateEncKey::MlKem512(dk) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &dk.0)?
         }
-        UnifiedPrivateEncKey::MlKem1024(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.clone(), &client_keys.0)?
+        UnifiedPrivateEncKey::MlKem1024(dk) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.clone(), &dk.0)?
         }
     };
 
