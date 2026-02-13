@@ -557,7 +557,10 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
-/// This should match the KeySetType in the protofile
+/// Keyset type for key generation, matching the KeySetType in the protofile.
+///
+/// It only supports the standard keyset type for now, which is to generate the full keyset
+/// rather than individual keys from a standard keyset.
 #[derive(ValueEnum, Debug, Clone, Default)]
 pub enum KeySetType {
     #[default]
@@ -576,6 +579,7 @@ impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SharedKeyGenParameters {
+    /// Keyset type for key generation (e.g., "standard")
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
     /// Generate compressed keys using XOF-seeded compression
@@ -596,6 +600,7 @@ pub struct KeyGenParameters {
     pub shared_args: SharedKeyGenParameters,
 }
 
+/// Parameters for insecure key generation (testing/development only).
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
     #[command(flatten)]
