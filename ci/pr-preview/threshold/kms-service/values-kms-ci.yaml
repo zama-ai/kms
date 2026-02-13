@@ -5,9 +5,9 @@ kmsPeers:
 kmsCore:
   thresholdMode:
     enabled: true
-    peersList: []
+    # peersList is generated dynamically by deploy.sh and should not be set here
     tls:
-      enabled: false
+      enabled: true
   nitroEnclave:
     enabled: false
   resources:

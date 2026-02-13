@@ -1,0 +1,28 @@
+# Minimal resource configuration for local development
+# Used automatically when running with --target kind-local
+
+kmsCore:
+  thresholdMode:
+    numSessionsPreproc: 2
+
+  resources:
+    requests:
+      # Reduced from 12 CPU / 24Gi Memory
+      cpu: 2
+      memory: 4Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+kmsCoreClient:
+  # Use lighter FHE parameters for testing
+  fhe_parameter: Test
+
+  resources:
+    requests:
+      # Reduced from 12 CPU / 24Gi Memory
+      cpu: 2
+      memory: 4Gi
+    limits:
+      cpu: 2
+      memory: 4Gi

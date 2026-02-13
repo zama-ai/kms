@@ -1,0 +1,463 @@
+##############################################################################
+# Performance Testing Workflow
+#
+# This workflow runs performance tests for KMS in different deployment modes:
+# - threshold: Standard threshold mode
+# - thresholdWithEnclave: Threshold mode with Nitro Enclave security
+#
+# Triggers:
+# - Manual dispatch with configurable parameters
+##############################################################################
+name: performance-testing
+
+on:
+  #=======================================================
+  schedule:
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+  #=======================================================
+  workflow_dispatch:
+    inputs:
+      build:
+        description: 'Build new Docker images (if true, image tags below are ignored)'
+        required: true
+        default: false
+        type: boolean
+      deployment_type:
+        description: 'Deployment type'
+        required: true
+        default: 'threshold'
+        type: choice
+        options:
+          - 'threshold'
+          - 'thresholdWithEnclave'
+          - 'centralized'
+          - 'centralizedWithEnclave'
+      fhe_params:
+        description: 'FHE parameters for preprocessing and keygen'
+        required: true
+        default: 'Test'
+        type: choice
+        options:
+          - 'Default'
+          - 'Test'
+      tls:
+        description: 'TLS enabled by default. Only available for thresholdWithEnclave'
+        required: true
+        default: true
+        type: boolean
+      kms_branch:
+        description: 'KMS branch (empty if you want to use a chart version)'
+        required: false
+        type: string
+      kms_chart_version:
+        description: 'KMS chart version (use repository if you want to use a branch)'
+        required: true
+        type: choice
+        options:
+          - '1.4.17'
+          - 'repository'
+        default: '1.4.17'
+      tkms_infra_chart_version:
+        description: 'TKMS Infra chart version'
+        required: true
+        default: '0.3.2'
+        type: string
+      kms_core_image_tag:
+        description: 'KMS Core image tag (ignored if build=true)'
+        required: false
+        default: ''
+        type: string
+      kms_core_client_image_tag:
+        description: 'KMS Core client image tag (ignored if build=true)'
+        required: false
+        default: ''
+        type: string
+  #=======================================================
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # Docker Build Job (Conditional)
+  # Only runs when:
+  # - workflow_dispatch with build=true
+  # - schedule (nightly)
+  ############################################################################
+  docker-build:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build == true) ||
+      (github.event_name == 'schedule')
+    name: performance-testing/docker-build
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: write # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull requests information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Start AMD64 Runner
+  # Waits for docker-build if it's running, but always executes
+  ############################################################################
+  start-amd64-runner:
+    name: performance-testing/start-amd64-runner
+    needs: [docker-build]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
+    steps:
+      - name: Start EC2 runner AMD64
+        id: start-ec2-runner-amd64
+        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: small-instance
+
+  ############################################################################
+  # Performance Testing Job
+  # Runs performance tests for KMS in different deployment modes
+  ############################################################################
+  performance-testing:
+    needs: [docker-build, start-amd64-runner]
+    if: always() && needs.start-amd64-runner.result == 'success' && !cancelled()
+    name: performance-testing
+    runs-on: ${{ needs.start-amd64-runner.outputs.label }}
+    timeout-minutes: 1800
+    steps:
+      - name: Setup Home
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
+
+      # ======================================================================
+      # DETERMINE IMAGE TAGS
+      # Use docker-build outputs if built, otherwise use provided inputs
+      # ======================================================================
+      - name: Determine image tags
+        env:
+          DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          INPUT_CORE_TAG: ${{ inputs.kms_core_image_tag }}
+          INPUT_CLIENT_TAG: ${{ inputs.kms_core_client_image_tag }}
+        run: |
+          # Determine which image tags to use
+          if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
+            echo "Using freshly built images from docker-build job"
+            CORE_TAG="${DOCKER_BUILD_TAG}"
+            CLIENT_TAG="${DOCKER_BUILD_TAG}"
+          else
+            echo "Using provided image tags from inputs"
+            CORE_TAG="${INPUT_CORE_TAG}"
+            CLIENT_TAG="${INPUT_CLIENT_TAG}"
+          fi
+
+          # Validate that we have image tags
+          if [[ -z "${CORE_TAG}" ]]; then
+            echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
+            exit 1
+          fi
+
+          echo "Core image tag: ${CORE_TAG}"
+          echo "Client image tag: ${CLIENT_TAG}"
+
+          {
+            echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
+            echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+          } >> "$GITHUB_ENV"
+
+      # ======================================================================
+      # CONFIGURE DEPLOYMENT PARAMETERS
+      # ======================================================================
+      - name: Configure deployment parameters
+        env:
+          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
+          TLS: ${{ inputs.tls || 'true' }}
+          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+          KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
+          NAMESPACE: 'kms-ci'
+          KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
+          TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+          SYNC_SECRETS_CHART_VERSION: '0.2.1'
+        run: |
+          {
+            echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            echo "TLS=${TLS}"
+            echo "FHE_PARAMS=${FHE_PARAMS}"
+            echo "KMS_BRANCH=${KMS_BRANCH}"
+            echo "NAMESPACE=${NAMESPACE}"
+            echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
+            echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
+            echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
+          } >> "$GITHUB_ENV"
+
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
+      - name: Set up path suffix based on deployment type
+        run: |
+          ###################################################################
+          # Set up path suffix based on deployment type
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Using enclave-enabled configuration..."
+            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
+          else
+            echo "Using standard threshold configuration..."
+            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
+          fi
+
+      # ======================================================================
+      # TOOLING SETUP
+      # ======================================================================
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:${NAMESPACE}
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
+
+      - name: Setup argo workflow CLI
+        env:
+          ARGO_OS: '${{ runner.os }}'
+          ARGO_VERSION: 'v3.7.2'
+        run: |
+          # Detect OS
+          if [[ "$(uname -s)" != "Darwin" ]]; then
+            ARGO_OS="linux"
+          fi
+          # Download the binary
+          curl -sLO "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-${ARGO_OS}-amd64.gz"
+          # Unzip
+          gunzip "argo-${ARGO_OS}-amd64.gz"
+          # Make binary executable
+          chmod +x "argo-${ARGO_OS}-amd64"
+          # Move binary to path
+          mv "./argo-${ARGO_OS}-amd64" /usr/local/bin/argo
+          # Test installation
+          argo version
+
+      - name: setup kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
+
+      # ======================================================================
+      # KUBERNETES & HELM SETUP
+      # ======================================================================
+      - name: Setup kubeconfig
+        run: |
+          ###################################################################
+          # Configure kubeconfig to connect to the Tailscale Kubernetes cluster
+          ###################################################################
+          echo "Configuring kubeconfig for Tailscale cluster..."
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Checkout Project
+        if: ${{ env.KMS_CHART_VERSION != 'repository' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Checkout Project KMS
+        if: ${{ env.KMS_CHART_VERSION == 'repository' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: "${{ env.KMS_BRANCH }}"
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Set kubeconfig
+        run: |
+          ###################################################################
+          # Verify and set the Kubernetes context
+          ###################################################################
+          echo "Available Kubernetes contexts:"
+          kubectl config get-contexts
+          echo "Setting context to Tailscale cluster..."
+          kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      # ======================================================================
+      # DEPLOYMENT
+      # ======================================================================
+      - name: Deploy KMS using unified script
+        env:
+          JQ_VERSION: 1.8.1
+        run: |
+          # Download JQ.
+          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+
+          # Install JQ.
+          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+          sudo chmod +x /usr/local/bin/jq
+          echo "JQ version: $(jq --version)"
+
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
+            --target aws-perf \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --core-tag "${KMS_CORE_IMAGE_TAG}" \
+            --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
+            --num-parties 13 \
+            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+
+      # ======================================================================
+      # PERFORMANCE TESTING
+      # ======================================================================
+      - name: Run performance testing
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          ###################################################################
+          # Prepare and execute Argo workflow for performance testing
+          ###################################################################
+          echo "Starting performance testing workflow..."
+
+          # Convert TLS boolean to enabled/disabled string
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
+          # Update the workflow template with the current image tag
+          echo "Updating workflow template with image tag: ${KMS_CORE_IMAGE_TAG}"
+          sed -i "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
+            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml
+
+          echo "Submitting Argo workflow..."
+          argo submit -n argo \
+            ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+
+          echo "Streaming workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
+
+          echo "Workflow completed."
+
+      # ======================================================================
+      # SAVE ARGO WORKFLOW LOGS
+      # ======================================================================
+      - name: Upload Argo workflow logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: argo-workflow-logs.txt
+          path: argo-workflow-logs.txt
+          retention-days: 30
+
+      # ======================================================================
+      # LOG COLLECTION
+      # ======================================================================
+      - name: Get logs from kms-core
+        if: always()
+        run: |
+          ###################################################################
+          # Collect logs from all KMS Core pods for debugging
+          ###################################################################
+          echo "Collecting logs from KMS Core pods..."
+          for i in {1..13}; do
+            echo "Collecting logs from KMS Core pod ${i}/13..."
+            POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
+            LOG_FILE="kms-core-${i}-logs.txt"
+
+            # Get pod logs and save to file
+            if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+              if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+                kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}"
+              else
+                kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}"
+              fi
+              echo "  ✅ Logs saved to ${LOG_FILE}"
+            else
+              echo "  ⚠️ Pod ${POD_NAME} not found, skipping log collection"
+              touch "${LOG_FILE}"  # Create empty file to prevent workflow failure
+            fi
+          done
+
+      - name: Upload kms-core logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kms-core-logs
+          path: kms-core-*.txt
+          retention-days: 30 # Keep logs for 30 days
+          if-no-files-found: warn # Only warn if no log files are found
+
+      # ======================================================================
+      # CLEANUP
+      # ======================================================================
+      - name: Cleanup
+        if: always()
+        run: |
+          ###################################################################
+          # Clean up all resources to avoid unnecessary costs
+          ###################################################################
+          echo "Starting cleanup of KMS resources..."
+
+          # Uninstall all Helm releases in the namespace
+          echo "Uninstalling all Helm releases in namespace ${NAMESPACE}..."
+          helm list -n "${NAMESPACE}" -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
+
+          # Clean up ConfigMaps
+          echo "Cleaning up ConfigMaps..."
+          kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
+
+          # Clean up StatefulSets
+          echo "Cleaning up StatefulSets..."
+          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
+
+          # Clean up Jobs
+          echo "Cleaning up Jobs..."
+          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
+
+          # Clean up workflow
+          echo "Cleaning up workflow..."
+          argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
+
+          echo "✅ Cleanup completed successfully"
+
+  ############################################################################
+  # Stop AMD64 Runner
+  ############################################################################
+  stop-amd64-runner:
+    name: performance-testing/stop-amd64-runner
+    needs: [start-amd64-runner, performance-testing]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Stop AMD64 runner
+        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-amd64-runner.outputs.label }}

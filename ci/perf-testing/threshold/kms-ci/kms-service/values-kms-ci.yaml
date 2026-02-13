@@ -1,0 +1,130 @@
+kmsPeers:
+  # Number of replicas managed by each statefulset
+  count: 1
+kmsConnector:
+  enabled: false
+kmsCoreClient:
+  enabled: false
+  envFrom:
+    configmap:
+      name: kms-ci-1
+  image:
+    tag: <version>
+
+kmsCore:
+  image:
+    name: ghcr.io/zama-ai/kms/core-service
+    tag: <version>
+
+  envFrom:
+    configmap:
+      key:
+        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
+        privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
+        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
+  rateLimiter:
+    bucketSize: 50000
+  thresholdMode:
+    enabled: true
+    initializationScript:
+      enabled: true
+    tls:
+      enabled: false
+    thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
+    numSessionsPreproc: 72
+    multiplier: 2.0
+    maxInterval: 60
+    initialIntervalMs: 100
+    cleanupIntervalSecs: 2
+    tokioWorkerThreads: 10
+    rayonNumThreads: 40
+    # peersList is generated dynamically by deploy.sh and should not be set here
+  aws:
+    region: eu-west-1
+  publicVault:
+    s3:
+      enabled: true
+      prefix:
+  privateVault:
+    s3:
+      enabled: true
+      prefix:
+  storage:
+    storageClassName: gp3
+    capacity: 5Gi
+  serviceMonitor:
+    enabled: false
+  resources:
+    requests:
+      memory: 96Gi
+      cpu: 48
+    limits:
+      memory: 96Gi
+      ephemeralStorage: 1Gi
+      grpcTimeout: 360
+      grpcMaxMessageSize: 104857600
+  nodeSelector:
+    karpenter.sh/nodepool: kms-bench-spot-64
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-bench-spot-64
+mtls:
+  enabled: false
+environment: dev
+runMode: dev
+redis:
+  enabled: false
+  host: "redis://redis-master.common.svc.cluster.local"
+tracing:
+  enabled: false
+  endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
+
+socat:
+  image:
+    name: alpine/socat
+    tag: latest
+rustLog: info
+minio:
+  enabled: false
+kyverno:
+  enabled: false
+kmsInit:
+  enabled: false
+kmsGenKeys:
+  enabled: false
+# Cronjob kubernetes
+# Store the key-id and crs-id in files for later use in /app/key-files volume
+# Then launch a test of the KMS core client
+
+kmsCoreClientTesting:
+  enabled: false
+  # schedule: "5 * * * *"
+  shell_command:
+    - date
+    - ./bin/kms-core-client --logs --max-iter 1200 -f config.toml preproc-key-gen
+    - date
+    # kmsCoreClientTesting:
+  # enabled: true
+  # schedule: "40 * * * *"
+  # shell_command:
+  # - echo "######################################################################"
+  # - echo "Launching testing core-client"
+  # - echo ""
+  # - echo ""
+  # - echo "######################################################################"
+  # - echo ""
+  # - if [ ! -f "/app/key-files/key-id.txt" ] && [ ! -f "/app/key-files/crs-id.txt" ]; then echo "Launching insecure key generation"; result_key_id=$(bin/kms-core-client -f config.toml insecure-key-gen); echo "######################################################################"; echo "Launching insecure crs generation"; result_crs_id=$(bin/kms-core-client -f config.toml insecure-crs-gen --max-num-bits 128); key_id=$(echo $result_key_id | grep request_id | cut -d'"' -f4); crs_id=$(echo $result_crs_id | grep request_id | cut -d'"' -f4); echo "${key_id}" > /app/key-files/key-id.txt; echo "${crs_id}" > /app/key-files/crs-id.txt;
+  # - fi
+  # - key_id=$(cat /app/key-files/key-id.txt)
+  # - crs_id=$(cat /app/key-files/crs-id.txt)
+  # - for i in 1 2 3 4 5; do echo "######################################################################"; echo "Launching public-decrypt with euint8"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint32"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint64"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching public-decrypt with euint128"; bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint8"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint8 -k $key_id -e ff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint32"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint32 -k $key_id -e ffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint64"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100; echo "######################################################################"; echo "Launching user-decrypt with euint128"; bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint128 -k $key_id -e ffffffffffffffffffffffffffffffff --precompute-sns --num-requests 100; done
+podSecurityContext:
+  # To set when the image will support non root user
+  runAsUser: 10003
+  runAsGroup: 10002
+  fsGroup: 10002
+  runAsNonRoot: true
