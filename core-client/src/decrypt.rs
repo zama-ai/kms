@@ -497,8 +497,8 @@ pub(crate) async fn get_public_decrypt_responses(
                 // do at most max_iter retries
                 if ctr >= max_iter {
                     anyhow::bail!(
-                        "timeout while waiting for public decryption from core {:?} after {max_iter} retries.",
-                        core_conf
+                        "timeout while waiting for public decryption from party {:?} after {max_iter} retries.",
+                        core_conf.party_id
                     );
                 }
                 ctr += 1;
@@ -507,7 +507,7 @@ pub(crate) async fn get_public_decrypt_responses(
                     .await;
             }
             let resp = response.map_err(|e| {
-                anyhow::anyhow!("public decryption response from core {:?} failed: {e}", core_conf)
+                anyhow::anyhow!("public decryption response from party {:?} failed: {e}", core_conf.party_id)
             })?;
             Ok((core_conf, request_id, resp.into_inner()))
         });
