@@ -25,7 +25,7 @@ threshold_fhe_0_13_1 = { git = "https://github.com/zama-ai/kms.git", package = "
     "testing",
 ] }
 
-# Dependencies for the 0.13 version
+# Dependencies for the 0.13.1 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
