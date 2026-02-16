@@ -19,6 +19,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
         .with_test_name("health_endpoint")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
+        .with_prss() // PRSS is required for the server to be able to serve
         .build()
         .await?;
 
@@ -62,6 +63,7 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
         .with_test_name("close_after_drop")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
+        .with_prss() // PRSS is required for the server to be able to serve
         .build()
         .await?;
 

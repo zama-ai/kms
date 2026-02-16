@@ -11,6 +11,7 @@ pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
 // More specific metrics for key generation, only used with counters
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
+pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
 pub const OP_STANDARD_KEYGEN: &str = "standard_keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
@@ -44,6 +45,7 @@ pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
 pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
 pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
+pub const OP_KEY_MATERIAL_AVAILABILITY: &str = "key_material_availability";
 
 // Epoch operations
 pub const OP_NEW_EPOCH: &str = "new_mpc_epoch";
