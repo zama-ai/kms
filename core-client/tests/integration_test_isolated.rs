@@ -782,13 +782,20 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 ///
 /// This creates:
 /// - Servers 1-4 with peers [1,2,3,4] (for context 1)
-/// - Servers 5-6 with peers [5,6,3,4] where 5→party1, 6→party2 (for context 2)
+/// - Servers 5,6,4,3 with peers [5,6,4,3] as MPC parties [1,2,3,4] (for context 2)
+///   - Server 5 → party 1 (replacing server 1)
+///   - Server 6 → party 2 (replacing server 2)
+///   - Server 4 → party 3 (was party 4 in context 1 — role swap)
+///   - Server 3 → party 4 (was party 3 in context 1 — role swap)
+///
+/// The role swap for servers 3 and 4 makes the test more challenging by ensuring
+/// that surviving servers change their MPC party roles between contexts.
 ///
 /// Returns:
 /// - TestMaterialHandle with test material
 /// - HashMap of server handles
 /// - Config path for context 1 (servers 1,2,3,4)
-/// - Config path for context 2 (servers 5,6,3,4)
+/// - Config path for context 2 (servers 5,6,4,3)
 ///
 /// TODO: add possibility for dynamic party number setup
 async fn setup_party_resharing_servers(
@@ -879,11 +886,11 @@ async fn setup_party_resharing_servers(
         })
         .collect();
 
-    // Peers for context 2: servers [5,6,3,4] acting as MPC parties [1,2,3,4]
+    // Peers for context 2: servers [5,6,4,3] acting as MPC parties [1,2,3,4]
     // - Server 5 (index 4) acts as MPC party 1 (replacing server 1)
     // - Server 6 (index 5) acts as MPC party 2 (replacing server 2)
-    // - Server 3 (index 2) remains as MPC party 3
-    // - Server 4 (index 3) remains as MPC party 4
+    // - Server 4 (index 3) acts as MPC party 3 (was party 4 in ctx1 — role swap)
+    // - Server 3 (index 2) acts as MPC party 4 (was party 3 in ctx1 — role swap)
     let peers_ctx2: Vec<PeerConf> = vec![
         PeerConf {
             party_id: 1, // MPC party 1
@@ -902,17 +909,17 @@ async fn setup_party_resharing_servers(
             verification_address: None,
         },
         PeerConf {
-            party_id: 3, // MPC party 3
+            party_id: 3, // MPC party 3 — server 4 (swapped from party 4 in ctx1)
             address: "127.0.0.1".to_string(),
-            mpc_identity: Some("kms-core-3.local".to_string()),
+            mpc_identity: Some("kms-core-4.local".to_string()),
             port: 0,
             tls_cert: None,
             verification_address: None,
         },
         PeerConf {
-            party_id: 4, // MPC party 4
+            party_id: 4, // MPC party 4 — server 3 (swapped from party 3 in ctx1)
             address: "127.0.0.1".to_string(),
-            mpc_identity: Some("kms-core-4.local".to_string()),
+            mpc_identity: Some("kms-core-3.local".to_string()),
             port: 0,
             tls_cert: None,
             verification_address: None,
@@ -924,9 +931,9 @@ async fn setup_party_resharing_servers(
     // - peer_server_indices: Maps each peer (by index in peers vec) to physical server index (0-based)
     //
     // Context 1 servers (indices 0-3): peers map to servers 0,1,2,3
-    // Context 2 servers (indices 4-5): peers map to servers 4,5,2,3 (party 1→server5, party 2→server6)
+    // Context 2 servers (indices 4-5): peers map to servers 4,5,3,2 (with role swap for 3↔4)
     let peer_indices_ctx1 = vec![0, 1, 2, 3]; // Peers 1,2,3,4 → servers 0,1,2,3
-    let peer_indices_ctx2 = vec![4, 5, 2, 3]; // Peers 1,2,3,4 → servers 4,5,2,3
+    let peer_indices_ctx2 = vec![4, 5, 3, 2]; // Peers 1,2,3,4 → servers 4,5,3(=party4→party3),2(=party3→party4)
 
     let server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)> = vec![
         (1, 1, peers_1234.clone(), peer_indices_ctx1.clone()), // Server 1 (idx 0): party 1
@@ -955,39 +962,29 @@ async fn setup_party_resharing_servers(
     // These are minimal configs with mock_enclave = true and TLS auto mode
     let threshold_value = 1; // For 4 parties: threshold = 1
 
-    // Create server configs for all 6 servers
-    for server_id in 1..=6 {
+    // Helper: map party_id to physical server_id for a given context
+    let party_to_server_ctx1 = |party_id: usize| -> u32 { party_id as u32 };
+    let party_to_server_ctx2 = |party_id: usize| -> u32 {
+        match party_id {
+            1 => 5,
+            2 => 6,
+            3 => 4, // server 4 acts as party 3 in ctx2 (swapped)
+            4 => 3, // server 3 acts as party 4 in ctx2 (swapped)
+            _ => party_id as u32,
+        }
+    };
+
+    // Helper: generate a compose config file for a given server in a given context
+    let write_compose_config = |config_path: &Path,
+                                server_id: usize,
+                                my_party_id: usize,
+                                peers: &[PeerConf],
+                                party_to_server: &dyn Fn(usize) -> u32|
+     -> Result<()> {
         let server = servers.get(&(server_id as u32)).unwrap();
-        let server_config_path = material_dir
-            .path()
-            .join(format!("compose_{}.toml", server_id));
-
-        // Determine which peer list this server uses
-        let (my_party_id, peers_for_config) = if server_id <= 4 {
-            // Servers 1-4 use peers_1234, party_id = server_id
-            (server_id, &peers_1234)
-        } else {
-            // Servers 5-6 use peers_ctx2, party_id = server_id - 4 (5→1, 6→2)
-            (server_id - 4, &peers_ctx2)
-        };
-
-        // Build peer list for this server's config
         let mut peers_config = String::new();
-        for peer in peers_for_config.iter() {
-            // Find the physical server for this peer
-            let peer_server_id = if server_id <= 4 {
-                // Context 1: peer party_id maps directly to server_id
-                peer.party_id as u32
-            } else {
-                // Context 2: party 1→server5, party 2→server6, party 3→server3, party 4→server4
-                match peer.party_id {
-                    1 => 5,
-                    2 => 6,
-                    3 => 3,
-                    4 => 4,
-                    _ => peer.party_id as u32,
-                }
-            };
+        for peer in peers.iter() {
+            let peer_server_id = party_to_server(peer.party_id);
             let peer_server = servers.get(&peer_server_id).unwrap();
             let mpc_port = peer_server.mpc_port.expect("MPC port should be set");
             peers_config.push_str(&format!(
@@ -1002,7 +999,7 @@ port = {}
             ));
         }
 
-        let server_config_content = format!(
+        let content = format!(
             r#"
 mock_enclave = true
 
@@ -1040,17 +1037,65 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
 {}
 "#,
             server.service_port,
-            server_id, // prefix for public_vault - use server_id to match client config
+            server_id,
             material_dir.path().display(),
-            server_id,   // PRIV-p{server_id}
-            my_party_id, // my_id
+            server_id,
+            my_party_id,
             threshold_value,
             server.mpc_port.expect("MPC port should be set"),
             peers_config
         );
+        std::fs::write(config_path, content)?;
+        Ok(())
+    };
 
-        std::fs::write(&server_config_path, server_config_content)?;
+    // Context 1 configs: servers 1-4 with peers_1234
+    for server_id in 1..=4 {
+        let path = material_dir
+            .path()
+            .join(format!("compose_{}.toml", server_id));
+        write_compose_config(
+            &path,
+            server_id,
+            server_id,
+            &peers_1234,
+            &party_to_server_ctx1,
+        )?;
     }
+
+    // Context 2 configs: servers 5,6 (new) + servers 3,4 with swapped roles
+    // Server 5 → party 1, Server 6 → party 2
+    for server_id in 5..=6 {
+        let path = material_dir
+            .path()
+            .join(format!("compose_{}.toml", server_id));
+        write_compose_config(
+            &path,
+            server_id,
+            server_id - 4, // 5→1, 6→2
+            &peers_ctx2,
+            &party_to_server_ctx2,
+        )?;
+    }
+    // Servers 3,4 need separate ctx2 configs with swapped roles
+    // Server 4 → party 3 in ctx2 (was party 4 in ctx1)
+    let compose_4_ctx2_path = material_dir.path().join("compose_4_ctx2.toml");
+    write_compose_config(
+        &compose_4_ctx2_path,
+        4,
+        3,
+        &peers_ctx2,
+        &party_to_server_ctx2,
+    )?;
+    // Server 3 → party 4 in ctx2 (was party 3 in ctx1)
+    let compose_3_ctx2_path = material_dir.path().join("compose_3_ctx2.toml");
+    write_compose_config(
+        &compose_3_ctx2_path,
+        3,
+        4,
+        &peers_ctx2,
+        &party_to_server_ctx2,
+    )?;
 
     // Generate CLI config for context 1 (servers 1,2,3,4)
     let fhe_params = FheParameter::Test;
@@ -1095,7 +1140,8 @@ config_path = "{}"
     }
     std::fs::write(&config_path_1234, config_content_1234)?;
 
-    // Generate CLI config for context 2 (servers 5,6,3,4 as parties 1,2,3,4)
+    // Generate CLI config for context 2 (servers 5,6,4,3 as parties 1,2,3,4)
+    // Note: servers 3 and 4 swap roles compared to context 1
     let config_path_5634 = material_dir.path().join("client_config_5634.toml");
     let mut config_content_5634 = format!(
         r#"
@@ -1114,13 +1160,17 @@ file_storage_path = "{path}"
         path = material_dir.path().display()
     );
 
-    // Map: MPC party_id -> physical server_id
-    // Party 1 -> Server 5, Party 2 -> Server 6, Party 3 -> Server 3, Party 4 -> Server 4
-    for (party_id, server_id) in [(1, 5), (2, 6), (3, 3), (4, 4)] {
-        let server = servers.get(&(server_id as u32)).unwrap();
-        let server_config_path = material_dir
-            .path()
-            .join(format!("compose_{}.toml", server_id));
+    // Map: MPC party_id -> (physical server_id, compose config path)
+    // Party 1 -> Server 5, Party 2 -> Server 6, Party 3 -> Server 4 (swapped), Party 4 -> Server 3 (swapped)
+    // Servers 3,4 use ctx2-specific compose configs with swapped roles and peers_ctx2
+    let ctx2_cores: Vec<(usize, u32, PathBuf)> = vec![
+        (1, 5, material_dir.path().join("compose_5.toml")),
+        (2, 6, material_dir.path().join("compose_6.toml")),
+        (3, 4, compose_4_ctx2_path.clone()), // server 4 as party 3
+        (4, 3, compose_3_ctx2_path.clone()), // server 3 as party 4
+    ];
+    for (party_id, server_id, config_path) in &ctx2_cores {
+        let server = servers.get(server_id).unwrap();
         config_content_5634.push_str(&format!(
             r#"
 [[cores]]
@@ -1136,7 +1186,7 @@ config_path = "{}"
             material_dir.path().display(),
             server_id, // Physical server ID for storage
             server_id,
-            server_config_path.display()
+            config_path.display()
         ));
     }
     std::fs::write(&config_path_5634, config_content_5634)?;
@@ -2718,8 +2768,8 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 ///
 /// This test validates party resharing/remapping across MPC contexts:
 /// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
-/// - Second context: Physical servers 5,6,3,4 act as MPC parties 1,2,3,4
-/// - Servers 3 and 4 participate in BOTH contexts (continuity)
+/// - Second context: Physical servers 5,6,4,3 act as MPC parties 1,2,3,4
+/// - Servers 3 and 4 participate in BOTH contexts with SWAPPED roles (continuity + role change)
 /// - Servers 5 and 6 REPLACE servers 1 and 2 in the second context
 ///
 /// This test replicates party resharing scenario, which is critical for:
@@ -2730,7 +2780,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **Architecture:**
 /// - 6 physical servers total, each MPC context uses 4 parties (threshold=1)
 /// - Servers 1-4 configured with peers [1,2,3,4]
-/// - Servers 5-6 configured with peers [5,6,3,4] where 5→party1, 6→party2
+/// - Servers 5,6,4,3 configured with peers [5,6,4,3] where 5→party1, 6→party2, 4→party3, 3→party4
 ///
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** Use K8s version in `kubernetes_test_threshold_context.rs`
@@ -2773,10 +2823,10 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         key_1_id
     );
 
-    // === CONTEXT 2: Servers 5,6,3,4 as parties 1,2,3,4 (party resharing) ===
+    // === CONTEXT 2: Servers 5,6,4,3 as parties 1,2,3,4 (party resharing + role swap) ===
     println!("\n========== CONTEXT 2 (PARTY RESHARING) ==========");
-    println!("Creating second context with servers [5, 6, 3, 4] as parties [1, 2, 3, 4]");
-    println!("Note: Servers 5,6 REPLACE servers 1,2 in this context");
+    println!("Creating second context with servers [5, 6, 4, 3] as parties [1, 2, 3, 4]");
+    println!("Note: Servers 5,6 REPLACE servers 1,2; servers 3,4 SWAP roles in this context");
 
     let context_2_id =
         ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
@@ -2797,7 +2847,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     )
     .await?;
     println!(
-        "✅ Context 2 (servers 5,6,3,4): Key generated: {}",
+        "✅ Context 2 (servers 5,6,4,3): Key generated: {}",
         key_2_id
     );
 
@@ -2832,8 +2882,10 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 
     println!("✅ Party resharing validated:");
     println!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
-    println!("   - Context 2: servers 5,6,3,4 as parties 1,2,3,4 (5,6 replaced 1,2)");
-    println!("   - Servers 3,4 participated in BOTH contexts");
+    println!(
+        "   - Context 2: servers 5,6,4,3 as parties 1,2,3,4 (5,6 replaced 1,2; 3↔4 swapped roles)"
+    );
+    println!("   - Servers 3,4 participated in BOTH contexts with DIFFERENT party roles");
     println!("   - All 3 keys are unique and isolated");
     println!("✅ 6-party MPC context switch with party resharing test completed successfully");
 

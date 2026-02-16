@@ -17,11 +17,12 @@ k8s-integration    = { max-threads = 1 }
 # CI profile: used for PR checks (fast feedback)
 # =============================================================================
 # Excludes slow tests from integration_test_isolated that only run nightly:
-#   - full_gen_tests_default*           (uses real/Default FHE params — very slow)
+#   - full_gen_tests_default*           (uses FheParameter::Default — production-sized, slow)
 #   - nightly_tests_threshold_sequential_crs
 #   - test_threshold_concurrent_crs
-# Note: K8s tests with "default" in their name are lightweight (insecure params)
-# and always run — the filter only targets the integration_test_isolated binary.
+# The filter only targets the integration_test_isolated binary — K8s tests are
+# unaffected even if they have "default" in their name (those run against an
+# insecure-param cluster and are fast).
 [profile.ci]
 default-filter = 'not (binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
