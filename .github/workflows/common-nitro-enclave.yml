@@ -165,16 +165,27 @@ jobs:
           echo "EIF_OUTPUT_DIR=${WORKSPACE}/${WORKING_DIRECTORY}/eif-output" >> "$GITHUB_ENV"
 
       - name: Create EIF file
-        uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
-        with:
-          image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
-          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{ env.DOCKER_SOCK_PATH}}:/var/run/docker.sock # zizmor: ignore[template-injection]
-          run: |
-            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
-            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
-            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          DOCKER_TAG: ${{ needs.determine-tag.outputs.docker_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Use the runner's native Docker CLI directly with amazonlinux@2023.10.20260202.2 which is the latest as of Feb 13, 2026
+          docker context use default
+          docker run --rm \
+            -v "${EIF_OUTPUT_DIR}:/output" \
+            -v "/var/run/docker.sock:/var/run/docker.sock" \
+            -e GH_TOKEN \
+            -e IMAGE_NAME \
+            -e DOCKER_TAG \
+            amazonlinux@sha256:97073cc66ae1fe66d59315987c36f4eeb98242a85086e972b4109bab4cb57454 \
+            sh -c '
+              dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
+              echo "$GH_TOKEN" | docker login ghcr.io -u USERNAME --password-stdin
+              docker pull --platform=linux/amd64 "ghcr.io/zama-ai/${IMAGE_NAME}:${DOCKER_TAG}"
+              nitro-cli build-enclave --docker-uri "ghcr.io/zama-ai/${IMAGE_NAME}:${DOCKER_TAG}" --name "$IMAGE_NAME" --output-file /output/enclave.eif
+              nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+            '
 
       - name: Export EIF measurements
         id: eif

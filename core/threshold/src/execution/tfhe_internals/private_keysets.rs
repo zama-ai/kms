@@ -622,7 +622,7 @@ mod test {
                     CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
                     PrivateKeySet,
                 },
-                test_feature::initialize_key_material,
+                test_feature::insecure_initialize_key_material,
             },
         },
         networking::NetworkMode,
@@ -692,7 +692,7 @@ mod test {
     #[tokio::test]
     async fn lift_private_keyset() {
         let task = |mut session_z64: SmallSession64<4>, mut session_z128: SmallSession128<4>| async move {
-            let (_, my_keys) = initialize_key_material::<_, 4>(
+            let (_, my_keys) = insecure_initialize_key_material::<_, 4>(
                 &mut session_z64,
                 BC_PARAMS_SNS,
                 tfhe::Tag::default(),

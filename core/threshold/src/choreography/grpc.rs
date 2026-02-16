@@ -2750,8 +2750,10 @@ where
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params, tag)
-        .await
+    crate::execution::tfhe_internals::test_feature::insecure_initialize_key_material(
+        session, params, tag,
+    )
+    .await
 }
 
 #[cfg(not(feature = "testing"))]

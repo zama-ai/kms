@@ -14,8 +14,9 @@ use backward_compatibility::{
     PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
     TestMetadataDD, TestType, Testcase,
 };
+use kms_lib::engine::context::SoftwareVersion;
 use rand::{RngCore, SeedableRng};
-use std::{env, path::Path};
+use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
@@ -290,11 +291,11 @@ impl TestedModule for ThresholdFhe {
 
 #[test]
 fn test_backward_compatibility_threshold_fhe() {
-    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_version = SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<ThresholdFhe>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<ThresholdFhe>(&base_data_dir, &pkg_version.to_string());
 
     if results.iter().any(|r| r.is_failure()) {
         panic!("Backward compatibility tests for the threshold fhe module failed")

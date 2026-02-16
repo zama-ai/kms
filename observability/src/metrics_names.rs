@@ -11,9 +11,14 @@ pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
 // More specific metrics for key generation, only used with counters
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
+pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
 pub const OP_STANDARD_KEYGEN: &str = "standard_keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
+// the compressed versions of the above
+pub const OP_INSECURE_STANDARD_COMPRESSED_KEYGEN: &str = "insecure_standard_compressed_keygen";
+pub const OP_STANDARD_COMPRESSED_KEYGEN: &str = "standard_compressed_keygen";
+pub const OP_DECOMPRESSION_COMPRESSED_KEYGEN: &str = "decompression_compressed_keygen";
 
 // Public/User decryption Operations
 // Corresponds to a request, a request may contain several ciphertexts

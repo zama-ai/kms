@@ -47,6 +47,7 @@ make generate-backward-compatibility-v0.11.0
 # Generate only v0.11.1 data
 make generate-backward-compatibility-v0.11.1
 ```
+WARNING: Generating for specific versions remove previously generated data from the `.ron` files. Thus, changes based on generating a specific version should NEVER be committed to the repo. 
 
 **Direct cargo commands:**
 ```shell

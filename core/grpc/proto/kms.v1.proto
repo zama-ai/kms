@@ -534,9 +534,10 @@ message MpcContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // A software version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
-  // If minor upgrades/downgrades are not permitted then a digest of the binaries to run should also be included.
-  bytes software_version = 3;
+  // Software version information stored in a string using semantic versioning.
+  // The semantic version must contain at least a major version, whereas minor, patch and tags are optional
+  // For example "1.2.3-alpha", "1.2" or "1"
+  string software_version = 3;
 
   // The corruption threshold for this context.
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.

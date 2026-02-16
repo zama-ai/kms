@@ -28,7 +28,7 @@ pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAd
 }
 
 /// Returns compressed keygen config with `CompressedKeyConfig::CompressedAll`
-#[cfg(feature = "slow_tests")]
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
