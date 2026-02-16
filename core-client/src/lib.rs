@@ -24,7 +24,7 @@ use crate::keygen::{
     get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
-use crate::mpc_epoch::do_new_epoch;
+use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
@@ -644,6 +644,13 @@ pub struct DestroyMpcContextParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct DestroyMpcEpochParameters {
+    /// The epoch ID to use for the MPC epoch to destroy.
+    #[clap(long)]
+    pub epoch_id: EpochId,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct NewTestingMpcContextFileParameters {
     /// The context ID to use for the new MPC context.
     #[clap(long)]
@@ -778,6 +785,7 @@ pub enum CCCommand {
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
+    DestroyMpcEpoch(DestroyMpcEpochParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
@@ -1863,6 +1871,13 @@ pub async fn execute_cmd(
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),
+            )]
+        }
+        CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id }) => {
+            do_destroy_mpc_epoch(&core_endpoints_req, epoch_id).await?;
+            vec![(
+                Some((*epoch_id).into()),
+                "epoch destruction done".to_string(),
             )]
         }
     };

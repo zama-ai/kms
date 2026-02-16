@@ -620,6 +620,23 @@ async fn destroy_mpc_context(context_id: &ContextId, config_path: &Path, test_pa
     assert_eq!(context_destroy_result.len(), 1);
 }
 
+async fn destroy_mpc_epoch(epoch_id: &EpochId, config_path: &Path, test_path: &Path) {
+    let command = CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters {
+        epoch_id: *epoch_id,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let epoch_destroy_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(epoch_destroy_result.len(), 1);
+}
+
 // expect the context to already exist in the KMS servers
 async fn new_genesis_epoch(
     context_id: ContextId,
@@ -1763,6 +1780,22 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     let result = execute_cmd(&ddec_config, test_path).await.unwrap();
     println!("Decrypt in reshared context succeeded : {:?}", result);
+
+    // Delete the old epoch and verify it's gone
+    println!("Destroying old epoch");
+    destroy_mpc_epoch(&epoch_id_set_1, &config_path_set_1, test_path).await;
+
+    // Verify the old epoch is gone by running preproc with the old context/epoch, which should fail
+    let err = real_preproc(
+        config_path_set_1.to_str().unwrap(),
+        test_path,
+        Some(context_id_set_1),
+        Some(epoch_id_set_1),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("NotFound"));
+    println!("Old epoch successfully destroyed and verified");
 }
 
 ///////// FULL GEN TESTS//////////

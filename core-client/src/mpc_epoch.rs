@@ -5,7 +5,7 @@ use crate::{
 };
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{FheParameter, KeyDigest, PreviousEpochInfo},
+    kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{alloy_to_protobuf_domain, PubDataType},
     RequestId,
@@ -212,4 +212,27 @@ pub(crate) async fn do_new_epoch(
         }
     }
     Ok(new_epoch_id)
+}
+
+pub(crate) async fn do_destroy_mpc_epoch(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    epoch_id: &EpochId,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (_party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+        let epoch_cloned = (*epoch_id).into();
+        req_tasks.spawn(async move {
+            cur_client
+                .destroy_mpc_epoch(DestroyMpcEpochRequest {
+                    epoch_id: Some(epoch_cloned),
+                })
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
 }

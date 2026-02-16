@@ -226,11 +226,10 @@ impl_endpoint! {
 
         async fn destroy_mpc_epoch(
             &self,
-            _request: Request<DestroyMpcEpochRequest>,
+            request: Request<DestroyMpcEpochRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_EPOCH);
-            // Currently no-op
-            Ok(Response::new(Empty {}))
+            Ok(self.epoch_manager.destroy_mpc_epoch(request).await?)
         }
 
         #[tracing::instrument(skip(self, request))]
