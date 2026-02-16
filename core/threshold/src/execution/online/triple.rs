@@ -131,9 +131,11 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     .await
 }
 
-// TODO: Calls to this should be replaced by calls to RobustOpen protocol.
+// TODO: Calls to this should be replaced by calls to a generic RobustOpen protocol.
+// instead of forcing the use of SecureRobustOpen impl.
 // This would be more consistent with the rest of the codebase and
 // allow for easier testing of malicious strategies.
+// We might even want to remove those 2 functions and directly call the robust open protocol from the code that needs it, as there is not much added value in having those wrapper functions.
 
 /// Opens a single secret
 pub async fn open<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(

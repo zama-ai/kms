@@ -67,22 +67,31 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
 
 impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
     fn num_bits_to_lift(&self) -> usize {
+        let PrivateKeySet {
+            lwe_encryption_secret_key_share,
+            lwe_compute_secret_key_share,
+            glwe_secret_key_share,
+            glwe_secret_key_share_sns_as_lwe: _,
+            glwe_secret_key_share_compression,
+            glwe_sns_compression_key_as_lwe: _,
+            parameters: _,
+        } = self;
+
         let mut count = 0;
-        if let LweSecretKeyShareEnum::Z64(key) = &self.lwe_encryption_secret_key_share {
+
+        if let LweSecretKeyShareEnum::Z64(key) = lwe_encryption_secret_key_share {
             count += key.data.len();
         }
 
-        if let LweSecretKeyShareEnum::Z64(key) = &self.lwe_compute_secret_key_share {
+        if let LweSecretKeyShareEnum::Z64(key) = lwe_compute_secret_key_share {
             count += key.data.len();
         }
 
-        if let GlweSecretKeyShareEnum::Z64(key) = &self.glwe_secret_key_share {
+        if let GlweSecretKeyShareEnum::Z64(key) = glwe_secret_key_share {
             count += key.data.len();
         }
 
-        if let Some(CompressionPrivateKeySharesEnum::Z64(key)) =
-            &self.glwe_secret_key_share_compression
-        {
+        if let Some(CompressionPrivateKeySharesEnum::Z64(key)) = glwe_secret_key_share_compression {
             count += key.post_packing_ks_key.data.len();
         }
 

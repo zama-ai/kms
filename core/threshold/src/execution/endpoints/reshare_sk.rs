@@ -45,7 +45,7 @@ impl ResharePreprocRequired {
     /// where `num_parties_reshare_from` is the number of parties holding the input shares
     /// (i.e. everyone in same set resharing, or the first set in two sets resharing)
     ///
-    /// NOTE: A [`PrivateKeySet`] is exepected to be either all Z64 or all Z128 depending on the DKG parameters.
+    /// NOTE: A [`PrivateKeySet`] is expected to be either all Z64 or all Z128 depending on the DKG parameters.
     pub fn new(num_parties_reshare_from: usize, parameters: DKGParams) -> Self {
         let params = parameters.get_params_basics_handle();
         let mut num_randoms_128 = 0;
