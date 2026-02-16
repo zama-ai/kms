@@ -1230,6 +1230,42 @@ async fn insecure_key_gen_isolated(config_path: &Path, test_path: &Path) -> Resu
     Ok(key_id.to_string())
 }
 
+/// Helper to run insecure key generation with compressed keys via CLI (isolated version)
+async fn insecure_key_gen_compressed_isolated(
+    config_path: &Path,
+    test_path: &Path,
+) -> Result<String> {
+    let config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            shared_args: SharedKeyGenParameters {
+                keyset_type: Some(KeySetType::Standard),
+                compressed: true,
+                context_id: None,
+                epoch_id: None,
+            },
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing insecure key-gen (compressed)");
+    let key_gen_results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("Insecure key-gen (compressed) done");
+
+    assert_eq!(key_gen_results.len(), 1);
+    let key_id = match key_gen_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing insecure compressed keygen"),
+    };
+
+    Ok(key_id.to_string())
+}
+
 // ============================================================================
 // CLI COMMAND HELPERS
 // ============================================================================
@@ -1363,7 +1399,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1378,7 +1414,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1393,7 +1429,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1416,14 +1452,14 @@ async fn integration_test_commands_isolated(
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
@@ -1482,7 +1518,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1497,7 +1533,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1512,7 +1548,7 @@ async fn integration_test_commands_isolated(
             key_id,
             context_id: None,
             epoch_id: None,
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 1,
             parallel_requests: 1,
             ciphertext_output_path: None,
@@ -1535,14 +1571,14 @@ async fn integration_test_commands_isolated(
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
-            batch_size: 1,
+            batch_size: 3,
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
@@ -2322,6 +2358,10 @@ async fn test_centralized_insecure() -> Result<()> {
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
 
+    // Also test with compressed keys
+    let compressed_key_id = insecure_key_gen_compressed_isolated(&config_path, keys_folder).await?;
+    integration_test_commands_isolated(&config_path, keys_folder, compressed_key_id).await?;
+
     Ok(())
 }
 
@@ -2459,6 +2499,10 @@ async fn test_threshold_insecure() -> Result<()> {
     let keys_folder = material_dir.path();
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
+
+    // Also test with compressed keys
+    let compressed_key_id = insecure_key_gen_compressed_isolated(&config_path, keys_folder).await?;
+    integration_test_commands_isolated(&config_path, keys_folder, compressed_key_id).await?;
 
     Ok(())
 }
