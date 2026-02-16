@@ -719,14 +719,15 @@ async fn main_exec() -> anyhow::Result<()> {
             );
             // create the default context if it does not exist
             let sk = (*base_kms.sig_key()?).clone();
+            let service_config = core_config.service.clone();
             create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
             let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+                core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
                 sk,
-                core_config.rate_limiter_conf,
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
@@ -738,7 +739,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
-                core_config.service,
+                service_config,
                 service_listener,
                 Arc::new(kms),
                 meta_store_status_service,

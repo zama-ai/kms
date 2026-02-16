@@ -54,6 +54,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_dkg_backup")
         .with_party_count(4)
+        .with_prss()
         .with_backup_vault()
         .build()
         .await?;
@@ -252,6 +253,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_autobackup")
         .with_party_count(4)
+        .with_prss()
         .with_backup_vault()
         .build()
         .await?;
@@ -316,6 +318,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_crs_backup")
         .with_party_count(4)
+        .with_prss()
         .with_backup_vault()
         .build()
         .await?;

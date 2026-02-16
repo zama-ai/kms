@@ -194,7 +194,9 @@ pub enum AwsKmsKeySpec {
 }
 
 /// Initialize the configuration from the given file.
-pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) -> anyhow::Result<T> {
+pub fn init_conf<'a, T: Serialize + Deserialize<'a> + std::fmt::Debug>(
+    config_file: &str,
+) -> anyhow::Result<T> {
     Settings::builder()
         .path(config_file)
         .env_prefix("KMS_CORE")
@@ -206,7 +208,7 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 /// Initialize and validate the configuration from the given file and initialize tracing.
 pub async fn init_conf_kms_core_telemetry<
     'a,
-    T: Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
+    T: Serialize + Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
 >(
     config_file: &str,
 ) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {

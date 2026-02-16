@@ -36,9 +36,7 @@ pub mod testing;
 pub mod vault;
 
 #[cfg(feature = "non-wasm")]
-pub use kms_grpc::utils::tonic_result::{
-    box_tonic_err, ok_or_tonic_abort, some_or_tonic_abort, BoxedStatus, TonicResult,
-};
+pub use kms_grpc::utils::tonic_result::BoxedStatus;
 
 /// Truncate s to a maximum of 128 chars.
 pub(crate) fn top_n_chars(mut s: String) -> String {

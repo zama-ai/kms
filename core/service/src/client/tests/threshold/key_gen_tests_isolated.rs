@@ -36,6 +36,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         .with_test_name("insecure_dkg")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
+        .with_prss() // PRSS is required for threshold key generation even in insecure mode
         .build()
         .await?;
 
@@ -83,6 +84,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         .with_test_name("default_insecure_dkg")
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
+        .with_prss() // PRSS is required for threshold key generation even in insecure mode
         .with_material_spec(spec)
         .build()
         .await?;

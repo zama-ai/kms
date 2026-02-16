@@ -4,7 +4,9 @@ use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{map_tonic_code_to_metric_err_tag, ERR_ASYNC};
+use observability::metrics_names::{
+    map_tonic_code_to_metric_err_tag, ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY,
+};
 use std::collections::HashSet;
 use std::fmt::Display;
 use tonic::Status;
@@ -66,7 +68,7 @@ pub async fn query_key_material_availability<S>(
     priv_storage: &S,
     kms_type: KMSType,
     preprocessing_ids: Vec<String>,
-) -> Result<KeyMaterialAvailabilityResponse, Status>
+) -> Result<KeyMaterialAvailabilityResponse, MetricedError>
 where
     S: StorageExt + Sync + Send,
 {
@@ -75,18 +77,39 @@ where
         KMSType::Centralized => priv_storage
             .all_data_ids_from_all_epochs(&PrivDataType::FhePrivateKey.to_string())
             .await
-            .map_err(|e| Status::internal(format!("Failed to query central FHE keys: {}", e)))?,
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_KEY_MATERIAL_AVAILABILITY,
+                    None,
+                    anyhow::anyhow!("Failed to query centralized FHE keys: {}", e),
+                    tonic::Code::Internal,
+                )
+            })?,
         KMSType::Threshold => priv_storage
             .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
             .await
-            .map_err(|e| Status::internal(format!("Failed to query threshold FHE keys: {}", e)))?,
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_KEY_MATERIAL_AVAILABILITY,
+                    None,
+                    anyhow::anyhow!("Failed to query threshold FHE keys: {}", e),
+                    tonic::Code::Internal,
+                )
+            })?,
     };
 
     // Query CRS IDs
     let crs_ids_set = priv_storage
         .all_data_ids(&PrivDataType::CrsInfo.to_string())
         .await
-        .map_err(|e| Status::internal(format!("Failed to query CRS: {}", e)))?;
+        .map_err(|e| {
+            MetricedError::new(
+                OP_KEY_MATERIAL_AVAILABILITY,
+                None,
+                anyhow::anyhow!("Failed to query CRS: {}", e),
+                tonic::Code::Internal,
+            )
+        })?;
 
     // Convert HashSet<RequestId> to Vec<String>
     let fhe_key_ids: Vec<String> = fhe_key_ids_set

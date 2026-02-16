@@ -1,18 +1,16 @@
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
-        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
+        utils::MetricedError,
+        validation::validate_new_mpc_epoch_request,
     },
+    util::meta_store::{add_req_to_meta_store, update_req_in_meta_store},
     vault::storage::{Storage, StorageExt},
 };
-use kms_grpc::{
-    kms::v1::{Empty, NewMpcEpochRequest},
-    utils::tonic_result::ok_or_tonic_abort,
-    ContextId,
-};
-use tonic::{Request, Response, Status};
+use kms_grpc::kms::v1::{Empty, NewMpcEpochRequest};
+use observability::metrics_names::OP_NEW_EPOCH;
+use tonic::{Request, Response};
 
 /// Initializes the centralized KMS service.
 ///
@@ -43,41 +41,61 @@ pub async fn init_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<NewMpcEpochRequest>,
-) -> Result<Response<Empty>, Status> {
+) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
-    let epoch_id = parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?;
-    let context_id: ContextId = match inner.context_id {
-        Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Init)?,
-        None => *DEFAULT_MPC_CONTEXT,
-    };
+    let (context_id, epoch_id, _previous_epoch_info) =
+        validate_new_mpc_epoch_request(inner).await?;
 
     if !service
         .context_manager
         .mpc_context_exists_and_consistent(&context_id)
-        .await?
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(context_id.into()),
+                e,
+                tonic::Code::Internal,
+            )
+        })?
+    // Error while checking context existence
     {
-        return Err(tonic::Status::new(
-            tonic::Code::NotFound,
+        return Err(MetricedError::new(
+            OP_NEW_EPOCH,
+            Some(context_id.into()),
             format!("Context {context_id} not found"),
+            tonic::Code::NotFound,
         ));
     }
 
-    let mut ids = service.epoch_ids.write().await;
     // Check that the system is not already initialized
-    if !ids.get_all_request_ids().is_empty() {
-        return Err(tonic::Status::new(
-            tonic::Code::AlreadyExists,
-            "Initialization already complete`".to_string(),
-        ));
+    {
+        if !service
+            .epoch_ids
+            .read()
+            .await
+            .get_all_request_ids()
+            .is_empty()
+        {
+            return Err(MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(context_id.into()),
+                "Initialization already complete".to_string(),
+                tonic::Code::AlreadyExists,
+            ));
+        }
     }
-    ok_or_tonic_abort(
-        ids.insert(&epoch_id),
-        "Could not insert init ID into meta store".to_string(),
+    add_req_to_meta_store(
+        &mut service.epoch_ids.write().await,
+        &epoch_id.into(),
+        OP_NEW_EPOCH,
     )?;
-    ok_or_tonic_abort(
-        ids.update(&epoch_id, Ok(())).map_err(|e| e.to_string()),
-        "Could not update init ID in meta store".to_string(),
-    )?;
+    update_req_in_meta_store::<(), anyhow::Error>(
+        &mut service.epoch_ids.write().await,
+        &epoch_id.into(),
+        Ok(()),
+        OP_NEW_EPOCH,
+    );
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
         epoch_id

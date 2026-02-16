@@ -3,7 +3,6 @@ use opentelemetry::{global, KeyValue};
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
 /// Type-safe wrapper for metric tags
 #[derive(Debug, Clone)]
 pub struct MetricTag {
@@ -63,9 +62,6 @@ pub struct CoreMetrics {
     duration_histogram: TaggedMetric<Histogram<f64>>, // TODO currently not used
     size_histogram: TaggedMetric<Histogram<f64>>,     // TODO currently not used
     // Gauges
-    gauge: TaggedMetric<Gauge<i64>>,
-    cpu_load_gauge: TaggedMetric<Gauge<f64>>, // 1-minute average CPU load, divided by number of cores
-    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
     socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
@@ -79,8 +75,13 @@ pub struct CoreMetrics {
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of public decryptions in meta storage
     meta_storage_user_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of user decryptions in meta storage
-    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>,           // CPU load for the current process
-    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Memory usage for the current process
+    // System metrics
+    total_cpus_gauge: TaggedMetric<Gauge<u64>>, // Total number of CPUs
+    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>, // CPU load for the current process in percentage
+    total_memory_gauge: TaggedMetric<Gauge<u64>>,      // Total memory available
+    process_memory_gauge: TaggedMetric<Gauge<u64>>,    // Memory usage for the current process
+    cpu_load_gauge: TaggedMetric<Gauge<f64>>, // 1-minute average CPU load, divided by number of cores
+    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -114,9 +115,6 @@ impl CoreMetrics {
         let duration_metric: Cow<'static, str> =
             format!("{}_operation_duration_ms", config.prefix).into();
         let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
-        let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
-        let memory_usage_metric: Cow<'static, str> =
-            format!("{}_memory_usage", config.prefix).into();
         let network_rx_metric: Cow<'static, str> =
             format!("{}_network_rx_bytes", config.prefix).into();
         let network_tx_metric: Cow<'static, str> =
@@ -141,11 +139,16 @@ impl CoreMetrics {
             format!("{}_meta_storage_user_decryptions_in_store", config.prefix).into();
         let meta_store_pub_total_metric: Cow<'static, str> =
             format!("{}_meta_storage_pub_decryptions_in_store", config.prefix).into();
+        let total_cpus_metric: Cow<'static, str> = format!("{}_total_cpus", config.prefix).into();
         let process_cpu_usage_metric: Cow<'static, str> =
             format!("{}_process_cpu_usage", config.prefix).into();
+        let total_memory_metric: Cow<'static, str> =
+            format!("{}_total_memory", config.prefix).into();
         let process_memory_metric: Cow<'static, str> =
             format!("{}_process_memory_usage", config.prefix).into();
-        let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
+        let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
+        let memory_usage_metric: Cow<'static, str> =
+            format!("{}_memory_usage", config.prefix).into();
 
         let request_counter = meter
             .u64_counter(operations)
@@ -194,22 +197,6 @@ impl CoreMetrics {
             .build();
         //Record 0 just to make sure the gauge is exported
         size_histogram.record(0.0, &[]);
-
-        let cpu_gauge = meter
-            .f64_gauge(cpu_load_metric)
-            .with_description("CPU load for KMS (averaged over all CPUs)")
-            .with_unit("percentage")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        cpu_gauge.record(0.0, &[]);
-
-        let memory_gauge = meter
-            .u64_gauge(memory_usage_metric)
-            .with_description("Memory used for KMS")
-            .with_unit("bytes")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        memory_gauge.record(0, &[]);
 
         let file_descriptor_gauge = meter
             .u64_gauge(file_descriptors_metric)
@@ -299,6 +286,14 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         meta_storage_pub_dec_total_gauge.record(0, &[]);
 
+        let total_cpus_gauge = meter
+            .u64_gauge(total_cpus_metric)
+            .with_description("Amount of CPU cores available to the system")
+            .with_unit("CPU cores")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        total_cpus_gauge.record(0, &[]);
+
         let process_cpu_usage_gauge = meter
             .f64_gauge(process_cpu_usage_metric)
             .with_description("CPU usage for the current process")
@@ -306,6 +301,14 @@ impl CoreMetrics {
             .build();
         //Record 0 just to make sure the gauge is exported
         process_cpu_usage_gauge.record(0.0, &[]);
+
+        let total_memory_gauge = meter
+            .u64_gauge(total_memory_metric)
+            .with_description("Amount of available memory in the system")
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        total_memory_gauge.record(0, &[]);
 
         let process_memory_gauge = meter
             .u64_gauge(process_memory_metric)
@@ -315,13 +318,21 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         process_memory_gauge.record(0, &[]);
 
-        let gauge = meter
-            .i64_gauge(gauge)
-            .with_description("An instrument that records independent values")
-            .with_unit("value")
+        let cpu_gauge = meter
+            .f64_gauge(cpu_load_metric)
+            .with_description("CPU load for KMS (averaged over all CPUs)")
+            .with_unit("percentage")
             .build();
         //Record 0 just to make sure the gauge is exported
-        gauge.record(0, &[]);
+        cpu_gauge.record(0.0, &[]);
+
+        let memory_gauge = meter
+            .u64_gauge(memory_usage_metric)
+            .with_description("Memory used for KMS")
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        memory_gauge.record(0, &[]);
 
         Self {
             request_counter: TaggedMetric::new(request_counter),
@@ -343,9 +354,10 @@ impl CoreMetrics {
             meta_storage_user_dec_gauge: TaggedMetric::new(meta_storage_user_dec_gauge),
             meta_storage_pub_dec_total_gauge: TaggedMetric::new(meta_storage_pub_dec_total_gauge),
             meta_storage_user_dec_total_gauge: TaggedMetric::new(meta_storage_user_dec_total_gauge),
+            total_cpus_gauge: TaggedMetric::new(total_cpus_gauge),
+            total_memory_gauge: TaggedMetric::new(total_memory_gauge),
             process_cpu_usage_gauge: TaggedMetric::new(process_cpu_usage_gauge),
             process_memory_gauge: TaggedMetric::new(process_memory_gauge),
-            gauge: TaggedMetric::new(gauge),
             trace_guard: Arc::new(Mutex::new(None)),
         }
     }
@@ -421,18 +433,13 @@ impl CoreMetrics {
     }
 
     pub fn observe_size(&self, operation: impl Into<String>, size: f64) {
+        if size == 0.0 {
+            return;
+        }
         let tags = vec![Self::create_operation_tag(operation)];
         self.size_histogram
             .metric
             .record(size, &self.size_histogram.with_tags(&tags));
-    }
-
-    // Gauge methods
-    pub fn gauge(&self, operation: impl Into<String>, value: i64) {
-        let tags = vec![Self::create_operation_tag(operation)];
-        self.gauge
-            .metric
-            .record(value, &self.gauge.with_tags(&tags));
     }
 
     /// Start building a duration guard for timing an operation
@@ -444,22 +451,12 @@ impl CoreMetrics {
         }
     }
 
-    /// Record the current CPU load into the gauge
-    pub fn record_cpu_load(&self, load: f64) {
-        self.cpu_load_gauge
-            .metric
-            .record(load, &self.cpu_load_gauge.with_tags(&[]));
-    }
-
-    /// Record the current memory usage into the gauge
-    pub fn record_memory_usage(&self, usage: u64) {
-        self.memory_usage_gauge
-            .metric
-            .record(usage, &self.memory_usage_gauge.with_tags(&[]));
-    }
-
     /// Record the current number of tasks into the gauge
     pub fn record_tasks(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
         self.task_gauge
             .metric
             .record(count, &self.task_gauge.with_tags(&[]));
@@ -467,6 +464,10 @@ impl CoreMetrics {
 
     /// Record the current number of open file descriptors into the gauge
     pub fn record_open_file_descriptors(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
         self.file_descriptor_gauge
             .metric
             .record(count, &self.file_descriptor_gauge.with_tags(&[]));
@@ -523,6 +524,10 @@ impl CoreMetrics {
 
     /// Record the total number of user decryptions in meta storage into the gauge
     pub fn record_meta_storage_user_decryptions_total(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
         self.meta_storage_user_dec_total_gauge.metric.record(
             count,
             &self.meta_storage_user_dec_total_gauge.with_tags(&[]),
@@ -531,9 +536,49 @@ impl CoreMetrics {
 
     /// Record the total number of public decryptions in meta storage into the gauge
     pub fn record_meta_storage_public_decryptions_total(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
         self.meta_storage_pub_dec_total_gauge
             .metric
             .record(count, &self.meta_storage_pub_dec_total_gauge.with_tags(&[]));
+    }
+
+    /// Record the amount of CPU cores
+    pub fn record_total_cpus(&self, amount: u64) {
+        // Should never be 0
+        if amount == 0 {
+            return;
+        }
+        self.total_cpus_gauge
+            .metric
+            .record(amount, &self.total_cpus_gauge.with_tags(&[]));
+    }
+
+    /// Record the current CPU load into the gauge
+    pub fn record_cpu_load(&self, load: f64) {
+        self.cpu_load_gauge
+            .metric
+            .record(load, &self.cpu_load_gauge.with_tags(&[]));
+    }
+
+    /// Record the total memory on the system
+    pub fn record_total_memory(&self, memory: u64) {
+        // Should never be 0
+        if memory == 0 {
+            return;
+        }
+        self.total_memory_gauge
+            .metric
+            .record(memory, &self.total_memory_gauge.with_tags(&[]));
+    }
+
+    /// Record the current memory usage into the gauge
+    pub fn record_memory_usage(&self, usage: u64) {
+        self.memory_usage_gauge
+            .metric
+            .record(usage, &self.memory_usage_gauge.with_tags(&[]));
     }
 
     /// Record the current process CPU usage into the gauge
@@ -545,6 +590,10 @@ impl CoreMetrics {
 
     /// Record the current process memory usage into the gauge
     pub fn record_process_memory_usage(&self, usage: u64) {
+        // Should never be 0
+        if usage == 0 {
+            return;
+        }
         self.process_memory_gauge
             .metric
             .record(usage, &self.process_memory_gauge.with_tags(&[]));

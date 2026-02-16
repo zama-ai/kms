@@ -1,6 +1,7 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{preproc_proto_to_keyset_config, InternalKeySetConfig};
+use crate::engine::utils::MetricedError;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -12,7 +13,9 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::{CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest};
+use kms_grpc::kms::v1::{
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
+};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -22,6 +25,9 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use kms_grpc::{KeyId, RequestId};
+use observability::metrics_names::{
+    OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
+};
 use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -53,9 +59,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
-    #[allow(unused)]
     Epoch,
-    Init,
 
     CrsGenRequest,
     PreprocRequest,
@@ -83,7 +87,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Epoch => write!(f, "Invalid epoch ID"),
-            RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
             RequestIdParsingErr::KeyGenRequest => write!(f, "Invalid key generation request ID"),
@@ -156,14 +159,40 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Validates a user decryption request and returns ciphertext, FheType, request digest, client
+/// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
+/// Observe that the validation is limited to checking the structure of the request and parsing data into the correct types,
+/// and does not check the existence of any of the referenced IDs (like request_id or key_id) or the consistency between them.
 #[allow(clippy::type_complexity)]
-pub fn validate_user_decrypt_req(
+pub(crate) fn validate_user_decrypt_req(
+    req: &UserDecryptionRequest,
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        Vec<u8>,
+        UnifiedPublicEncKey,
+        alloy_primitives::Address,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        alloy_sol_types::Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_user_decrypt_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_user_decrypt_req(
     req: &UserDecryptionRequest,
 ) -> Result<
     (
@@ -233,14 +262,36 @@ pub fn validate_user_decrypt_req(
     ))
 }
 
-/// Validates a public decryption request and unpacks and returns
+/// Validates and unpacks a public decryption request and returns
 /// the ciphertext, FheType, digest, key_id and request_id if it is valid.
 ///
-/// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
-/// is needed.
+/// Observe that validation is limited to checking the structure of the request and unpacking parameters into their correct structs.
 #[allow(clippy::type_complexity)]
-pub fn validate_public_decrypt_req(
+pub(crate) fn validate_public_decrypt_req(
+    req: &PublicDecryptionRequest,
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_public_decrypt_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_public_decrypt_req(
     req: &PublicDecryptionRequest,
 ) -> Result<
     (
@@ -517,7 +568,32 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_preproc_request(
+    req: KeyGenPreprocRequest,
+) -> Result<
+    (
+        RequestId,
+        ContextId,
+        EpochId,
+        DKGParams,
+        KeySetConfig,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_preproc_request(req).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_preproc_request(
     req: KeyGenPreprocRequest,
 ) -> anyhow::Result<(
     RequestId,
@@ -561,7 +637,33 @@ pub(crate) fn validate_preproc_request(
     ))
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_key_gen_request(
+    req: KeyGenRequest,
+    op_tag: &'static str,
+) -> Result<
+    (
+        RequestId,
+        RequestId,
+        ContextId,
+        EpochId,
+        DKGParams,
+        InternalKeySetConfig,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
+    unpack_key_gen_request(req).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+fn unpack_key_gen_request(
     req: KeyGenRequest,
 ) -> anyhow::Result<(
     RequestId,
@@ -615,7 +717,23 @@ pub(crate) fn validate_key_gen_request(
     ))
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn validate_crs_gen_request(
+    req: CrsGenRequest,
+    op_tag: &'static str,
+) -> Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain), MetricedError> {
+    unpack_crs_gen_request(req).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn unpack_crs_gen_request(
     req: CrsGenRequest,
 ) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
@@ -665,6 +783,31 @@ fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     }
 }
 
+pub(crate) async fn validate_new_mpc_epoch_request(
+    req: NewMpcEpochRequest,
+) -> Result<(ContextId, EpochId, Option<PreviousEpochInfo>), MetricedError> {
+    unpack_new_mpc_epoch_req(req).map_err(|e| {
+        MetricedError::new(
+            OP_NEW_EPOCH,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })
+}
+
+fn unpack_new_mpc_epoch_req(
+    req: NewMpcEpochRequest,
+) -> anyhow::Result<(ContextId, EpochId, Option<PreviousEpochInfo>)> {
+    let context_id = match req.context_id {
+        Some(context_id) => parse_grpc_request_id(&context_id, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId =
+        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
+    Ok((context_id, epoch_id, req.previous_epoch))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -697,9 +840,9 @@ mod tests {
     };
 
     use super::{
-        validate_public_decrypt_meta_data, validate_public_decrypt_req,
-        validate_public_decrypt_responses_against_request, validate_user_decrypt_req,
-        verify_max_num_bits, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
+        validate_public_decrypt_responses_against_request, verify_max_num_bits,
+        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -738,7 +881,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequestBadKeyId.to_string()));
@@ -755,7 +898,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
@@ -775,7 +918,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
@@ -792,7 +935,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_public_decrypt_req(&req)
+            assert!(unpack_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS));
@@ -809,7 +952,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain) = unpack_public_decrypt_req(&req).unwrap();
         }
     }
 
@@ -860,7 +1003,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequestBadKeyId.to_string()));
@@ -879,7 +1022,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
@@ -901,7 +1044,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
@@ -920,7 +1063,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS));
@@ -940,7 +1083,7 @@ mod tests {
                 epoch_id: None,
             };
             assert!(
-                validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
+                unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
                     "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum"
                 )
             );
@@ -965,7 +1108,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req)
+            assert!(unpack_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
                 .contains("Error deserializing")); // the error message that is returned from trying to decode the bad encoding
@@ -984,7 +1127,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(validate_user_decrypt_req(&req).is_ok());
+            assert!(unpack_user_decrypt_req(&req).is_ok());
         }
     }
 
@@ -995,7 +1138,7 @@ mod tests {
             request_id: ['x'; ID_LENGTH].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&bad_req_id1, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&bad_req_id1, RequestIdParsingErr::Epoch).is_err()
         );
 
         // wrong length
@@ -1003,14 +1146,14 @@ mod tests {
             request_id: ['a'; ID_LENGTH - 1].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&bad_req_id2, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&bad_req_id2, RequestIdParsingErr::Epoch).is_err()
         );
 
         let good_req_id = v1::RequestId {
             request_id: ['a'; ID_LENGTH].iter().collect(),
         };
         assert!(
-            parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Init).is_err()
+            parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Epoch).is_err()
         );
     }
 
