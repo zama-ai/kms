@@ -1802,6 +1802,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         test_path,
         Some(context_id_set_1),
         Some(epoch_id_set_1),
+        200,
     )
     .await
     .unwrap_err();
