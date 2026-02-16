@@ -23,7 +23,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 /// Mirrors the original: boots servers WITHOUT PRSS, sends decryption requests
 /// (verifies they are accepted but results fail), checks both core + MPC health,
 /// initializes PRSS via new_mpc_epoch, then shuts down and verifies NotServing.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let amount_parties = 4;
 
@@ -156,7 +156,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
 ///
 /// Mirrors the original: boots servers with PRSS, checks both core + MPC health,
 /// drops server 1, sleeps 300ms, verifies both services are unreachable.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_close_after_drop_isolated() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
@@ -227,7 +227,7 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
 /// Mirrors the original: boots servers with PRSS, awaits ready, sends 3 decryption
 /// requests to keep server busy, shuts down server 1 via service_shutdown_tx,
 /// verifies NotServing status, then verifies ports are closed.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_shutdown_isolated() -> Result<()> {
     let amount_parties = 4;
     let pub_storage_prefixes =
@@ -329,7 +329,7 @@ async fn test_threshold_shutdown_isolated() -> Result<()> {
 /// ISOLATED VERSION: Test rate limiter functionality
 ///
 /// Validates that the rate limiter correctly rejects requests when the bucket is exhausted.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "slow_tests")]
 async fn test_ratelimiter_isolated() -> Result<()> {
     use crate::consts::TEST_PARAM;

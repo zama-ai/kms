@@ -463,10 +463,25 @@ impl TestMaterialManager {
                         key_id,
                     )
                     .await?;
+                    #[allow(deprecated)]
+                    self.copy_key_files(
+                        &source_pub,
+                        &dest_pub,
+                        &PubDataType::PublicKeyMetadata.to_string(),
+                        key_id,
+                    )
+                    .await?;
                     self.copy_epoch_key_files(
                         &source_priv,
                         &dest_priv,
                         &PrivDataType::FhePrivateKey.to_string(),
+                        key_id,
+                    )
+                    .await?;
+                    self.copy_epoch_key_files(
+                        &source_priv,
+                        &dest_priv,
+                        &PrivDataType::FheKeyInfo.to_string(),
                         key_id,
                     )
                     .await?;
@@ -504,10 +519,25 @@ impl TestMaterialManager {
                     key_id,
                 )
                 .await?;
+                #[allow(deprecated)]
+                self.copy_key_files(
+                    &source_pub,
+                    &dest_pub,
+                    &PubDataType::PublicKeyMetadata.to_string(),
+                    key_id,
+                )
+                .await?;
                 self.copy_epoch_key_files(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::FhePrivateKey.to_string(),
+                    key_id,
+                )
+                .await?;
+                self.copy_epoch_key_files(
+                    &source_priv,
+                    &dest_priv,
+                    &PrivDataType::FheKeyInfo.to_string(),
                     key_id,
                 )
                 .await?;
