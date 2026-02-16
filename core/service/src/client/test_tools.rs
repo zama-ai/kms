@@ -362,7 +362,10 @@ pub async fn setup_threshold_with_custom_peers<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(updated_peers),
-            core_to_core_net: None,
+            core_to_core_net: core_config
+                .threshold
+                .as_ref()
+                .and_then(|t| t.core_to_core_net),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
