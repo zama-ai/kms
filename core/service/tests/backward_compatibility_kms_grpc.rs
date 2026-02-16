@@ -9,6 +9,7 @@ use backward_compatibility::{
     TestType, Testcase,
 };
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal};
+use kms_lib::engine::context::SoftwareVersion;
 use std::path::Path;
 
 fn test_signed_pub_data_handle_internal(
@@ -107,11 +108,11 @@ impl TestedModule for KmsGrpc {
 
 #[test]
 fn test_backward_compatibility_kms_grpc() {
-    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_version = SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<KmsGrpc>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<KmsGrpc>(&base_data_dir, &pkg_version.to_string());
 
     for r in results.iter() {
         if r.is_failure() {

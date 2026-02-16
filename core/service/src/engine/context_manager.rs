@@ -332,7 +332,7 @@ pub async fn create_default_centralized_context_in_storage<
             extra_verification_keys: vec![],
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: 0,
         pcr_values: vec![],
     };
@@ -437,7 +437,7 @@ pub async fn ensure_default_threshold_context_in_storage<
     let context_info = ContextInfo {
         mpc_nodes,
         context_id,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: threshold_config.threshold as u32,
         pcr_values: pcr_values.unwrap_or_default(),
     };
@@ -916,8 +916,6 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
     use crate::{
         backup::{
@@ -953,6 +951,7 @@ mod tests {
         RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
     use tonic::Request;
 

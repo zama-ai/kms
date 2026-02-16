@@ -1,18 +1,12 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
-
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-    Versionize,
-};
+use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
 
 use crate::{
-    consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
     engine::validation::{parse_optional_grpc_request_id, RequestIdParsingErr},
     vault::storage::{crypto_material::get_core_signing_key, StorageReader},
@@ -41,9 +35,9 @@ pub struct SoftwareVersion {
 }
 
 impl SoftwareVersion {
-    pub fn current() -> Self {
+    pub fn current() -> anyhow::Result<Self> {
         let version = env!("CARGO_PKG_VERSION");
-        Self::from(version)
+        Self::new(version)
     }
 }
 
@@ -73,33 +67,40 @@ impl std::fmt::Display for SoftwareVersion {
     }
 }
 
-impl From<&str> for SoftwareVersion {
-    fn from(s: &str) -> Self {
-        let parts: Vec<&str> = s.split('-').collect();
-        let version_parts: Vec<&str> = parts[0].split('.').collect();
-        let major = version_parts
-            .first()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        let minor = version_parts
-            .get(1)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        let patch = version_parts
-            .get(2)
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+impl SoftwareVersion {
+    /// Use a semantic version string like "1.2.3-alpha" to create a SoftwareVersion
+    pub fn new(semantic_str: &str) -> anyhow::Result<Self> {
+        let parsed_str = semantic_str.trim().to_ascii_lowercase();
+        // Remove any leading "v." if present (e.g., "v.1.2.3")
+        let parsed_str = parsed_str.strip_prefix("v.").unwrap_or(&parsed_str);
+        // Remove any leading "v" if present, since some versions might be prefixed with "v" (e.g., "v1.2.3")
+        let parsed_str = parsed_str.strip_prefix("v").unwrap_or(parsed_str);
+        let parts: Vec<&str> = parsed_str.split('-').collect();
         let tag = if parts.len() > 1 {
-            Some(parts[1].to_string())
+            // Only care about the first '-' since the tag can also contain '-' characters, e.g., "1.2.3-alpha-1"
+            Some(parts[1..].join("-"))
         } else {
             None
         };
-        SoftwareVersion {
+        let version_parts = parts[0].split('.').collect::<Vec<&str>>();
+        let major = match version_parts.first() {
+            Some(v) => v.parse()?,
+            None => anyhow::bail!("Invalid semantic version string: missing major version"),
+        };
+        let minor = match version_parts.get(1) {
+            Some(v) => v.parse()?,
+            None => 0,
+        };
+        let patch = match version_parts.get(2) {
+            Some(p) => p.parse()?,
+            None => 0,
+        };
+        Ok(SoftwareVersion {
             major,
             minor,
             patch,
             tag,
-        }
+        })
     }
 }
 
@@ -315,9 +316,7 @@ impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::MpcContext) -> anyhow::Result<Self> {
-        let mut buf = std::io::Cursor::new(&value.software_version);
-        let software_version = safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow::anyhow!("Deserialization of software version failed: {e}"))?;
+        let software_version = SoftwareVersion::new(&value.software_version)?;
         Ok(ContextInfo {
             mpc_nodes: value
                 .mpc_nodes
@@ -347,13 +346,6 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
-        let mut software_version = Vec::new();
-        safe_serialize(
-            &value.software_version,
-            &mut software_version,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| anyhow::anyhow!("Serialization of software version failed: {e}"))?;
         Ok(kms_grpc::kms::v1::MpcContext {
             mpc_nodes: value
                 .mpc_nodes
@@ -361,7 +353,7 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
                 .map(kms_grpc::kms::v1::MpcNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
-            software_version,
+            software_version: value.software_version.to_string(),
             threshold: value.threshold.try_into()?,
             pcr_values: value
                 .pcr_values
@@ -557,22 +549,64 @@ mod tests {
     }
 
     #[test]
-    fn parse_software_version() {
+    fn parse_software_semantic_version() {
         {
-            let version = SoftwareVersion::from("1.2.3-alpha");
+            let version = SoftwareVersion::new("1.2.3-alpha").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        // Ensure everything is trimmed and lower case
+        {
+            let version = SoftwareVersion::new(" 1.2.3-ALPHA ").unwrap();
             assert_eq!(version.major, 1);
             assert_eq!(version.minor, 2);
             assert_eq!(version.patch, 3);
             assert_eq!(version.tag, Some("alpha".to_string()));
         }
         {
-            let version = SoftwareVersion::from("zzz");
-            assert_eq!(version.major, 0);
+            let version = SoftwareVersion::new(" 1.2.3-ALPHA ").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        // Version prefix is ignored
+        {
+            let version = SoftwareVersion::new("v1.2.3-alpha").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        {
+            let version = SoftwareVersion::new("v.1.2.3-alpha").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        // Parsing double `-` in tag
+        {
+            let version = SoftwareVersion::new("1.2.3-alpha-beta").unwrap();
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha-beta".to_string()));
+        }
+        // Non existing minor parts default to 0
+        {
+            let version = SoftwareVersion::new("1").unwrap();
+            assert_eq!(version.major, 1);
             assert_eq!(version.minor, 0);
             assert_eq!(version.patch, 0);
             assert_eq!(version.tag, None);
         }
+        {
+            let version = SoftwareVersion::new("zzz");
+            assert!(version.is_err());
+        }
     }
-
     // TODO more tests will be added here once the context definition is fully fleshed out
 }

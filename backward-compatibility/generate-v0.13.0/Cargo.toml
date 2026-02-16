@@ -9,27 +9,25 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-# TODO the references in this file to 25cc5fc35556275ca6d38b8308d4eb4038f77e16 should be updated to the release tag of 0.13.0 once it is made
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "25cc5fc35556275ca6d38b8308d4eb4038f77e16" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", tag = "v0.13.0-rc.2" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
 # Each generator may need different versions to match its target KMS version.
 
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
-# TODO observe that the commit is only temporary to make the new tests work and must be updated when cutting the real 0.13.0 release
-# Observe that modification here also requires temporarily removing the `--locked` flag in the `generate-backward-compatibility-v0.13.0` in Makefile in order to properly update and compile the correct verison of the KMS to test
-kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "25cc5fc35556275ca6d38b8308d4eb4038f77e16"}
-kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "25cc5fc35556275ca6d38b8308d4eb4038f77e16"}
-threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "25cc5fc35556275ca6d38b8308d4eb4038f77e16", features = [
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", tag = "v0.13.0-rc.2"}
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", tag = "v0.13.0-rc.2"}
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", tag = "v0.13.0-rc.2", features = [
     "testing",
 ] }
 
 # Dependencies for the 0.13 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
-tfhe_versionable_0_6 = { package = "tfhe-versionable", version = "=0.6.2" }
-tfhe_1_4 = { package = "tfhe", version = "1.4.2", features = [
+cfg-if_1_0_3 = { package = "cfg-if", version = "=1.0.3" }
+tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.7.0" }
+tfhe_1_5_1 = { package = "tfhe", version = "1.5.1", features = [
     "shortint",
 ] }
 alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }
