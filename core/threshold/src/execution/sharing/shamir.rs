@@ -205,38 +205,31 @@ where
 }
 
 /// Maps `values` into [ShamirSharings]s by pairwise adding each of these to each of the `sharings`.
-/// Furthermore, adds a zero-share for each share in `sharings` if there is not supplied enough `values`,
-/// and discard extra shares if too many are given.
-/// This in turn means that there will be `num_values` shares in `sharings`.
+/// Pads or discard values to ensure the number of values matches exactly the number of sharings.
+/// It's up to the caller to make sure the sharings is of the expected length.
 /// The function is useful to ensure that an indexable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
     sharings: &mut [ShamirSharings<Z>],
     mut values: Vec<Z>,
-    num_values: usize,
     party_id: Role,
 ) {
-    // If sharings is not of the expected length it means
-    // it was poorly initialized, and that is a bug
-    assert_eq!(
-        sharings.len(),
-        num_values,
-        "Number of sharings must be equal to the number of values to add."
-    );
-    if values.len() < num_values {
+    let num_expected_values = sharings.len();
+
+    if values.len() < num_expected_values {
         tracing::warn!(
             "Received {} values from party {} but expected {}. Filling with 0s",
             values.len(),
             party_id,
-            num_values
+            num_expected_values
         );
-    } else if values.len() > num_values {
+    } else if values.len() > num_expected_values {
         tracing::warn!(
             "Received more values than expected from party {}. Ignoring extra values.",
             party_id
         );
     }
 
-    values.resize(num_values, Z::ZERO);
+    values.resize(num_expected_values, Z::ZERO);
 
     // Use zip_eq as we just resized the values received to the expected length
     let pair = values.into_iter().zip_eq(sharings.iter_mut());

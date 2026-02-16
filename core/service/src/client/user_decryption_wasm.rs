@@ -477,11 +477,9 @@ impl Client {
                         (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
                     }
                 }
-                let num_values = cur_blocks.len();
                 fill_indexed_shares(
                     opt_sharings.as_mut().unwrap(),
                     cur_blocks,
-                    num_values,
                     Role::indexed_from_one(payload.party_id as usize),
                 );
             }
@@ -674,7 +672,6 @@ impl Client {
                         fill_indexed_shares(
                             &mut sharings,
                             cur_blocks,
-                            num_shares,
                             Role::indexed_from_one(cur_resp.party_id as usize),
                         );
                     }

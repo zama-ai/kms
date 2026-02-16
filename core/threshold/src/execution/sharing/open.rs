@@ -469,8 +469,6 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     mut jobs: JoinSet<Result<JobResultType<Role, Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    let num_secrets = sharings.len();
-
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
     // Instead of processing one party at a time, collect multiple responses
     // and attempt reconstruction less frequently to reduce O(n×m) complexity
@@ -498,7 +496,6 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
                             .lock()
                             .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
                         values,
-                        num_secrets,
                         party_id,
                     );
                     collected_shares += 1;

@@ -31,7 +31,7 @@ use threshold_fhe::{
             prf::{PRSSConversions, PrfKey},
             prss::{PRSSSetup, PrssSet, PrssSetV0},
         },
-        tfhe_internals::private_keysets::PrivateKeySet,
+        tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
     },
     networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
@@ -257,7 +257,19 @@ fn test_private_key_gen(
     test: &PrivateKeySetTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let _original_versionized: PrivateKeySet<4> = load_and_unversionize(dir, test, format)?;
+    let original_versionized: PrivateKeySet<4> = load_and_unversionize(dir, test, format)?;
+
+    // If the key comes from an old version, the encryption and compute key
+    // shares were stored as Z64, so we check that they are indeed Z64 after unversionizing.
+    assert!(matches!(
+        original_versionized.lwe_encryption_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
+
+    assert!(matches!(
+        original_versionized.lwe_compute_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
 
     Ok(test.success(format))
 }
