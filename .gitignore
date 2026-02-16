@@ -10,6 +10,7 @@ CLAUDE.md
 .vscode/launch.json
 .DS_Store
 .vscode/
+.claude
 .idea/
 *.eif
 .crates.toml
