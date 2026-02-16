@@ -23,7 +23,7 @@ pub use preprocessing::*;
 #[cfg(test)]
 mod tests {
     use crate::conf::{init_conf, CoreConfig};
-    use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+    use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
     use crate::engine::context::{NodeInfo, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::vault::storage::store_versioned_at_request_id;
