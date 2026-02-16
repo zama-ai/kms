@@ -3,6 +3,7 @@
 // - test_threshold_close_after_drop → test_threshold_close_after_drop_isolated
 // - test_threshold_shutdown → test_threshold_shutdown_isolated
 // - test_ratelimiter → test_ratelimiter_isolated
+// - nightly_test_complete_session_notification → nightly_test_complete_session_notification_isolated
 // TODO: Remove after migration complete.
 
 use crate::client::test_tools::{

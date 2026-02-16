@@ -470,6 +470,14 @@ impl TestMaterialManager {
                         key_id,
                     )
                     .await?;
+                    // Threshold servers store key shares under FheKeyInfo
+                    self.copy_epoch_key_files(
+                        &source_priv,
+                        &dest_priv,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                        key_id,
+                    )
+                    .await?;
 
                     if spec.requires_key_type(KeyType::DecompressionKeys) {
                         self.copy_key_files(
