@@ -48,25 +48,15 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
-    let permit = service
-        .rate_limiter
-        .start_crsgen()
-        .await
-        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+    let permit = service.rate_limiter.start_crsgen(op_tag).await?;
     let mut timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
+    let max_bits = inner.max_num_bits;
     let (req_id, context_id, _witness_dimension, params, eip712_domain) =
-        validate_crs_gen_request(inner.clone()).map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        validate_crs_gen_request(inner, op_tag)?;
     let metric_tags = vec![
         (TAG_CRS_ID, req_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
@@ -119,7 +109,7 @@ pub async fn crs_gen_impl<
                 sk,
                 params,
                 eip712_domain,
-                inner.max_num_bits,
+                max_bits,
                 op_tag,
             )
             .await;

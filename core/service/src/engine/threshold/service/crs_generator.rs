@@ -97,25 +97,14 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        let permit = self
-            .rate_limiter
-            .start_crsgen()
-            .await
-            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+        let permit = self.rate_limiter.start_crsgen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
         let inner = request.into_inner();
-
+        let max_bits = inner.max_num_bits;
         let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
-            validate_crs_gen_request(inner.clone()).map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    None,
-                    e, // Validation error
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
+            validate_crs_gen_request(inner, op_tag)?;
         // Find the role of the current server and validate the context exists
         let my_role = self
             .session_maker
@@ -145,14 +134,16 @@ impl<
         })?;
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
-            inner.request_id, inner.context_id, inner.max_num_bits
+            req_id,
+            context_id,
+            max_bits
         );
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
             req_id,
             witness_dim,
-            inner.max_num_bits,
+            max_bits,
             dkg_params,
             &eip712_domain,
             permit,

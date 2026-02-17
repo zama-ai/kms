@@ -4995,6 +4995,7 @@ dependencies = [
  "opentelemetry_sdk",
  "prometheus",
  "serde",
+ "serde_json",
  "strum",
  "strum_macros",
  "sysinfo",

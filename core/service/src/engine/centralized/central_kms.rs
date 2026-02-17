@@ -1,5 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::backup::operator::RecoveryValidationMaterial;
+#[cfg(feature = "non-wasm")]
+use crate::conf::CoreConfig;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
@@ -24,8 +26,10 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt};
+#[cfg(feature = "non-wasm")]
+use observability::conf::TelemetryConfig;
 
-use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
+use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
 };
@@ -40,6 +44,7 @@ use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::RequestId;
+use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -886,12 +891,12 @@ impl<
     > CentralizedKms<PubS, PrivS, CM, BO>
 {
     pub async fn new(
+        config: CoreConfig,
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
         sk: PrivateSigKey,
-        rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
         (HealthReporter, HealthServer<impl Health>),
@@ -958,6 +963,22 @@ impl<
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption.
         backup_operator.update_backup_vault().await?;
+
+        let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
+        let user_dec_meta_store =
+            Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
+        let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
+        let telemetry_conf = config
+            .telemetry
+            .unwrap_or_else(|| TelemetryConfig::builder().build());
+        // Start updating system metrics
+        update_central_kms_system_metrics(
+            rate_limiter.clone(),
+            Arc::clone(&user_dec_meta_store),
+            Arc::clone(&pub_dec_meta_store),
+            telemetry_conf.refresh_interval(),
+        );
+
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
 
@@ -970,19 +991,13 @@ impl<
                     HashMap::new(),
                 ))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
-                pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
-                    DEC_CAPACITY,
-                    MIN_DEC_CACHE,
-                ))),
-                user_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
-                    DEC_CAPACITY,
-                    MIN_DEC_CACHE,
-                ))),
+                pub_dec_meta_store,
+                user_dec_meta_store,
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
-                rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
+                rate_limiter,
                 health_reporter: health_reporter.clone(),
                 tracker: Arc::clone(&tracker),
                 thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
@@ -1066,9 +1081,42 @@ impl<
     }
 }
 
+fn update_central_kms_system_metrics(
+    rate_limiter: RateLimiter,
+    user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    refresh_interval: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
+            {
+                let user_meta_store_guard = user_meta_store.read().await;
+                METRICS.record_meta_storage_user_decryptions(
+                    user_meta_store_guard.get_processing_count() as u64,
+                );
+                METRICS.record_meta_storage_user_decryptions_total(
+                    user_meta_store_guard.get_total_count() as u64,
+                );
+            }
+            {
+                let public_meta_store_guard = public_meta_store.read().await;
+                METRICS.record_meta_storage_public_decryptions(
+                    public_meta_store_guard.get_processing_count() as u64,
+                );
+                METRICS.record_meta_storage_public_decryptions_total(
+                    public_meta_store_guard.get_total_count() as u64,
+                );
+            }
+            tokio::time::sleep(refresh_interval).await;
+        }
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{generate_fhe_keys, CentralizedKmsKeys, CentralizedTestingKeys, Storage};
+    use crate::conf::{init_conf, CoreConfig};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
@@ -1462,8 +1510,10 @@ pub(crate) mod tests {
                 },
             )
         };
+        let config = init_conf("config/default_centralized.toml").unwrap();
         let kms = {
             let (inner, _health_service) = RealCentralizedKms::new(
+                config,
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1473,7 +1523,6 @@ pub(crate) mod tests {
                 None,
                 None,
                 keys.centralized_kms_keys.sig_sk.clone(),
-                None,
             )
             .await
             .unwrap();
@@ -1691,7 +1740,9 @@ pub(crate) mod tests {
         };
 
         let kms = {
+            let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
             let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
+                core_config,
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1701,7 +1752,6 @@ pub(crate) mod tests {
                 None,
                 None,
                 keys.centralized_kms_keys.sig_sk.clone(),
-                None,
             )
             .await
             .unwrap();

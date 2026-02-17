@@ -60,7 +60,10 @@ use crate::{
     },
     engine::{
         base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
-        threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
+        threshold::{
+            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            traits::UserDecryptor,
+        },
         traits::BaseKms,
         utils::MetricedError,
         validation::{
@@ -444,14 +447,7 @@ impl<
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+        let permit = self.rate_limiter.start_user_decrypt().await?;
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
@@ -470,24 +466,15 @@ impl<
             context_id,
             epoch_id,
             domain,
-        ) = validate_user_decrypt_req(inner.as_ref()).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-
-        // Find the role of the current server and validate the context exists
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::NotFound,
-            )
-        })?;
+        ) = validate_user_decrypt_req(inner.as_ref())?;
+        let my_role = validate_context_and_epoch(
+            OP_USER_DECRYPT_REQUEST,
+            &self.session_maker,
+            Some(req_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),

@@ -65,7 +65,6 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
@@ -78,7 +77,10 @@ use crate::{
         },
         traits::EpochManager,
         utils::MetricedError,
-        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
+        validation::{
+            parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
+            RequestIdParsingErr,
+        },
     },
     util::{
         meta_store::{retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore},
@@ -862,30 +864,11 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_new_epoch().await.map_err(|e| {
-            MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::ResourceExhausted)
-        })?;
+        let permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
-        // the request ID of the init request is the epoch ID for PRSS and shares
-        let epoch_id: EpochId =
-            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
-                |e| MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::InvalidArgument),
-            )?;
-
-        let context_id: ContextId = match inner.context_id {
-            Some(ctx_id) => {
-                parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Context).map_err(|e| {
-                    MetricedError::new(
-                        OP_NEW_EPOCH,
-                        Some(epoch_id.into()),
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?
-            }
-            None => *DEFAULT_MPC_CONTEXT,
-        };
+        let (context_id, epoch_id, previous_epoch_info) =
+            validate_new_mpc_epoch_request(inner).await?;
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(MetricedError::new(
@@ -896,7 +879,7 @@ impl<
             ));
         }
 
-        let resharing_task = match inner.previous_epoch {
+        let resharing_task = match previous_epoch_info {
             Some(prev_epoch) => Some(
                 self.initiate_resharing(&context_id, &epoch_id, prev_epoch)
                     .await?,
