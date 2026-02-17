@@ -32,8 +32,11 @@ cfg_if::cfg_if! {
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
+use crate::testing::utils::purge;
+
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::{
@@ -142,15 +145,35 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let req_new_cus: RequestId = derive_request_id(&format!(
-        "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
-    ))
-    .unwrap();
+            "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
+        ))
+        .unwrap();
 
     let test_path = None;
     let crs_req: RequestId = derive_request_id(&format!(
-        "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
+        "test_backup_after_crs_threshold_crs_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    // Purge IDs so repeated test runs find a fresh plate.
+    purge(
+        None,
+        None,
+        &crs_req,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
+    purge(
+        None,
+        None,
+        &req_new_cus,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
+    purge_backup(test_path, backup_storage_prefixes).await;
 
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
