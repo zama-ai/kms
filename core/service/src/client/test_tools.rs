@@ -727,8 +727,8 @@ pub async fn setup_centralized_no_client<
     create_default_centralized_context_in_storage(&mut priv_storage, &sk)
         .await
         .unwrap();
-    let mut core_config: CoreConfig =
-        init_conf("config/default_centralized.toml").expect("config must parse");
+    let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
+    let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
     let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
         core_config,

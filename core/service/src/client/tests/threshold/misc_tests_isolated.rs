@@ -55,8 +55,8 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let clients = env.clients;
     let servers = env.servers;
 
-    // Validate that decryption requests are accepted but results fail (no PRSS yet)
-    let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
+    // Validate that decryption requests fail (no PRSS initialized)
+    let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         1,
         &TEST_THRESHOLD_KEY_ID,
         None,
@@ -67,11 +67,10 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
-    assert!(dec_res.iter().all(|res| res.is_ok()));
-    // But the response will result in an error (no PRSS initialized)
-    let dec_resp_tasks = crate::client::tests::common::get_pub_dec_resp(&req_id, &clients).await;
-    let dec_resp_res = dec_resp_tasks.join_all().await;
-    assert!(dec_resp_res.iter().all(|res| res.is_err()));
+    // Check the server will fail since it cannot find the PRSS info
+    assert!(dec_res
+        .iter()
+        .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound));
 
     // Check core service health for server 1
     let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
