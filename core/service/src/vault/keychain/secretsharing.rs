@@ -195,7 +195,7 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             PrivDataType::PrssSetupCombined => unwrapped_dec_key
                 .decrypt(&backup_ct.ciphertext)
                 .map_err(|e| {
-                    anyhow::anyhow!("Could not decrypt backed up Prss setup combined {e}")
+                    anyhow::anyhow!("Could not decrypt backed up PRSS setup combined {e}")
                 }),
             PrivDataType::ContextInfo => {
                 unwrapped_dec_key
