@@ -32,7 +32,7 @@ use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
+use super::grpc::{MessageQueueStore, OptionConfigWrapper, TagWithContextId};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
@@ -424,9 +424,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
         let round_counter = *self.round_counter.read().await;
-        let tagged_value = Tag {
+        let tagged_value = TagWithContextId {
             session_id: self.session_id,
             sender: self.owner.mpc_identity(),
+            context_id: SessionId::from(crate::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT),
             round_counter,
         };
 

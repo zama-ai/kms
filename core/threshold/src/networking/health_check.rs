@@ -7,7 +7,8 @@ use tonic::{service::interceptor::InterceptedService, transport::Channel, Status
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Identity, RoleTrait},
-    networking::grpc::HealthTag,
+    networking::grpc::HealthTagWithContextId,
+    session_id::SessionId,
 };
 
 pub struct HealthCheckSession<R: RoleTrait> {
@@ -60,8 +61,9 @@ impl<R: RoleTrait> HealthCheckSession<R> {
     }
 
     pub async fn run_healthcheck(&self) -> anyhow::Result<HealthCheckResult<R>> {
-        let tag = HealthTag {
+        let tag = HealthTagWithContextId {
             sender: self.owner.mpc_identity(),
+            context_id: SessionId::from(crate::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT),
         };
 
         let tag_serialized = bc2wrap::serialize(&tag)

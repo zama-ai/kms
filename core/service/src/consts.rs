@@ -167,3 +167,20 @@ lazy_static::lazy_static! {
 lazy_static::lazy_static! {
     pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_session_id_from_context() {
+        let sid = DEFAULT_MPC_CONTEXT.derive_session_id().unwrap();
+        assert_eq!(
+            threshold_fhe::session_id::SessionId::from(
+                threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
+            ),
+            sid,
+            "DEFAULT_SESSION_ID_FROM_CONTEXT must match DEFAULT_MPC_CONTEXT.derive_session_id()"
+        );
+    }
+}

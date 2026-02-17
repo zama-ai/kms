@@ -10,7 +10,8 @@ use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    KeyPair, KeyUsagePurpose, PublicKeyData, SerialNumber, PKCS_ECDSA_P256K1_SHA256,
+    PKCS_ECDSA_P256_SHA256,
 };
 use std::{sync::Arc, time::Duration};
 use threshold_fhe::networking::tls::extract_subject_from_cert;
@@ -113,6 +114,9 @@ pub trait SecurityModule {
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
         tls_cp.distinguished_name = distinguished_name;
+        tls_cp.serial_number = Some(SerialNumber::from_slice(
+            &threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
+        ));
 
         // Key usages
         tls_cp.key_usages = vec![

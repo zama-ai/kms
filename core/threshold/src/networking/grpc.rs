@@ -942,12 +942,23 @@ impl Gnetworking for NetworkingImpl {
         .transpose()
         .map_err(|boxed| *boxed)?;
         let request = request.into_inner();
-        let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("failed to parse value: {} as a HealthTag", e),
-            )
-        })?;
+        // Try with context_id first (v0.12.7 format).
+        // Fall back to v0.13.x format without context_id if that fails.
+        let health_tag = match bc2wrap::deserialize_safe::<HealthTagWithContextId>(&request.tag) {
+            Ok(tag) => tag,
+            Err(_) => {
+                let compat = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("failed to parse value: {} as a HealthTag", e),
+                    )
+                })?;
+                HealthTagWithContextId {
+                    sender: compat.sender,
+                    context_id: SessionId::from(crate::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT),
+                }
+            }
+        };
 
         sender_verification(
             #[cfg(feature = "testing")]
@@ -986,12 +997,18 @@ impl Gnetworking for NetworkingImpl {
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("failed to parse value: {}", e),
-            )
-        })?;
+        // Try with context_id first (v0.12.7 format).
+        // Fall back to v0.13.0 format if the above fails.
+        let tag = match bc2wrap::deserialize_safe::<TagWithContextId>(&request.tag) {
+            Ok(tag) => Tag {
+                session_id: tag.session_id,
+                sender: tag.sender,
+                round_counter: tag.round_counter,
+            },
+            Err(_) => bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
+                tonic::Status::new(tonic::Code::Aborted, format!("failed to parse tag: {}", e))
+            })?,
+        };
 
         sender_verification(
             #[cfg(feature = "testing")]
@@ -1126,7 +1143,25 @@ pub struct Tag {
     pub(crate) round_counter: usize,
 }
 
+/// v0.12.7-compatible Tag with context_id field.
+/// Used for SENDING (always) and for deserializing v0.12.7 messages.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TagWithContextId {
+    pub(crate) session_id: SessionId,
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
+    pub(crate) round_counter: usize,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HealthTag {
     pub(crate) sender: MpcIdentity,
+}
+
+/// v0.12.7-compatible HealthTag with context_id field.
+/// Used for SENDING (always) and for deserializing v0.12.7 messages.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthTagWithContextId {
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
 }
