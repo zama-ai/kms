@@ -8,13 +8,16 @@ use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::backup_operator::{
     update_specific_backup_vault, update_specific_backup_vault_for_all_epochs,
 };
+use crate::engine::base::CrsGenMetadata;
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use crate::engine::threshold::service::session::SessionMaker;
+use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
+use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr,
 };
+use crate::util::key_setup::FhePrivateKey;
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
@@ -260,20 +263,71 @@ where
                 return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
             }
             for cur_type in PrivDataType::iter() {
-                update_specific_backup_vault::<PrivS, ContextInfo>(
-                    &guarded_priv_storage,
-                    &mut guarded_backup_vault,
-                    cur_type,
-                    true, // We MUST overwrite existing data in the backup vault
-                )
-                .await?;
-                update_specific_backup_vault_for_all_epochs::<PrivS, ContextInfo>(
-                    &guarded_priv_storage,
-                    &mut guarded_backup_vault,
-                    cur_type,
-                    true, // We MUST overwrite existing data in the backup vault
-                )
-                .await?;
+                match cur_type {
+                    // These types might have epoch-specific data
+                    PrivDataType::FheKeyInfo => {
+                        update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                    PrivDataType::FhePrivateKey => {
+                        update_specific_backup_vault_for_all_epochs::<PrivS, FhePrivateKey>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                    PrivDataType::PrssSetupCombined => {
+                        update_specific_backup_vault_for_all_epochs::<PrivS, PRSSSetupCombined>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                    #[expect(deprecated)]
+                    PrivDataType::PrssSetup => {
+                        tracing::info!(
+                            "Skipping deprecated PRSS setup type during custodian context creation"
+                        );
+                    }
+                    // Non epoched types
+                    PrivDataType::SigningKey => {
+                        // TODO(#2862) will eventually be epoched
+                        update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                    PrivDataType::CrsInfo => {
+                        update_specific_backup_vault::<PrivS, CrsGenMetadata>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                    PrivDataType::ContextInfo => {
+                        update_specific_backup_vault::<PrivS, ContextInfo>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                    }
+                }
             }
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)

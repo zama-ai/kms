@@ -1,9 +1,14 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
+use crate::engine::base::CrsGenMetadata;
+use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{query_key_material_availability, MetricedError};
 use crate::engine::validation::parse_optional_grpc_request_id;
+use crate::util::key_setup::FhePrivateKey;
 use crate::vault::storage::{
-    delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
+    delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id,
+    StorageExt, StorageReaderExt,
 };
 use crate::{
     anyhow_error_and_log,
@@ -744,16 +749,51 @@ where
     PrivS: StorageExt + Sync + Send + 'static,
 {
     for cur_type in PrivDataType::iter() {
-        // First try to restore data without epoch ID (for data types that support it)
-
-        restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type).await?;
-        // Next try to restore data with epoch ID (for data types that support it)
-        restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
-            priv_storage,
-            backup_vault,
-            cur_type,
-        )
-        .await?;
+        match cur_type {
+            // These types might have epoch-specific data
+            PrivDataType::FheKeyInfo => {
+                restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
+            }
+            PrivDataType::FhePrivateKey => {
+                restore_data_type_for_all_epochs::<PrivS, FhePrivateKey>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
+            }
+            PrivDataType::PrssSetupCombined => {
+                restore_data_type_for_all_epochs::<PrivS, PRSSSetupCombined>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
+            }
+            #[expect(deprecated)]
+            PrivDataType::PrssSetup => {
+                tracing::info!("Skipping deprecated PRSS setup type during restore");
+            }
+            // Non epoched types
+            PrivDataType::SigningKey => {
+                // TODO(#2862) will eventually be epoched
+                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
+            PrivDataType::CrsInfo => {
+                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
+            PrivDataType::ContextInfo => {
+                restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -801,7 +841,13 @@ where
             if overwrite {
                 // Delete the old backup data
                 // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-                delete_at_request_id(backup_vault, request_id, &data_type_enum.to_string()).await?;
+                delete_at_request_and_epoch_id(
+                    backup_vault,
+                    request_id,
+                    &epoch_id,
+                    &data_type_enum.to_string(),
+                )
+                .await?;
             }
             // Finally store the new backup data
             store_versioned_at_request_and_epoch_id(
@@ -887,22 +933,71 @@ where
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
-                    // First try to update data without epoch ID (for data types that support it)
-                    update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                        &private_storage,
-                        &mut backup_vault,
-                        cur_type,
-                        false, // Do NOT overwrite existing data. Observe we just check for existebce and NOT integrity
-                    )
-                    .await?;
-                    // Next try to update data with epoch ID (for data types that support it)
-                    update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                        &private_storage,
-                        &mut backup_vault,
-                        cur_type,
-                        false, // Do NOT overwrite existing data. Observe we just check for existebce and NOT integrity
-                    )
-                    .await?;
+                    match cur_type {
+                        // These types might have epoch-specific data
+                        PrivDataType::FheKeyInfo => {
+                            update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                false, // We should NOT o
+                            )
+                            .await?;
+                        }
+                        PrivDataType::FhePrivateKey => {
+                            update_specific_backup_vault_for_all_epochs::<PrivS, FhePrivateKey>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                true, // We MUST overwrite existing data in the backup vault
+                            )
+                            .await?;
+                        }
+                        PrivDataType::PrssSetupCombined => {
+                            update_specific_backup_vault_for_all_epochs::<PrivS, PRSSSetupCombined>(
+                            &private_storage,
+                                &mut backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
+                        }
+                        #[expect(deprecated)]
+                        PrivDataType::PrssSetup => {
+                            tracing::info!(
+                            "Skipping deprecated PRSS setup type during custodian context creation"
+                        );
+                        }
+                        // Non epoched types
+                        PrivDataType::SigningKey => {
+                            // TODO(#2862) will eventually be epoched
+                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                true, // We MUST overwrite existing data in the backup vault
+                            )
+                            .await?;
+                        }
+                        PrivDataType::CrsInfo => {
+                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                true, // We MUST overwrite existing data in the backup vault
+                            )
+                            .await?;
+                        }
+                        PrivDataType::ContextInfo => {
+                            update_specific_backup_vault::<PrivS, ContextInfo>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                true, // We MUST overwrite existing data in the backup vault
+                            )
+                            .await?;
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -924,6 +1019,7 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::storage::{ram::RamStorage, tests::TestType, StorageProxy};
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
         cryptography::{
@@ -933,12 +1029,20 @@ mod tests {
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
+    use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
     use std::{
         collections::BTreeMap,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    fn make_unencrypted_vault() -> Vault {
+        Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: None,
+        }
+    }
 
     fn dummy_recovery_material(
         threshold: u32,
@@ -1121,5 +1225,275 @@ mod tests {
         assert!(logs_contain(
             "Could not find verification key for custodian role"
         ));
+    }
+    #[tokio::test]
+    async fn test_update_backup_vault() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id_1 = derive_request_id("multi_1").unwrap();
+        let req_id_2 = derive_request_id("multi_2").unwrap();
+
+        // Store two data items in private storage
+        let data_1 = TestType { i: 10 };
+        let data_2 = TestType { i: 20 };
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &req_id_1,
+            &data_1,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &req_id_2,
+            &data_2,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Run backup
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify both items were backed up
+        let restored_1: TestType = backup_vault
+            .read_data(&req_id_1, &data_type.to_string())
+            .await
+            .unwrap();
+        let restored_2: TestType = backup_vault
+            .read_data(&req_id_2, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored_1.i, 10);
+        assert_eq!(restored_2.i, 20);
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_vault_without_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id = derive_request_id("test_backup_2").unwrap();
+
+        // Store original data in private storage
+        let data = TestType { i: 42 };
+        store_versioned_at_request_id(&mut priv_storage, &req_id, &data, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Pre-populate backup vault with different data
+        let old_data = TestType { i: 1 };
+        backup_vault
+            .store_data(&old_data, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup without overwrite
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify the old data was NOT overwritten
+        let restored: TestType = backup_vault
+            .read_data(&req_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_vault_with_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id = derive_request_id("test_backup_3").unwrap();
+
+        // Store new data in private storage
+        let data = TestType { i: 99 };
+        store_versioned_at_request_id(&mut priv_storage, &req_id, &data, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Pre-populate backup vault with old data
+        let old_data = TestType { i: 1 };
+        backup_vault
+            .store_data(&old_data, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup with overwrite
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            true,
+        )
+        .await
+        .unwrap();
+
+        // Verify the data was overwritten with the new value
+        let restored: TestType = backup_vault
+            .read_data(&req_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 99);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("multi_epoch").unwrap();
+        let epoch_1 = EpochId::from_bytes([10u8; 32]);
+        let epoch_2 = EpochId::from_bytes([20u8; 32]);
+
+        // Store data at two different epochs
+        let data_1 = TestType { i: 111 };
+        let data_2 = TestType { i: 222 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_1,
+            &data_1,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_2,
+            &data_2,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Run backup
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify both epochs were backed up
+        let restored_1: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_1, &data_type.to_string())
+            .await
+            .unwrap();
+        let restored_2: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_2, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored_1.i, 111);
+        assert_eq!(restored_2.i, 222);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault_without_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("epoch_test_2").unwrap();
+        let epoch_id = EpochId::from_bytes([2u8; 32]);
+
+        // Store new data in private storage
+        let data = TestType { i: 50 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &data,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Pre-populate backup vault with old data at the same epoch
+        let old_data = TestType { i: 5 };
+        backup_vault
+            .store_data_at_epoch(&old_data, &req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup without overwrite
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify the old data was NOT overwritten
+        let restored: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 5);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault_with_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("epoch_test_3").unwrap();
+        let epoch_id = EpochId::from_bytes([3u8; 32]);
+
+        // Store new data in private storage
+        let data = TestType { i: 77 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &data,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Pre-populate backup vault with old data
+        let old_data = TestType { i: 7 };
+        backup_vault
+            .store_data_at_epoch(&old_data, &req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup with overwrite=true
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            true,
+        )
+        .await
+        .unwrap();
+
+        // The new data is now in the vault
+        let restored: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 77);
     }
 }

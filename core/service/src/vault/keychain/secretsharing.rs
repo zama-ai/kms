@@ -190,11 +190,13 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                 }),
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                anyhow::bail!("PRSS backup is not supported")
+                anyhow::bail!("PRSS Setup backup is deprecated and not supported for decryption. This backup type should not be generated anymore.")
             }
-            PrivDataType::PrssSetupCombined => {
-                anyhow::bail!("Combined PRSS backup is not supported")
-            }
+            PrivDataType::PrssSetupCombined => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| {
+                    anyhow::anyhow!("Could not decrypt backed up Prss setup combined {e}")
+                }),
             PrivDataType::ContextInfo => {
                 unwrapped_dec_key
                     .decrypt(&backup_ct.ciphertext)
