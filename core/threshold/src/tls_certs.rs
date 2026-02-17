@@ -1,3 +1,9 @@
+/// The default session ID derived from DEFAULT_MPC_CONTEXT.
+/// This equals `DEFAULT_MPC_CONTEXT.derive_session_id()` and is used for
+/// backward compatibility with v0.12.7, which embeds context_id in tags
+/// and TLS certificate serial numbers.
+pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
+
 use anyhow::anyhow;
 use clap::Parser;
 use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
