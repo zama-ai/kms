@@ -37,18 +37,7 @@ pub async fn user_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_user_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+    let permit = service.rate_limiter.start_user_decrypt().await?;
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -65,15 +54,7 @@ pub async fn user_decrypt_impl<
         context_id,
         epoch_id,
         domain,
-    ) = validate_user_decrypt_req(&inner).map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_REQUEST,
-            None,
-            e, // Validation error
-            tonic::Code::InvalidArgument,
-        )
-    })?;
-
+    ) = validate_user_decrypt_req(&inner)?;
     if !service
         .context_manager
         .mpc_context_exists_in_cache(&context_id)
@@ -86,6 +67,7 @@ pub async fn user_decrypt_impl<
             tonic::Code::NotFound,
         ));
     }
+    // Observe we accept any epoch ID
 
     // Use a constant party ID since this is the central KMS
     let metric_tags = vec![
@@ -264,18 +246,7 @@ pub async fn public_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_pub_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+    let permit = service.rate_limiter.start_pub_decrypt().await?;
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
@@ -283,14 +254,7 @@ pub async fn public_decrypt_impl<
         .start();
     let inner = request.into_inner();
     let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
-        validate_public_decrypt_req(&inner).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        validate_public_decrypt_req(&inner)?;
 
     if !service
         .context_manager
@@ -304,6 +268,7 @@ pub async fn public_decrypt_impl<
             tonic::Code::NotFound,
         ));
     }
+    // Observe we accept any epoch ID
 
     let metric_tags = vec![
         (TAG_KEY_ID, key_id.to_string()),

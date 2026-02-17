@@ -60,7 +60,7 @@ async fn test_threshold_health_endpoint_availability() {
         threshold_handles(TEST_PARAM, amount_parties, false, None, None).await;
 
     // Validate that the core server is not ready
-    let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
+    let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         1,
         &TEST_THRESHOLD_KEY_ID,
         None,
@@ -71,13 +71,10 @@ async fn test_threshold_health_endpoint_availability() {
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
-    // Even though servers are not initialized they will accept the requests
-    assert!(dec_res.iter().all(|res| res.is_ok()));
-    // But the response will result in an error
-    let dec_resp_tasks =
-        crate::client::tests::common::get_pub_dec_resp(&req_id, &kms_clients).await;
-    let dec_resp_res = dec_resp_tasks.join_all().await;
-    assert!(dec_resp_res.iter().all(|res| res.is_err()));
+    // Check the server will fail since it cannot find the PRSS info
+    assert!(dec_res
+        .iter()
+        .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound));
 
     // Get health client for main server 1
     let mut main_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -135,30 +132,14 @@ async fn test_threshold_health_endpoint_availability() {
             Err(e) => panic!("Init request failed: {e}"),
         }
     }
-
     // Shutdown the servers and check that the health endpoint is no longer serving
     for (_, server) in kms_servers {
         // Shut down MPC servers triggers a shutdown of the core server
-        server.mpc_shutdown_tx.unwrap().send(()).unwrap();
+        server.assert_shutdown().await;
     }
-    //  The core server should not be serving
-    let mut status = get_status(&mut main_health_client, core_service_name).await;
-    // As long as the server is open check that it is not serving
-    while status.is_ok() {
-        assert_eq!(
-            status.clone().unwrap(),
-            ServingStatus::NotServing as i32,
-            "Service is not in NOT_SERVING status. Got status: {}",
-            status.unwrap()
-        );
-        // Sleep a bit and check whether the server has shut down
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        status = get_status(&mut main_health_client, core_service_name).await;
-    }
-
     // The MPC servers should be closed at this point
     let status = get_status(&mut threshold_health_client, threshold_service_name).await;
-    assert!(status.is_err(),);
+    assert!(status.is_err());
 }
 
 /// Validate that dropping the server signal triggers the server to shut down

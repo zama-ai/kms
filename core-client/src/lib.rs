@@ -24,7 +24,7 @@ use crate::keygen::{
     get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
-use crate::mpc_epoch::do_new_epoch;
+use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
@@ -557,7 +557,10 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
-/// This should match the KeySetType in the protofile
+/// Keyset type for key generation, matching the KeySetType in the protofile.
+///
+/// It only supports the standard keyset type for now, which is to generate the full keyset
+/// rather than individual keys from a standard keyset.
 #[derive(ValueEnum, Debug, Clone, Default)]
 pub enum KeySetType {
     #[default]
@@ -576,6 +579,7 @@ impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SharedKeyGenParameters {
+    /// Keyset type for key generation (e.g., "standard")
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
     /// Generate compressed keys using XOF-seeded compression
@@ -596,6 +600,7 @@ pub struct KeyGenParameters {
     pub shared_args: SharedKeyGenParameters,
 }
 
+/// Parameters for insecure key generation (testing/development only).
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
     #[command(flatten)]
@@ -636,6 +641,13 @@ pub struct DestroyMpcContextParameters {
     /// The context ID to use for the MPC context to destroy.
     #[clap(long)]
     pub context_id: ContextId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct DestroyMpcEpochParameters {
+    /// The epoch ID to use for the MPC epoch to destroy.
+    #[clap(long)]
+    pub epoch_id: EpochId,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -773,6 +785,7 @@ pub enum CCCommand {
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
+    DestroyMpcEpoch(DestroyMpcEpochParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
@@ -1858,6 +1871,13 @@ pub async fn execute_cmd(
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),
+            )]
+        }
+        CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id }) => {
+            do_destroy_mpc_epoch(&core_endpoints_req, epoch_id).await?;
+            vec![(
+                Some((*epoch_id).into()),
+                "epoch destruction done".to_string(),
             )]
         }
     };

@@ -56,7 +56,10 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
+            service::{
+                session::{validate_context_and_epoch, ImmutableSessionMaker},
+                PublicKeyMaterial, ThresholdFheKeys,
+            },
             traits::KeyGenerator,
         },
         utils::MetricedError,
@@ -414,17 +417,14 @@ impl<
         };
         // Acquire the serial lock to make sure no other keygen is running concurrently
         let _guard = self.serial_lock.lock().await;
-        let permit = self
-            .rate_limiter
-            .start_keygen()
-            .await
-            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+        let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
         // Note: We increase the request counter only in launch_dkg
         // so we don't increase the error counter here either
         let inner = request.into_inner();
+        let params = inner.params;
         let (
             req_id,
             preproc_id,
@@ -433,20 +433,15 @@ impl<
             _dkg_params,
             internal_keyset_config,
             eip712_domain,
-        ) = validate_key_gen_request(inner.clone()).map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-        // Find the role of the current server and validate the context exists
-        let my_role = self
-            .session_maker
-            .my_role(&context_id)
-            .await
-            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::NotFound))?;
+        ) = validate_key_gen_request(inner, op_tag)?;
+        let my_role = validate_context_and_epoch(
+            op_tag,
+            &self.session_maker,
+            Some(req_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
             (TAG_KEY_ID, req_id.to_string()),
@@ -461,7 +456,7 @@ impl<
                 self.preproc_buckets.read().await,
                 req_id,
                 preproc_id,
-                inner.params,
+                params,
                 insecure,
             )
             .await?;
@@ -473,10 +468,8 @@ impl<
         )?;
 
         tracing::info!(
-            "Keygen starting with request_id={:?}, keyset_config={:?}, keyset_added_info={:?}, insecure={}",
-            inner.request_id,
-            inner.keyset_config,
-            inner.keyset_added_info,
+            "Keygen starting with request_id={:?}, insecure={}",
+            req_id,
             insecure
         );
 
@@ -1321,7 +1314,9 @@ mod tests {
     };
     use rand::rngs::OsRng;
     use threshold_fhe::{
-        execution::online::preprocessing::dummy::DummyPreprocessing,
+        execution::{
+            online::preprocessing::dummy::DummyPreprocessing, small_execution::prss::PRSSSetup,
+        },
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
@@ -1402,10 +1397,16 @@ mod tests {
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-        let epoch_id = *DEFAULT_EPOCH_ID;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            &epoch_id,
+            base_kms.new_rng().await,
+        );
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),

@@ -17,7 +17,7 @@ use kms_lib::{
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
-        context_manager::create_default_centralized_context_in_storage,
+        context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
         migration::migrate_fhe_keys_v0_12_to_v0_13, run_server,
         threshold::service::new_real_threshold_kms,
     },
@@ -34,7 +34,7 @@ use kms_lib::{
         Vault,
     },
 };
-use std::{env, net::ToSocketAddrs, sync::Arc, thread};
+use std::{net::ToSocketAddrs, sync::Arc, thread};
 use threshold_fhe::{
     networking::tls::{build_ca_certs_map, AttestedVerifier},
     thread_handles::init_rayon_thread_pool,
@@ -108,7 +108,7 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
     tracing::info!(
         "Starting threshold KMS server v{}, with id {:?}, listening for MPC communication on {:?}...",
-        env!("CARGO_PKG_VERSION"),
+        SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable."),
         threshold_config.my_id,
         mpc_socket_addr
     );
@@ -699,7 +699,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let meta_store_status_service = Arc::new(metastore_status_service);
             tracing::info!(
                 "Starting threshold KMS server v{}...",
-                env!("CARGO_PKG_VERSION"),
+                SoftwareVersion::current()?
             );
             run_server(
                 service_config,
@@ -715,18 +715,19 @@ async fn main_exec() -> anyhow::Result<()> {
         None => {
             tracing::info!(
                 "Starting centralized KMS server v{}...",
-                env!("CARGO_PKG_VERSION"),
+                SoftwareVersion::current()?
             );
             // create the default context if it does not exist
             let sk = (*base_kms.sig_key()?).clone();
+            let service_config = core_config.service.clone();
             create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
             let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+                core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
                 sk,
-                core_config.rate_limiter_conf,
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
@@ -738,7 +739,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
-                core_config.service,
+                service_config,
                 service_listener,
                 Arc::new(kms),
                 meta_store_status_service,

@@ -6,7 +6,11 @@ use std::{
 
 use aes_prng::AesRng;
 // === External Crates ===
-use kms_grpc::identifiers::{ContextId, EpochId};
+use crate::engine::{context::ContextInfo, utils::MetricedError};
+use kms_grpc::{
+    identifiers::{ContextId, EpochId},
+    RequestId,
+};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
@@ -36,8 +40,7 @@ use threshold_fhe::{
     session_id::SessionId,
 };
 use tokio::sync::{Mutex, RwLock};
-
-use crate::engine::context::ContextInfo;
+use tonic::Code;
 
 struct Context {
     // I may not belong to all the contexts I am aware of
@@ -323,6 +326,11 @@ impl SessionMaker {
     pub(crate) async fn add_epoch(&self, epoch_id: EpochId, prss: PRSSSetupCombined) {
         let mut epoch_map = self.epoch_map.write().await;
         epoch_map.insert(epoch_id, prss);
+    }
+
+    pub(crate) async fn remove_epoch(&self, epoch_id: &EpochId) {
+        let mut epoch_map = self.epoch_map.write().await;
+        epoch_map.remove(epoch_id);
     }
 
     pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
@@ -804,4 +812,29 @@ impl ImmutableSessionMaker {
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         self.inner.get_healthcheck_session_all_contexts().await
     }
+}
+
+/// Validates that a context and epoch ID exists and returns the role of the current server in this context.
+pub(crate) async fn validate_context_and_epoch(
+    op_tag: &'static str,
+    session_maker: &ImmutableSessionMaker,
+    req_id: Option<RequestId>,
+    context_id: &ContextId,
+    epoch_id: &EpochId,
+) -> Result<Role, MetricedError> {
+    // Find the role of the current server and validate the context exists
+    let my_role = session_maker
+        .my_role(context_id)
+        .await
+        .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
+
+    if !session_maker.epoch_exists(epoch_id).await {
+        return Err(MetricedError::new(
+            op_tag,
+            req_id,
+            anyhow::anyhow!("Epoch {epoch_id} not found"),
+            Code::NotFound,
+        ));
+    }
+    Ok(my_role)
 }

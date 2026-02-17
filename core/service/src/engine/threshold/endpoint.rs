@@ -186,12 +186,7 @@ impl_endpoint! {
             request: Request<NewMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
-            self.context_manager.new_mpc_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
-            })
-
+            self.context_manager.new_mpc_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -200,7 +195,7 @@ impl_endpoint! {
             request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            Ok(self.context_manager.destroy_mpc_context(request).await?)
+            self.context_manager.destroy_mpc_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip_all)]
@@ -226,11 +221,10 @@ impl_endpoint! {
 
         async fn destroy_mpc_epoch(
             &self,
-            _request: Request<DestroyMpcEpochRequest>,
+            request: Request<DestroyMpcEpochRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_EPOCH);
-            // Currently no-op
-            Ok(Response::new(Empty {}))
+            Ok(self.epoch_manager.destroy_mpc_epoch(request).await?)
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -239,12 +233,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
-            self.context_manager.new_custodian_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_CUSTODIAN_CONTEXT, tag);
-            })
-
+            self.context_manager.new_custodian_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -253,12 +242,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_CUSTODIAN_CONTEXT);
-            self.context_manager.destroy_custodian_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_CUSTODIAN_CONTEXT, tag);
-            })
-
+            self.context_manager.destroy_custodian_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -267,12 +251,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::OperatorPublicKey>, Status> {
             METRICS.increment_request_counter(OP_FETCH_PK);
-            self.backup_operator.get_operator_public_key(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_FETCH_PK, tag);
-            })
-
+            self.backup_operator.get_operator_public_key(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -281,11 +260,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::CustodianRecoveryRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
-            self.backup_operator.custodian_backup_recovery(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CUSTODIAN_BACKUP_RECOVERY, tag);
-            })
+            self.backup_operator.custodian_backup_recovery(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -294,11 +269,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_RESTORE_FROM_BACKUP);
-            self.backup_operator.restore_from_backup(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_RESTORE_FROM_BACKUP, tag);
-            })
+            self.backup_operator.restore_from_backup(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, _request))]
@@ -325,11 +296,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::CustodianRecoveryInitRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
-            self.backup_operator.custodian_recovery_init(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
-            })
+            self.backup_operator.custodian_recovery_init(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, _request))]

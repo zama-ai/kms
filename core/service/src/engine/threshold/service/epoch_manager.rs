@@ -35,7 +35,7 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
-use observability::metrics_names::{OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
+use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -54,9 +54,7 @@ use threshold_fhe::{
             offline::{Preprocessing, SecureSmallPreprocessing},
             prss::{PRSSInit, PRSSSetup},
         },
-        tfhe_internals::{
-            parameters::DKGParams, private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
-        },
+        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
     },
     networking::NetworkMode,
 };
@@ -65,20 +63,23 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
-            compute_info_standard_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
+            compute_info_compressed_keygen, compute_info_standard_keygen, retrieve_parameters,
+            KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::service::{
-            reshare_utils::get_verified_public_materials,
+            reshare_utils::{get_verified_public_materials, VerifiedPublicMaterial},
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
             PublicKeyMaterial, ThresholdFheKeys,
         },
         traits::EpochManager,
         utils::MetricedError,
-        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
+        validation::{
+            parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
+            RequestIdParsingErr,
+        },
     },
     util::{
         meta_store::{retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore},
@@ -86,7 +87,7 @@ use crate::{
     },
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
-        delete_at_request_id,
+        delete_at_request_and_epoch_id, delete_at_request_id,
         s3::{ReadOnlyS3Storage, RealReadOnlyS3StorageGetter},
         store_versioned_at_request_id, Storage, StorageExt,
     },
@@ -489,52 +490,93 @@ impl<
         ))
     }
 
-    /// Stores the reshared keys and updates the meta store
+    /// Stores the reshared keys and updates the meta store.
+    /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
-        fhe_pubkeys: &FhePubKeySet,
+        verified_material: VerifiedPublicMaterial,
         new_private_keyset: PrivateKeySet<4>,
     ) -> anyhow::Result<()> {
-        let info = match compute_info_standard_keygen(
-            sk,
-            &DSEP_PUBDATA_KEY,
-            &verified_previous_epoch.preproc_id,
-            &verified_previous_epoch.key_id,
-            fhe_pubkeys,
-            &verified_previous_epoch.eip712_domain,
-        ) {
-            Ok(info) => info,
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
+        match verified_material {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                let info = match compute_info_standard_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    &verified_previous_epoch.preproc_id,
+                    &verified_previous_epoch.key_id,
+                    &fhe_pubkeys,
+                    &verified_previous_epoch.eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
+                    }
+                };
+
+                let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                    fhe_pubkeys.server_key.clone().into_raw_parts();
+
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(new_private_keyset),
+                    public_material: PublicKeyMaterial::Uncompressed {
+                        integer_server_key: Arc::new(integer_server_key),
+                        sns_key: sns_key.map(Arc::new),
+                        decompression_key: decompression_key.map(Arc::new),
+                    },
+                    meta_data: info,
+                };
+
+                crypto_storage
+                    .write_threshold_keys_with_epoch_meta_store(
+                        &verified_previous_epoch.key_id,
+                        &new_epoch_id,
+                        threshold_fhe_keys,
+                        fhe_pubkeys,
+                        meta_store,
+                    )
+                    .await;
             }
-        };
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                let info = match compute_info_compressed_keygen(
+                    sk,
+                    &DSEP_PUBDATA_KEY,
+                    &verified_previous_epoch.preproc_id,
+                    &verified_previous_epoch.key_id,
+                    &compressed_keyset,
+                    &verified_previous_epoch.eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to compute compressed key info: {}",
+                            e
+                        ));
+                    }
+                };
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-            fhe_pubkeys.server_key.clone().into_raw_parts();
+                let public_material = PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
 
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: Arc::new(new_private_keyset),
-            public_material: PublicKeyMaterial::Uncompressed {
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
-            },
-            meta_data: info,
-        };
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(new_private_keyset),
+                    public_material,
+                    meta_data: info,
+                };
 
-        crypto_storage
-            .write_threshold_keys_with_epoch_meta_store(
-                &verified_previous_epoch.key_id,
-                &new_epoch_id,
-                threshold_fhe_keys,
-                fhe_pubkeys.clone(),
-                meta_store,
-            )
-            .await;
+                crypto_storage
+                    .write_threshold_keys_with_epoch_meta_store_compressed(
+                        &verified_previous_epoch.key_id,
+                        &new_epoch_id,
+                        threshold_fhe_keys,
+                        &compressed_keyset,
+                        meta_store,
+                    )
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -547,7 +589,7 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
+        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
             &epoch_id_as_request_id,
             &verified_previous_epoch.key_id,
@@ -605,7 +647,7 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                &fhe_pubkeys,
+                verified_material,
                 new_private_keyset,
             )
             .await
@@ -623,7 +665,7 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
+        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
             &epoch_id_as_request_id,
             &verified_previous_epoch.key_id,
@@ -684,13 +726,99 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                &fhe_pubkeys,
+                verified_material,
                 new_private_keyset,
             )
             .await
         };
 
         Ok(task)
+    }
+
+    /// Destroys an epoch by removing all private data stored under the given epoch and data type,
+    /// then removing the PRSS setup data, and finally removing the epoch from the session maker.
+    pub(crate) async fn destroy_epoch(
+        epoch_id: &EpochId,
+        priv_data_type: PrivDataType,
+        priv_storage: &tokio::sync::Mutex<PrivS>,
+        session_maker: &SessionMaker,
+    ) -> Result<Response<Empty>, MetricedError> {
+        if !session_maker.epoch_exists(epoch_id).await {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        let mut priv_storage_guard = priv_storage.lock().await;
+
+        // Delete all data stored under this epoch for the given private data type
+        // first find all data IDs
+        let data_ids = priv_storage_guard
+            .all_data_ids_at_epoch(epoch_id, &priv_data_type.to_string())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_EPOCH,
+                    Some((*epoch_id).into()),
+                    e,
+                    tonic::Code::Internal,
+                )
+            })?;
+
+        // At this point we're committed to deleting the epoch, so do not return if there's an error,
+        // but track the first error to report back to the caller.
+        let mut first_error: Option<anyhow::Error> = None;
+
+        for data_id in &data_ids {
+            if let Err(e) = delete_at_request_and_epoch_id(
+                &mut (*priv_storage_guard),
+                data_id,
+                epoch_id,
+                &priv_data_type.to_string(),
+            )
+            .await
+            {
+                tracing::error!(
+                    "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
+                    &priv_data_type
+                );
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+
+        // Delete the PRSS setup data (stored under epoch_id as a request_id)
+        if let Err(e) = delete_at_request_id(
+            &mut (*priv_storage_guard),
+            &(*epoch_id).into(),
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        {
+            tracing::error!("Error deleting PrssSetupCombined epoch ID {epoch_id}: {e:?}");
+            if first_error.is_none() {
+                first_error = Some(e);
+            }
+        }
+
+        // Remove the epoch from the session maker regardless of deletion errors
+        session_maker.remove_epoch(epoch_id).await;
+
+        if let Some(e) = first_error {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                e,
+                tonic::Code::Internal,
+            ));
+        }
+
+        tracing::info!("Epoch {} destroyed successfully", epoch_id);
+        Ok(Response::new(Empty {}))
     }
 
     async fn initiate_resharing(
@@ -776,30 +904,11 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        let permit = self.rate_limiter.start_new_epoch().await.map_err(|e| {
-            MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::ResourceExhausted)
-        })?;
+        let permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
-        // the request ID of the init request is the epoch ID for PRSS and shares
-        let epoch_id: EpochId =
-            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
-                |e| MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::InvalidArgument),
-            )?;
-
-        let context_id: ContextId = match inner.context_id {
-            Some(ctx_id) => {
-                parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Context).map_err(|e| {
-                    MetricedError::new(
-                        OP_NEW_EPOCH,
-                        Some(epoch_id.into()),
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?
-            }
-            None => *DEFAULT_MPC_CONTEXT,
-        };
+        let (context_id, epoch_id, previous_epoch_info) =
+            validate_new_mpc_epoch_request(inner).await?;
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(MetricedError::new(
@@ -810,7 +919,7 @@ impl<
             ));
         }
 
-        let resharing_task = match inner.previous_epoch {
+        let resharing_task = match previous_epoch_info {
             Some(prev_epoch) => Some(
                 self.initiate_resharing(&context_id, &epoch_id, prev_epoch)
                     .await?,
@@ -897,9 +1006,22 @@ impl<
 
     async fn destroy_mpc_epoch(
         &self,
-        _request: Request<DestroyMpcEpochRequest>,
+        request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        todo!()
+        let inner = request.into_inner();
+        let epoch_id: EpochId =
+            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
+                |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument),
+            )?;
+
+        let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
+        Self::destroy_epoch(
+            &epoch_id,
+            PrivDataType::FheKeyInfo,
+            &priv_storage,
+            &self.session_maker,
+        )
+        .await
     }
 
     async fn get_epoch_result(
@@ -1459,5 +1581,125 @@ pub(crate) mod tests {
             domain: Some(domain),
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn test_destroy_epoch_success() {
+        use crate::vault::storage::{
+            store_versioned_at_request_and_epoch_id, tests::TestType, StorageReaderExt,
+        };
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
+
+        // Add the epoch to the session maker with PRSS data
+        let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+        let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+        let prss = PRSSSetupCombined {
+            prss_setup_z128,
+            prss_setup_z64,
+            num_parties: 4,
+            threshold: 1,
+        };
+        epoch_manager
+            .session_maker
+            .add_epoch(epoch_id, prss.clone())
+            .await;
+
+        // Store some test data under this epoch
+        let data_type = PrivDataType::FheKeyInfo;
+        let data = TestType { i: 42 };
+        let data_id = derive_request_id("test_data_1").unwrap();
+
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut priv_storage = private_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*priv_storage),
+                &data_id,
+                &epoch_id,
+                &data,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+
+            // Also store the PRSS setup in storage
+            store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &epoch_id.into(),
+                &prss,
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Verify epoch exists and data is present
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let priv_storage = private_storage.lock().await;
+            let ids = priv_storage
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(ids.contains(&data_id));
+        }
+
+        // Destroy the epoch
+        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(
+            &epoch_id,
+            PrivDataType::FheKeyInfo,
+            &priv_storage,
+            &epoch_manager.session_maker,
+        )
+        .await
+        .unwrap();
+
+        // Verify epoch is gone from session maker
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+
+        // Verify data is gone from storage
+        {
+            let priv_storage = priv_storage.lock().await;
+            let ids = priv_storage
+                .all_data_ids_at_epoch(&epoch_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert!(ids.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_destroy_epoch_not_found() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let nonexistent_epoch_id = EpochId::new_random(&mut rng);
+
+        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
+        let err = RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(
+            &nonexistent_epoch_id,
+            PrivDataType::FheKeyInfo,
+            &priv_storage,
+            &epoch_manager.session_maker,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }
