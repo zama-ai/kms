@@ -279,7 +279,7 @@ async fn setup_isolated_centralized_cli_test_with_custodian_backup(
 ///
 /// See `core-client/config/client_local_centralized.toml` for the reference format.
 ///
-/// TODO: Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
+/// TODO (Issue #2900): Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
 ///
 /// This would require (preliminary estimation):
 /// 1. Adding a `storage` field to `CoreClientConfig` (currently only in deserialization)
@@ -571,7 +571,7 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 ///
 /// See `core-client/config/client_local_threshold.toml` for the reference format.
 ///
-/// TODO: Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
+/// TODO (Issue #2900): Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
 /// See the TODO in `generate_centralized_cli_config` for details.
 fn generate_threshold_cli_config(
     material_dir: &kms_lib::testing::material::TestMaterialHandle,
