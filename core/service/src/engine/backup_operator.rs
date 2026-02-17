@@ -940,7 +940,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                false, // We should NOT o
+                                true, // We MUST overwrite existing data in the backup vault
                             )
                             .await?;
                         }
@@ -955,18 +955,18 @@ where
                         }
                         PrivDataType::PrssSetupCombined => {
                             update_specific_backup_vault_for_all_epochs::<PrivS, PRSSSetupCombined>(
-                            &private_storage,
+                                &private_storage,
                                 &mut backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
+                                cur_type,
+                                true, // We MUST overwrite existing data in the backup vault
                         )
                         .await?;
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
                             tracing::info!(
-                            "Skipping deprecated PRSS setup type during custodian context creation"
-                        );
+                                "Skipping deprecated PRSS setup type during backup vault update"
+                            );
                         }
                         // Non epoched types
                         PrivDataType::SigningKey => {
