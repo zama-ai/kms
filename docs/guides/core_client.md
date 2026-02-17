@@ -43,7 +43,7 @@ Values inside the TOML configs are:
 - `kms_type` - The kind of KMS to interact with; "centralized" or "threshold".
 - `num_majority` - The minimum number of matching responses required to have an honest majority.
 - `num_reconstruct` - The minimum number of responses required to reconstruct a value (e.g. in user decryption).
-- `decryption_mode` - For a threshold deployment this must match to what is deployed on the threshold servers. The default is `NoiseFloodSmall`.
+- `decryption_mode` - For a threshold deployment this must match to what is deployed on the threshold servers. Valid values are `NoiseFloodSmall` (default), `NoiseFloodLarge`, `BitDecSmall`, and `BitDecLarge`.
 - `fhe_params` - The set of FHE parameters to use. Can be either `Default` (for large, secure parameters) or `Test` (for smaller, insecure testing parameters).
 - Each KMS core is configured under a separate `[[cores]]` section containing the following values:
   - `party_id` - The MPC party id, starting from 1 going up to n.
@@ -170,7 +170,6 @@ $ cargo run -- -f <path-to-toml-config-file> backup-restore
 ```
 This call will take the data in the backup, decrypt (if needed), and write this to the private storage.
 However, this will _NOT_ overwrite anything on the private storage. Hence the restore operation is non-destructive and idempotent. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first.
-See [pitfalls](#pitfalls) below for details.
 
 After `backup-restore` has been executed the KMS server must be rebooted for the restored data to be fetched into memory.
 
@@ -250,7 +249,6 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```
   This call will take the data in the backup and write this to the private storage.
   However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
-  See [pitfalls](#pitfalls) below for details.
   Furthermore, observe that this will remove the decryption key from RAM. Hence the call can only be executed once. If a need arises to execute the call again then the `custodian-backup-recovery` call must be repeated. Also note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1.
 
   Consider the following example as a concrete call:
@@ -270,7 +268,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
   KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
   ```
-  Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use password `admin` and password `superstrongpassword`. If you don't do this, then the process might fail.
+  Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use username `admin` and password `strongadminpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:
   In the project root run:
   ```{bash}
@@ -339,8 +337,12 @@ These commands generate a set of private and public FHE keys. It will return a `
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen [--compressed] [--keyset-type <TYPE>]
 ```
+
+Optional arguments:
+ - `-c`/`--compressed`: Generate compressed keys using XOF-seeded compression (default: disabled).
+ - `-t`/`--keyset-type <TYPE>`: Keyset type for key generation. Currently only `standard` is supported (default: `standard`).
 
 This means that a single KMS core will generate a set of FHE keys in plain. In a threshold KMS, the contained private key material will then be secret shared between all KMS cores.
 
@@ -348,7 +350,7 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--compressed]
 ```
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
@@ -394,14 +396,18 @@ Optional arguments:
 Analogously to above, _secure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID>
+$ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID> [--compressed] [--keyset-type <TYPE>]
 ```
 Note that this will run the full distributed keygen protocol, which is expensive and time-consuming (read: several minutes of computation on a powerful machine with many cores).
 This command requires a set of pre-processing information, specified via `--preproc-id <PREPROC_ID>`.
 
+Optional arguments:
+ - `-c`/`--compressed`: Generate compressed keys using XOF-seeded compression (default: disabled).
+ - `-t`/`--keyset-type <TYPE>`: Keyset type for key generation. Currently only `standard` is supported (default: `standard`).
+
 It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> key-gen-result --request-id <REQUEST_ID> [--compressed]
 ```
 
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
@@ -450,7 +456,7 @@ If a backup vault is specified in the server configuration toml file, then all n
 This is done through the backup recovery command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> custodian-backup-restore
+$ cargo run -- -f <path-to-toml-config-file> backup-restore
 ```
 
 Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
@@ -461,14 +467,14 @@ This can be used to move private information from one node to another. More spec
 WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used.
 
 #### Arguments
-`<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
+`<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS. This is a required argument. Typically `2048` is used since that is the largest bit width needed with the current FHE types.
 
 ### Encryption
 
 We provide a way to perform an encryption without actually sending any request to the kms-core:
 
 ```{bash}
-$ cargo run -- encrypt -f <path-to-toml-config-file> --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --ciphertext-output-path <output-file-path>
+$ cargo run -- -f <path-to-toml-config-file> encrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --ciphertext-output-path <output-file-path>
 ```
 
 This allows storing the encryption to file which can then be re-used in future commands.
@@ -497,9 +503,9 @@ $ cargo run -- -f <path-to-toml-config-file> public-decrypt from-file --input-pa
 Note that the key must have been previously generated using the (secure or insecure) [keygen](#key-generation) above.
 
 
-It is also possible to fetch the result of a decryption through its `REQUEST_ID` using the following command:
+It is also possible to fetch the result of a public decryption through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> decrypt-result --request-id <REQUEST_ID>
+$ cargo run -- -f <path-to-toml-config-file> public-decrypt-result --request-id <REQUEST_ID>
 ```
 
 Upon success, both the commands to decrypt _and_ the command to fetch the result, will result in a print of `Vec<PublicDecryptionResponse> - <REQUEST_ID>` where the `Vec` size depends on the number of received responses (specified via `num_majority` in the configuration file) for each request (specified via `--num-requests`).
@@ -573,22 +579,62 @@ Finally a concrete example of a command for a setup with 3 custodians is the fol
 $ cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
 ```
 
-### Reshare
+### New Epoch (Resharing)
 
-In case some parties crashed during the DKG process we currently support doing a reshare within the current set of parties.
-This will then allow __all__ parties (including the one that failed during DKG) to hold a share of the secret keys.
+The `new-epoch` command creates a new epoch within a given context, performing a reshare of private key material.
+This can be used when some parties crashed during the DKG process so that __all__ parties (including the one that failed during DKG) can hold a share of the secret keys, or when we want to refresh key shares as a pro-active security measure.
 
-Before executing reshare, we expect the TFHE public key material to be present in the public storage of all the parties. Which implies that if a party has crashed during DKG, we need to copy this material _somehow_.
+Before executing a new epoch, the TFHE public key material must be present in the public storage of all the parties.
+If a party crashed during DKG, this material needs to be copied to its storage beforehand.
 
-To execute a reshare, one then runs the command
 ```{bash}
-cargo run --bin kms-core-client -- -f config/client_local_threshold.toml reshare -k <KEY_ID> -i <PREPROC_ID>
+$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--context-id <PREV_CONTEXT_ID> --epoch-id <PREV_EPOCH_ID> --key-id <KEY_ID> --preproc-id <PREPROC_ID> --server-key-digest <DIGEST> --public-key-digest <DIGEST>]
 ```
 
-Where the `KEY_ID` corresponds to the ID of the key we want to reshare and the `PREPROC_ID` corresponds to the ID of the preprocessing that was used to generate said key.
-The `PREPROC_ID` is required because it is part of the metadata that is signed by the parties.
+Required arguments:
+ - `--new-epoch-id <EPOCH_ID>`: the ID of the epoch to be created.
+ - `--new-context-id <CONTEXT_ID>`: the context ID for which the new epoch is created.
 
-__NOTE__: Currently, because this is meant to be used only in case of DKG fails, and is __not__ triggered by the GW, the reshared key will be stored under the __same__ key ID as previously (we internally overwrite the storage to achieve this).
+Optional arguments (for resharing from a previous epoch). These must all be provided together or not at all:
+ - `--context-id <PREV_CONTEXT_ID>`: the context ID of the previous epoch.
+ - `--epoch-id <PREV_EPOCH_ID>`: the epoch ID of the previous epoch.
+ - `--key-id <KEY_ID>`: the key ID to reshare.
+ - `--preproc-id <PREPROC_ID>`: the preprocessing ID used to generate the key.
+ - `--server-key-digest <DIGEST>`: the hex-encoded server key digest to use for resharing.
+ - `--public-key-digest <DIGEST>`: the hex-encoded public key digest to use for resharing.
+
+### MPC Context Management
+
+#### Create a New MPC Context
+
+A new MPC context can be created from a serialized context file or a TOML context file:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> new-mpc-context serialized-context-path --input-path <path-to-context-file>
+$ cargo run -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>
+```
+
+#### Destroy an MPC Context
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
+```
+
+#### Destroy an MPC Epoch
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
+```
+
+### Operator Public Key
+
+To retrieve the operator public keys from the KMS cores:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> get-operator-public-key
+```
+
+This prints the public key for each configured core.
 
 ## Example Commands
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
@@ -597,11 +643,11 @@ __NOTE__: Currently, because this is meant to be used only in case of DKG fails,
     ```
 - Generate an encryption of `0x2342` of type `euint16` and ask for a user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once it has enough responses (the `-a` flag is not provided) and will write logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l user-decrypt --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -l user-decrypt from-args --to-encrypt 0x2342 --data-type euint16 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
 - Generate an encryption of `0xC0FFEE` of type `euint32` and ask for a public decryption of a batch of 3 of these ciphertexts from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will expect all responses (`-a`) and will write logs (`-l`).
     ```{bash}
-    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l public-decrypt --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
+    $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l public-decrypt from-args --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
 
 ## Health Monitoring
@@ -657,9 +703,9 @@ docker run -v $(pwd)/core/service/config:/config \
 ### Health Status Levels
 
 - **Optimal**: All nodes online and reachable
-- **Healthy**: Sufficient 2/3 majority but not all nodes online
-- **Degraded**: At least threshold + 1 nodes but below 2/3 majority
-- **Unhealthy**: Insufficient nodes for operations
+- **Healthy**: Sufficient majority but not all nodes online
+- **Degraded**: Reduced fault tolerance or missing key material
+- **Unhealthy**: Insufficient nodes for operations or other failures
 
 ### Integration with CI/CD
 
@@ -682,6 +728,8 @@ readinessProbe:
 
 ### Exit Codes
 
-- `0`: Success (Optimal or Healthy status)
-- `1`: Warning (Degraded or Unhealthy status)
-- `2`: Error (Tool execution failure)
+- `0`: Success (the health check completed and printed results)
+- `1`: Error (tool execution failure, e.g. unreachable endpoint or invalid config file)
+
+Note: the health status level (Optimal, Healthy, Degraded, Unhealthy) is reported in the output but does not affect the exit code.
+The tool exits `0` as long as it can complete the check, regardless of the health status reported.
