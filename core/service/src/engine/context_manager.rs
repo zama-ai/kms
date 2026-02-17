@@ -5,10 +5,11 @@ use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
+use crate::engine::backup_operator::{
+    update_specific_backup_vault, update_specific_backup_vault_for_all_epochs,
+};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
-use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
@@ -17,10 +18,8 @@ use crate::engine::validation::{
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_at_request_id, delete_context_at_id, delete_custodian_context_at_id,
-    store_context_at_id, store_versioned_at_request_id, StorageExt,
+    delete_context_at_id, delete_custodian_context_at_id, store_context_at_id, StorageExt,
 };
-use crate::vault::Vault;
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
@@ -261,59 +260,20 @@ where
                 return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
             }
             for cur_type in PrivDataType::iter() {
-                // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
-                match cur_type {
-                    PrivDataType::SigningKey => {
-                        backup_priv_data::<PrivS, PrivateSigKey>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FheKeyInfo => {
-                        backup_priv_data::<PrivS, ThresholdFheKeys>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::CrsInfo => {
-                        backup_priv_data::<PrivS, CrsGenMetadata>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FhePrivateKey => {
-                        // TODO needs fixing
-                        backup_priv_data::<PrivS, KmsFheKeyHandles>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    #[expect(deprecated)]
-                    PrivDataType::PrssSetup => {
-                        // We will not back up PRSS setup data
-                        continue;
-                    }
-                    PrivDataType::PrssSetupCombined => {
-                        // We will not back up Combined PRSS setup data
-                        continue;
-                    }
-                    PrivDataType::ContextInfo => {
-                        backup_priv_data::<PrivS, ContextInfo>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                }
+                update_specific_backup_vault::<PrivS, ContextInfo>(
+                    &guarded_priv_storage,
+                    &mut guarded_backup_vault,
+                    cur_type,
+                    true, // We MUST overwrite existing data in the backup vault
+                )
+                .await?;
+                update_specific_backup_vault_for_all_epochs::<PrivS, ContextInfo>(
+                    &guarded_priv_storage,
+                    &mut guarded_backup_vault,
+                    cur_type,
+                    true, // We MUST overwrite existing data in the backup vault
+                )
+                .await?;
             }
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
@@ -900,40 +860,6 @@ where
     }
 }
 
-async fn backup_priv_data<
-    S1: Storage + Sync + Send + 'static,
-    T: serde::de::DeserializeOwned
-        + tfhe::Unversionize
-        + tfhe::named::Named
-        + Send
-        + serde::ser::Serialize
-        + tfhe::Versionize
-        + Sync
-        + 'static,
->(
-    priv_storage: &S1,
-    backup_vault: &mut Vault,
-    data_type_enum: PrivDataType,
-) -> anyhow::Result<()>
-where
-    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
-{
-    let data_ids = priv_storage
-        .all_data_ids(&data_type_enum.to_string())
-        .await?;
-    for data_id in data_ids.iter() {
-        let data: T = priv_storage
-            .read_data(data_id, &data_type_enum.to_string())
-            .await?;
-        // Delete the old backup data
-        // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-        delete_at_request_id(backup_vault, data_id, &data_type_enum.to_string()).await?;
-        store_versioned_at_request_id(backup_vault, data_id, &data, &data_type_enum.to_string())
-            .await?;
-    }
-    Ok(())
-}
-
 /// Generate a recovery request to the backup vault.
 async fn gen_recovery_validation(
     rng: &mut AesRng,
@@ -1001,6 +927,7 @@ mod tests {
                 read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
                 StorageProxy,
             },
+            Vault,
         },
     };
     use kms_grpc::{

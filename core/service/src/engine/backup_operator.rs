@@ -3,7 +3,7 @@ use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::engine::utils::{query_key_material_availability, MetricedError};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
+    delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
 };
 use crate::{
     anyhow_error_and_log,
@@ -18,10 +18,7 @@ use crate::{
         signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
     },
     engine::{
-        base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
-        context::ContextInfo,
-        threshold::service::ThresholdFheKeys,
-        traits::BackupOperator,
+        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
         validation::RequestIdParsingErr,
     },
     vault::{
@@ -747,50 +744,21 @@ where
     PrivS: StorageExt + Sync + Send + 'static,
 {
     for cur_type in PrivDataType::iter() {
-        match cur_type {
-            PrivDataType::FheKeyInfo => {
-                restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
-            }
-            PrivDataType::SigningKey => {
-                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
-                    .await?;
-            }
-            PrivDataType::CrsInfo => {
-                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
-                    .await?;
-            }
-            PrivDataType::FhePrivateKey => {
-                restore_data_type_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
-            }
-            #[expect(deprecated)]
-            PrivDataType::PrssSetup => {
-                tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
-            }
-            PrivDataType::PrssSetupCombined => {
-                tracing::info!(
-                    "Combined PRSS setup data is not backed up currently. Skipping for now."
-                );
-            }
-            PrivDataType::ContextInfo => {
-                restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
-                    .await?;
-            }
-        }
+        // First try to restore data without epoch ID (for data types that support it)
+
+        restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type).await?;
+        // Next try to restore data with epoch ID (for data types that support it)
+        restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
+            priv_storage,
+            backup_vault,
+            cur_type,
+        )
+        .await?;
     }
     Ok(())
 }
 
-async fn update_specific_backup_vault_for_all_epochs<
+pub(crate) async fn update_specific_backup_vault_for_all_epochs<
     S1: StorageExt + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
         + tfhe::Unversionize
@@ -804,6 +772,7 @@ async fn update_specific_backup_vault_for_all_epochs<
     priv_storage: &S1,
     backup_vault: &mut Vault,
     data_type_enum: PrivDataType,
+    overwrite: bool,
 ) -> anyhow::Result<()>
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
@@ -816,28 +785,39 @@ where
             .all_data_ids_at_epoch(&epoch_id, &data_type_enum.to_string())
             .await?;
         for request_id in req_ids.iter() {
-            if !backup_vault
+            if backup_vault
                 .data_exists_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
                 .await?
+                && !overwrite
             {
-                let cur_data: T = priv_storage
-                    .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
-                    .await?;
-                store_versioned_at_request_and_epoch_id(
-                    backup_vault,
-                    request_id,
-                    &epoch_id,
-                    &cur_data,
-                    &data_type_enum.to_string(),
-                )
-                .await?;
+                // The data is there and we are not overwriting anything, so skip before performing more IO
+                continue;
             }
+            // First ensure we can actually read the data we want to back up
+            let cur_data: T = priv_storage
+                .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                .await?;
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_id(backup_vault, request_id, &data_type_enum.to_string()).await?;
+            }
+            // Finally store the new backup data
+            store_versioned_at_request_and_epoch_id(
+                backup_vault,
+                request_id,
+                &epoch_id,
+                &cur_data,
+                &data_type_enum.to_string(),
+            )
+            .await?;
         }
     }
     Ok(())
 }
 
-async fn update_specific_backup_vault<
+pub(crate) async fn update_specific_backup_vault<
     S1: Storage + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
         + tfhe::Unversionize
@@ -851,6 +831,7 @@ async fn update_specific_backup_vault<
     priv_storage: &S1,
     backup_vault: &mut Vault,
     data_type_enum: PrivDataType,
+    overwrite: bool,
 ) -> anyhow::Result<()>
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
@@ -859,21 +840,32 @@ where
         .all_data_ids(&data_type_enum.to_string())
         .await?;
     for request_id in req_ids.iter() {
-        if !backup_vault
+        if backup_vault
             .data_exists(request_id, &data_type_enum.to_string())
             .await?
+            && !overwrite
         {
-            let cur_data: T = priv_storage
-                .read_data(request_id, &data_type_enum.to_string())
-                .await?;
-            store_versioned_at_request_id(
-                backup_vault,
-                request_id,
-                &cur_data,
-                &data_type_enum.to_string(),
-            )
-            .await?;
+            // The data is there and we are not overwriting anything, so skip before performing more IO
+            continue;
         }
+        // First ensure we can actually read the data we want to back up
+        let cur_data: T = priv_storage
+            .read_data(request_id, &data_type_enum.to_string())
+            .await?;
+        // In case we need to overwrite, delete the old data
+        if overwrite {
+            // Delete the old backup data
+            // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+            delete_at_request_id(backup_vault, request_id, &data_type_enum.to_string()).await?;
+        }
+        // Finally store the new backup data
+        store_versioned_at_request_id(
+            backup_vault,
+            request_id,
+            &cur_data,
+            &data_type_enum.to_string(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -895,59 +887,22 @@ where
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
-                    match cur_type {
-                        PrivDataType::SigningKey => {
-                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::FheKeyInfo => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::CrsInfo => {
-                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
-                        #[expect(deprecated)]
-                        PrivDataType::PrssSetup => {
-                            tracing::info!(
-                                "PRSS setup data is not backed up currently. Skipping for now."
-                            );
-                        }
-                        PrivDataType::PrssSetupCombined => {
-                            tracing::info!(
-                                "Combined PRSS setup data is not backed up currently. Skipping for now."
-                            );
-                        }
-                        PrivDataType::ContextInfo => {
-                            update_specific_backup_vault::<PrivS, ContextInfo>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
-                    }
+                    // First try to update data without epoch ID (for data types that support it)
+                    update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                        &private_storage,
+                        &mut backup_vault,
+                        cur_type,
+                        false, // Do NOT overwrite existing data. Observe we just check for existebce and NOT integrity
+                    )
+                    .await?;
+                    // Next try to update data with epoch ID (for data types that support it)
+                    update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                        &private_storage,
+                        &mut backup_vault,
+                        cur_type,
+                        false, // Do NOT overwrite existing data. Observe we just check for existebce and NOT integrity
+                    )
+                    .await?;
                 }
                 Ok(())
             }
