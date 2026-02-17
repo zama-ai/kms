@@ -8,16 +8,19 @@ use crate::experimental::algebra::integers::IntQ;
 use crate::experimental::algebra::integers::ModReduction;
 use crate::experimental::algebra::integers::PositiveConv;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
-use crate::experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne, ScalingFactor};
+use crate::experimental::algebra::levels::{
+    GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor, Q, QR,
+};
 use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::constants::PLAINTEXT_MODULUS;
-use crypto_bigint::{Limb, NonZero};
+use crypto_bigint::modular::ConstMontyParams;
+use crypto_bigint::{Limb, NonZero, U1536};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Mul, Neg, Sub};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PublicKey<QMod, QRMod, N> {
@@ -215,19 +218,19 @@ where
     supported_ptxt
 }
 
-pub fn modulus_switch<NewQ, ModQ, N>(
-    ct: &LevelledCiphertext<ModQ, N>,
+pub fn modulus_switch<NewQ, OldQ, N>(
+    ct: &LevelledCiphertext<OldQ, N>,
     q: NewQ,
-    big_q: ModQ,
+    big_q: OldQ,
     plaintext_mod: NonZero<Limb>,
 ) -> LevelledCiphertext<NewQ, N>
 where
-    IntQ: From<ModQ>,
-    IntQ: PositiveConv<ModQ>,
+    IntQ: From<OldQ>,
+    IntQ: PositiveConv<OldQ>,
     IntQ: PositiveConv<NewQ>,
 
-    for<'a> RingElement<IntQ>: From<&'a RqElement<ModQ, N>>,
-    RingElement<IntQ>: ModReduction<NewQ, Output = RingElement<NewQ>>,
+    for<'a> RingElement<IntQ>: From<&'a RqElement<OldQ, N>>,
+    IntQ: ModReduction<NewQ>,
     RingElement<IntQ>: Mul<IntQ, Output = RingElement<IntQ>>,
     RingElement<IntQ>: Sub<RingElement<IntQ>, Output = RingElement<IntQ>>,
 
@@ -266,9 +269,89 @@ where
     }
 }
 
+fn key_switch(
+    c0: RqElement<LevelEll, N65536>,
+    c1: RqElement<LevelEll, N65536>,
+    c2: RqElement<LevelEll, N65536>,
+    pk: &PublicBgvKeySet,
+) -> LevelledCiphertext<LevelEll, N65536> {
+    let converted_c0 = RqElement::from(
+        c0.data
+            .iter()
+            .map(|v| {
+                let value: U1536 = (&v.value.0).into();
+                LevelKsw {
+                    value: GenericModulus(value),
+                }
+            })
+            .collect_vec(),
+    );
+
+    let converted_c1 = RqElement::from(
+        c1.data
+            .iter()
+            .map(|v| {
+                let value: U1536 = (&v.value.0).into();
+                LevelKsw {
+                    value: GenericModulus(value),
+                }
+            })
+            .collect_vec(),
+    );
+
+    let converted_c2 = RqElement::from(
+        c2.data
+            .iter()
+            .map(|v| {
+                let value: U1536 = (&v.value.0).into();
+                LevelKsw {
+                    value: GenericModulus(value),
+                }
+            })
+            .collect_vec(),
+    )
+    .neg();
+
+    let c0_prime = (pk.b_prime.clone() * &converted_c2) + (converted_c0 * &LevelKsw::FACTOR);
+
+    let c1_prime = (pk.a_prime.clone() * &converted_c2) + (converted_c1 * &LevelKsw::FACTOR);
+
+    let new_ct = LevelledCiphertext {
+        c0: c0_prime,
+        c1: c1_prime,
+    };
+
+    let q = LevelEll {
+        value: GenericModulus(*Q::MODULUS.as_ref()),
+    };
+    let big_q = LevelKsw {
+        value: GenericModulus(*QR::MODULUS.as_ref()),
+    };
+
+    modulus_switch::<LevelEll, LevelKsw, N65536>(&new_ct, q, big_q, *PLAINTEXT_MODULUS)
+}
+
+// NOTE: We return a ctxt at the Ell level (highest one) because we only care
+// about supporting one level of multiplication for as this is for exposition purposes only.
+pub fn multiply_ctxt(
+    ct_a: LevelledCiphertext<LevelEll, N65536>,
+    ct_b: LevelledCiphertext<LevelEll, N65536>,
+    pk: &PublicBgvKeySet,
+) -> LevelledCiphertext<LevelEll, N65536> {
+    let (c_a_0, c_a_1) = (ct_a.get_c0(), ct_a.get_c1());
+    let (c_b_0, c_b_1) = (ct_b.get_c0(), ct_b.get_c1());
+
+    let d_0 = c_a_0 * c_b_0;
+    let d_1 = c_a_0 * c_b_1 + c_a_1 * c_b_0;
+    let d_2 = c_a_1 * c_b_1;
+
+    key_switch(d_0, d_1, d_2, pk)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::structure_traits::FromU128;
     use crate::experimental::algebra::levels::{
         GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1,
     };
@@ -316,6 +399,70 @@ mod tests {
         );
         let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, plaintext_vec);
+    }
+
+    #[test]
+    fn test_bgv_multiply() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let (pk, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
+
+        let plaintext_vec_a: Vec<u32> = (0..N65536::VALUE)
+            .map(|i| ((i as u64) % PLAINTEXT_MODULUS.get().0) as u32)
+            .collect();
+        let plaintext_vec_b: Vec<u32> = (0..N65536::VALUE)
+            .map(|j| ((20 * j as u64) % PLAINTEXT_MODULUS.get().0) as u32)
+            .collect();
+
+        let ct_a = bgv_enc(
+            &mut rng,
+            &plaintext_vec_a,
+            &pk.a,
+            &pk.b,
+            PLAINTEXT_MODULUS.get().0,
+        );
+        let ct_b = bgv_enc(
+            &mut rng,
+            &plaintext_vec_b,
+            &pk.a,
+            &pk.b,
+            PLAINTEXT_MODULUS.get().0,
+        );
+
+        let ct_product = multiply_ctxt(ct_a, ct_b, &pk);
+        let decrypted_product = bgv_dec(&ct_product, sk, &PLAINTEXT_MODULUS);
+
+        // The expected result is the polynomial product mod (X^N+1) mod p,
+        // NOT componentwise multiplication. We compute it using RqElement
+        // multiplication over LevelEll (large enough to avoid overflow),
+        // then reduce mod p.
+        let a_rq = RqElement::<LevelEll, N65536>::from(
+            plaintext_vec_a
+                .iter()
+                .map(|v| LevelEll::from_u128(*v as u128))
+                .collect::<Vec<_>>(),
+        );
+        let b_rq = RqElement::<LevelEll, N65536>::from(
+            plaintext_vec_b
+                .iter()
+                .map(|v| LevelEll::from_u128(*v as u128))
+                .collect::<Vec<_>>(),
+        );
+        let product_poly = a_rq * b_rq;
+        let expected_product: Vec<u32> = RingElement::<IntQ>::from(product_poly)
+            .zero_centered_rem(*PLAINTEXT_MODULUS)
+            .data
+            .iter()
+            .map(|v| v.0 as u32)
+            .collect();
+
+        if decrypted_product != expected_product {
+            panic!(
+                "Wrong decryption of product, expected {:?}, got {:?}",
+                expected_product.iter().take(100).collect::<Vec<_>>(),
+                decrypted_product.iter().take(100).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

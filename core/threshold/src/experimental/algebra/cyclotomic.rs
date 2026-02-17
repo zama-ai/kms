@@ -14,8 +14,8 @@ use itertools::{
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::ops::Add;
 use std::ops::Sub;
+use std::ops::{Add, Neg};
 use std::ops::{Div, Mul};
 
 #[derive(Debug, Clone)]
@@ -349,6 +349,21 @@ where
     }
 }
 
+impl<T, N> Neg for RqElement<T, N>
+where
+    N: Const,
+    T: Neg<Output = T>,
+{
+    type Output = RqElement<T, N>;
+    fn neg(self) -> Self::Output {
+        let data: Vec<_> = self.data.into_iter().map(|v| -v).collect();
+        RqElement {
+            data,
+            _degree: self._degree,
+        }
+    }
+}
+
 #[allow(clippy::suspicious_arithmetic_impl)]
 impl Div<&IntQ> for &RingElement<IntQ> {
     type Output = RingElement<IntQ>;
@@ -428,12 +443,11 @@ where
     }
 }
 
-impl<T> ModReduction<T> for RingElement<IntQ>
+impl<T> ModReduction<RingElement<T>> for RingElement<IntQ>
 where
-    IntQ: ModReduction<T, Output = T>,
+    IntQ: ModReduction<T>,
 {
-    type Output = RingElement<T>;
-    fn mod_reduction(&self) -> Self::Output {
+    fn mod_reduction(&self) -> RingElement<T> {
         let data: Vec<_> = self.data.iter().map(|v| v.mod_reduction()).collect();
         RingElement { data }
     }
