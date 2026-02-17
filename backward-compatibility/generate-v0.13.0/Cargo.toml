@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility-generate-v0-13-0"
-version = "0.13.0"
+version = "0.13.1"
 publish = false
 authors = ["Zama"]
 edition = "2021"
