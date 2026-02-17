@@ -5,6 +5,7 @@
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
+#[cfg(feature = "slow_tests")]
 use serial_test::serial;
 use threshold_fhe::networking::grpc::GrpcServer;
 use tonic::server::NamedService;
