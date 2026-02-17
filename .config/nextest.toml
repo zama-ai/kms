@@ -43,6 +43,15 @@ test-group = "docker-integration"
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
 
+# Long timeout for tests that use production-sized FHE parameters (Default +
+# SnS).  These are inherently very slow (keygen/CRS can take 30-90 min).
+# Give them a 2h window before termination and serialize them with the Docker
+# tests to avoid CPU/memory contention on CI machines.
+[[profile.ci.overrides]]
+filter = 'test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+slow-timeout = { period = "600s", terminate-after = 12 }
+test-group = "docker-integration"
+
 # =============================================================================
 # CI-nightly profile: used for scheduled builds — runs ALL tests
 # =============================================================================
@@ -65,3 +74,9 @@ test-group = "docker-integration"
 [[profile.ci-nightly.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
+
+# Long timeout + serialization for slow Default-param tests (same as ci profile).
+[[profile.ci-nightly.overrides]]
+filter = 'test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+slow-timeout = { period = "600s", terminate-after = 12 }
+test-group = "docker-integration"
