@@ -25,7 +25,7 @@ use tfhe::{
     },
 };
 
-use crate::execution::keyset_config::KeySetConfig;
+use crate::execution::keyset_config::{KeyGenSecretKeyConfig, KeySetConfig};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncryptionType {
@@ -521,7 +521,7 @@ impl DKGParamsBasics for DKGParamsRegular {
         let mut num_bits_needed = self.num_raw_bits(keyset_config);
 
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 //And additionally, need bits to process the TUniform noises
                 //(we need bound + 2 bits to sample a TUniform(bound))
                 //For pk
@@ -566,7 +566,7 @@ impl DKGParamsBasics for DKGParamsRegular {
         let mut num_triples_needed = 0;
 
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
 
                 //Required for the compression BK
@@ -936,33 +936,27 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         match keyset_config {
-            KeySetConfig::Standard(config) => {
-                self.lwe_sk_num_bits_to_sample()
-                    + self.lwe_hat_sk_num_bits_to_sample()
-                    + self.glwe_sk_num_bits_to_sample()
-                    + if config.is_using_existing_compression_sk() {
-                        0
-                    } else {
-                        self.compression_sk_num_bits_to_sample()
-                    }
-            }
-            KeySetConfig::UseExistingSecret(config) => {
-                // TODO check if lwe_hat_sk_num_bits_to_sample is needed?
-                self.lwe_hat_sk_num_bits_to_sample()
-                    + self.glwe_sk_num_bits_to_sample()
-                    + if config.is_using_existing_compression_sk() {
-                        0
-                    } else {
-                        self.compression_sk_num_bits_to_sample()
-                    }
-            }
+            KeySetConfig::Standard(config) => match config.secret_key_config {
+                KeyGenSecretKeyConfig::GenerateAll
+                | KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                    self.lwe_sk_num_bits_to_sample()
+                        + self.lwe_hat_sk_num_bits_to_sample()
+                        + self.glwe_sk_num_bits_to_sample()
+                        + if config.is_using_existing_compression_sk() {
+                            0
+                        } else {
+                            self.compression_sk_num_bits_to_sample()
+                        }
+                }
+                KeyGenSecretKeyConfig::UseExisting => 0,
+            },
             KeySetConfig::DecompressionOnly => 0,
         }
     }
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 let target_bound = self.num_needed_noise_ksk().bound;
                 let noises = &[
                     self.num_needed_noise_ksk(),
@@ -991,7 +985,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 let out = self.num_needed_noise_pk();
                 #[cfg(test)]
                 assert!(matches!(out.bound, NoiseBounds::LweHatNoise(..)));
@@ -1007,7 +1001,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         let target_bound = self.num_needed_noise_bk().bound;
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 let noises = &[
                     self.num_needed_noise_bk(),
                     self.num_needed_noise_pksk(),
@@ -1035,7 +1029,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 let out = self.num_needed_noise_compression_key();
                 #[cfg(test)]
                 {
@@ -1249,7 +1243,7 @@ impl DKGParamsBasics for DKGParamsSnS {
         //Need the bits for regular keygen
         let mut num_bits_needed = self.regular_params.total_bits_required(keyset_config);
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 num_bits_needed +=
                 //And for the additional glwe sk
                 self.glwe_sk_num_bits_sns_to_sample() +
@@ -1273,7 +1267,7 @@ impl DKGParamsBasics for DKGParamsSnS {
         let mut num_triples_needed = 0;
 
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 num_triples_needed +=
                 // Raw triples necessary for the 2 BK
                 self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
@@ -1471,7 +1465,7 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         self.regular_params.num_raw_bits(keyset_config)
             + match keyset_config {
-                KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+                KeySetConfig::Standard(_) => {
                     self.glwe_sk_num_bits_sns() + self.sns_compression_sk_num_bits()
                 }
                 KeySetConfig::DecompressionOnly => 0,
@@ -1480,7 +1474,7 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => {
+            KeySetConfig::Standard(_) => {
                 let regular_lwe = self.regular_params.all_lwe_noise(keyset_config);
                 let sns_lwe = self.num_needed_noise_msnrk_sns();
                 let target_bound = regular_lwe.bound;

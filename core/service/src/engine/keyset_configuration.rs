@@ -22,13 +22,13 @@ impl TryFrom<WrappedKeySetConfig> for ddec_keyset_config::KeySetConfig {
                     .ok_or_else(|| anyhow::anyhow!("missing StandardKeySetConfig"))?;
                 let compute_key_type =
                     kms_grpc::kms::v1::ComputeKeyType::try_from(inner_config.compute_key_type)?;
-                let compression_type = kms_grpc::kms::v1::KeySetCompressionConfig::try_from(
-                    inner_config.keyset_compression_config,
+                let compression_type = kms_grpc::kms::v1::KeyGenSecretKeyConfig::try_from(
+                    inner_config.secret_key_config,
                 )?;
                 Ok(ddec_keyset_config::KeySetConfig::Standard(
                     ddec_keyset_config::StandardKeySetConfig {
                         computation_key_type: WrappedComputeKeyType(compute_key_type).into(),
-                        compression_config: WrappedCompressionConfig(compression_type).into(),
+                        secret_key_config: WrappedCompressionConfig(compression_type).into(),
                         compressed_key_config: WrappedCompressedKeyConfig(
                             inner_config.compressed_key_config,
                         )
@@ -53,16 +53,19 @@ impl From<WrappedComputeKeyType> for ddec_keyset_config::ComputeKeyType {
     }
 }
 
-pub(crate) struct WrappedCompressionConfig(kms_grpc::kms::v1::KeySetCompressionConfig);
+pub(crate) struct WrappedCompressionConfig(kms_grpc::kms::v1::KeyGenSecretKeyConfig);
 
-impl From<WrappedCompressionConfig> for ddec_keyset_config::KeySetCompressionConfig {
+impl From<WrappedCompressionConfig> for ddec_keyset_config::KeyGenSecretKeyConfig {
     fn from(value: WrappedCompressionConfig) -> Self {
         match value.0 {
-            kms_grpc::kms::v1::KeySetCompressionConfig::Generate => {
-                ddec_keyset_config::KeySetCompressionConfig::Generate
+            kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll => {
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll
             }
-            kms_grpc::kms::v1::KeySetCompressionConfig::UseExisting => {
-                ddec_keyset_config::KeySetCompressionConfig::UseExisting
+            kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
+            }
+            kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting => {
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
             }
         }
     }
@@ -93,7 +96,7 @@ impl InternalKeySetConfig {
     /// If `keyset_config` is `None`, it defaults to [`KeySetConfig::Standard`].
     /// If `keyset_config` is set to `DecompressionOnly`, `keyset_added_info` must be provided.
     ///     Furthermore, within `keyset_added_info` the `from_keyset_id_decompression_only` and `to_keyset_id_decompression_only` must be set.
-    /// If `keyset_config` is set to `Standard` with `KeySetCompressionConfig::UseExisting` compression,
+    /// If `keyset_config` is set to `Standard` with `KeyGenSecretKeyConfig::UseExisting` compression,
     ///     then `keyset_added_info` must be provided and must have `compression_keyset_id` set.
     ///
     /// # Arguments
@@ -114,9 +117,9 @@ impl InternalKeySetConfig {
                     KeySetType::Standard => {
                         match &inner.standard_keyset_config {
                             Some(config) => {
-                                if kms_grpc::kms::v1::KeySetCompressionConfig::try_from(
-                                    config.keyset_compression_config,
-                                ) == Ok(kms_grpc::kms::v1::KeySetCompressionConfig::UseExisting)
+                                if kms_grpc::kms::v1::KeyGenSecretKeyConfig::try_from(
+                                    config.secret_key_config,
+                                ) == Ok(kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting)
                                 {
                                     match &keyset_added_info {
                                         Some(inner_key_set_added_info) => {
@@ -218,7 +221,7 @@ impl InternalKeySetConfig {
     }
 
     /// Retrieves the compression keyset ID from the added info.
-    /// Will always return Some request ID if [`KeySetCofig::Standard`] is used with the [`KeySetCompressionConfig::UseExisting`] setting.
+    /// Will always return Some request ID if [`KeySetCofig::Standard`] is used with the [`KeyGenSecretKeyConfig::UseExisting`] setting.
     pub fn get_compression_id(&self) -> anyhow::Result<Option<RequestId>> {
         if let Some(inner) = self
             .keyset_added_info
@@ -255,7 +258,7 @@ pub(crate) fn preproc_proto_to_keyset_config(
 pub(crate) mod tests {
     use crate::engine::keyset_configuration::InternalKeySetConfig;
     use kms_grpc::kms::v1::{
-        KeySetAddedInfo, KeySetCompressionConfig, KeySetConfig, KeySetType, StandardKeySetConfig,
+        KeyGenSecretKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, StandardKeySetConfig,
     };
 
     #[test]
@@ -265,7 +268,7 @@ pub(crate) mod tests {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: KeySetCompressionConfig::Generate as i32,
+                secret_key_config: KeyGenSecretKeyConfig::GenerateAll as i32,
                 compressed_key_config: 0,
             }),
         };
@@ -280,7 +283,7 @@ pub(crate) mod tests {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                secret_key_config: KeyGenSecretKeyConfig::UseExisting as i32,
                 compressed_key_config: 0,
             }),
         };
@@ -295,7 +298,7 @@ pub(crate) mod tests {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                secret_key_config: KeyGenSecretKeyConfig::UseExisting as i32,
                 compressed_key_config: 0,
             }),
         };
@@ -315,7 +318,7 @@ pub(crate) mod tests {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: KeySetCompressionConfig::UseExisting as i32,
+                secret_key_config: KeyGenSecretKeyConfig::UseExisting as i32,
                 compressed_key_config: 0,
             }),
         };

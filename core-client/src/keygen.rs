@@ -57,8 +57,8 @@ pub(crate) async fn do_keygen(
                 .map(|x| kms_grpc::kms::v1::KeySetType::from(x) as i32)
                 .unwrap_or(kms_grpc::kms::v1::KeySetType::Standard as i32),
             standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-                compute_key_type: 0,          // CPU
-                keyset_compression_config: 0, // Generate
+                compute_key_type: 0,  // CPU
+                secret_key_config: 0, // Generate
                 compressed_key_config: if shared_config.compressed {
                     kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
                 } else {

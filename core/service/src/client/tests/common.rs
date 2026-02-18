@@ -35,7 +35,7 @@ pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySet
             keyset_type: KeySetType::Standard.into(),
             standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: 0,
+                secret_key_config: 0,
                 compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
             }),
         }),

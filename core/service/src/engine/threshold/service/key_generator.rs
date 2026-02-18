@@ -274,9 +274,6 @@ impl<
                 PreprocHandleWithMode::Insecure,
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_INSECURE_DECOMPRESSION_KEYGEN,
-            (_, ddec_keyset_config::KeySetConfig::UseExistingSecret(_)) => {
-                todo!()
-            }
         };
 
         // On top of the global KG request counter, we also increment the specific operation counter
@@ -362,9 +359,6 @@ impl<
                         op_tag,
                     )
                     .await
-                }
-                ddec_keyset_config::KeySetConfig::UseExistingSecret(_inner_config) => {
-                    todo!()
                 }
                 ddec_keyset_config::KeySetConfig::DecompressionOnly => {
                     Self::decompression_key_gen_background(
@@ -1050,13 +1044,13 @@ impl<
                     (
                         *INSECURE_PREPROCESSING_ID,
                         match (
-                            keyset_config.compression_config,
+                            keyset_config.secret_key_config,
                             keyset_config.computation_key_type,
                             keyset_config.compressed_key_config,
                         ) {
                             // Insecure standard keygen
                             (
-                                ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
                                 ddec_keyset_config::CompressedKeyConfig::None,
                             ) => insecure_initialize_key_material(
@@ -1068,7 +1062,7 @@ impl<
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
                             // Insecure compressed keygen
                             (
-                                ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
                                 ddec_keyset_config::CompressedKeyConfig::All,
                             ) => initialize_compressed_key_material(
@@ -1092,13 +1086,12 @@ impl<
             PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
                 (prep_id, match (
-                    keyset_config.compression_config,
+                    keyset_config.secret_key_config,
                     keyset_config.computation_key_type,
                     keyset_config.compressed_key_config,
                 ) {
-                    // Standard keygen with new compression keys
                     (
-                        ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                            ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
@@ -1106,9 +1099,8 @@ impl<
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
-                    // Standard keygen with existing compression keys
                     (
-                        ddec_keyset_config::KeySetCompressionConfig::UseExisting,
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
@@ -1124,9 +1116,8 @@ impl<
                         .await
                         .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
-                    // Compressed keygen (only supported with Generate compression config)
                     (
-                        ddec_keyset_config::KeySetCompressionConfig::Generate,
+                        ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::All,
                     ) => {
@@ -1134,15 +1125,22 @@ impl<
                             .await
                             .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
                     }
-                    // Compressed keygen with UseExisting is not supported
-                    // In theory it is easy to add but we do not need this feature for now
-                    // and adding it would mean adding more infrastructure around testing and client support.
                     (
-                        ddec_keyset_config::KeySetCompressionConfig::UseExisting,
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
                         _,
                         ddec_keyset_config::CompressedKeyConfig::All,
                     ) => {
                         Err(anyhow::anyhow!("Compressed keygen with UseExisting compression keys is not supported"))
+                    }
+                    (
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::None
+                    ) => {
+                        todo!()
+                    }
+                    (
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::All
+                    ) => {
+                        todo!()
                     }
                 })
             }

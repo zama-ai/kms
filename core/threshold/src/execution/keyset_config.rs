@@ -4,19 +4,8 @@ pub enum ComputeKeyType {
     Cpu,
 }
 
-/// Compression configuration for a keyset.
-/// The default is to generate a new compression secret key.
-#[derive(Copy, Clone, PartialEq, Default)]
-pub enum KeySetCompressionConfig {
-    /// Generate a new compression secret key.
-    #[default]
-    Generate,
-    /// Use an existing compression secret key.
-    UseExisting,
-}
-
 /// Whether to generate compressed keys.
-/// This is independent of KeySetCompressionConfig which is related to
+/// This is independent of KeyGenSecretKeyConfig which is related to
 /// generating keys for compressing ciphertexts.
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum CompressedKeyConfig {
@@ -37,10 +26,6 @@ pub enum KeySetConfig {
     /// The standard configuration is the one that generates the full keyset.
     /// Which includes the public key, server key, compression keys, private key shares and so on.
     Standard(StandardKeySetConfig),
-    /// The same as the Standard keygen except the secret component (private keys or shares)
-    /// already exists and must be given. This does not mean the "intermediate" secret components are given,
-    /// only the initial LWE secret is given.
-    UseExistingSecret(StandardKeySetConfig),
     DecompressionOnly,
 }
 
@@ -71,9 +56,13 @@ impl KeySetConfig {
     pub fn is_standard_cpu_generate_compression_key(&self) -> bool {
         match self {
             KeySetConfig::Standard(inner) => {
-                match (inner.computation_key_type, inner.compression_config) {
-                    (ComputeKeyType::Cpu, KeySetCompressionConfig::Generate) => true,
-                    (ComputeKeyType::Cpu, KeySetCompressionConfig::UseExisting) => false,
+                match (inner.computation_key_type, inner.secret_key_config) {
+                    (ComputeKeyType::Cpu, KeyGenSecretKeyConfig::GenerateAll) => true,
+                    (
+                        ComputeKeyType::Cpu,
+                        KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
+                    ) => false,
+                    (ComputeKeyType::Cpu, KeyGenSecretKeyConfig::UseExisting) => false,
                 }
             }
             _ => false,
@@ -81,11 +70,18 @@ impl KeySetConfig {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Default)]
+pub enum KeyGenSecretKeyConfig {
+    #[default]
+    GenerateAll,
+    UseExisting,
+    UseExistingCompressionSecretKey,
+}
+
 #[derive(Copy, Clone, Default)]
 pub struct StandardKeySetConfig {
     pub computation_key_type: ComputeKeyType,
-    /// The compression configuration.
-    pub compression_config: KeySetCompressionConfig,
+    pub secret_key_config: KeyGenSecretKeyConfig,
     pub compressed_key_config: CompressedKeyConfig,
 }
 
@@ -95,12 +91,12 @@ impl StandardKeySetConfig {
     pub fn use_existing_compression_sk() -> Self {
         Self {
             computation_key_type: ComputeKeyType::default(),
-            compression_config: KeySetCompressionConfig::UseExisting,
+            secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
             compressed_key_config: CompressedKeyConfig::default(),
         }
     }
 
     pub fn is_using_existing_compression_sk(&self) -> bool {
-        self.compression_config == KeySetCompressionConfig::UseExisting
+        self.secret_key_config == KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
     }
 }

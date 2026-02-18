@@ -1133,8 +1133,8 @@ mod tests {
         assert_eq!(v1::FheParameter::default(), v1::FheParameter::Default);
         assert_eq!(v1::ComputeKeyType::default(), v1::ComputeKeyType::Cpu);
         assert_eq!(
-            v1::KeySetCompressionConfig::default(),
-            v1::KeySetCompressionConfig::Generate
+            v1::KeyGenSecretKeyConfig::default(),
+            v1::KeyGenSecretKeyConfig::Generate
         );
     }
 
