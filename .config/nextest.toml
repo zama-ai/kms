@@ -1,19 +1,82 @@
-# Require nextest 0.9.48+ for test-groups support
-[nextest]
-required-version = "0.9.48"
+nextest-version = { required = "0.9.48" }
 
-# Docker-based integration tests must run sequentially because they share
-# Docker Compose infrastructure with fixed container names.
-# The #[serial(docker)] attribute only works within a single process,
-# but nextest runs each test in a separate process.
+# =============================================================================
+# Test Groups — enforce sequential execution for tests sharing infrastructure
+# =============================================================================
+# nextest runs each test in a separate process, so #[serial] attributes alone
+# are insufficient to prevent parallel execution across binaries.
 [test-groups]
+# Docker Compose tests (integration_test binary) share fixed container names
+# and ports — running them in parallel would cause port/name conflicts.
 docker-integration = { max-threads = 1 }
+# K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
+# cluster — concurrent requests would interfere with each other.
+k8s-integration    = { max-threads = 1 }
+
+# =============================================================================
+# CI profile: used for PR checks (fast feedback)
+# =============================================================================
+# Excludes slow tests from integration_test_isolated that only run nightly:
+#   - full_gen_tests_default*           (uses FheParameter::Default — production-sized, slow)
+#   - nightly_tests_threshold_sequential_crs
+#   - test_threshold_concurrent_crs
+# The filter only targets the integration_test_isolated binary — K8s tests are
+# unaffected even if they have "default" in their name (those run against an
+# insecure-param cluster and are fast).
+[profile.ci]
+default-filter = 'not (binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
 [profile.ci.junit]
 path = "junit.xml"
 store-success-output = true
 store-failure-output = true
 
+# Serialize Docker Compose tests: "binary(=integration_test)" is an exact match,
+# so it does NOT affect integration_test_isolated (which runs in parallel).
 [[profile.ci.overrides]]
-filter = "binary(integration_test)"
+filter = "binary(=integration_test)"
+test-group = "docker-integration"
+
+# Serialize all K8s test binaries (kubernetes_test_threshold*,
+# kubernetes_test_centralized*) — they share the same Kind cluster pods.
+[[profile.ci.overrides]]
+filter = "binary(/^kubernetes_test_/)"
+test-group = "k8s-integration"
+
+# Long timeout for tests that use production-sized FHE parameters (Default +
+# SnS).  These are inherently very slow (keygen/CRS can take 30-90 min).
+# Give them a 2h window before termination and serialize them with the Docker
+# tests to avoid CPU/memory contention on CI machines.
+[[profile.ci.overrides]]
+filter = 'test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+slow-timeout = { period = "600s", terminate-after = 12 }
+test-group = "docker-integration"
+
+# =============================================================================
+# CI-nightly profile: used for scheduled builds — runs ALL tests
+# =============================================================================
+# No default-filter: includes the slow tests that the ci profile skips.
+# The serialization overrides below are identical to ci — Docker and K8s tests
+# still need sequential execution regardless of profile.
+[profile.ci-nightly]
+
+[profile.ci-nightly.junit]
+path = "junit.xml"
+store-success-output = true
+store-failure-output = true
+
+# Serialize Docker Compose tests (same as ci profile).
+[[profile.ci-nightly.overrides]]
+filter = "binary(=integration_test)"
+test-group = "docker-integration"
+
+# Serialize K8s tests (same as ci profile).
+[[profile.ci-nightly.overrides]]
+filter = "binary(/^kubernetes_test_/)"
+test-group = "k8s-integration"
+
+# Long timeout + serialization for slow Default-param tests (same as ci profile).
+[[profile.ci-nightly.overrides]]
+filter = 'test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+slow-timeout = { period = "600s", terminate-after = 12 }
 test-group = "docker-integration"

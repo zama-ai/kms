@@ -109,6 +109,60 @@ impl ThresholdTestEnv {
             .map(|(party_id, client)| (*party_id, client.clone()))
             .collect()
     }
+
+    /// Create an internal client for making requests to the threshold KMS
+    ///
+    /// This helper eliminates boilerplate for tests that need to create gRPC requests.
+    /// The client is configured with the test material from this environment.
+    ///
+    /// # Arguments
+    /// * `params` - FHE parameters (use `&TEST_PARAM` for testing)
+    /// * `decryption_mode` - Optional decryption mode override
+    ///
+    /// # Example
+    /// ```ignore
+    /// let env = ThresholdTestEnv::builder()
+    ///     .with_test_name("my_test")
+    ///     .build()
+    ///     .await?;
+    ///
+    /// let client = env.create_internal_client(&TEST_PARAM, None).await?;
+    /// let req = client.crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), &domain)?;
+    /// ```
+    pub async fn create_internal_client(
+        &self,
+        params: &threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+        decryption_mode: Option<threshold_fhe::execution::endpoints::decryption::DecryptionMode>,
+    ) -> Result<crate::client::client_wasm::Client> {
+        use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+        use crate::vault::storage::{file::FileStorage, StorageType};
+
+        let material_path = self.material_dir.path();
+        let party_count = self.clients.len();
+
+        // Build public storage map for all parties
+        let mut pub_storage_map = HashMap::new();
+        for (i, prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count]
+            .iter()
+            .enumerate()
+        {
+            let pub_storage =
+                FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?;
+            pub_storage_map.insert((i + 1) as u32, pub_storage);
+        }
+
+        // Create client storage
+        let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
+
+        // Create and return the internal client
+        crate::client::client_wasm::Client::new_client(
+            client_storage,
+            pub_storage_map,
+            params,
+            decryption_mode,
+        )
+        .await
+    }
 }
 
 /// Builder for threshold test environments

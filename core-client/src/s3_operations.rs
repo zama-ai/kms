@@ -209,7 +209,13 @@ async fn generic_fetch_element(
         }
     } else {
         // read from local file system
-        let key_path = Path::new(endpoint).join(folder).join(element_id);
+        // Strip file:// prefix if present
+        let local_path = if let Some(stripped) = endpoint.strip_prefix("file://") {
+            stripped
+        } else {
+            endpoint
+        };
+        let key_path = Path::new(local_path).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow::anyhow!(
                 "Failed to read bytes from file at {:?} with error: {e}",
@@ -217,7 +223,7 @@ async fn generic_fetch_element(
             )
         })?;
         let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {local_path}/{folder}", res.len());
         Ok(res)
     }
 }
