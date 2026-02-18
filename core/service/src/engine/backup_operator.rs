@@ -932,7 +932,6 @@ where
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
-                    println!("Updating backup vault for data type {:?}", cur_type);
                     match cur_type {
                         // These types might have epoch-specific data
                         PrivDataType::FheKeyInfo => {
