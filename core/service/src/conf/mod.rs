@@ -14,6 +14,8 @@ use validator::{Validate, ValidationErrors};
 pub mod threshold;
 
 /// Common configuration parameters that should be set in all scenarios
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CoreConfig {
@@ -62,6 +64,8 @@ impl Default for InternalConfig {
     }
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceEndpoint {
@@ -86,6 +90,8 @@ impl ConfigTracing for CoreConfig {
 
 /// Override AWS configuration when running in Nitro enclaves or in test
 /// environments
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct AWSConfig {
@@ -100,6 +106,8 @@ pub struct AWSConfig {
 }
 
 /// Where and how to store the key material
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct VaultConfig {
@@ -111,6 +119,8 @@ pub struct VaultConfig {
 }
 
 /// How to store the key material
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum Storage {
@@ -133,6 +143,8 @@ impl Validate for Storage {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct RamStorage {}
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct FileStorage {
@@ -140,6 +152,8 @@ pub struct FileStorage {
     pub prefix: Option<String>,
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct S3Storage {

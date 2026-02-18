@@ -14,6 +14,8 @@ use threshold_fhe::networking::{
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 #[validate(schema(function = validate_threshold_party_conf))]
@@ -82,6 +84,8 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
     Ok(())
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum TlsConf {
@@ -89,6 +93,7 @@ pub enum TlsConf {
     // enclaves are not used, this is the ony option.
     Manual {
         cert: TlsCert,
+        #[serde(skip_serializing)]
         key: TlsKey,
     },
     // The party will generate a keypair inside of the enclave on boot and issue
@@ -114,6 +119,7 @@ pub enum TlsConf {
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsCert {
     Path(PathBuf),
+    #[serde(skip_serializing)]
     Pem(String),
 }
 
@@ -175,6 +181,7 @@ impl TlsCert {
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsKey {
     Path(PathBuf),
+    #[serde(skip_serializing)]
     Pem(String),
 }
 
@@ -187,18 +194,21 @@ impl TlsKey {
     pub fn into_request_id(&self) -> anyhow::Result<RequestId> {
         let key_bytes = self.to_string()?;
         derive_request_id(key_bytes.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to derive request ID from key: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to derive request ID from TLS key: {}", e))
     }
 
     fn to_string(&self) -> anyhow::Result<String> {
         match self {
-            TlsKey::Path(ref key_path) => std::fs::read_to_string(key_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", key_path.display(), e)),
+            TlsKey::Path(ref key_path) => std::fs::read_to_string(key_path).map_err(|e| {
+                anyhow::anyhow!("Failed to open TLS key file {}: {}", key_path.display(), e)
+            }),
             TlsKey::Pem(ref key_bytes) => Ok(key_bytes.to_string()),
         }
     }
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConf {
