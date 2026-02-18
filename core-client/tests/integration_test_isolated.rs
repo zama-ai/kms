@@ -232,6 +232,25 @@ use kms_lib::util::key_setup::test_tools::{
 };
 
 // ============================================================================
+// UTILITY HELPERS
+// ============================================================================
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // CLI TEST SETUP FUNCTIONS
 // ============================================================================
 
@@ -2696,11 +2715,24 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss("concurrent_preproc", 4).await?;
 
-    // Run concurrent preprocessing and keygen operations (use material_dir as keys_folder)
-    let keys_folder = material_dir.path();
+    // Each concurrent execute_cmd needs its own keys_folder to avoid file races.
+    // With file:// endpoints, concurrent fetches of VerfAddress race on the same
+    // file (tokio::fs::write uses O_TRUNC, creating a window where the file is empty).
+    // We copy the CLIENT directory (client signing keys) so the server can validate
+    // the client's signature.
+    let keys_folder_1 = tempfile::tempdir()?;
+    let keys_folder_2 = tempfile::tempdir()?;
+    copy_dir_recursive(
+        &material_dir.path().join("CLIENT"),
+        &keys_folder_1.path().join("CLIENT"),
+    )?;
+    copy_dir_recursive(
+        &material_dir.path().join("CLIENT"),
+        &keys_folder_2.path().join("CLIENT"),
+    )?;
     let _ = join_all([
-        real_preproc_and_keygen_isolated(&config_path, keys_folder, 200),
-        real_preproc_and_keygen_isolated(&config_path, keys_folder, 200),
+        real_preproc_and_keygen_isolated(&config_path, keys_folder_1.path(), 200),
+        real_preproc_and_keygen_isolated(&config_path, keys_folder_2.path(), 200),
     ])
     .await;
 
@@ -2744,12 +2776,21 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_default("threshold_concurrent_crs", 4).await?;
 
-    // Run concurrent CRS generation via CLI with production-sized params (max_num_bits=2048)
-    // insecure_crs_gen=true: secure ZK ceremony doesn't support concurrent sessions
-    let keys_folder = material_dir.path();
+    // Each concurrent execute_cmd needs its own keys_folder to avoid file races
+    // (see test_threshold_concurrent_preproc_keygen for details).
+    let keys_folder_1 = tempfile::tempdir()?;
+    let keys_folder_2 = tempfile::tempdir()?;
+    copy_dir_recursive(
+        &material_dir.path().join("CLIENT"),
+        &keys_folder_1.path().join("CLIENT"),
+    )?;
+    copy_dir_recursive(
+        &material_dir.path().join("CLIENT"),
+        &keys_folder_2.path().join("CLIENT"),
+    )?;
     let res = join_all([
-        crs_gen_isolated_with_params(&config_path, keys_folder, true, 2048, 5000),
-        crs_gen_isolated_with_params(&config_path, keys_folder, true, 2048, 5000),
+        crs_gen_isolated_with_params(&config_path, keys_folder_1.path(), true, 2048, 5000),
+        crs_gen_isolated_with_params(&config_path, keys_folder_2.path(), true, 2048, 5000),
     ])
     .await;
 
