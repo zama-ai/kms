@@ -1,11 +1,10 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::engine::base::CrsGenMetadata;
+use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{query_key_material_availability, MetricedError};
 use crate::engine::validation::parse_optional_grpc_request_id;
-use crate::util::key_setup::FhePrivateKey;
 use crate::vault::storage::{
     delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id,
     StorageExt, StorageReaderExt,
@@ -760,7 +759,7 @@ where
                 .await?;
             }
             PrivDataType::FhePrivateKey => {
-                restore_data_type_for_all_epochs::<PrivS, FhePrivateKey>(
+                restore_data_type_for_all_epochs::<PrivS, KmsFheKeyHandles>(
                     priv_storage,
                     backup_vault,
                     cur_type,
@@ -933,6 +932,7 @@ where
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
+                    println!("Updating backup vault for data type {:?}", cur_type);
                     match cur_type {
                         // These types might have epoch-specific data
                         PrivDataType::FheKeyInfo => {
@@ -945,7 +945,7 @@ where
                             .await?;
                         }
                         PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, FhePrivateKey>(
+                            update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

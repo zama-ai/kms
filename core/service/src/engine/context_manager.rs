@@ -8,7 +8,7 @@ use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::backup_operator::{
     update_specific_backup_vault, update_specific_backup_vault_for_all_epochs,
 };
-use crate::engine::base::CrsGenMetadata;
+use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
 use crate::engine::threshold::service::ThresholdFheKeys;
@@ -17,7 +17,6 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr,
 };
-use crate::util::key_setup::FhePrivateKey;
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
@@ -275,7 +274,7 @@ where
                         .await?;
                     }
                     PrivDataType::FhePrivateKey => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, FhePrivateKey>(
+                        update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,

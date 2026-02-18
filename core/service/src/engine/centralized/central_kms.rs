@@ -907,7 +907,7 @@ impl<
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
-
+        println!("Finished reading existing keys from storage, starting sanity check...");
         // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
@@ -933,6 +933,7 @@ impl<
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
         }
+        println!("Sanity check of public materials completed successfully.");
         let custodian_meta_store =
             Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
         let tracker = Arc::new(TaskTracker::new());
@@ -962,7 +963,9 @@ impl<
         // This ensures that all files in the private storage are also in the backup vault
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption.
+        println!("Updating backup vault with existing data...");
         backup_operator.update_backup_vault().await?;
+        println!("Backup vault update completed.");
 
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =
@@ -978,7 +981,7 @@ impl<
             Arc::clone(&pub_dec_meta_store),
             telemetry_conf.refresh_interval(),
         );
-
+        println!("Centralized KMS initialization completed.");
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
 
