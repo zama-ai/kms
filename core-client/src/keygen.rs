@@ -591,6 +591,10 @@ pub(crate) async fn get_preproc_keygen_responses(
             ))
             .await;
 
+            tracing::info!(
+                "Polling preproc result for request {} from party {}",
+                request_id, core_conf.party_id
+            );
             let mut response = client
                 .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                 .await;
@@ -610,6 +614,10 @@ pub(crate) async fn get_preproc_keygen_responses(
                     );
                 }
                 ctr += 1;
+                tracing::info!(
+                    "Preproc result not ready yet for request {} from party {} (retry {}/{})",
+                    request_id, core_conf.party_id, ctr, max_iter
+                );
                 response = client
                     .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                     .await;

@@ -43,6 +43,13 @@ pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT
 //TODO: Do we want to load this from configuration ?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 
+// Preprocessing (offline phase) is significantly slower than other operations,
+// especially with Default FHE params where even 1% of the offline phase can
+// take several minutes of MPC network communication. Use a longer server-side
+// wait window so each poll covers more computation time and reduces the number
+// of Unavailable round-trips the client must make.
+pub const DURATION_WAITING_ON_PREPROC_RESULT_SECONDS: u64 = 300;
+
 // Maximum number of attempts to try to wait for a result to be done on the server
 pub const MAX_TRIES: usize = 50;
 
