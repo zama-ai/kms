@@ -51,6 +51,10 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-profile:
+        type: string
+        required: false
+        default: 'ci'  # Use 'ci-nightly' for nightly builds that run all tests
       nextest-test-threads:
         type: string
         required: false
@@ -142,6 +146,7 @@ jobs:
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       app-cache-dir: ${{ inputs.app-cache-dir }}
+      nextest-profile: ${{ inputs.nextest-profile }}
       nextest-test-threads: ${{ inputs.nextest-test-threads }}
 
   stop-runner:

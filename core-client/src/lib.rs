@@ -528,6 +528,11 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
+    /// Whether the key was generated as a compressed keyset (CompressedXofKeySet).
+    /// When true, fetches CompressedXofKeySet instead of PublicKey/ServerKey.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, default_value_t = false)]
+    pub compressed_keys: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -934,7 +939,7 @@ pub async fn encrypt(
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
         },
-        false,
+        cipher_params.compressed_keys,
     )
     .await;
 
@@ -1226,8 +1231,8 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(addr_vec);
 
-    // TODO: handle compressed keys
     let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
+    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
 
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command
@@ -1252,10 +1257,15 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+                    let fetch_types = if cipher_parameters.compressed_keys {
+                        &compressed_key_types
+                    } else {
+                        &key_types
+                    };
+                    tracing::info!("Fetching keys {fetch_types:?}. ({command:?})");
                     let party_confs = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
-                        &key_types,
+                        fetch_types,
                         &cc_conf,
                         destination_prefix,
                         false,
@@ -1332,10 +1342,15 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+                    let fetch_types = if cipher_parameters.compressed_keys {
+                        &compressed_key_types
+                    } else {
+                        &key_types
+                    };
+                    tracing::info!("Fetching keys {fetch_types:?}. ({command:?})");
                     let party_confs = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
-                        &key_types,
+                        fetch_types,
                         &cc_conf,
                         destination_prefix,
                         false,

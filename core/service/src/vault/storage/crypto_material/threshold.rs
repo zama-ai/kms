@@ -311,17 +311,191 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
-        self.inner
-            .write_compressed_keys_with_dkg_meta_store(
-                key_id,
-                epoch_id,
-                threshold_fhe_keys,
-                PrivDataType::FheKeyInfo,
-                compressed_keyset,
-                meta_store,
-                Arc::clone(&self.fhe_keys),
-            )
-            .await
+        self.inner_write_threshold_keys_compressed(
+            None,
+            key_id,
+            epoch_id,
+            threshold_fhe_keys,
+            compressed_keyset,
+            meta_store,
+        )
+        .await
+    }
+
+    /// Write the key materials (result of a compressed keygen resharing) to storage and cache
+    /// for the threshold KMS.
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
+    ///
+    /// This is similar to [write_threshold_keys_with_epoch_meta_store] but for compressed keys.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_threshold_keys_with_epoch_meta_store_compressed(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        compressed_keyset: &CompressedXofKeySet,
+        meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
+    ) {
+        self.inner_write_threshold_keys_compressed(
+            Some(&(*epoch_id).into()),
+            key_id,
+            epoch_id,
+            threshold_fhe_keys,
+            compressed_keyset,
+            meta_store,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn inner_write_threshold_keys_compressed<T: From<KeyGenMetadata> + Clone>(
+        &self,
+        reshare_id: Option<&RequestId>,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        compressed_keyset: &CompressedXofKeySet,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
+    ) {
+        let info = threshold_fhe_keys.meta_data.clone();
+        // use guarded_meta_store as the synchronization point
+        // all other locks are taken as needed so that we don't lock up
+        // other function calls too much
+        let mut guarded_meta_storage = meta_store.write().await;
+        let (r1, r2, r3) = {
+            // Lock the storage components in the correct order to avoid deadlocks.
+            let mut pub_storage = self.inner.public_storage.lock().await;
+            let mut priv_storage = self.inner.private_storage.lock().await;
+            let back_vault = match self.inner.backup_vault {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+
+            let f1 = async {
+                let store_result = store_versioned_at_request_and_epoch_id(
+                    &mut (*priv_storage),
+                    key_id,
+                    epoch_id,
+                    &threshold_fhe_keys,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &store_result {
+                    tracing::error!(
+                        "Failed to store threshold FHE keys to private storage for request {}: {}",
+                        key_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        priv_storage.info(),
+                        &PrivDataType::FheKeyInfo.to_string(),
+                        false,
+                        true,
+                    );
+                }
+                store_result.is_ok()
+            };
+            let f2 = async {
+                // Store compressed xof key set
+                let server_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    compressed_keyset,
+                    &PubDataType::CompressedXofKeySet.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &server_result {
+                    tracing::error!(
+                        "Failed to store compressed server key for request {}: {}",
+                        key_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::CompressedXofKeySet.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                server_result.is_ok()
+            };
+            let threshold_key_clone = threshold_fhe_keys.clone();
+            let f3 = async move {
+                match back_vault {
+                    Some(mut guarded_backup_vault) => {
+                        let backup_result = store_versioned_at_request_and_epoch_id(
+                            &mut (*guarded_backup_vault),
+                            key_id,
+                            epoch_id,
+                            &threshold_key_clone,
+                            &PrivDataType::FheKeyInfo.to_string(),
+                        )
+                        .await;
+
+                        if let Err(e) = &backup_result {
+                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                        } else {
+                            log_storage_success(
+                                key_id,
+                                guarded_backup_vault.info(),
+                                &PrivDataType::FheKeyInfo.to_string(),
+                                false,
+                                true,
+                            );
+                        }
+                        backup_result.is_ok()
+                    }
+                    None => {
+                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        true
+                    }
+                }
+            };
+            tokio::join!(f1, f2, f3)
+        };
+        // Try to store the new data
+        tracing::info!("Storing compressed keys objects for key ID {}", key_id);
+
+        let meta_update_result =
+            guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(T::from(info)));
+        if let Err(e) = &meta_update_result {
+            tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
+        }
+        if r1 && r2 && r3 && meta_update_result.is_ok() {
+            {
+                let mut guarded_fhe_keys = self.fhe_keys.write().await;
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
+                if previous.is_some() {
+                    tracing::warn!(
+                        "Threshold FHE keys already exist in cache for {}, overwriting",
+                        key_id
+                    );
+                } else {
+                    tracing::debug!(
+                        "Added new compressed threshold FHE keys to cache for {}",
+                        key_id
+                    );
+                }
+            }
+            tracing::info!("Finished storing compressed key for Key Id {key_id}.");
+        } else {
+            // Try to delete stored data to avoid anything dangling
+            // Ignore any failure to delete something since it might be
+            // because the data did not get created
+            // In any case, we can't do much.
+            tracing::warn!(
+                "Failed to ensure existence of compressed threshold key material for Key with ID: {}",
+                key_id
+            );
+            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
+                .await;
+        }
     }
 
     /// Read the key materials for decryption in the threshold case.
