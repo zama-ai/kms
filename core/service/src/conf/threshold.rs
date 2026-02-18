@@ -120,8 +120,13 @@ pub enum TlsCert {
 impl TlsCert {
     pub fn unchecked_cert_string(&self) -> anyhow::Result<String> {
         match self {
-            TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", cert_path.display(), e)),
+            TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to open TLS cert file {}: {}",
+                    cert_path.display(),
+                    e
+                )
+            }),
             TlsCert::Pem(ref cert_bytes) => Ok(cert_bytes.to_string()),
         }
     }

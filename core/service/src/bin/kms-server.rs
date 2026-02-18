@@ -616,8 +616,8 @@ async fn main_exec() -> anyhow::Result<()> {
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     // load key
-    let base_kms = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => BaseKmsStruct::new(kms_type, sk)?,
+    let (base_kms, recovery_mode) = match get_core_signing_key(&private_vault).await {
+        Ok(sk) => (BaseKmsStruct::new(kms_type, sk)?, false),
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -627,7 +627,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_key(kms_type, verf_key)
+            (BaseKmsStruct::new_no_signing_key(kms_type, verf_key), true)
         }
     };
 
@@ -645,22 +645,29 @@ async fn main_exec() -> anyhow::Result<()> {
             let mpc_listener = make_mpc_listener(threshold_config).await;
 
             let tls_identity = match &threshold_config.tls {
-                Some(tls_config) => Some({
-                    build_tls_config(
-                        &threshold_config.peers,
-                        tls_config,
-                        security_module.clone(),
-                        private_vault
-                            .keychain
-                            .as_ref()
-                            .map(|x| x.root_key_measurements()),
-                        &public_vault,
-                        base_kms.sig_key()?,
-                        #[cfg(feature = "insecure")]
-                        core_config.mock_enclave.is_some_and(|m| m),
-                    )
-                    .await?
-                }),
+                Some(tls_config) => {
+                    if recovery_mode {
+                        tracing::warn!("TLS identity is configured but signing key is not available, TLS will not be available in recovery mode");
+                        None
+                    } else {
+                        Some(
+                            build_tls_config(
+                                &threshold_config.peers,
+                                tls_config,
+                                security_module.clone(),
+                                private_vault
+                                    .keychain
+                                    .as_ref()
+                                    .map(|x| x.root_key_measurements()),
+                                &public_vault,
+                                base_kms.sig_key()?,
+                                #[cfg(feature = "insecure")]
+                                core_config.mock_enclave.is_some_and(|m| m),
+                            )
+                            .await?,
+                        )
+                    }
+                }
                 None => {
                     tracing::warn!(
                         "No TLS identity - using plaintext communication between MPC nodes"

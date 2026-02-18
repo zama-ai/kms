@@ -19,6 +19,7 @@ use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 pub use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
+use serde::Serialize;
 use std::{
     env,
     net::SocketAddr,
@@ -38,6 +39,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
+use validator::Validate;
 
 #[cfg(target_os = "linux")]
 use prometheus::process_collector::ProcessCollector;
@@ -46,15 +48,21 @@ use prometheus::process_collector::ProcessCollector;
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
 pub const TRACER_PARENT_SPAN_ID: &str = "x-zama-kms-parent-span-id";
 
+pub trait ConfigTracing {
+    fn telemetry(&self) -> Option<TelemetryConfig>;
+}
+
 #[derive(Clone)]
 struct MetricsState {
+    config: String, // Store the config as a string for the /config endpoint
     registry: Arc<PrometheusRegistry>,
     start_time: std::time::SystemTime,
 }
 
 impl MetricsState {
-    fn new(registry: PrometheusRegistry) -> Self {
+    fn new(registry: PrometheusRegistry, config: String) -> Self {
         Self {
+            config,
             registry: Arc::new(registry),
             start_time: std::time::SystemTime::now(),
         }
@@ -99,11 +107,24 @@ async fn liveness_handler() -> impl IntoResponse {
     (StatusCode::OK, "alive")
 }
 
-pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyhow::Error> {
+async fn config_handler(State(state): State<MetricsState>) -> impl IntoResponse {
+    (StatusCode::OK, state.config)
+}
+
+pub fn init_metrics<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
+    config: &T,
+) -> Result<SdkMeterProvider, anyhow::Error> {
     if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
         return Ok(SdkMeterProvider::default());
     }
-
+    let telemetry_settings = config.telemetry().unwrap_or_else(|| {
+        tracing::warn!("No telemetry configuration found, using defaults");
+        TelemetryConfig::builder()
+            .tracing_service_name("kms_core".to_string())
+            .build()
+    });
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize configuration: {:?}", e))?;
     let registry = PrometheusRegistry::new();
 
     // Add process collector for system metrics
@@ -123,7 +144,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
                 .with_attributes(vec![
                     KeyValue::new(
                         opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        settings
+                        telemetry_settings
                             .tracing_service_name()
                             .unwrap_or("unknown-service")
                             .to_string(),
@@ -144,13 +165,13 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
     opentelemetry::global::set_meter_provider(provider.clone());
 
     // Start metrics server if configured
-    let metrics_addr = settings
+    let metrics_addr = telemetry_settings
         .metrics_bind_address()
         .unwrap_or("0.0.0.0:9464")
         .parse::<SocketAddr>()
         .context("Failed to parse metrics bind address")?;
 
-    let state = MetricsState::new(registry);
+    let state = MetricsState::new(registry, config_json);
 
     // Use the global METRICS instance also as a sanity check that metrics are working
     METRICS.increment_request_counter("system_startup");
@@ -165,6 +186,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
             .route("/ready", get(readiness_handler))
             .route("/version", get(version_handler))
             .route("/live", get(liveness_handler))
+            .route("/config", get(config_handler))
             .with_state(state);
 
         let listener = tokio::net::TcpListener::bind(metrics_addr)
@@ -406,24 +428,28 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
     Ok(provider)
 }
 
-pub async fn init_telemetry(
-    settings: &TelemetryConfig,
+pub async fn init_telemetry<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
+    config: &T,
 ) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     println!("Starting telemetry initialization...");
-
+    let telemetry_conf = config.telemetry().unwrap_or_else(|| {
+        TelemetryConfig::builder()
+            .tracing_service_name("kms_core".to_string())
+            .build()
+    });
     // First initialize tracing as it's more critical
     println!("Initializing tracing subsystem...");
-    let tracer_provider = init_tracing(settings).await?;
+    let tracer_provider = init_tracing(&telemetry_conf).await?;
 
     // Now that tracing is initialized, we can use info! tracing macros
     info!("Tracing initialization completed successfully");
 
     println!("Initializing metrics subsystem...");
-    let meter_provider = init_metrics(settings)?;
+    let meter_provider = init_metrics(config)?;
     info!("Metrics initialization completed successfully");
 
-    if settings.enable_sys_metrics() {
-        start_sys_metrics_collection(settings.refresh_interval())?;
+    if telemetry_conf.enable_sys_metrics() {
+        start_sys_metrics_collection(telemetry_conf.refresh_interval())?;
     }
 
     info!("Telemetry stack initialization completed");
