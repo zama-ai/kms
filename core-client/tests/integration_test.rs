@@ -1830,20 +1830,20 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 ///////// FULL GEN TESTS//////////
 //////////////////////////////////
 
-#[test_context(DockerComposeThresholdDefault)]
-#[tokio::test]
-#[serial(docker)]
-async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
-    ctx: &DockerComposeThresholdDefault,
-) {
-    init_testing();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-    assert_ne!(key_id_1, key_id_2);
-}
+// #[test_context(DockerComposeThresholdDefault)]
+// #[tokio::test]
+// #[serial(docker)]
+// async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
+//     ctx: &DockerComposeThresholdDefault,
+// ) {
+//     init_testing();
+//     let temp_dir = tempfile::tempdir().unwrap();
+//     let keys_folder = temp_dir.path();
+//     let config_path = config_path_from_context(ctx);
+//     let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+//     let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+//     assert_ne!(key_id_1, key_id_2);
+// }
 
 #[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]

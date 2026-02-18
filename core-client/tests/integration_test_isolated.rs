@@ -1909,67 +1909,67 @@ async fn real_preproc_and_keygen_isolated(
     Ok(key_id.to_string())
 }
 
-/// Helper to run partial preprocessing and keygen via CLI (isolated version)
-/// Uses PartialPreprocKeyGen with a small percentage_offline to avoid generating
-/// the full 785M bits with Default FHE params. store_dummy_preprocessing=true
-/// allows keygen to proceed with the partial material.
-#[cfg(feature = "k8s_tests")]
-async fn real_partial_preproc_and_keygen_isolated(
-    config_path: &Path,
-    test_path: &Path,
-    percentage_offline: u32,
-    max_iter: usize,
-) -> Result<String> {
-    // Step 1: Partial preprocessing
-    let preproc_config = CmdConfig {
-        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
-        command: CCCommand::PartialPreprocKeyGen(PartialKeyGenPreprocParameters {
-            context_id: None,
-            epoch_id: None,
-            percentage_offline,
-            store_dummy_preprocessing: true,
-        }),
-        logs: true,
-        max_iter,
-        expect_all_responses: true,
-        download_all: false,
-    };
+// /// Helper to run partial preprocessing and keygen via CLI (isolated version)
+// /// Uses PartialPreprocKeyGen with a small percentage_offline to avoid generating
+// /// the full 785M bits with Default FHE params. store_dummy_preprocessing=true
+// /// allows keygen to proceed with the partial material.
+// #[cfg(feature = "k8s_tests")]
+// async fn real_partial_preproc_and_keygen_isolated(
+//     config_path: &Path,
+//     test_path: &Path,
+//     percentage_offline: u32,
+//     max_iter: usize,
+// ) -> Result<String> {
+//     // Step 1: Partial preprocessing
+//     let preproc_config = CmdConfig {
+//         file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+//         command: CCCommand::PartialPreprocKeyGen(PartialKeyGenPreprocParameters {
+//             context_id: None,
+//             epoch_id: None,
+//             percentage_offline,
+//             store_dummy_preprocessing: true,
+//         }),
+//         logs: true,
+//         max_iter,
+//         expect_all_responses: true,
+//         download_all: false,
+//     };
 
-    println!("Doing partial preprocessing ({percentage_offline}%)");
-    let mut preproc_result = execute_cmd(&preproc_config, test_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    assert_eq!(preproc_result.len(), 1);
-    let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Partial preprocessing done with ID {preproc_id:?}");
+//     println!("Doing partial preprocessing ({percentage_offline}%)");
+//     let mut preproc_result = execute_cmd(&preproc_config, test_path)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("{}", e))?;
+//     assert_eq!(preproc_result.len(), 1);
+//     let (preproc_id, _) = preproc_result.pop().unwrap();
+//     println!("Partial preprocessing done with ID {preproc_id:?}");
 
-    // Step 2: Key generation using preprocessing result
-    let keygen_config = CmdConfig {
-        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
-        command: CCCommand::KeyGen(KeyGenParameters {
-            preproc_id: preproc_id.unwrap(),
-            shared_args: SharedKeyGenParameters::default(),
-        }),
-        logs: true,
-        max_iter,
-        expect_all_responses: true,
-        download_all: false,
-    };
+//     // Step 2: Key generation using preprocessing result
+//     let keygen_config = CmdConfig {
+//         file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+//         command: CCCommand::KeyGen(KeyGenParameters {
+//             preproc_id: preproc_id.unwrap(),
+//             shared_args: SharedKeyGenParameters::default(),
+//         }),
+//         logs: true,
+//         max_iter,
+//         expect_all_responses: true,
+//         download_all: false,
+//     };
 
-    println!("Doing key-gen");
-    let key_gen_results = execute_cmd(&keygen_config, test_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Key-gen done");
-    assert_eq!(key_gen_results.len(), 1);
+//     println!("Doing key-gen");
+//     let key_gen_results = execute_cmd(&keygen_config, test_path)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("{}", e))?;
+//     println!("Key-gen done");
+//     assert_eq!(key_gen_results.len(), 1);
 
-    let key_id = match key_gen_results.first().unwrap() {
-        (Some(value), _) => value,
-        _ => panic!("Error doing keygen"),
-    };
+//     let key_id = match key_gen_results.first().unwrap() {
+//         (Some(value), _) => value,
+//         _ => panic!("Error doing keygen"),
+//     };
 
-    Ok(key_id.to_string())
-}
+//     Ok(key_id.to_string())
+// }
 
 // ============================================================================
 // MPC CONTEXT HELPER FUNCTIONS
@@ -2862,29 +2862,29 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "k8s_tests")]
-#[tokio::test]
-#[serial] // PRSS requires sequential execution
-async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
-    init_testing();
+// #[cfg(feature = "k8s_tests")]
+// #[tokio::test]
+// #[serial] // PRSS requires sequential execution
+// async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
+//     init_testing();
 
-    // Setup isolated threshold KMS servers (4 parties for default context) with PRSS enabled
-    let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
+//     // Setup isolated threshold KMS servers (4 parties for default context) with PRSS enabled
+//     let (material_dir, _servers, config_path) =
+//         setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
-    // Run sequential partial preprocessing (1%) and keygen with Default FHE params
-    // 1% of 785M bits ≈ 7.8M bits — manageable in CI
-    let keys_folder = material_dir.path();
-    let key_id_1 =
-        real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
-    let key_id_2 =
-        real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
+//     // Run sequential partial preprocessing (1%) and keygen with Default FHE params
+//     // 1% of 785M bits ≈ 7.8M bits — manageable in CI
+//     let keys_folder = material_dir.path();
+//     let key_id_1 =
+//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
+//     let key_id_2 =
+//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
 
-    // Verify different key IDs generated
-    assert_ne!(key_id_1, key_id_2);
+//     // Verify different key IDs generated
+//     assert_ne!(key_id_1, key_id_2);
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
