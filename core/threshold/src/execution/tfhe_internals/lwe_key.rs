@@ -364,7 +364,7 @@ where
 
     //Then actually generate the public key
     let lwe_public_key_shared =
-        allocate_and_generate_new_lwe_compact_public_key(&lwe_secret_key_share, mpc_encryption_rng);
+        allocate_and_generate_new_lwe_compact_public_key(lwe_secret_key_share, mpc_encryption_rng);
 
     Ok(lwe_public_key_shared)
 }
