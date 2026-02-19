@@ -273,6 +273,7 @@ pub(crate) async fn new_epoch_with_reshare(
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
+        None,
         &key_req_id,
         Some(&new_context_id),
         vec![TestingPlaintext::U8(u8::MAX)],
