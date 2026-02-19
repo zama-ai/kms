@@ -454,7 +454,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
     Ok(provider)
 }
 
-pub async fn init_telemetry<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
+pub async fn init_telemetry<T: Serialize + ConfigTracing>(
     config: &T,
 ) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     println!("Starting telemetry initialization...");
