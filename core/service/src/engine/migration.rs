@@ -330,6 +330,12 @@ mod tests {
             .unwrap();
         assert_eq!(migrated_data_1, legacy_data_1);
         assert_eq!(migrated_data_2, legacy_data_2);
+
+        // Run migration again and verify it skips already migrated keys
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
+            .await
+            .unwrap();
+        assert_eq!(migrated_count, 0);
     }
 
     /// Test migration of centralized FHE keys (FhePrivateKey)
@@ -372,6 +378,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(migrated_data, legacy_data);
+
+        // Run migration again and verify it skips already migrated keys
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Centralized)
+            .await
+            .unwrap();
+        assert_eq!(migrated_count, 0);
     }
 
     /// Test that migration skips keys that already exist at the target epoch
