@@ -352,15 +352,13 @@ where
 impl<T, N> Neg for RqElement<T, N>
 where
     N: Const,
-    T: Neg<Output = T>,
+    // Assumes that if Output is (), the negation is done in place
+    for<'a> &'a mut T: Neg<Output = ()>,
 {
     type Output = RqElement<T, N>;
-    fn neg(self) -> Self::Output {
-        let data: Vec<_> = self.data.into_iter().map(|v| -v).collect();
-        RqElement {
-            data,
-            _degree: self._degree,
-        }
+    fn neg(mut self) -> Self::Output {
+        self.data.iter_mut().for_each(Neg::neg);
+        self
     }
 }
 

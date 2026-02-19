@@ -6,7 +6,9 @@ use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::Uint;
 use crypto_bigint::Zero;
+use crypto_bigint::U128;
 use crypto_bigint::U2304;
+use crypto_bigint::U768;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Add;
@@ -286,7 +288,7 @@ impl ZeroCenteredRem for IntQ {
 impl ModReduction<LevelOne> for IntQ {
     fn mod_reduction(&self) -> LevelOne {
         // assuming inputs are bounded by q since are computed from division
-        let x: Uint<2> = (&(self.data)).into();
+        let x: U128 = (&(self.data)).into();
         let cheap_mod = x.rem(LevelOne::MODULUS.as_nz_ref());
 
         if self.is_negative {
@@ -304,7 +306,7 @@ impl ModReduction<LevelOne> for IntQ {
 impl ModReduction<LevelEll> for IntQ {
     fn mod_reduction(&self) -> LevelEll {
         // assuming inputs are bounded by q since are computed from division
-        let x: Uint<12> = (&(self.data)).into();
+        let x: U768 = (&(self.data)).into();
         let cheap_mod = x.rem(LevelEll::MODULUS.as_nz_ref());
 
         if self.is_negative {

@@ -309,8 +309,7 @@ fn key_switch(
                 }
             })
             .collect_vec(),
-    )
-    .neg();
+    );
 
     let c0_prime = (pk.b_prime.clone() * &converted_c2) + (converted_c0 * &LevelKsw::FACTOR);
 
@@ -332,7 +331,7 @@ fn key_switch(
 }
 
 // NOTE: We return a ctxt at the Ell level (highest one) because we only care
-// about supporting one level of multiplication for as this is for exposition purposes only.
+// about supporting one level of multiplication as this is for exposition purposes only.
 pub fn multiply_ctxt(
     ct_a: LevelledCiphertext<LevelEll, N65536>,
     ct_b: LevelledCiphertext<LevelEll, N65536>,
@@ -343,7 +342,7 @@ pub fn multiply_ctxt(
 
     let d_0 = c_a_0 * c_b_0;
     let d_1 = c_a_0 * c_b_1 + c_a_1 * c_b_0;
-    let d_2 = c_a_1 * c_b_1;
+    let d_2 = (c_a_1 * c_b_1).neg();
 
     key_switch(d_0, d_1, d_2, pk)
 }

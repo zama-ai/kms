@@ -123,6 +123,16 @@ macro_rules! impl_ring_level {
                 }
             }
 
+            /// In-place negation if we have a mutable reference.
+            impl Neg for &mut $name {
+                type Output = ();
+
+                fn neg(self) -> Self::Output {
+                    self.value.0 = self.value.0.neg_mod(&$name::MODULUS);
+
+                }
+            }
+
             impl Zero for $name {
                 const ZERO: Self = Self {
                     value: GenericModulus(<$uint_type>::from_u8(0)),
