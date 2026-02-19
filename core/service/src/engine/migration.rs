@@ -21,7 +21,9 @@ where
     S: StorageExt + Sync + Send,
 {
     migrate_fhe_keys_v0_12_to_v0_13(storage, kms_type).await?;
-    migrate_legacy_prss_before_0_13_1(storage, threshold, num_parties).await?;
+    if let KMSType::Threshold = kms_type {
+        migrate_legacy_prss_before_0_13_1(storage, threshold, num_parties).await?;
+    }
     Ok(())
 }
 
