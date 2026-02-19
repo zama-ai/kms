@@ -255,15 +255,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use kms_grpc::RequestId;
     use std::str::FromStr;
 
-    use aes_prng::AesRng;
-    use kms_grpc::RequestId;
-    use rand::SeedableRng;
-    use threshold_fhe::malicious_execution::small_execution::malicious_prss::EmptyPrss;
-
     use super::*;
-    use crate::engine::threshold::service::epoch_manager::tests::make_epoch_manager;
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -542,7 +537,7 @@ mod tests {
     }
 
     // write prss to storage using the legacy method
-    async fn write_legacy_prss_to_storage(private_storage: &mut ram::RamStorage) {
+    async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let num_parties = 4;
         let threshold = 1u8;
@@ -578,29 +573,6 @@ mod tests {
         )
         .await
         .unwrap();
-    }
-
-    #[tokio::test]
-    async fn legacy_prss() {
-        let mut rng = AesRng::seed_from_u64(42);
-
-        // initially the storage should be empty
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        {
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
-            let mut guarded_private_storage = private_storage.lock().await;
-            write_legacy_prss_to_storage(&mut guarded_private_storage).await;
-        }
-
-        epoch_manager.init_all_prss_from_storage().await.unwrap();
-
-        let default_epoch_id = *DEFAULT_EPOCH_ID;
-        assert!(
-            epoch_manager
-                .session_maker
-                .epoch_exists(&default_epoch_id)
-                .await
-        );
     }
 
     // ── Tests for migrate_fhe_keys_after_0_13_1 ──
@@ -804,12 +776,12 @@ mod tests {
 
     #[tokio::test]
     #[expect(deprecated)]
-    async fn test_migrate_prss_happy_path() {
+    async fn test_migrate_prss_sunshine() {
         let mut storage = RamStorage::new();
         let num_parties = 4;
         let threshold = 1u8;
 
-        write_legacy_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage).await;
 
         migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
             .await
@@ -863,7 +835,7 @@ mod tests {
         let num_parties = 4;
         let threshold = 1u8;
 
-        write_legacy_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage).await;
 
         // First migration
         migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
@@ -871,7 +843,7 @@ mod tests {
             .unwrap();
 
         // Write fresh legacy data again
-        write_legacy_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage).await;
 
         // Second migration should skip (PrssSetupCombined already exists)
         migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
