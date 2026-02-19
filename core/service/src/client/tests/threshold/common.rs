@@ -293,11 +293,16 @@ pub async fn threshold_insecure_key_gen_isolated(
 /// * `Ok(())` if preprocessing and key generation succeeded on all parties
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
+#[allow(clippy::too_many_arguments)]
 pub async fn threshold_key_gen_secure_isolated(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    keyset_added_info: Option<kms_grpc::kms::v1::KeySetAddedInfo>,
+    context_id: Option<kms_grpc::kms::v1::RequestId>,
+    epoch_id: Option<kms_grpc::kms::v1::RequestId>,
 ) -> anyhow::Result<()> {
     use crate::dummy_domain;
     use crate::testing::helpers::domain_to_msg;
@@ -314,9 +319,9 @@ pub async fn threshold_key_gen_secure_isolated(
             request_id: Some((*preproc_id).into()),
             params: params as i32,
             domain: Some(domain_msg.clone()),
-            keyset_config: None,
-            context_id: None,
-            epoch_id: None,
+            keyset_config,
+            context_id: context_id.clone(),
+            epoch_id: epoch_id.clone(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -353,10 +358,10 @@ pub async fn threshold_key_gen_secure_isolated(
             params: Some(params as i32),
             preproc_id: Some((*preproc_id).into()),
             domain: Some(domain_msg.clone()),
-            keyset_config: None,
-            keyset_added_info: None,
-            context_id: None,
-            epoch_id: None,
+            keyset_config,
+            keyset_added_info: keyset_added_info.clone(),
+            context_id: context_id.clone(),
+            epoch_id: epoch_id.clone(),
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });

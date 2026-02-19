@@ -328,10 +328,6 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
 
-    // NOTE: This can not be used or tested yet as we are waiting for tfhe-rs
-    // next release to be able to decompress the keys generated here.
-    // see https://github.com/zama-ai/kms/pull/40
-
     /// Runs the distributed key generation protocol for compressed keys.
     ///
     /// Inputs:
@@ -378,6 +374,23 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         tag: tfhe::Tag,
         existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
     ) -> anyhow::Result<CompressedXofKeySet>
+    where
+        Z: BaseRing,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
+
+    #[allow(private_bounds)]
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<FhePubKeySet>
     where
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -567,6 +580,59 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         .await?;
         Ok(pub_key_set.to_compressed_pubkeyset(params, tag))
     }
+
+    #[instrument(name="TFHE.Threshold-KeyGenFromExistingPrivateKeyset", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    #[allow(private_bounds)]
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<FhePubKeySet>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+    {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+        if Z::BIT_LENGTH == 64 {
+            if let DKGParams::WithSnS(_) = params {
+                return Err(anyhow_error_and_log(
+                    "Can not generate Switch and Squash key in Z64".to_string(),
+                ));
+            }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
+        }
+
+        let pub_key_set = distributed_keygen_from_existing_private_keyset(
+            session,
+            preprocessing,
+            params,
+            existing_private_keyset,
+        )
+        .await?;
+        Ok(pub_key_set.to_pubkeyset(params, tag))
+    }
 }
 
 /// Generates all private key shares needed for the DKG protocol.
@@ -752,7 +818,6 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
-    let my_role = session.my_role();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -773,6 +838,64 @@ where
     // Open LWE public key
     let lwe_public_key = lwe_pk_share.open_to_tfhers_type(session).await?;
 
+    let pub_key_set = generate_all_uncompressed_public_keys(
+        session,
+        preprocessing,
+        &mut mpc_encryption_rng,
+        params,
+        &private_key_set,
+        lwe_public_key,
+        seed,
+        existing_compression_sk,
+    )
+    .await?;
+
+    Ok((pub_key_set, private_key_set))
+}
+
+/// Generates all uncompressed public keys from an existing private key set.
+///
+/// This function extracts the shared uncompressed public key generation code used by both
+/// `distributed_keygen_from_optional_compression_sk` and
+/// `distributed_keygen_from_existing_private_keyset`.
+///
+/// Inputs:
+/// - `session`: the session that holds necessary information for networking
+/// - `preprocessing`: [`DKGPreprocessing`] handle
+/// - `mpc_encryption_rng`: the MPC encryption RNG
+/// - `params`: [`DKGParams`] parameters
+/// - `private_key_set`: the private key set to generate public keys from
+/// - `lwe_public_key`: the opened LWE public key
+/// - `seed`: the random seed
+/// - `existing_compression_sk`: optional existing compression secret key to use
+///
+/// Returns a [`RawPubKeySet`] containing all generated uncompressed public keys.
+#[allow(clippy::too_many_arguments)]
+async fn generate_all_uncompressed_public_keys<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >,
+    params: DKGParams,
+    private_key_set: &GenericPrivateKeySet<Z, EXTENSION_DEGREE>,
+    lwe_public_key: tfhe::core_crypto::entities::LweCompactPublicKeyOwned<u64>,
+    seed: u128,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let my_role = session.my_role();
+
     let glwe_sk_share_as_lwe = private_key_set
         .glwe_secret_key_share
         .clone()
@@ -791,7 +914,7 @@ where
                     &private_key_set.glwe_secret_key_share,
                     compression_sk,
                     comp_params,
-                    &mut mpc_encryption_rng,
+                    mpc_encryption_rng,
                     session,
                     preprocessing,
                 )
@@ -808,7 +931,7 @@ where
         &glwe_sk_share_as_lwe,
         &private_key_set.lwe_secret_key_share,
         &ksk_params,
-        &mut mpc_encryption_rng,
+        mpc_encryption_rng,
         session,
         preprocessing,
     )
@@ -822,7 +945,7 @@ where
         &private_key_set.glwe_secret_key_share,
         &private_key_set.lwe_secret_key_share,
         params_basics_handle.get_bk_params(),
-        &mut mpc_encryption_rng,
+        mpc_encryption_rng,
         session,
         preprocessing,
     )
@@ -836,7 +959,7 @@ where
                 generate_mod_switch_noise_reduction_key(
                     &private_key_set.lwe_secret_key_share,
                     &msnrkparams,
-                    &mut mpc_encryption_rng,
+                    mpc_encryption_rng,
                     session,
                     preprocessing,
                 )
@@ -858,7 +981,7 @@ where
                 private_key_set.glwe_secret_key_share_sns.as_ref().unwrap(),
                 &private_key_set.lwe_secret_key_share,
                 sns_params.get_bk_sns_params(),
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -871,7 +994,7 @@ where
                         generate_mod_switch_noise_reduction_key(
                             &private_key_set.lwe_secret_key_share,
                             &msnrkparams,
-                            &mut mpc_encryption_rng,
+                            mpc_encryption_rng,
                             session,
                             preprocessing,
                         )
@@ -900,7 +1023,7 @@ where
                 &private_key_set.lwe_encryption_secret_key_share,
                 &glwe_sk_share_as_lwe,
                 &pksk_params,
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -913,7 +1036,7 @@ where
                 &private_key_set.lwe_encryption_secret_key_share,
                 &private_key_set.lwe_secret_key_share,
                 &pksk_params,
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -941,7 +1064,7 @@ where
                         &private_key_set.lwe_encryption_secret_key_share,
                         &glwe_sk_share_as_lwe,
                         &cpk_re_randomization_ksk_params,
-                        &mut mpc_encryption_rng,
+                        mpc_encryption_rng,
                         session,
                         preprocessing,
                     )
@@ -969,7 +1092,7 @@ where
                     .as_ref()
                     .unwrap(),
                 comp_params,
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -978,7 +1101,7 @@ where
         _ => None,
     };
 
-    let pub_key_set = RawPubKeySet {
+    Ok(RawPubKeySet {
         lwe_public_key,
         ksk,
         pksk,
@@ -990,9 +1113,7 @@ where
         seed,
         cpk_re_randomization_ksk,
         sns_compression_key,
-    };
-
-    Ok((pub_key_set, private_key_set))
+    })
 }
 
 /// Generates all compressed public keys from an existing private key set.
@@ -1418,6 +1539,95 @@ where
                 .await?;
 
             generate_all_compressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                lwe_public_key,
+                seed,
+                None,
+            )
+            .await
+        }
+    }
+}
+
+/// Generates uncompressed public keys from an existing private keyset (or fresh keys if None).
+///
+/// When `existing_private_keyset` is `Some`, it converts the `PrivateKeySet` back to a
+/// `GenericPrivateKeySet` and generates uncompressed public keys from it.
+/// When `None`, it generates fresh private keys and returns only the uncompressed public keys.
+async fn distributed_keygen_from_existing_private_keyset<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+    PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    //Init the XOF with the seed computed above
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
+
+    match existing_private_keyset {
+        Some(keyset) => {
+            let private_key_set = keyset.to_generic(params)?;
+
+            // Generate LWE public key from existing private key
+            let lwe_pk_share = generate_lwe_public_key_shared(
+                &params,
+                &mut mpc_encryption_rng,
+                &private_key_set.lwe_encryption_secret_key_share,
+                session,
+                preprocessing,
+            )
+            .await?;
+
+            // Open LWE public key (uncompressed variant)
+            let lwe_public_key = lwe_pk_share.open_to_tfhers_type(session).await?;
+
+            let existing_compression_sk =
+                private_key_set.glwe_secret_key_share_compression.as_ref();
+
+            generate_all_uncompressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                lwe_public_key,
+                seed,
+                existing_compression_sk,
+            )
+            .await
+        }
+        None => {
+            let (private_key_set, lwe_pk_share) = generate_private_key_set(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                None,
+            )
+            .await?;
+
+            // Open LWE public key (uncompressed variant)
+            let lwe_public_key = lwe_pk_share.open_to_tfhers_type(session).await?;
+
+            generate_all_uncompressed_public_keys(
                 session,
                 preprocessing,
                 &mut mpc_encryption_rng,

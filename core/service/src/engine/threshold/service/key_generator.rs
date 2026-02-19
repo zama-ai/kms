@@ -22,14 +22,17 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_fhe::{
     algebra::{
         base_ring::Z128,
-        galois_rings::{common::ResiduePoly, degree_4::ResiduePolyF4Z128},
+        galois_rings::{
+            common::ResiduePoly,
+            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        },
         structure_traits::Ring,
     },
     execution::{
         endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
         keyset_config as ddec_keyset_config,
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSession,
+        online::{bit_lift::BitLift, preprocessing::DKGPreprocessing},
+        runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
         tfhe_internals::{
             parameters::DKGParams,
             private_keysets::{
@@ -38,7 +41,6 @@ use threshold_fhe::{
             public_keysets::FhePubKeySet,
         },
     },
-    networking::NetworkMode,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -81,6 +83,14 @@ use crate::{
 // === Current Module Imports ===
 use super::BucketMetaStore;
 
+const DKG_Z64_SESSION_COUNTER: u64 = 1;
+const DKG_Z128_SESSION_COUNTER: u64 = 2;
+
+struct DkgSessions {
+    session_z64: SmallSession<ResiduePolyF4Z64>,
+    session_z128: SmallSession<ResiduePolyF4Z128>,
+}
+
 /// Enum to handle both compressed and uncompressed DKG results.
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
 // It's ok to have a big enum here since the way this type is used is only temporary.
@@ -116,6 +126,7 @@ pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+    BL: BitLift,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -129,6 +140,7 @@ pub struct RealKeyGenerator<
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
+    pub(crate) _bl: PhantomData<BL>,
     // This is a lock to make sure calls to keygen do not happen concurrently.
     // It's needed because we lock the meta store at different times before starting the keygen
     // and if two concurrent keygen calls on the same key ID or preproc ID are made, they can interfere with each other.
@@ -142,8 +154,9 @@ pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+    BL: BitLift,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
+    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG, BL>,
 }
 
 #[cfg(feature = "insecure")]
@@ -151,9 +164,10 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    > RealInsecureKeyGenerator<PubS, PrivS, KG>
+        BL: BitLift,
+    > RealInsecureKeyGenerator<PubS, PrivS, KG, BL>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
+    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG, BL>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -165,6 +179,7 @@ impl<
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
+                _bl: std::marker::PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             },
         }
@@ -176,7 +191,8 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
+        BL: BitLift,
+    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG, BL>
 {
     async fn insecure_key_gen(
         &self,
@@ -231,7 +247,8 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > RealKeyGenerator<PubS, PrivS, KG>
+        BL: BitLift,
+    > RealKeyGenerator<PubS, PrivS, KG, BL>
 {
     #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -288,12 +305,23 @@ impl<
             .time_operation(op_tag)
             .tag(TAG_PARTY_ID, my_role.to_string());
 
-        // Create the base session necessary to run the DKG
-        let base_session = {
-            let session_id = req_id.derive_session_id()?;
-            self.session_maker
-                .make_base_session(session_id, context_id, NetworkMode::Async)
-                .await?
+        // Create the sessions necessary to run the DKG
+        let dkg_sessions = {
+            let session_id_z64 = req_id.derive_session_id_with_counter(DKG_Z64_SESSION_COUNTER)?;
+            let session_id_z128 =
+                req_id.derive_session_id_with_counter(DKG_Z128_SESSION_COUNTER)?;
+            let session_z64 = self
+                .session_maker
+                .make_small_async_session_z64(session_id_z64, context_id, epoch_id)
+                .await?;
+            let session_z128 = self
+                .session_maker
+                .make_small_async_session_z128(session_id_z128, context_id, epoch_id)
+                .await?;
+            DkgSessions {
+                session_z64,
+                session_z128,
+            }
         };
 
         // Clone all the Arcs to give them to the tokio thread
@@ -315,6 +343,9 @@ impl<
         let req_id_clone = req_id;
         let epoch_id_clone = epoch_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
+        let opt_existing_keyset_info = internal_keyset_config
+            .get_existing_keyset_id_and_epoch_id()
+            .ok();
         let preproc_bucket = self.preproc_buckets.clone();
 
         let keygen_background = async move {
@@ -346,7 +377,7 @@ impl<
                     Self::key_gen_background(
                         &req_id_clone,
                         &epoch_id_clone,
-                        base_session,
+                        dkg_sessions,
                         meta_store,
                         crypto_storage,
                         preproc_handle_w_mode_copy,
@@ -354,6 +385,7 @@ impl<
                         dkg_params,
                         inner_config.to_owned(),
                         opt_compression_key_id,
+                        opt_existing_keyset_info,
                         eip712_domain_copy,
                         permit,
                         op_tag,
@@ -364,7 +396,7 @@ impl<
                     Self::decompression_key_gen_background(
                         &req_id_clone,
                         &epoch_id_clone,
-                        base_session,
+                        dkg_sessions.session_z128.base_session,
                         meta_store,
                         crypto_storage,
                         preproc_handle_w_mode_copy,
@@ -695,8 +727,8 @@ impl<
         epoch_id: &EpochId,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     ) -> anyhow::Result<(
-        GlweSecretKeyShare<Z128, 4>,
-        CompressionPrivateKeyShares<Z128, 4>,
+        GlweSecretKeyShare<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        CompressionPrivateKeyShares<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     )> {
         let compression_req_id = parse_optional_grpc_request_id(
             &keyset_added_info.from_keyset_id_decompression_only,
@@ -746,8 +778,11 @@ impl<
         req_id: &RequestId,
         base_session: &BaseSession,
         params: DKGParams,
-        glwe_shares: GlweSecretKeyShare<Z128, 4>,
-        compression_shares: CompressionPrivateKeyShares<Z128, 4>,
+        glwe_shares: GlweSecretKeyShare<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        compression_shares: CompressionPrivateKeyShares<
+            Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >,
     ) -> anyhow::Result<DecompressionKey> {
         use itertools::Itertools;
         use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
@@ -982,9 +1017,14 @@ impl<
         params: DKGParams,
         compression_key_id: RequestId,
         preprocessing: &mut P,
-    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<4>)>
+    ) -> anyhow::Result<(
+        FhePubKeySet,
+        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    )>
     where
-        P: DKGPreprocessing<ResiduePoly<Z128, 4>> + Send + ?Sized,
+        P: DKGPreprocessing<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>
+            + Send
+            + ?Sized,
     {
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
@@ -1013,10 +1053,98 @@ impl<
     }
 
     #[allow(clippy::too_many_arguments)]
+    async fn compressed_key_gen_from_existing_private_keyset<P>(
+        req_id: &RequestId,
+        dkg_sessions: &mut DkgSessions,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        params: DKGParams,
+        existing_keyset_id: RequestId,
+        existing_epoch_id: EpochId,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<(
+        CompressedXofKeySet,
+        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    )>
+    where
+        P: DKGPreprocessing<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>
+            + Send
+            + ?Sized,
+    {
+        let existing_private_keys = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &existing_epoch_id)
+                .await?;
+            threshold_keys.private_keys.as_ref().clone()
+        };
+
+        // First we need to do bit-lift
+        let existing_private_keys = existing_private_keys
+            .lift_to_z128_integrated(
+                &mut dkg_sessions.session_z64,
+                &mut dkg_sessions.session_z128,
+            )
+            .await?;
+
+        let compressed_keyset = KG::compressed_keygen_from_existing_private_keyset(
+            &mut dkg_sessions.session_z128,
+            preprocessing,
+            params,
+            req_id.into(),
+            Some(&existing_private_keys),
+        )
+        .await?;
+        Ok((compressed_keyset, existing_private_keys))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn key_gen_from_existing_private_keyset<P>(
+        req_id: &RequestId,
+        dkg_sessions: &mut DkgSessions,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        params: DKGParams,
+        existing_keyset_id: RequestId,
+        existing_epoch_id: EpochId,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<(
+        FhePubKeySet,
+        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    )>
+    where
+        P: DKGPreprocessing<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>
+            + Send
+            + ?Sized,
+    {
+        let existing_private_keys = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &existing_epoch_id)
+                .await?;
+            threshold_keys.private_keys.as_ref().clone()
+        };
+
+        // First we need to do bit-lift
+        let existing_private_keys = existing_private_keys
+            .lift_to_z128_integrated(
+                &mut dkg_sessions.session_z64,
+                &mut dkg_sessions.session_z128,
+            )
+            .await?;
+
+        let pub_keyset = KG::keygen_from_existing_private_keyset(
+            &mut dkg_sessions.session_z128,
+            preprocessing,
+            params,
+            req_id.into(),
+            Some(&existing_private_keys),
+        )
+        .await?;
+        Ok((pub_keyset, existing_private_keys))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
         epoch_id: &EpochId,
-        mut base_session: BaseSession,
+        mut dkg_sessions: DkgSessions,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
@@ -1024,6 +1152,7 @@ impl<
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         compression_key_id: Option<RequestId>,
+        existing_keyset_info: Option<(RequestId, EpochId)>,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
@@ -1054,7 +1183,7 @@ impl<
                                 ddec_keyset_config::ComputeKeyType::Cpu,
                                 ddec_keyset_config::CompressedKeyConfig::None,
                             ) => insecure_initialize_key_material(
-                                &mut base_session,
+                                &mut dkg_sessions.session_z128,
                                 params,
                                 req_id.into(),
                             )
@@ -1066,7 +1195,7 @@ impl<
                                 ddec_keyset_config::ComputeKeyType::Cpu,
                                 ddec_keyset_config::CompressedKeyConfig::All,
                             ) => initialize_compressed_key_material(
-                                &mut base_session,
+                                &mut dkg_sessions.session_z128,
                                 params,
                                 req_id.into(),
                             )
@@ -1095,7 +1224,7 @@ impl<
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
+                        KG::keygen(&mut dkg_sessions.session_z128, preproc_handle.as_mut(), params, req_id.into(), None)
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
@@ -1107,7 +1236,7 @@ impl<
                         Self::key_gen_from_existing_compression_sk(
                             req_id,
                             epoch_id,
-                            &mut base_session,
+                            &mut dkg_sessions.session_z128.base_session,
                             crypto_storage.clone(),
                             params,
                             compression_key_id.expect("compression key ID must be set for secure key generation and should have been validated before starting key generation"),
@@ -1121,7 +1250,7 @@ impl<
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::All,
                     ) => {
-                        KG::compressed_keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
+                        KG::compressed_keygen(&mut dkg_sessions.session_z128, preproc_handle.as_mut(), params, req_id.into(), None)
                             .await
                             .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
                     }
@@ -1135,12 +1264,38 @@ impl<
                     (
                         ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::None
                     ) => {
-                        todo!()
+                        let (existing_keyset_id, existing_epoch_id) = existing_keyset_info
+                            .expect("existing keyset info must be set and should have been validated");
+                        Self::key_gen_from_existing_private_keyset(
+                            req_id,
+                            &mut dkg_sessions,
+                            crypto_storage.clone(),
+                            params,
+                            existing_keyset_id,
+                            existing_epoch_id,
+                            preproc_handle.as_mut(),
+                        )
+                        .await
+                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
                     }
                     (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::All
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                        ddec_keyset_config::ComputeKeyType::Cpu,
+                        ddec_keyset_config::CompressedKeyConfig::All,
                     ) => {
-                        todo!()
+                        let (existing_keyset_id, existing_epoch_id) = existing_keyset_info
+                            .expect("existing keyset info must be set and should have been validated");
+                        Self::compressed_key_gen_from_existing_private_keyset(
+                            req_id,
+                            &mut dkg_sessions,
+                            crypto_storage.clone(),
+                            params,
+                            existing_keyset_id,
+                            existing_epoch_id,
+                            preproc_handle.as_mut(),
+                        )
+                        .await
+                        .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
                     }
                 })
             }
@@ -1293,7 +1448,8 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
+        BL: BitLift,
+    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG, BL>
 {
     async fn key_gen(
         &self,
@@ -1319,11 +1475,13 @@ mod tests {
     use rand::rngs::OsRng;
     use threshold_fhe::{
         execution::{
-            online::preprocessing::dummy::DummyPreprocessing, small_execution::prss::PRSSSetup,
+            online::{bit_lift::SecureBitLift, preprocessing::dummy::DummyPreprocessing},
+            small_execution::prss::PRSSSetup,
         },
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
+        networking::NetworkMode,
     };
 
     use crate::{
@@ -1339,7 +1497,8 @@ mod tests {
             PubS: Storage + Sync + Send + 'static,
             PrivS: StorageExt + Sync + Send + 'static,
             KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-        > RealKeyGenerator<PubS, PrivS, KG>
+            BL: BitLift,
+        > RealKeyGenerator<PubS, PrivS, KG, BL>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1367,6 +1526,7 @@ mod tests {
                 ongoing,
                 rate_limiter,
                 _kg: PhantomData,
+                _bl: PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             }
         }
@@ -1380,8 +1540,10 @@ mod tests {
         }
     }
 
-    impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
+    impl<
+            KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+            BL: BitLift,
+        > RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG, BL>
     {
         async fn init_ram_keygen(
             base_kms: BaseKmsStruct,
@@ -1397,7 +1559,7 @@ mod tests {
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG, SecureBitLift>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
@@ -1411,7 +1573,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rng().await,
         );
-        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
+        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG, SecureBitLift>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),
         )

@@ -34,6 +34,7 @@ message StandardKeySetConfig {
 
   // Configuration for generating compressed vs uncompressed keys.
   // Compressed keys use XOF-seeded compression and are smaller.
+  // (We may rename this to KeyGenPublicKeyConfig.)
   CompressedKeyConfig compressed_key_config = 3;
 }
 
@@ -44,7 +45,7 @@ enum ComputeKeyType {
 }
 
 message KeySetAddedInfo {
-  // Must be set if KeyGenSecretKeyConfig::UseExisting is used
+  // Must be set if KeyGenSecretKeyConfig::UseExistingCompressionSecretKey is used
   RequestId compression_keyset_id = 1;
 
   // Must be set if KeySetType::DecompressionOnly is used
@@ -52,6 +53,10 @@ message KeySetAddedInfo {
 
   // Must be set if KeySetType::DecompressionOnly is used
   RequestId to_keyset_id_decompression_only = 3;
+
+  // Must be set if KeyGenSecretKeyConfig::UseExisting is used
+  RequestId existing_keyset_id = 4;
+  RequestId existing_epoch_id = 5;
 }
 
 // The keyset configuration message.
