@@ -44,6 +44,7 @@ jobs:
       changes-backward-compatibility: ${{ steps.filter.outputs.backward-compatibility }}
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
+      changes-core-client-k8s-tests: ${{ steps.filter.outputs.core-client-k8s-tests }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
@@ -64,10 +65,14 @@ jobs:
             ci:
               - '.github/workflows/**'
             core-client:
-              - 'core-client/**'
+              - 'core-client/src/**'
+              - 'core-client/config/**'
+              - 'core-client/tests-utils/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            core-client-k8s-tests:
+              - 'core-client/tests/kubernetes_test_*'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -280,7 +285,7 @@ jobs:
                     # Threshold tests: includes PRSS tests (sequential execution via #[serial])
           # Centralized tests: basic keygen, CRS, backup/restore workflows
           # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
-          MATRIX="${MATRIX}{\"args-tests\":\"--features testing -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\"},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"--features testing,k8s_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\"},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
@@ -350,22 +355,22 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    # Only run on scheduled (nightly) builds
-    if: github.event_name == 'schedule'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and full_gen_tests_*)
-      args-tests: '--features testing -- --skip k8s_ --skip isolated_test_example'
+      args-tests: '--features testing,k8s_tests -- --skip k8s_ --skip isolated_test_example'
+      nextest-profile: 'ci-nightly'
       app-cache-dir: 'kms-core-client'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}

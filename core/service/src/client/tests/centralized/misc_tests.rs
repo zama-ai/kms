@@ -1,3 +1,9 @@
+// DEPRECATED: Isolated equivalents in `misc_tests_isolated.rs`
+// - test_central_health_endpoint_availability → test_central_health_endpoint_availability_isolated
+// - test_central_close_after_drop → test_central_close_after_drop_isolated
+// - test_largecipher → test_largecipher_isolated
+// TODO: Remove after migration complete.
+
 use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::consts::TEST_CENTRAL_KEY_ID;
