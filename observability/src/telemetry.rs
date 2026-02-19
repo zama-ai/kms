@@ -2,6 +2,8 @@ use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
 use crate::metrics::METRICS;
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
+use axum::extract::{ConnectInfo, Request};
+use axum::middleware::Next;
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -9,6 +11,7 @@ use axum::{
     routing::get,
     Router,
 };
+use axum::{middleware, Json};
 use opentelemetry::propagation::TextMapCompositePropagator;
 use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
 use opentelemetry_http::HeaderExtractor;
@@ -54,7 +57,7 @@ pub trait ConfigTracing {
 
 #[derive(Clone)]
 struct MetricsState {
-    config: String, // Store the config as a string for the /config endpoint
+    config: Arc<String>, // Store the config as a string for the /config endpoint
     registry: Arc<PrometheusRegistry>,
     start_time: std::time::SystemTime,
 }
@@ -62,10 +65,25 @@ struct MetricsState {
 impl MetricsState {
     fn new(registry: PrometheusRegistry, config: String) -> Self {
         Self {
-            config,
+            config: Arc::new(config),
             registry: Arc::new(registry),
             start_time: std::time::SystemTime::now(),
         }
+    }
+}
+
+/// Middleware to restrict access to certain routes to localhost only.
+async fn localhost_only(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let ip = addr.ip();
+
+    if ip.is_loopback() {
+        Ok(next.run(req).await)
+    } else {
+        Err(StatusCode::FORBIDDEN)
     }
 }
 
@@ -108,7 +126,7 @@ async fn liveness_handler() -> impl IntoResponse {
 }
 
 async fn config_handler(State(state): State<MetricsState>) -> impl IntoResponse {
-    (StatusCode::OK, state.config)
+    Json(state.config).into_response()
 }
 
 pub fn init_metrics<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
@@ -180,24 +198,32 @@ pub fn init_metrics<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
     let rt = tokio::runtime::Handle::current();
 
     rt.spawn(async move {
-        let app = Router::new()
+        // Setup public routes
+        let public_routes = Router::new()
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/ready", get(readiness_handler))
             .route("/version", get(version_handler))
-            .route("/live", get(liveness_handler))
-            .route("/config", get(config_handler))
-            .with_state(state);
+            .route("/live", get(liveness_handler));
 
+        // Setup localhost-only routes for internal metrics and debugging
+        let local_routes = Router::new()
+            .route("/config", get(config_handler))
+            .layer(middleware::from_fn(localhost_only));
+
+        let app = public_routes.merge(local_routes).with_state(state);
         let listener = tokio::net::TcpListener::bind(metrics_addr)
             .await
             .expect("Failed to bind metrics server");
 
         info!("Metrics server listening on {}", metrics_addr);
 
-        axum::serve(listener, app.into_make_service())
-            .await
-            .expect("Metrics server error");
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("Metrics server error");
     });
 
     Ok(provider)
