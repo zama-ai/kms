@@ -129,7 +129,7 @@ async fn config_handler(State(state): State<MetricsState>) -> impl IntoResponse 
     Json(state.config).into_response()
 }
 
-pub fn init_metrics<T: Serialize + std::fmt::Debug + ConfigTracing + Validate>(
+pub fn init_metrics<T: Serialize + ConfigTracing>(
     config: &T,
 ) -> Result<SdkMeterProvider, anyhow::Error> {
     if matches!(*ENVIRONMENT, ExecutionEnvironment::Integration) {
