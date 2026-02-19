@@ -1496,7 +1496,7 @@ mod tests {
         .await
         .unwrap();
 
-        // The new data is now in the vault
+        // The new data is still in storage and has replaced the old backup
         let restored: TestType = backup_vault
             .read_data_at_epoch(&req_id, &epoch_id, &data_type.to_string())
             .await
