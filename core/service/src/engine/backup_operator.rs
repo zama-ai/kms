@@ -920,7 +920,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    pub async fn update_backup_vault(&self) -> anyhow::Result<()> {
+    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
@@ -939,7 +939,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
@@ -948,7 +948,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
@@ -957,7 +957,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                         )
                         .await?;
                         }
@@ -974,7 +974,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
@@ -983,7 +983,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
@@ -992,7 +992,7 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
