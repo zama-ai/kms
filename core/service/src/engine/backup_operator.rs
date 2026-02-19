@@ -793,6 +793,9 @@ where
     Ok(())
 }
 
+/// Update the backup vault with the data from the private storage for the specified data type.
+///
+/// Note: this method updates material that is epoched, for non-epoched material use `update_specific_backup_vault` instead.
 pub(crate) async fn update_specific_backup_vault_for_all_epochs<
     S1: StorageExt + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
@@ -812,6 +815,9 @@ pub(crate) async fn update_specific_backup_vault_for_all_epochs<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
+    if data_type_enum != PrivDataType::FheKeyInfo && data_type_enum != PrivDataType::FhePrivateKey {
+        anyhow::bail!("This method is only meant to be used for epoched material, but the provided data type is not epoched.");
+    }
     let epoch_ids = priv_storage
         .all_epoch_ids_for_data(&data_type_enum.to_string())
         .await?;
@@ -858,6 +864,9 @@ where
     Ok(())
 }
 
+/// Update the backup vault with the data from the private storage for the specified data type.
+/// Note: this method only updates material that is _not_ epoched.
+/// For epoched material, use `update_specific_backup_vault_for_all_epochs` instead.
 pub(crate) async fn update_specific_backup_vault<
     S1: Storage + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
@@ -877,6 +886,9 @@ pub(crate) async fn update_specific_backup_vault<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
+    if data_type_enum == PrivDataType::FheKeyInfo || data_type_enum == PrivDataType::FhePrivateKey {
+        anyhow::bail!("This method is only meant to be used for non-epoched material, but the provided data type is epoched.");
+    }
     let req_ids = priv_storage
         .all_data_ids(&data_type_enum.to_string())
         .await?;
