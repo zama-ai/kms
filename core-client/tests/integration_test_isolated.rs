@@ -2909,7 +2909,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 
-    // Setup isolated threshold KMS servers (4 parties for default context) with PRSS enabled
+    // Setup isolated threshold KMS servers (4 parties for Default context) with PRSS enabled
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
