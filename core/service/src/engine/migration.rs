@@ -169,7 +169,6 @@ async fn migrate_legacy_prss_before_0_13_1<S>(
 where
     S: StorageExt + Sync + Send,
 {
-    // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
     let epoch_id = *DEFAULT_EPOCH_ID;
     // Check if this key already exists in the new epoch-aware format
     if storage
