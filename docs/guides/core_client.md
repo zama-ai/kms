@@ -51,7 +51,7 @@ Values inside the TOML configs are:
   - `s3_endpoint` - The host name or IP address and port of the S3 endpoint that is used for public data (public keys, CRS, etc.). Example: `s3_endpoint = "http://localhost:9000/kms"`.
   - `object_folder` - The folder on the S3 endpoint where public key material for this party is stored. Example: `object_folder = "PUB-p1"`.
 
-When running tests the smaller `Test` parameters are _highly_ recommended to save time.
+When running tests, the smaller `Test` parameters are _highly_ recommended to save time.
 
 ## Usage
 
@@ -105,7 +105,6 @@ docker run --network host \
 
 See the [Health Monitoring](#health-monitoring) section below for more details on using the health check tool.
 
-
 Use the `-f` flag to specify the path to the [configuration file](#configuration-file).
 
 Other command line options are:
@@ -115,7 +114,7 @@ Other command line options are:
  - `-d`/`--download-all`: if set, the tool downloads the generated keys/CRSes from all KMS cores, rather than only from a single core.
  - `-h`/`--help`: show the CLI help
 
-## Backup and restore
+## Backup and recovery
 
 Before running the KMS servers it is important to ensure a proper setup of the backup system.
 Currently multiple different modes of backup are available for the KMS. However, only a single mode can be used at any given time.
@@ -136,8 +135,10 @@ WARNING: If using the import/export based approach _without_ AWS KMS, then the b
 Both modes are set up under `[backup_vault]` in the configuration TOML used by a KMS server.
 Below we sketch how to set up each of these modes:
 
-### Import/export based
+### Import/export-based backup
+
 #### Setup
+
 To set up this approach (without AWS KMS) the minimum configuration may be as follows (where the local file system is used as storage):
 ```{toml}
 [backup_vault.storage.file]
@@ -164,6 +165,7 @@ root_key_spec = "asymm"
 ```
 
 #### Recovery
+
 To recover a backup the following command can be used:
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> backup-restore
@@ -173,8 +175,10 @@ However, this will _NOT_ overwrite anything on the private storage. Hence the re
 
 After `backup-restore` has been executed the KMS server must be rebooted for the restored data to be fetched into memory.
 
-### Custodian-based
+### Custodian-based backup
+
 #### Setup
+
 To set up a custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
 ```{toml}
 [backup_vault.storage.file]
@@ -201,6 +205,7 @@ path = "./backup_vault"
 ```
 
 #### Recovery
+
 WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
 
 Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
@@ -257,6 +262,7 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```
 
 ### Concrete e2e example for custodian backup
+
 For completeness we here list all the steps needed to carry out for custodian-based manual recovery. Hence this can be considered a manual feasibility test. We present these steps under the assumption that everything is running on a local machine using docker, after having checked out the source code of the project.
 
 To further make this a manual test, make sure a [key is generated](#Key-generation) before starting step 1, and then manually delete the private shared from the KMS nodes after step 5 (i.e. remove the files at `/app/kms/core/service/keys` in the Docker images). Reboot the servers after completing all the steps and run some [decryption](#decryption) to validate the key has been restored and works properly.
@@ -334,6 +340,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 These commands generate a set of private and public FHE keys. It will return a `key-id` that can be used to identify the generated keys. The keys will be stored in the configured S3 bucket (or via minio locally).
 
 #### Insecure Key-Generation
+
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
@@ -393,6 +400,7 @@ Optional arguments:
 
 
 #### Secure Key-Generation
+
 Analogously to above, _secure_ key-generation can be done using the following command:
 
 ```{bash}
@@ -450,7 +458,7 @@ $ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUES
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
 
-#### Backup restoring
+### Backup restoring
 
 If a backup vault is specified in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
 This is done through the backup recovery command:
@@ -467,6 +475,7 @@ This can be used to move private information from one node to another. More spec
 WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used.
 
 #### Arguments
+
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS. This is a required argument. Typically `2048` is used since that is the largest bit width needed with the current FHE types.
 
 ### Encryption
@@ -486,7 +495,7 @@ The most common use case for the KMS is to request decryptions of ciphertexts. T
  - public decryption, which returns plaintext values
  - user decryption (reencryption), which returns shares of plaintext values encrypted under a user-provided classical public key, which can then be decrypted by the user and reconstructed to the plaintext
 
-#### Decryption / Public Decryption
+#### Public Decryption
 
 To decrypt a given value of the provided FHE type, using the specified public key and then request a public decryption from the KMS cores run the following command.
 
@@ -585,7 +594,8 @@ The `new-epoch` command creates a new epoch within a given context, performing a
 This can be used when some parties crashed during the DKG process so that __all__ parties (including the one that failed during DKG) can hold a share of the secret keys, or when we want to refresh key shares as a pro-active security measure.
 
 Before executing a new epoch, the TFHE public key material must be present in the public storage of all the parties.
-If a party crashed during DKG, this material needs to be copied to its storage beforehand.
+The kms core locally checks for existence of the public key material, and if it is missing, will attempt to automatically fetch it from its peers.
+If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--context-id <PREV_CONTEXT_ID> --epoch-id <PREV_EPOCH_ID> --key-id <KEY_ID> --preproc-id <PREPROC_ID> --server-key-digest <DIGEST> --public-key-digest <DIGEST>]
@@ -603,9 +613,15 @@ Optional arguments (for resharing from a previous epoch). These must all be prov
  - `--server-key-digest <DIGEST>`: the hex-encoded server key digest to use for resharing.
  - `--public-key-digest <DIGEST>`: the hex-encoded public key digest to use for resharing.
 
+#### Destroying an MPC Epoch
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
+```
+
 ### MPC Context Management
 
-#### Create a New MPC Context
+#### Createing a new MPC Context
 
 A new MPC context can be created from a serialized context file or a TOML context file:
 
@@ -614,19 +630,13 @@ $ cargo run -- -f <path-to-toml-config-file> new-mpc-context serialized-context-
 $ cargo run -- -f <path-to-toml-config-file> new-mpc-context context-toml --input-path <path-to-context-toml>
 ```
 
-#### Destroy an MPC Context
+#### Destroying an MPC Context
 
 ```{bash}
 $ cargo run -- -f <path-to-toml-config-file> destroy-mpc-context --context-id <CONTEXT_ID>
 ```
 
-#### Destroy an MPC Epoch
-
-```{bash}
-$ cargo run -- -f <path-to-toml-config-file> destroy-mpc-epoch --epoch-id <EPOCH_ID>
-```
-
-### Operator Public Key
+### Retrieving Operator Public Key
 
 To retrieve the operator public keys from the KMS cores:
 
@@ -637,6 +647,7 @@ $ cargo run -- -f <path-to-toml-config-file> get-operator-public-key
 This prints the public key for each configured core.
 
 ## Example Commands
+
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
     ```{bash}
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen
