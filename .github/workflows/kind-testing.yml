@@ -455,6 +455,8 @@ jobs:
     needs:
       - kind-testing
     runs-on: ubuntu-latest
+    permissions:
+      packages: write # Required to delete GitHub packages/container registry
     steps:
       - name: Clean up build
         env:
