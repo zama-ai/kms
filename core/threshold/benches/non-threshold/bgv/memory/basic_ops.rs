@@ -46,7 +46,7 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
     );
 
     {
-        write!(name, "bgv_mul_memory").unwrap();
+        write!(name, "non-threshold_basic-ops_bgv_mul_memory").unwrap();
         let bench_fn =
             |(ct_a, ct_b, pk): &mut (LevelEllCiphertext, LevelEllCiphertext, PublicBgvKeySet)| {
                 multiply_ctxt(ct_a, ct_b, pk)
@@ -60,7 +60,7 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
     }
 
     {
-        write!(name, "bgv_encrypt_memory").unwrap();
+        write!(name, "non-threshold_basic-ops_bgv_encrypt_memory").unwrap();
         let bench_fn = |(plaintext_vec, pk, rng): &mut (Vec<u32>, PublicBgvKeySet, AesRng)| {
             bgv_enc(rng, plaintext_vec, &pk.a, &pk.b, PLAINTEXT_MODULUS.get().0)
         };
@@ -73,7 +73,7 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
     }
 
     {
-        write!(name, "bgv_decrypt_memory").unwrap();
+        write!(name, "non-threshold_basic-ops_bgv_decrypt_memory").unwrap();
         let bench_fn = |(ct, sk): &mut (LevelEllCiphertext, SecretKey)| {
             bgv_dec(ct, sk.clone(), &PLAINTEXT_MODULUS)
         };
@@ -83,6 +83,7 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
 }
 
 fn main() {
+    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
     let mut rng = AesRng::from_random_seed();
     let (pk, sk) =
         keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);

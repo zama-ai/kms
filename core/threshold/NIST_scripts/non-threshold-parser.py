@@ -9,7 +9,9 @@ PARAMS_MAP = {
     "NIST_PARAMS_P32_SNS_LWE":"TFHE_Clear_P32_LWE.csv",
     "NIST_PARAMS_P8_SNS_FGLWE":"TFHE_Clear_P8_FGLWE.csv",
     "NIST_PARAMS_P8_SNS_LWE":"TFHE_Clear_P8_LWE.csv",
-    "BC_PARAMS_SNS":"TFHE_Clear_BC_FGLWE.csv"
+    "BC_PARAMS_SNS":"TFHE_Clear_BC_FGLWE.csv",
+    "BGV":"BGV.csv",
+    "bgv":"bgv.csv"
 }
 
 # Maps the experiment name to the corresponding row in the csv file
@@ -48,7 +50,8 @@ RESULT_MAP = {
     "NIST_PARAMS_P32_SNS_LWE":ResultEntry(),
     "NIST_PARAMS_P8_SNS_FGLWE":ResultEntry(),
     "NIST_PARAMS_P8_SNS_LWE":ResultEntry(),
-    "BC_PARAMS_SNS":ResultEntry()
+    "BC_PARAMS_SNS":ResultEntry(),
+    "bgv":ResultEntry()
     }
 
 def find_parameters_from_json(data):
@@ -126,7 +129,7 @@ def parse_latency_file():
             elif "non-threshold_erc20" in experiment_name :
                 parse_latency_erc20(data)
             # We only care about FheUint64 type
-            elif "non-threshold_basic-ops" in experiment_name and "FheUint64" in experiment_name:
+            elif "non-threshold_basic-ops" in experiment_name and ("FheUint64" in experiment_name or "bgv" in experiment_name):
                 parse_latency_basic_ops(data)
             else :
                 continue
@@ -195,7 +198,7 @@ def parse_memory_file():
             elif "non-threshold_erc20" in line :
                 parse_memory_erc20(line)
             # We only care about FheUint64 type
-            elif "non-threshold_basic-ops" in line and "FheUint64" in line:
+            elif "non-threshold_basic-ops" in line and ("FheUint64" in line or "bgv" in line):
                 parse_memory_basic_ops(line)
             else :
                 continue
