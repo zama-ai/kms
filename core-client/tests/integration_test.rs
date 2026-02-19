@@ -1623,7 +1623,10 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("NotFound"));
+
+        assert!(err
+            .to_string()
+            .contains("Only 0/4 preproc requests succeeded"));
     }
 }
 
@@ -1823,7 +1826,10 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     )
     .await
     .unwrap_err();
-    assert!(err.to_string().contains("NotFound"));
+    assert!(err
+        .to_string()
+        .contains("Only 0/4 preproc requests succeeded"));
+
     println!("Old epoch successfully destroyed and verified");
 }
 
