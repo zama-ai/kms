@@ -30,7 +30,7 @@ where
 /// Migrate from 0.13.1 to 0.14.0
 /// This is disabled for now and should only be enabled in the next version
 ///
-/// This involves removing, already migrated FHE key material in the legacy storage location.
+/// This involves removing already migrated FHE key material in the legacy storage location.
 pub async fn migrate_to_0_14_0<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
