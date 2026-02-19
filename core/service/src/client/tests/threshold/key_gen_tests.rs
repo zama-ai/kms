@@ -1,3 +1,8 @@
+// DEPRECATED: Isolated equivalents in `key_gen_tests_isolated.rs`
+// - test_insecure_dkg → test_insecure_dkg_isolated
+// - test_insecure_threshold_decompression_keygen → test_insecure_threshold_decompression_keygen_isolated
+// TODO: Remove after migration complete.
+
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::tests::common::{OptKeySetConfigAccessor, standard_keygen_config};

@@ -5,7 +5,6 @@
 use crate::testing::helpers::{create_test_material_manager, regenerate_central_keys};
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
-use crate::testing::utils::setup::ensure_testing_material_exists;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -96,14 +95,12 @@ impl CentralizedTestEnvBuilder {
         // Setup isolated material
         let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
 
-        // Generate material with correct RequestIds
-        ensure_testing_material_exists(Some(material_dir.path())).await;
-
         let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
         let mut priv_storage =
             FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
-        // Regenerate keys with consistent RequestIds
+        // Generate centralized keys directly (don't use ensure_testing_material_exists
+        // which generates both centralized and threshold material unnecessarily)
         regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
 
         // Setup KMS server with optional backup vault

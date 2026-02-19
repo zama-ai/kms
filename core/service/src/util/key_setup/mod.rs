@@ -26,7 +26,6 @@ cfg_if::cfg_if! {
 }
 
 use crate::client::client_non_wasm::ClientDataType;
-use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
@@ -176,13 +175,81 @@ where
         };
 
     if !temp.is_empty() {
-        // If signing keys already exist, then do nothing
+        // If signing keys already exist, check if VerfAddress/VerfKey need regeneration
         log_data_exists(
             priv_storage.info(),
             None::<String>,
             "",
             "Server signing keys",
         );
+
+        // Even if signing keys exist, VerfAddress and VerfKey might not
+        if let Some(sk) = temp.get(req_id) {
+            let pk = sk.verf_key();
+
+            // Regenerate VerfAddress if missing
+            let verf_address_exists = match pub_storage
+                .data_exists(req_id, &PubDataType::VerfAddress.to_string())
+                .await
+            {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to check VerfAddress existence: {}, will attempt regeneration",
+                        e
+                    );
+                    false
+                }
+            };
+            if !verf_address_exists {
+                let ethereum_address = pk.address();
+                if let Err(store_err) = store_text_at_request_id(
+                    pub_storage,
+                    req_id,
+                    &ethereum_address.to_string(),
+                    &PubDataType::VerfAddress.to_string(),
+                )
+                .await
+                {
+                    tracing::error!("Failed to regenerate VerfAddress: {}", store_err);
+                } else {
+                    tracing::info!(
+                        "Regenerated VerfAddress {} from existing signing key",
+                        ethereum_address
+                    );
+                }
+            }
+
+            // Regenerate VerfKey if missing
+            let verf_key_exists = match pub_storage
+                .data_exists(req_id, &PubDataType::VerfKey.to_string())
+                .await
+            {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to check VerfKey existence: {}, will attempt regeneration",
+                        e
+                    );
+                    false
+                }
+            };
+            if !verf_key_exists {
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_storage,
+                    req_id,
+                    &pk,
+                    &PubDataType::VerfKey.to_string(),
+                )
+                .await
+                {
+                    tracing::error!("Failed to regenerate VerfKey: {}", store_err);
+                } else {
+                    tracing::info!("Regenerated VerfKey from existing signing key");
+                }
+            }
+        }
+
         return false;
     }
 
@@ -663,10 +730,67 @@ where
                 "",
                 "Threshold server signing keys",
             );
-            // Even if signing keys exist, CA certificates might not
-            if let Some(sk) = temp.get(&SIGNING_KEY_ID) {
+            // Even if signing keys exist, CA certificates and VerfAddress might not
+            if let Some(sk) = temp.get(request_id) {
+                // Regenerate VerfAddress if missing
                 if !pub_storages[i - 1]
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
+                    .data_exists(request_id, &PubDataType::VerfAddress.to_string())
+                    .await?
+                {
+                    let pk = sk.verf_key();
+                    let ethereum_address = pk.address();
+                    if let Err(store_err) = store_text_at_request_id(
+                        &mut pub_storages[i - 1],
+                        request_id,
+                        &ethereum_address.to_string(),
+                        &PubDataType::VerfAddress.to_string(),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to regenerate VerfAddress for party {}: {}",
+                            i,
+                            store_err
+                        );
+                    } else {
+                        tracing::info!(
+                            "Regenerated VerfAddress {} for party {} from existing signing key",
+                            ethereum_address,
+                            i
+                        );
+                    }
+                }
+
+                // Regenerate VerfKey if missing
+                if !pub_storages[i - 1]
+                    .data_exists(request_id, &PubDataType::VerfKey.to_string())
+                    .await?
+                {
+                    let pk = sk.verf_key();
+                    if let Err(store_err) = store_versioned_at_request_id(
+                        &mut pub_storages[i - 1],
+                        request_id,
+                        &pk,
+                        &PubDataType::VerfKey.to_string(),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to regenerate VerfKey for party {}: {}",
+                            i,
+                            store_err
+                        );
+                    } else {
+                        tracing::info!(
+                            "Regenerated VerfKey for party {} from existing signing key",
+                            i
+                        );
+                    }
+                }
+
+                // Regenerate CA certificate if missing
+                if !pub_storages[i - 1]
+                    .data_exists(request_id, &PubDataType::CACert.to_string())
                     .await?
                 {
                     ensure_ca_cert_exists(

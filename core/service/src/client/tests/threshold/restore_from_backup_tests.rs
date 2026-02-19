@@ -1,3 +1,7 @@
+// DEPRECATED: Isolated equivalent in `restore_from_backup_tests_isolated.rs`
+// - test_insecure_threshold_crs_backup → test_insecure_threshold_crs_backup_isolated
+// TODO: Remove after migration complete.
+
 use crate::{
     client::tests::threshold::{common::threshold_handles, crs_gen_tests::run_crs},
     consts::{
