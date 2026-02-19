@@ -18,8 +18,7 @@ use kms_lib::{
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
-        migration::migrate_fhe_keys_v0_12_to_v0_13, run_server,
-        threshold::service::new_real_threshold_kms,
+        migration::migrate_to_0_13_1, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -512,9 +511,22 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_fhe_keys_v0_12_to_v0_13(&mut private_storage, kms_type)
-        .await
-        .inspect_err(|e| tracing::warn!("Could not migrate legacy FHE keys: {e}"))?;
+    migrate_to_0_13_1(
+        &mut private_storage,
+        kms_type,
+        core_config
+            .threshold
+            .as_ref()
+            .map(|t| t.threshold)
+            .expect("Threshold configuration must be provided for migration"),
+        core_config
+            .threshold
+            .as_ref()
+            .and_then(|t| t.peers.as_ref().map(|p| p.len()))
+            .expect("Peer configuration must be provided for migration"),
+    )
+    .await
+    .expect("Could not complete migration: {e}");
 
     let private_keychain = OptionFuture::from(
         core_config

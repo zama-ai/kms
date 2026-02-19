@@ -680,6 +680,7 @@ impl SessionMaker {
         Ok(context_info.threshold)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn num_parties(&self, context_id: &ContextId) -> anyhow::Result<usize> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
