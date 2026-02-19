@@ -282,8 +282,9 @@ where
                         )
                         .await?;
                     }
+                    // Non epoched types
                     PrivDataType::PrssSetupCombined => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, PRSSSetupCombined>(
+                        update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
@@ -297,7 +298,6 @@ where
                             "Skipping deprecated PRSS setup type during custodian context creation"
                         );
                     }
-                    // Non epoched types
                     PrivDataType::SigningKey => {
                         // TODO(#2862) will eventually be epoched
                         update_specific_backup_vault::<PrivS, PrivateSigKey>(

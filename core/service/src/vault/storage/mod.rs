@@ -317,9 +317,7 @@ pub async fn delete_all_at_request_id<S: Storage>(
 ) -> anyhow::Result<()> {
     for cur_type in PrivDataType::iter() {
         match cur_type {
-            PrivDataType::FhePrivateKey
-            | PrivDataType::FheKeyInfo
-            | PrivDataType::PrssSetupCombined => {
+            PrivDataType::FhePrivateKey | PrivDataType::FheKeyInfo => {
                 // These types might have epoch-specific data
                 continue;
             }

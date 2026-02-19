@@ -766,19 +766,15 @@ where
                 )
                 .await?;
             }
+            // Non epoched types
             PrivDataType::PrssSetupCombined => {
-                restore_data_type_for_all_epochs::<PrivS, PRSSSetupCombined>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
+                restore_data_type::<PrivS, PRSSSetupCombined>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
                 tracing::info!("Skipping deprecated PRSS setup type during restore");
             }
-            // Non epoched types
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
                 restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
@@ -952,14 +948,15 @@ where
                             )
                             .await?;
                         }
+                        // Non epoched types
                         PrivDataType::PrssSetupCombined => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, PRSSSetupCombined>(
+                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
                                 overwrite,
-                        )
-                        .await?;
+                            )
+                            .await?;
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
@@ -967,7 +964,6 @@ where
                                 "Skipping deprecated PRSS setup type during backup vault update"
                             );
                         }
-                        // Non epoched types
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched
                             update_specific_backup_vault::<PrivS, PrivateSigKey>(
