@@ -12,10 +12,10 @@ use crate::{
 };
 
 pub type DummySmallSessionBitProducer<Z> =
-    GenericBitProducer<Z, SmallSession<Z>, DummyPreprocessing<Z>, DummyBitGenEven>;
+    GenericBitProducer<Z, SmallSession<Z>, DummyPreprocessing, DummyBitGenEven>;
 
 pub type DummyLargeSessionBitProducer<Z> =
-    GenericBitProducer<Z, LargeSession, DummyPreprocessing<Z>, DummyBitGenEven>;
+    GenericBitProducer<Z, LargeSession, DummyPreprocessing, DummyBitGenEven>;
 
 pub type FailingSmallSessionBitProducer<Z> =
     GenericBitProducer<Z, SmallSession<Z>, FailingPreprocessing<Z>, DummyBitGenEven>;

@@ -546,7 +546,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             let mut small_session =
                 SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
             let sid_u128: u128 = session_id.into();
-            let mut preproc = DummyPreprocessing::<LevelKsw>::new(sid_u128 as u64, &small_session);
+            let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &small_session);
             let my_future = || async move {
                 let keys = bgv_distributed_keygen::<N65536, _, _>(
                     &mut small_session,

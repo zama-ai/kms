@@ -25,6 +25,7 @@ use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use crate::execution::tfhe_internals::private_keysets::LweSecretKeyShareEnum;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions,
@@ -1052,6 +1053,7 @@ pub async fn run_decryption_bitdec_64<
 ) -> anyhow::Result<Z64>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let res = run_decryption_bitdec(session, prep, keyshares, ksk, ciphertext).await?;
     Ok(Wrapping(res))
@@ -1079,6 +1081,7 @@ where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let own_role = session.my_role();
 
@@ -1155,6 +1158,7 @@ where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let role = session.my_role();
     // This vec will be joined on "main" task and all results recombined there
@@ -1258,6 +1262,7 @@ pub fn partial_decrypt64<const EXTENSION_DEGREE: usize>(
 ) -> anyhow::Result<ResiduePoly<Z64, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
     let ciphertext_modulus = 64;
     let mut output_ctxt;
@@ -1276,8 +1281,21 @@ where
         ct_block.ct.get_mask_and_body()
     };
 
-    let key_share64 = sk_share.lwe_compute_secret_key_share.data_as_raw_iter();
-    let a_time_s = key_share64.zip_eq(mask.as_ref()).fold(
+    let key_share64 = match &sk_share.lwe_compute_secret_key_share {
+        LweSecretKeyShareEnum::Z64(key) => key,
+        LweSecretKeyShareEnum::Z128(_) => {
+            // NOTE: We turn the key to it's Z64 representation here instead of erroring out
+            // but would be very inefficient to do this for every decrypt.
+            // If we ever use this path in production, we should consider caching the Z64 version of the key share instead.
+            tracing::warn!("Switching to Z64 key during decrypt, very much not optimal",);
+            &sk_share
+                .lwe_compute_secret_key_share
+                .clone()
+                .convert_to_z64()
+        }
+    };
+    let key_share64_iter = key_share64.data_as_raw_iter();
+    let a_time_s = key_share64_iter.zip_eq(mask.as_ref()).fold(
         ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO,
         |acc, (sk, m)| {
             let tmp =

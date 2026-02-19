@@ -63,7 +63,7 @@ fn shift_right_2d<Z: Ring + ZConsts>(
 
 impl<Z> BatchedBits<Z>
 where
-    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
+    Z: ZConsts + Send + Sync + ErrorCorrect,
 {
     /// Takes a 1D array and arranges it into a 2D of size B (batch_size).
     /// Does this by taking consecutive CHAR_LOG2 (64/128) entries and puts them in a single batch
@@ -334,7 +334,7 @@ where
 
 impl<Z> Bits<Z>
 where
-    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
+    Z: ZConsts + Send + Sync + ErrorCorrect,
 {
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs given AND(\<a\>,\<b\>)
     fn xor_with_prods(
@@ -567,7 +567,7 @@ mod tests {
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
                 .collect_vec();
-            let mut preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
+            let mut preprocessing = DummyPreprocessing::new(42, &session);
             let bits = Bits::<ResiduePolyF4Z64>::xor_list_secret_secret(
                 Arc::new(lhs),
                 Arc::new(rhs),
@@ -659,7 +659,7 @@ mod tests {
         let ref_val = Wrapping(a) + Wrapping(b);
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
+            let mut prep = DummyPreprocessing::new(42, &session);
 
             let input_a = (0..Z64::CHAR_LOG2)
                 .map(|bit_idx| get_my_share((a >> bit_idx) & 1, &session))
@@ -723,7 +723,7 @@ mod tests {
         let bits_d: Vec<_> = (0..64).map(|bit_idx| (d >> bit_idx) & 1).collect();
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
+            let mut prep = DummyPreprocessing::new(42, &session);
 
             let input_a = (0..Z64::CHAR_LOG2)
                 .map(|bit_idx| get_my_share((a >> bit_idx) & 1, &session))
@@ -856,7 +856,7 @@ mod tests {
         let ref_val: Vec<_> = (0..64).map(|bit_idx| (a >> bit_idx) & 1).collect();
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
+            let mut prep = DummyPreprocessing::new(42, &session);
 
             let input_a = get_my_share(a, &session);
             let input_a = vec![input_a];
