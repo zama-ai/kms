@@ -148,7 +148,7 @@ where
             .data_exists_at_epoch(&key_id, &default_epoch_id, &data_type_str)
             .await?
         {
-            // Removed obsolete keys that has already been converted
+            // Removes obsolete keys that have already been converted
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
             tracing::error!("Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion", key_id, default_epoch_id);
