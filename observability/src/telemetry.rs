@@ -42,7 +42,6 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
-use validator::Validate;
 
 #[cfg(target_os = "linux")]
 use prometheus::process_collector::ProcessCollector;
