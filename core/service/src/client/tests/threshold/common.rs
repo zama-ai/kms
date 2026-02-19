@@ -229,16 +229,12 @@ pub async fn threshold_insecure_key_gen_isolated(
     )>,
 > {
     use crate::dummy_domain;
-    use crate::engine::base::derive_request_id;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::kms::v1::KeyGenRequest;
     use tokio::task::JoinSet;
 
     let domain_msg = domain_to_msg(&dummy_domain());
-
-    // For insecure mode, we need a dummy preproc_id because validate_key_gen_request
-    // requires it, even though insecure mode doesn't actually use preprocessing.
-    let dummy_preproc_id = derive_request_id("dummy_preproc_for_insecure")?;
 
     // Use insecure_key_gen endpoint which bypasses preprocessing validation
     let mut keygen_tasks = JoinSet::new();
@@ -247,7 +243,7 @@ pub async fn threshold_insecure_key_gen_isolated(
         let keygen_req = KeyGenRequest {
             request_id: Some((*request_id).into()),
             params: Some(params as i32),
-            preproc_id: Some(dummy_preproc_id.into()),
+            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
             domain: Some(domain_msg.clone()),
             keyset_config: None,
             keyset_added_info: None,

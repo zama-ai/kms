@@ -50,6 +50,12 @@ pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 // of Unavailable round-trips the client must make.
 pub const DURATION_WAITING_ON_PREPROC_RESULT_SECONDS: u64 = 300;
 
+// Key generation (online DKG) with Default FHE params is also very slow —
+// generating full-sized FHE keys via MPC can take 30-90+ minutes.
+// Use the same longer wait window as preprocessing so each client poll
+// covers more computation time.
+pub const DURATION_WAITING_ON_KEYGEN_RESULT_SECONDS: u64 = 300;
+
 // Maximum number of attempts to try to wait for a result to be done on the server
 pub const MAX_TRIES: usize = 50;
 

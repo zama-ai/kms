@@ -145,7 +145,7 @@ pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1:
             .unwrap_or_default(),
         chain_id: domain
             .chain_id
-            .map(|id| id.to_string().into_bytes())
+            .map(|id| id.to_be_bytes_vec())
             .unwrap_or_default(),
         verifying_contract: domain
             .verifying_contract
