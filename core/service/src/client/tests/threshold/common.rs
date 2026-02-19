@@ -215,14 +215,19 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// * `params` - FHE parameters to use for key generation
 ///
 /// # Returns
-/// * `Ok(())` if key generation succeeded on all parties
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "insecure")]
 pub async fn threshold_insecure_key_gen_isolated(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::testing::helpers::domain_to_msg;
@@ -260,8 +265,9 @@ pub async fn threshold_insecure_key_gen_isolated(
         res??;
     }
 
-    // Wait for key generation to complete on all parties
-    for client in clients.values() {
+    // Wait for key generation to complete on all parties and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
         let mut cur_client = client.clone();
         let mut result = cur_client
             .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
@@ -272,10 +278,10 @@ pub async fn threshold_insecure_key_gen_isolated(
                 .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
                 .await;
         }
-        result?;
+        responses.push((*party_id, result));
     }
 
-    Ok(())
+    Ok(responses)
 }
 
 /// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
@@ -290,7 +296,7 @@ pub async fn threshold_insecure_key_gen_isolated(
 /// * `params` - FHE parameters to use
 ///
 /// # Returns
-/// * `Ok(())` if preprocessing and key generation succeeded on all parties
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 pub async fn threshold_key_gen_secure_isolated(
@@ -298,7 +304,12 @@ pub async fn threshold_key_gen_secure_isolated(
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
     use crate::dummy_domain;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
@@ -366,8 +377,9 @@ pub async fn threshold_key_gen_secure_isolated(
         res??;
     }
 
-    // Wait for key generation to complete
-    for client in clients.values() {
+    // Wait for key generation to complete and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
         let mut cur_client = client.clone();
         let mut result = cur_client
             .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
@@ -378,8 +390,8 @@ pub async fn threshold_key_gen_secure_isolated(
                 .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
                 .await;
         }
-        result?;
+        responses.push((*party_id, result));
     }
 
-    Ok(())
+    Ok(responses)
 }

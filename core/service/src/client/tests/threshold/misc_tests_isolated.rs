@@ -29,11 +29,20 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let amount_parties = 4;
 
-    // Boot servers WITHOUT PRSS (run_prss=false is the default)
+    // Boot servers WITHOUT PRSS and without pre-generated PRSS material,
+    // so decryption requests fail (no epoch initialized). FHE keys are still
+    // needed so send_dec_reqs can encrypt ciphertexts for the request.
+    let spec = {
+        use crate::testing::material::KeyType;
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::FheKeys);
+        s
+    };
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)
         .with_threshold(1)
+        .with_material_spec(spec)
         .build()
         .await?;
 
@@ -50,8 +59,8 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let clients = env.clients;
     let servers = env.servers;
 
-    // Validate that decryption requests are accepted but results fail (no PRSS yet)
-    let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
+    // Validate that the send itself fails since there is no PRSS (no epoch initialized)
+    let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         1,
         &TEST_THRESHOLD_KEY_ID,
         None,
@@ -62,11 +71,9 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
-    assert!(dec_res.iter().all(|res| res.is_ok()));
-    // But the response will result in an error (no PRSS initialized)
-    let dec_resp_tasks = crate::client::tests::common::get_pub_dec_resp(&req_id, &clients).await;
-    let dec_resp_res = dec_resp_tasks.join_all().await;
-    assert!(dec_resp_res.iter().all(|res| res.is_err()));
+    assert!(dec_res
+        .iter()
+        .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound));
 
     // Check core service health for server 1
     let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
@@ -123,18 +130,10 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
         }
     }
 
-    // Shutdown the servers and check that the health endpoint is no longer serving
+    // Shutdown the servers and check that the threshold health endpoint is no longer serving
     for (_, server) in servers {
-        server.service_shutdown_tx.send(()).unwrap();
+        server.assert_shutdown().await;
     }
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let status = get_status(&mut main_health_client, core_service_name).await;
-    assert_eq!(
-        status.unwrap(),
-        ServingStatus::NotServing as i32,
-        "Service is not in NOT_SERVING status after shutdown"
-    );
     let status = get_status(&mut threshold_health_client, threshold_service_name).await;
     assert!(status.is_err());
 
