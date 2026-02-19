@@ -3,15 +3,15 @@
 //! well as minor differences, in particular to be able to measure memory
 //! complexity as required by NIST.
 
-#[path = "../../utilities.rs"]
+#[path = "../../../utilities.rs"]
 mod utilities;
 
 use crate::utilities::{generate_tfhe_keys, set_plan};
-
+use criterion::measurement::WallTime;
+use criterion::{BenchmarkGroup, Criterion};
 use rand::prelude::*;
 use std::fmt::Write;
-use tfhe::unset_server_key;
-
+use std::hint::black_box;
 use std::ops::*;
 use tfhe::CompactCiphertextList;
 use tfhe::CompactPublicKey;
@@ -21,16 +21,15 @@ use tfhe::{set_server_key, ClientKey, FheUint64};
 
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
-use crate::utilities::bench_memory;
 use utilities::ALL_PARAMS;
-
+//use tfhe::{FheUint10, FheUint12,FheUint14, FheUint6}
 fn bench_fhe_type<FheType>(
-    client_key: ClientKey,
-    public_key: CompactPublicKey,
-    bench_name: &str,
+    bench_group: &mut BenchmarkGroup<'_, WallTime>,
+    client_key: &ClientKey,
+    public_key: &CompactPublicKey,
     type_name: &str,
 ) where
-    FheType: FheEncrypt<u64, ClientKey> + FheDecrypt<u64> + Clone + Send + Sync + 'static,
+    FheType: FheEncrypt<u64, ClientKey> + FheDecrypt<u64>,
     for<'a> &'a FheType: Add<&'a FheType, Output = FheType>
         + Sub<&'a FheType, Output = FheType>
         + Mul<&'a FheType, Output = FheType>
@@ -46,41 +45,38 @@ fn bench_fhe_type<FheType>(
 {
     let mut rng = thread_rng();
 
+    let lhs = FheType::encrypt(rng.gen(), client_key);
+    let rhs = FheType::encrypt(rng.gen(), client_key);
+
     let mut name = String::with_capacity(255);
 
-    let lhs = FheType::encrypt(rng.gen(), &client_key);
-    let rhs = FheType::encrypt(rng.gen(), &client_key);
+    //Added encrypt and decrypt that was not in original bench in tfhe-rs
     {
-        write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): &mut (FheType, FheType)| &*lhs * &*rhs;
-        bench_memory(bench_fn, &mut (rhs, lhs), name.clone());
+        let value: u64 = rng.gen();
+        write!(name, "encrypt({type_name})").unwrap();
+        bench_group.bench_function(&name, |b| {
+            b.iter(|| {
+                black_box(
+                    CompactCiphertextList::builder(public_key)
+                        .push(value)
+                        .build(),
+                )
+            })
+        });
         name.clear();
     }
 
-    // We drop the server key and don't measure its memory usage
-    // as it's not needed for enc/dec
-    unset_server_key();
-
     {
-        let value = rng.gen();
-        write!(name, "{bench_name}_encrypt_memory({type_name})").unwrap();
-
-        let bench_fn = |(value, public_key): &mut (u64, CompactPublicKey)| {
-            CompactCiphertextList::builder(public_key)
-                .push(*value)
-                .build();
-        };
-
-        bench_memory(bench_fn, &mut (value, public_key), name.clone());
+        write!(name, "decrypt({type_name})").unwrap();
+        bench_group.bench_function(&name, |b| {
+            b.iter(|| black_box(FheType::decrypt(&lhs, client_key)))
+        });
         name.clear();
     }
 
-    let lhs = FheType::encrypt(rng.gen(), &client_key);
     {
-        write!(name, "{bench_name}_decrypt_memory({type_name})").unwrap();
-        let bench_fn =
-            |(ct, client_key): &mut (FheType, ClientKey)| FheType::decrypt(ct, client_key);
-        bench_memory(bench_fn, &mut (lhs, client_key), name.clone());
+        write!(name, "mul({type_name}, {type_name})").unwrap();
+        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs * &rhs)));
         name.clear();
     }
 }
@@ -88,8 +84,8 @@ fn bench_fhe_type<FheType>(
 macro_rules! bench_type {
     ($fhe_type:ident) => {
         ::paste::paste! {
-            fn [<bench_ $fhe_type:snake>]( cks: ClientKey, public_key: CompactPublicKey, bench_name: &str) {
-                bench_fhe_type::<$fhe_type>( cks, public_key, bench_name, stringify!($fhe_type));
+            fn [<bench_ $fhe_type:snake>](c: &mut BenchmarkGroup<'_, WallTime>, cks: &ClientKey, public_key: &CompactPublicKey) {
+                bench_fhe_type::<$fhe_type>(c, cks, public_key, stringify!($fhe_type));
             }
         }
     };
@@ -103,14 +99,8 @@ macro_rules! bench_type {
 bench_type!(FheUint64);
 //bench_type!(FheUint128);
 
-#[global_allocator]
-pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
-
 fn main() {
     set_plan();
-
-    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
-
     for (name, params) in ALL_PARAMS {
         let (client_key, compressed_server_key) = generate_tfhe_keys(&params);
 
@@ -120,10 +110,17 @@ fn main() {
             .into_raw_parts();
 
         set_server_key(server_key);
+
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
+        let mut c = Criterion::default().sample_size(10).configure_from_args();
+
         {
-            bench_fhe_uint64(client_key, public_key, &bench_name);
+            let bench_name = format!("{bench_name}_FheUint64");
+            let mut group = c.benchmark_group(&bench_name);
+            bench_fhe_uint64(&mut group, &client_key, &public_key);
         }
+
+        c.final_summary();
     }
 }

@@ -1,4 +1,4 @@
-#[path = "../../utilities.rs"]
+#[path = "../../../utilities.rs"]
 mod utilities;
 
 use crate::utilities::generate_tfhe_keys;

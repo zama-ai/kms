@@ -333,8 +333,8 @@ fn key_switch(
 // NOTE: We return a ctxt at the Ell level (highest one) because we only care
 // about supporting one level of multiplication as this is for exposition purposes only.
 pub fn multiply_ctxt(
-    ct_a: LevelledCiphertext<LevelEll, N65536>,
-    ct_b: LevelledCiphertext<LevelEll, N65536>,
+    ct_a: &LevelledCiphertext<LevelEll, N65536>,
+    ct_b: &LevelledCiphertext<LevelEll, N65536>,
     pk: &PublicBgvKeySet,
 ) -> LevelledCiphertext<LevelEll, N65536> {
     let (c_a_0, c_a_1) = (ct_a.get_c0(), ct_a.get_c1());
@@ -428,7 +428,7 @@ mod tests {
             PLAINTEXT_MODULUS.get().0,
         );
 
-        let ct_product = multiply_ctxt(ct_a, ct_b, &pk);
+        let ct_product = multiply_ctxt(&ct_a, &ct_b, &pk);
         let decrypted_product = bgv_dec(&ct_product, sk, &PLAINTEXT_MODULUS);
 
         // The expected result is the polynomial product mod (X^N+1) mod p,
