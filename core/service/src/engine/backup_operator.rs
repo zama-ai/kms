@@ -835,7 +835,7 @@ where
             // In case we need to overwrite, delete the old data
             if overwrite {
                 // Delete the old backup data
-                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                // Observe that no backups from previous operator contexts are deleted, only backups for current custodian context in case they exist.
                 delete_at_request_and_epoch_id(
                     backup_vault,
                     request_id,
