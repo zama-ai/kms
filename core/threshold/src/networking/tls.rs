@@ -38,6 +38,9 @@ pub enum ReleasePCRValuesVersioned {
 /// PCR8 which is the hash of the certificate that signed a running enclave
 /// image but its reference value comes from hashing the certificate bundled
 /// within the mTLS certificate, not through configuration.
+///
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Versionize, Hash, Eq)]
 #[versionize(ReleasePCRValuesVersioned)]
 #[serde(deny_unknown_fields)]

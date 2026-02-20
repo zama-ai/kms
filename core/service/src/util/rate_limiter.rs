@@ -12,6 +12,9 @@ use validator::Validate;
 /// The bucket size is the maximum number of tokens in the bucket.
 /// The other fields are the number of tokens consumed for the
 /// different operations.
+///
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Validate)]
 pub struct RateLimiterConfig {
     #[validate(range(min = 1))]
