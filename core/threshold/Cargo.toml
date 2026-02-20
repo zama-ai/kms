@@ -143,7 +143,7 @@ required-features = ["testing", "extension_degree_8"]
 [[bench]]
 name = "decoding"
 harness = false
-required-features = ["experimental"]
+required-features = ["experimental", "extenson_degree_8"]
 
 [[bench]]
 name = "algebra"
@@ -248,10 +248,10 @@ default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
 slow_tests = ["testing", "all_extension_degrees"]
-experimental = ["dep:crypto-bigint", "choreographer", "testing"]
+experimental = ["dep:crypto-bigint"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies"]
-measure_memory = ["dep:peak_alloc", "choreographer"]
+measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 # put all the dependencies that does not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures

@@ -3,28 +3,25 @@ use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 use crate::execution::sharing::share::Share;
-use crate::experimental::algebra::levels::LevelEll;
-use crate::experimental::algebra::levels::LevelKsw;
-use crate::experimental::algebra::levels::LevelOne;
-use crate::experimental::algebra::ntt::Const;
-use crate::experimental::algebra::ntt::NTTConstants;
-use crate::experimental::algebra::ntt::N65536;
-use crate::experimental::bgv::basics::{keygen, PrivateBgvKeySet, PublicBgvKeySet, SecretKey};
+use crate::experimental::algebra::levels::*;
+use crate::experimental::algebra::ntt::*;
+use crate::experimental::bgv::basics::*;
 use crate::experimental::bgv::ddec::keygen_shares;
-use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::value::NetworkValue;
-use aes_prng::AesRng;
 use itertools::Itertools;
-use rand::SeedableRng;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::timeout_at;
 
+#[cfg(feature = "choreographer")]
 pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
-    let mut rng = AesRng::seed_from_u64(0);
+    use rand::SeedableRng;
+    let mut rng = aes_prng::AesRng::seed_from_u64(0);
 
-    let (pk, sk) =
-        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
+    let (pk, sk) = keygen::<aes_prng::AesRng, LevelEll, LevelKsw, N65536>(
+        &mut rng,
+        crate::experimental::constants::PLAINTEXT_MODULUS.get().0,
+    );
 
     (pk, sk)
 }
