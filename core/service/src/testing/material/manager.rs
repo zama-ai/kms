@@ -345,6 +345,11 @@ impl TestMaterialManager {
         if source_client_path.exists() {
             self.copy_directory_contents(&source_client_path, &dest_client_path)
                 .await?;
+        } else {
+            tracing::warn!(
+                "Client keys source directory does not exist, skipping copy: {}",
+                source_client_path.display()
+            );
         }
 
         Ok(())
@@ -470,13 +475,6 @@ impl TestMaterialManager {
                         &source_pub,
                         &dest_pub,
                         &PubDataType::ServerKey.to_string(),
-                        key_id,
-                    )
-                    .await?;
-                    self.copy_epoch_key_files(
-                        &source_priv,
-                        &dest_priv,
-                        &PrivDataType::FhePrivateKey.to_string(),
                         key_id,
                     )
                     .await?;
@@ -609,7 +607,17 @@ impl TestMaterialManager {
             let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
-            // Copy PRSS setup files
+            // PRSS setup is runtime-generated (not pre-generated material), so missing
+            // source directories are expected and should be skipped.
+            let source_prss_dir = source_priv.join("PrssSetup");
+            if !source_prss_dir.exists() {
+                tracing::warn!(
+                    "PRSS setup not pre-generated for party {i}, skipping copy: {}",
+                    source_prss_dir.display()
+                );
+                continue;
+            }
+
             self.copy_key_files(&source_priv, &dest_priv, "PrssSetup", PRSS_INIT_REQ_ID)
                 .await?;
         }
