@@ -7,7 +7,6 @@
 mod utilities;
 
 use rand::RngCore;
-use std::fmt::Write;
 use tfhe::core_crypto::seeders::new_seeder;
 use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
 use threshold_fhe::experimental::algebra::ntt::*;
@@ -24,7 +23,6 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
     let mut seeder = new_seeder();
     let seed = seeder.seed().0;
     let mut rng = XofWrapper::new_bgv_enc(seed);
-    let mut name = String::with_capacity(255);
 
     let plaintext_vec_a: Vec<u32> = (0..N65536::VALUE)
         .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -49,7 +47,6 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
     );
 
     {
-        write!(name, "non-threshold_basic-ops_bgv_mul_memory").unwrap();
         let bench_fn =
             |(ct_a, ct_b, pk): &mut (LevelEllCiphertext, LevelEllCiphertext, PublicBgvKeySet)| {
                 multiply_ctxt(ct_a, ct_b, pk)
@@ -57,13 +54,11 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
         bench_memory(
             bench_fn,
             &mut (ct_a.clone(), ct_b, pk.clone()),
-            name.clone(),
+            "non-threshold_basic-ops_bgv_mul_memory".to_string(),
         );
-        name.clear();
     }
 
     {
-        write!(name, "non-threshold_basic-ops_bgv_encrypt_memory").unwrap();
         let bench_fn = |(plaintext_vec, pk, seed): &mut (Vec<u32>, PublicBgvKeySet, u128)| {
             let mut rng = XofWrapper::new_bgv_enc(*seed);
             bgv_enc(
@@ -77,18 +72,19 @@ pub fn bench_bgv(sk: SecretKey, pk: PublicBgvKeySet) {
         bench_memory(
             bench_fn,
             &mut (plaintext_vec_a.clone(), pk.clone(), seed),
-            name.clone(),
+            "non-threshold_basic-ops_bgv_encrypt_memory".to_string(),
         );
-        name.clear();
     }
 
     {
-        write!(name, "non-threshold_basic-ops_bgv_decrypt_memory").unwrap();
         let bench_fn = |(ct, sk): &mut (LevelEllCiphertext, SecretKey)| {
             bgv_dec(ct, sk.clone(), &PLAINTEXT_MODULUS)
         };
-        bench_memory(bench_fn, &mut (ct_a.clone(), sk.clone()), name.clone());
-        name.clear();
+        bench_memory(
+            bench_fn,
+            &mut (ct_a.clone(), sk.clone()),
+            "non-threshold_basic-ops_bgv_decrypt_memory".to_string(),
+        );
     }
 }
 

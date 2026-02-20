@@ -9,7 +9,6 @@ mod utilities;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use rand::RngCore;
-use std::fmt::Write;
 use std::hint::black_box;
 use tfhe::core_crypto::seeders::new_seeder;
 use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
@@ -26,7 +25,6 @@ pub fn bench_bgv(
     let mut seeder = new_seeder();
     let seed = seeder.seed().0;
     let mut rng = XofWrapper::new_bgv_enc(seed);
-    let mut name = String::with_capacity(255);
 
     let plaintext_vec_a: Vec<u32> = (0..N65536::VALUE)
         .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -51,16 +49,13 @@ pub fn bench_bgv(
     );
 
     {
-        write!(name, "mul(bgv)").unwrap();
-        bench_group.bench_function(&name, |b| {
+        bench_group.bench_function("mul(bgv)", |b| {
             b.iter(|| black_box(multiply_ctxt(&ct_a, &ct_b, &pk)));
         });
-        name.clear();
     }
 
     {
-        write!(name, "encrypt(bgv)").unwrap();
-        bench_group.bench_function(&name, |b| {
+        bench_group.bench_function("encrypt(bgv)", |b| {
             b.iter(|| {
                 let mut rng = XofWrapper::new_bgv_enc(seed);
                 black_box(bgv_enc(
@@ -72,15 +67,12 @@ pub fn bench_bgv(
                 ))
             });
         });
-        name.clear();
     }
 
     {
-        write!(name, "decrypt(bgv)").unwrap();
-        bench_group.bench_function(&name, |b| {
+        bench_group.bench_function("decrypt(bgv)", |b| {
             b.iter(|| black_box(bgv_dec(&ct_a, sk.clone(), &PLAINTEXT_MODULUS)))
         });
-        name.clear();
     }
 }
 

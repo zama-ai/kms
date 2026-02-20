@@ -17,13 +17,12 @@ fn main() {
 
     let mut seeder = new_seeder();
     let mut seed = seeder.seed().0;
-    let bench_name = "non-threshold_keygen_bgv_memory".to_string();
     bench_memory(
         |seed: &mut u128| {
             let mut xof = XofWrapper::new_bgv_kg(*seed);
             keygen::<_, LevelEll, LevelKsw, N65536>(&mut xof, PLAINTEXT_MODULUS.get().0)
         },
         &mut seed,
-        bench_name,
+        "non-threshold_keygen_bgv_memory".to_string(),
     );
 }
