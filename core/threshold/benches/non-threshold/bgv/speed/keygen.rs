@@ -1,20 +1,23 @@
 #[path = "../../../utilities.rs"]
 mod utilities;
 
-use aes_prng::AesRng;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
+use tfhe::core_crypto::seeders::new_seeder;
 use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
 use threshold_fhe::experimental::algebra::ntt::*;
 use threshold_fhe::experimental::bgv::basics::*;
+use threshold_fhe::experimental::bgv::utils::XofWrapper;
 use threshold_fhe::experimental::constants::*;
 
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>) {
+    let mut seeder = new_seeder();
+    let seed = seeder.seed().0;
     c.bench_function("keygen", |b| {
         b.iter(|| {
-            let mut rng = AesRng::from_random_seed();
-            std::hint::black_box(keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-                &mut rng,
+            let mut xof = XofWrapper::new_bgv_kg(seed);
+            std::hint::black_box(keygen::<_, LevelEll, LevelKsw, N65536>(
+                &mut xof,
                 PLAINTEXT_MODULUS.get().0,
             ))
         });

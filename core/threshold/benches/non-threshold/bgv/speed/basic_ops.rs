@@ -6,15 +6,16 @@
 #[path = "../../../utilities.rs"]
 mod utilities;
 
-use aes_prng::AesRng;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use rand::RngCore;
 use std::fmt::Write;
 use std::hint::black_box;
+use tfhe::core_crypto::seeders::new_seeder;
 use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
 use threshold_fhe::experimental::algebra::ntt::*;
 use threshold_fhe::experimental::bgv::basics::*;
+use threshold_fhe::experimental::bgv::utils::XofWrapper;
 use threshold_fhe::experimental::constants::*;
 
 pub fn bench_bgv(
@@ -22,7 +23,9 @@ pub fn bench_bgv(
     sk: SecretKey,
     pk: PublicBgvKeySet,
 ) {
-    let mut rng = AesRng::from_random_seed();
+    let mut seeder = new_seeder();
+    let seed = seeder.seed().0;
+    let mut rng = XofWrapper::new_bgv_enc(seed);
     let mut name = String::with_capacity(255);
 
     let plaintext_vec_a: Vec<u32> = (0..N65536::VALUE)
@@ -59,6 +62,7 @@ pub fn bench_bgv(
         write!(name, "encrypt(bgv)").unwrap();
         bench_group.bench_function(&name, |b| {
             b.iter(|| {
+                let mut rng = XofWrapper::new_bgv_enc(seed);
                 black_box(bgv_enc(
                     &mut rng,
                     &plaintext_vec_a,
@@ -81,9 +85,10 @@ pub fn bench_bgv(
 }
 
 fn main() {
-    let mut rng = AesRng::from_random_seed();
-    let (pk, sk) =
-        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
+    let mut seeder = new_seeder();
+    let seed = seeder.seed().0;
+    let mut xof = XofWrapper::new_bgv_kg(seed);
+    let (pk, sk) = keygen::<_, LevelEll, LevelKsw, N65536>(&mut xof, PLAINTEXT_MODULUS.get().0);
 
     let mut c = Criterion::default().sample_size(10).configure_from_args();
     {

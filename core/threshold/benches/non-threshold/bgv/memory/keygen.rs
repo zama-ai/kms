@@ -1,10 +1,11 @@
 #[path = "../../../utilities.rs"]
 mod utilities;
 
-use aes_prng::AesRng;
+use tfhe::core_crypto::seeders::new_seeder;
 use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
 use threshold_fhe::experimental::algebra::ntt::*;
 use threshold_fhe::experimental::bgv::basics::*;
+use threshold_fhe::experimental::bgv::utils::XofWrapper;
 use threshold_fhe::experimental::constants::*;
 use utilities::bench_memory;
 
@@ -14,13 +15,15 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    let mut rng = AesRng::from_random_seed();
+    let mut seeder = new_seeder();
+    let mut seed = seeder.seed().0;
     let bench_name = "non-threshold_keygen_bgv_memory".to_string();
     bench_memory(
-        |rng: &mut AesRng| {
-            keygen::<AesRng, LevelEll, LevelKsw, N65536>(rng, PLAINTEXT_MODULUS.get().0)
+        |seed: &mut u128| {
+            let mut xof = XofWrapper::new_bgv_kg(*seed);
+            keygen::<_, LevelEll, LevelKsw, N65536>(&mut xof, PLAINTEXT_MODULUS.get().0)
         },
-        &mut rng,
+        &mut seed,
         bench_name,
     );
 }

@@ -9,7 +9,12 @@ use crate::experimental::bgv::basics::*;
 use crate::experimental::bgv::ddec::keygen_shares;
 use crate::networking::value::NetworkValue;
 use itertools::Itertools;
+use rand::CryptoRng;
+use rand::RngCore;
 use std::sync::Arc;
+use tfhe::core_crypto::commons::math::random::RandomGenerator;
+use tfhe::XofSeed;
+use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tokio::task::JoinSet;
 use tokio::time::timeout_at;
 
@@ -148,3 +153,55 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
         Ok(PrivateBgvKeySet::from_poly_representation(sk_shares))
     }
 }
+
+// Main reason to have this wrapper is to implement CryptoRng for it
+// also adds convenient functions to initialize the XOF with the correct DSEP
+pub struct XofWrapper {
+    xof: RandomGenerator<SoftwareRandomGenerator>,
+}
+
+impl XofWrapper {
+    pub fn new_bgv_kg(seed: u128) -> Self {
+        let xof =
+            RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(seed, *b"BGV_KeyG"));
+        Self { xof }
+    }
+
+    pub fn new_bgv_enc(seed: u128) -> Self {
+        let xof =
+            RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(seed, *b"BGV_Enc_"));
+        Self { xof }
+    }
+
+    pub fn new_bfv_kg(seed: u128) -> Self {
+        let xof =
+            RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(seed, *b"BFV_KeyG"));
+        Self { xof }
+    }
+
+    pub fn new_bfv_enc(seed: u128) -> Self {
+        let xof =
+            RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(seed, *b"BFV_Enc_"));
+        Self { xof }
+    }
+}
+
+impl RngCore for XofWrapper {
+    fn next_u32(&mut self) -> u32 {
+        self.xof.next_u32()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.xof.next_u64()
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.xof.fill_bytes(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.xof.try_fill_bytes(dest)
+    }
+}
+
+impl CryptoRng for XofWrapper {}
