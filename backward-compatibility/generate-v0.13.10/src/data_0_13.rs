@@ -3,10 +3,10 @@
 //! for kms-core v0.13.1
 
 use aes_prng::AesRng;
-use kms_0_13_1::backup::custodian::{
+use kms_0_13_10::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
-use kms_0_13_1::backup::{
+use kms_0_13_10::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
@@ -14,8 +14,8 @@ use kms_0_13_1::backup::{
     },
     BackupCiphertext,
 };
-use kms_0_13_1::consts::SAFE_SER_SIZE_LIMIT;
-use kms_0_13_1::cryptography::{
+use kms_0_13_10::consts::SAFE_SER_SIZE_LIMIT;
+use kms_0_13_10::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
@@ -23,16 +23,16 @@ use kms_0_13_1::cryptography::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
-use kms_0_13_1::engine::base::{
+use kms_0_13_10::engine::base::{
     safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
-use kms_0_13_1::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_13_1::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use kms_0_13_1::engine::threshold::service::session::PRSSSetupCombined;
-use kms_0_13_1::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
-use kms_0_13_1::util::key_setup::FhePublicKey;
-use kms_0_13_1::vault::keychain::AppKeyBlob;
-use kms_grpc_0_13_1::{
+use kms_0_13_10::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_13_10::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use kms_0_13_10::engine::threshold::service::session::PRSSSetupCombined;
+use kms_0_13_10::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
+use kms_0_13_10::util::key_setup::FhePublicKey;
+use kms_0_13_10::vault::keychain::AppKeyBlob;
+use kms_grpc_0_13_10::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
@@ -64,10 +64,10 @@ use tfhe_1_5_1::{
     ServerKey, Tag,
 };
 use tfhe_versionable_0_7::Upgrade;
-use threshold_fhe_0_13_1::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_13_1::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_13_1::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe_0_13_1::{
+use threshold_fhe_0_13_10::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_13_10::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_13_10::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_fhe_0_13_10::{
     execution::{
         runtime::party::Role,
         sharing::share::Share,
@@ -100,7 +100,7 @@ use backward_compatibility::{
     KMS_MODULE_NAME,
 };
 
-use kms_0_13_1::cryptography::signcryption::SigncryptionPayload;
+use kms_0_13_10::cryptography::signcryption::SigncryptionPayload;
 
 use crate::generate::{
     store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
@@ -1150,8 +1150,8 @@ impl KmsV0_13 {
 
         // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
         // so generation is not deterministic
-        let key_id = kms_grpc_0_13_1::RequestId::zeros();
-        let preproc_id = kms_grpc_0_13_1::RequestId::zeros();
+        let key_id = kms_grpc_0_13_10::RequestId::zeros();
+        let preproc_id = kms_grpc_0_13_10::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
@@ -1237,7 +1237,7 @@ impl KmsV0_13 {
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: std::sync::Arc::new(private_key_set),
             public_material,
-            meta_data: kms_0_13_1::engine::base::KeyGenMetadata::LegacyV0(info),
+            meta_data: kms_0_13_10::engine::base::KeyGenMetadata::LegacyV0(info),
         };
 
         store_versioned_test!(
