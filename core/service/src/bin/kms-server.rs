@@ -523,12 +523,8 @@ async fn main_exec() -> anyhow::Result<()> {
         .and_then(|tls| match tls {
             TlsConf::Manual { .. } => Some(false),
             TlsConf::Auto {
-                eif_signing_cert: _,
-                trusted_releases: _,
-                ignore_aws_ca_chain: _,
                 attest_private_vault_root_key,
-                renew_slack_after_expiration: _,
-                renew_fail_retry_timeout: _,
+                ..
             } => *attest_private_vault_root_key,
         })
         .is_some_and(|m| m);
