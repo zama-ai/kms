@@ -5,7 +5,7 @@
 
 use crate::client::test_tools::{await_server_ready, check_port_is_closed};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::consts::TEST_THRESHOLD_KEY_ID;
+use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
@@ -43,6 +43,9 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
+        .force_isolated() // Must use isolated material: shared mode includes PRSS data
+        // which would cause the epoch to load, making decrypt succeed
+        // instead of returning NotFound.
         .build()
         .await?;
 
@@ -68,7 +71,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     // Validate that the send itself fails since there is no PRSS (no epoch initialized)
     let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         1,
-        &TEST_THRESHOLD_KEY_ID,
+        &TEST_THRESHOLD_KEY_ID_4P,
         None,
         &clients,
         &mut internal_client,
@@ -156,6 +159,7 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS data to the shared test-material source
         .build()
         .await?;
 
@@ -231,6 +235,7 @@ async fn test_threshold_shutdown_isolated() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 
@@ -283,7 +288,7 @@ async fn test_threshold_shutdown_isolated() -> Result<()> {
     // Keep the server occupied so it won't shut down immediately after dropping the handle
     let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         3,
-        &TEST_THRESHOLD_KEY_ID,
+        &TEST_THRESHOLD_KEY_ID_4P,
         None,
         &clients,
         &mut internal_client,
@@ -344,6 +349,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss() // Need PRSS for CRS gen
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .with_rate_limiter(rate_limiter_conf)
         .build()
         .await?;
@@ -393,9 +399,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 #[cfg(feature = "slow_tests")]
 #[serial]
 async fn nightly_test_complete_session_notification_isolated() -> Result<()> {
-    use crate::consts::{
-        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
-    };
+    use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
@@ -437,6 +441,7 @@ async fn nightly_test_complete_session_notification_isolated() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 

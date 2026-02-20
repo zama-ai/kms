@@ -43,6 +43,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -99,6 +100,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_material_spec(spec)
         .build()
         .await?;
@@ -154,6 +156,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -210,6 +213,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -319,6 +323,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -441,6 +446,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 

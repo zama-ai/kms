@@ -84,6 +84,16 @@ impl TestMaterialManager {
         spec: &TestMaterialSpec,
         test_name: &str,
     ) -> Result<TempDir> {
+        // Cannot copy material without a source path configured.
+        if self.source_path.is_none() {
+            return Err(anyhow!(
+                "Cannot setup isolated test material for '{}': no source path configured. \
+                 Run 'cargo run -p generate-test-material -- --output ./test-material testing' \
+                 from workspace root.",
+                test_name
+            ));
+        }
+
         // Verify source material exists for the requested material type
         self.verify_material_exists(spec)?;
 
@@ -619,6 +629,16 @@ impl TestMaterialManager {
         let dest_type_dir = dest_dir.join(key_type);
 
         if !source_type_dir.exists() {
+            // Only error if we have a configured source path — means the material
+            // should exist but doesn't (likely a generation or path bug).
+            if self.source_path.is_some() {
+                return Err(anyhow!(
+                    "Source directory does not exist: {}. \
+                     Run 'cargo run -p generate-test-material -- --output ./test-material testing' \
+                     from workspace root.",
+                    source_type_dir.display()
+                ));
+            }
             tracing::warn!(
                 "Source directory does not exist, skipping copy: {}",
                 source_type_dir.display()
@@ -641,10 +661,12 @@ impl TestMaterialManager {
                 )
             })?;
         } else {
-            tracing::warn!(
-                "Source file does not exist, skipping: {}",
+            return Err(anyhow!(
+                "Source key file does not exist: {}. \
+                 Run 'cargo run -p generate-test-material -- --output ./test-material testing' \
+                 from workspace root.",
                 source_file.display()
-            );
+            ));
         }
 
         Ok(())
