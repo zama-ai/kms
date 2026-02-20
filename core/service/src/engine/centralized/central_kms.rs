@@ -907,7 +907,6 @@ impl<
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
-
         // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
@@ -961,8 +960,9 @@ impl<
         // Update backup vault if it exists
         // This ensures that all files in the private storage are also in the backup vault
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
-        // Note however that the data in the vault is not checked for corruption.
-        backup_operator.update_backup_vault().await?;
+        // Note however that the data in the vault is not checked for corruption hence
+        // existing values are not re-backed up
+        backup_operator.update_backup_vault(false).await?;
 
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =
@@ -978,7 +978,6 @@ impl<
             Arc::clone(&pub_dec_meta_store),
             telemetry_conf.refresh_interval(),
         );
-
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
 
