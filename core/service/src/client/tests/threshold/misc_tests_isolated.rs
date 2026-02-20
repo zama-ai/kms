@@ -46,8 +46,6 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
         .build()
         .await?;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-
     // Create internal client before destructuring env
     let pub_storage_prefixes =
         &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -58,6 +56,14 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let _material_dir = env.material_dir; // keep alive for temp dir cleanup
     let clients = env.clients;
     let servers = env.servers;
+
+    // Wait for all core servers to be ready before sending requests
+    let core_service_name = <CoreServiceEndpointServer<
+        RealThresholdKms<FileStorage, FileStorage>,
+    > as NamedService>::NAME;
+    for cur_handle in servers.values() {
+        await_server_ready(core_service_name, cur_handle.service_port).await;
+    }
 
     // Validate that the send itself fails since there is no PRSS (no epoch initialized)
     let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
@@ -79,9 +85,6 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
         .await
         .expect("Failed to get core health client");
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
     let status = get_status(&mut main_health_client, core_service_name)
         .await
         .unwrap();
