@@ -516,6 +516,23 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .inspect_err(|e| tracing::warn!("Could not migrate legacy FHE keys: {e}"))?;
 
+    let attest_private_vault_root_key_policy = core_config
+        .threshold
+        .as_ref()
+        .and_then(|t| t.tls.as_ref())
+        .and_then(|tls| match tls {
+            TlsConf::Manual { .. } => Some(false),
+            TlsConf::Auto {
+                eif_signing_cert: _,
+                trusted_releases: _,
+                ignore_aws_ca_chain: _,
+                attest_private_vault_root_key,
+                renew_slack_after_expiration: _,
+                renew_fail_retry_timeout: _,
+            } => *attest_private_vault_root_key,
+        })
+        .is_some_and(|m| m);
+
     let private_keychain = OptionFuture::from(
         core_config
             .private_vault
@@ -529,6 +546,7 @@ async fn main_exec() -> anyhow::Result<()> {
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
                     Some(&public_vault.storage),
+                    attest_private_vault_root_key_policy,
                 )
             }),
     )
@@ -567,6 +585,7 @@ async fn main_exec() -> anyhow::Result<()> {
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
                     Some(&public_vault),
+                    false,
                 )
             }),
     )
