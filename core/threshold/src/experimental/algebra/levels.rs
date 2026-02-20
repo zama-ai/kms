@@ -34,6 +34,7 @@ use std::sync::RwLock;
 use crate::experimental::algebra::crt::from_crt;
 use crate::experimental::algebra::crt::to_crt;
 use crate::experimental::algebra::crt::LevelKswCrtRepresentation;
+use crate::experimental::algebra::integers::{IntQ, ModReduction};
 use crate::experimental::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
@@ -120,6 +121,16 @@ macro_rules! impl_ring_level {
                     Self {
                         value: GenericModulus(value),
                     }
+                }
+            }
+
+            /// In-place negation if we have a mutable reference.
+            impl Neg for &mut $name {
+                type Output = ();
+
+                fn neg(self) -> Self::Output {
+                    self.value.0 = self.value.0.neg_mod(&$name::MODULUS);
+
                 }
             }
 
@@ -247,6 +258,24 @@ macro_rules! impl_ring_level {
                     Ok(Self {
                         value: GenericModulus(<$uint_type>::deserialize(deserializer)?),
                     })
+                }
+            }
+        }
+
+        impl ModReduction<$name> for IntQ {
+            fn mod_reduction(&self) -> $name {
+                // assuming inputs are bounded by q since are computed from division
+                let x: $uint_type = (&(self.data)).into();
+                let cheap_mod = x.rem($name::MODULUS.as_nz_ref());
+
+                if self.is_negative {
+                    $name {
+                        value: GenericModulus(cheap_mod.neg_mod(&$name::MODULUS)),
+                    }
+                } else {
+                    $name {
+                        value: GenericModulus(cheap_mod),
+                    }
                 }
             }
         }
@@ -1064,7 +1093,7 @@ pub trait ScalingFactor {
 }
 
 impl ScalingFactor for LevelKsw {
-    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"))};
+    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001"))};
 }
 
 #[cfg(test)]
