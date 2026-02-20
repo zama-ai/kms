@@ -72,10 +72,19 @@ pub struct Symm {
 }
 
 impl Symm {
-    pub async fn new(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<Self> {
-        let (key_origin, mut key_policy) =
-            get_key_origin_and_policy(awskms_client.clone(), key_id.clone()).await?;
-        canonicalize_iam_policy(&mut key_policy);
+    pub async fn new(
+        awskms_client: AWSKMSClient,
+        key_id: String,
+        attest_key_policy: bool,
+    ) -> anyhow::Result<Self> {
+        let key_origin = get_key_origin(awskms_client.clone(), key_id.clone()).await?;
+        let key_policy = if attest_key_policy {
+            let mut key_policy = get_key_policy(awskms_client.clone(), key_id.clone()).await?;
+            canonicalize_iam_policy(&mut key_policy);
+            Some(key_policy)
+        } else {
+            None
+        };
         Ok(Self {
             key_id,
             enc_algo_spec: EncryptionAlgorithmSpec::SymmetricDefault,
@@ -106,10 +115,19 @@ pub struct Asymm {
 }
 
 impl Asymm {
-    pub async fn new(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<Self> {
-        let (key_origin, mut key_policy) =
-            get_key_origin_and_policy(awskms_client.clone(), key_id.clone()).await?;
-        canonicalize_iam_policy(&mut key_policy);
+    pub async fn new(
+        awskms_client: AWSKMSClient,
+        key_id: String,
+        attest_key_policy: bool,
+    ) -> anyhow::Result<Self> {
+        let key_origin = get_key_origin(awskms_client.clone(), key_id.clone()).await?;
+        let key_policy = if attest_key_policy {
+            let mut key_policy = get_key_policy(awskms_client.clone(), key_id.clone()).await?;
+            canonicalize_iam_policy(&mut key_policy);
+            Some(key_policy)
+        } else {
+            None
+        };
         let get_public_key_response = awskms_client
             .get_public_key()
             .key_id(key_id.clone())
@@ -544,10 +562,7 @@ pub fn decrypt_ciphertext_for_recipient(
     Ok(plaintext)
 }
 
-async fn get_key_origin_and_policy(
-    awskms_client: AWSKMSClient,
-    key_id: String,
-) -> anyhow::Result<(OriginType, IAMPolicy)> {
+async fn get_key_origin(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<OriginType> {
     let describe_key_response = awskms_client.describe_key().key_id(&key_id).send().await?;
     let key_origin = describe_key_response
         .key_metadata
@@ -556,6 +571,10 @@ async fn get_key_origin_and_policy(
         .ok_or_else(|| {
             anyhow_error_and_log(format!("Cannot determine origin of root key {key_id}"))
         })?;
+    Ok(key_origin)
+}
+
+async fn get_key_policy(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<IAMPolicy> {
     let get_key_policy_response = awskms_client
         .get_key_policy()
         .key_id(&key_id)
@@ -569,7 +588,7 @@ async fn get_key_origin_and_policy(
             "Cannot parse key policy for root key {key_id}: {e}"
         ))
     })?;
-    Ok((key_origin, key_policy))
+    Ok(key_policy)
 }
 
 /// We're interested in comparing the policy structure only, not the identifiers

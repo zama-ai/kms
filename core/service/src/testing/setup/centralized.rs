@@ -135,6 +135,7 @@ impl CentralizedTestEnvBuilder {
                         None,
                         None,
                         Some(&pub_proxy),
+                        false,
                     )
                     .await?,
                 )
