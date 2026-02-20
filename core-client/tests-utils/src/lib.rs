@@ -1,8 +1,10 @@
 use std::env;
 use std::fmt;
 use std::io::Write;
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
 pub struct DockerComposeCmd {
     pub root_path: PathBuf,
@@ -40,6 +42,21 @@ pub fn format_output(output: &Output) -> OutputWrapper<'_> {
     OutputWrapper(output)
 }
 
+/// Wait until all given TCP ports on localhost are no longer bound.
+/// This prevents "address already in use" errors when Docker Compose retries
+/// start before the OS has released ports from the previous run.
+fn wait_for_ports_free(ports: &[u16], timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    for &port in ports {
+        while Instant::now() < deadline {
+            if TcpStream::connect(("127.0.0.1", port)).is_err() {
+                break; // port is free
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+}
+
 impl DockerComposeCmd {
     pub fn new(mode: KMSMode) -> Self {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -51,8 +68,26 @@ impl DockerComposeCmd {
         DockerComposeCmd { root_path, mode }
     }
 
+    fn ports_for_mode(&self) -> &'static [u16] {
+        match self.mode {
+            KMSMode::ThresholdTestParameterNoInitSixParty => &[
+                50100, 50200, 50300, 50400, 50500, 50600, 50001, 50002, 50003, 50004, 50005, 50006,
+            ],
+            KMSMode::ThresholdDefaultParameter
+            | KMSMode::ThresholdTestParameter
+            | KMSMode::ThresholdTestParameterNoInit
+            | KMSMode::ThresholdCustodianTestParameter => {
+                &[50100, 50200, 50300, 50400, 50001, 50002, 50003, 50004]
+            }
+            KMSMode::Centralized | KMSMode::CentralizedCustodian => &[50100],
+        }
+    }
+
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
+                     // Wait for the OS to release ports before starting new containers.
+                     // Without this, Docker Compose retries fail with "address already in use".
+        wait_for_ports_free(self.ports_for_mode(), Duration::from_secs(30));
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
 
         // set the FHE params based on mode
