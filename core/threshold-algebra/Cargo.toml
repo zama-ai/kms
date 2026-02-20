@@ -1,0 +1,39 @@
+[package]
+name = "threshold-algebra"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+
+[dependencies]
+anyhow.workspace   = true
+bc2wrap.workspace   = true
+g2p.workspace   = true
+itertools.workspace   = true # TODO: get rid of this
+lazy_static.workspace   = true # TODO: get rid of this
+ndarray.workspace   = true
+rand.workspace   = true
+serde.workspace   = true # TODO: wouldn't it be nice to not have to have this here?
+sha3.workspace   = true
+tracing.workspace   = true
+zeroize.workspace   = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[features]
+default = ["extension_degree_4"]
+extension_degree_3 =[]
+extension_degree_4 =[]
+extension_degree_5 =[]
+extension_degree_6 =[]
+extension_degree_7 =[]
+extension_degree_8 =[]
+
+all_extension_degrees = [
+"extension_degree_3",
+"extension_degree_4",
+"extension_degree_5",
+"extension_degree_6",
+"extension_degree_7",
+"extension_degree_8",
+]

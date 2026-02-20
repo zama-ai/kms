@@ -6,6 +6,7 @@ members = [
     "core/grpc",
     "core/service",
     "core/threshold",
+    "core/threshold-algebra",
     "core-client",
     "observability",
     "tools/kms-health-check",
@@ -72,6 +73,7 @@ kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
+threshold-algebra = { path = "./core/threshold-algebra" }
 
 # External dependencies (alphabetically sorted)
 aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+ downloads), actively maintained

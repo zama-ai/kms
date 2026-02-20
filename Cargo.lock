@@ -7679,6 +7679,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "threshold-algebra"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "bc2wrap",
+ "g2p",
+ "itertools 0.14.0",
+ "lazy_static",
+ "ndarray",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "sha3",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "threshold-fhe"
 version = "0.13.0-rc.3"
 dependencies = [
