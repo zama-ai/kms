@@ -47,6 +47,17 @@ where
         })
     }
 
+    pub fn from_lwe_secret_key(
+        lwe_key: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+        polynomial_size: PolynomialSize,
+        params: NoiseSquashingCompressionParameters,
+    ) -> Self {
+        Self {
+            post_packing_ks_key: GlweSecretKeyShare::from_lwe_secret_key(lwe_key, polynomial_size),
+            params,
+        }
+    }
+
     pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.post_packing_ks_key.data_as_raw_vec()
     }

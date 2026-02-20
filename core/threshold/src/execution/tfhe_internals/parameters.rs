@@ -25,7 +25,7 @@ use tfhe::{
     },
 };
 
-use crate::execution::keyset_config::KeySetConfig;
+use crate::execution::keyset_config::{KeyGenSecretKeyConfig, KeySetConfig};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncryptionType {
@@ -936,23 +936,27 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         match keyset_config {
-            KeySetConfig::Standard(config) => {
-                self.lwe_sk_num_bits_to_sample()
-                    + self.lwe_hat_sk_num_bits_to_sample()
-                    + self.glwe_sk_num_bits_to_sample()
-                    + if config.is_using_existing_compression_sk() {
-                        0
-                    } else {
-                        self.compression_sk_num_bits_to_sample()
-                    }
-            }
+            KeySetConfig::Standard(config) => match config.secret_key_config {
+                KeyGenSecretKeyConfig::GenerateAll
+                | KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                    self.lwe_sk_num_bits_to_sample()
+                        + self.lwe_hat_sk_num_bits_to_sample()
+                        + self.glwe_sk_num_bits_to_sample()
+                        + if config.is_using_existing_compression_sk() {
+                            0
+                        } else {
+                            self.compression_sk_num_bits_to_sample()
+                        }
+                }
+                KeyGenSecretKeyConfig::UseExisting => 0,
+            },
             KeySetConfig::DecompressionOnly => 0,
         }
     }
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_inner_config) => {
+            KeySetConfig::Standard(_) => {
                 let target_bound = self.num_needed_noise_ksk().bound;
                 let noises = &[
                     self.num_needed_noise_ksk(),
@@ -981,7 +985,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_inner_config) => {
+            KeySetConfig::Standard(_) => {
                 let out = self.num_needed_noise_pk();
                 #[cfg(test)]
                 assert!(matches!(out.bound, NoiseBounds::LweHatNoise(..)));
@@ -997,7 +1001,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         let target_bound = self.num_needed_noise_bk().bound;
         match keyset_config {
-            KeySetConfig::Standard(_inner_config) => {
+            KeySetConfig::Standard(_) => {
                 let noises = &[
                     self.num_needed_noise_bk(),
                     self.num_needed_noise_pksk(),
@@ -1025,7 +1029,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_inner_config) => {
+            KeySetConfig::Standard(_) => {
                 let out = self.num_needed_noise_compression_key();
                 #[cfg(test)]
                 {
@@ -1461,7 +1465,7 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         self.regular_params.num_raw_bits(keyset_config)
             + match keyset_config {
-                KeySetConfig::Standard(_standard_key_set_config) => {
+                KeySetConfig::Standard(_) => {
                     self.glwe_sk_num_bits_sns() + self.sns_compression_sk_num_bits()
                 }
                 KeySetConfig::DecompressionOnly => 0,
@@ -1470,7 +1474,7 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo {
         match keyset_config {
-            KeySetConfig::Standard(_inner) => {
+            KeySetConfig::Standard(_) => {
                 let regular_lwe = self.regular_params.all_lwe_noise(keyset_config);
                 let sns_lwe = self.num_needed_noise_msnrk_sns();
                 let target_bound = regular_lwe.bound;

@@ -111,6 +111,16 @@ where
         self.data.iter().map(|share| share.value()).collect_vec()
     }
 
+    pub fn from_lwe_secret_key(
+        lwe_key: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+        polynomial_size: PolynomialSize,
+    ) -> Self {
+        Self {
+            data: lwe_key.data,
+            polynomial_size,
+        }
+    }
+
     pub fn into_lwe_secret_key(self) -> LweSecretKeyShare<Z, EXTENSION_DEGREE> {
         LweSecretKeyShare { data: self.data }
     }

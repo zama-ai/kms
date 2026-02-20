@@ -65,6 +65,24 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
             "This keygen implementation is supposed to fail"
         ))
     }
+
+    async fn compressed_keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<CompressedXofKeySet>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        Err(anyhow::anyhow!(
+            "This keygen implementation is supposed to fail"
+        ))
+    }
 }
 
 #[tonic::async_trait]
@@ -99,6 +117,24 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _tag: tfhe::Tag,
         _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        Err(anyhow::anyhow!(
+            "This keygen implementation is supposed to fail"
+        ))
+    }
+
+    async fn compressed_keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<CompressedXofKeySet>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
