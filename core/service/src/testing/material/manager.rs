@@ -84,16 +84,6 @@ impl TestMaterialManager {
         spec: &TestMaterialSpec,
         test_name: &str,
     ) -> Result<TempDir> {
-        // Cannot copy material without a source path configured.
-        if self.source_path.is_none() {
-            return Err(anyhow!(
-                "Cannot setup isolated test material for '{}': no source path configured. \
-                 Run 'cargo run -p generate-test-material -- --output ./test-material testing' \
-                 from workspace root.",
-                test_name
-            ));
-        }
-
         // Verify source material exists for the requested material type
         self.verify_material_exists(spec)?;
 
