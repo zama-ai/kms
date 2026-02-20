@@ -4,8 +4,9 @@ use super::{
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
+    xx_anyhow_error_and_log,
 };
-use crate::error::error_handler::anyhow_error_and_log;
+
 #[cfg(test)]
 use crate::execution::runtime::party::Role;
 use crate::execution::sharing::shamir::ShamirFieldPoly;
@@ -40,14 +41,14 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
                         lock_exceptional_set_store.insert((index, degree), powers.clone());
                         Ok(powers)
                     } else {
-                        Err(anyhow_error_and_log(
+                        Err(xx_anyhow_error_and_log(
                             "Error writing exceptional store 64".to_string(),
                         ))
                     }
                 }
             }
         } else {
-            Err(anyhow_error_and_log(
+            Err(xx_anyhow_error_and_log(
                 "Error reading exceptional store".to_string(),
             ))
         }

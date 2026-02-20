@@ -6,3 +6,14 @@ pub mod galois_rings;
 pub mod poly;
 pub mod structure_traits;
 pub mod syndrome;
+
+use std::{fmt, panic::Location};
+
+use anyhow::anyhow;
+
+// Temporarily move this here so we have a local version before extraction.
+#[track_caller]
+pub(crate) fn xx_anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
+    tracing::error!("Error in {}: {}", Location::caller(), msg);
+    anyhow!("Error in {}: {}", Location::caller(), msg)
+}

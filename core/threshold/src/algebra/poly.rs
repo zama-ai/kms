@@ -1,8 +1,8 @@
+use super::xx_anyhow_error_and_log;
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
     structure_traits::{Field, Invert, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
-use crate::error::error_handler::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -602,7 +602,7 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
     let ls = F::memoize_lagrange(points)?;
     if ls.len() != values.len() {
-        return Err(anyhow_error_and_log(
+        return Err(xx_anyhow_error_and_log(
             "Lagrange interpolation failure: mismatch between number of points and values"
                 .to_string(),
         ));
@@ -656,11 +656,11 @@ pub fn gao_decoding<F: Field>(
     // d = n-k+1
     let d = (n + 1)
         .checked_sub(k)
-        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
+        .ok_or_else(|| xx_anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
 
     // sanity checks for parameter sizes
     if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
+        return Err(xx_anyhow_error_and_log(
             "Gao decoding failure: mismatch between number of values and points".to_string(),
         ));
     }
@@ -668,7 +668,7 @@ pub fn gao_decoding<F: Field>(
     // We are expecting to correct more than what can be done
     // Gao can only correct up to (d-1)/2 errors
     if 2 * max_errs >= d {
-        return Err(anyhow_error_and_log(
+        return Err(xx_anyhow_error_and_log(
             "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
         ));
     }
@@ -696,7 +696,7 @@ pub fn gao_decoding<F: Field>(
 
     // abort early if we have too many errors
     if q0.deg() > max_errs {
-        return Err(anyhow_error_and_log(
+        return Err(xx_anyhow_error_and_log(
             format!("Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.", q0.deg())
         ));
     }
@@ -705,11 +705,11 @@ pub fn gao_decoding<F: Field>(
     let (h, rem) = q1 / &q0;
 
     if !rem.is_zero() {
-        Err(anyhow_error_and_log(format!(
+        Err(xx_anyhow_error_and_log(format!(
             "Gao decoding failure: Division remainder is not zero but {rem:?}."
         )))
     } else if h.deg() >= k {
-        Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be at most {}.", h.deg(), k-1)))
+        Err(xx_anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be at most {}.", h.deg(), k-1)))
     } else {
         Ok(h)
     }

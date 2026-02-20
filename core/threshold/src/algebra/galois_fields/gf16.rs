@@ -1,6 +1,6 @@
+use super::super::xx_anyhow_error_and_log;
+use crate::algebra::poly::lagrange_polynomials;
 use std::collections::HashMap;
-
-use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log};
 
 use crate::algebra::{
     poly::Poly,
@@ -105,14 +105,14 @@ impl Field for GF16 {
                         lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
                         Ok(lagrange_pols)
                     } else {
-                        Err(anyhow_error_and_log(
+                        Err(xx_anyhow_error_and_log(
                             "Error writing LAGRANGE_STORE".to_string(),
                         ))
                     }
                 }
             }
         } else {
-            Err(anyhow_error_and_log(
+            Err(xx_anyhow_error_and_log(
                 "Error reading LAGRANGE_STORE".to_string(),
             ))
         }

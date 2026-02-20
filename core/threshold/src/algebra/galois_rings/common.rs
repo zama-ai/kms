@@ -1,3 +1,4 @@
+use super::super::xx_anyhow_error_and_log;
 use super::utils::ArrayVisitor;
 use crate::algebra::{
     base_ring::ToZ64,
@@ -9,7 +10,7 @@ use crate::algebra::{
     },
     syndrome::lagrange_numerators,
 };
-use crate::error::error_handler::anyhow_error_and_log;
+
 #[cfg(feature = "non-wasm")]
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::{algebra::structure_traits::Field, execution::sharing::shamir::ShamirFieldPoly};
@@ -130,7 +131,7 @@ impl<Z: Clone, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
     {
         for i in 1..EXTENSION_DEGREE {
             if self.coefs[i] != Z::ZERO {
-                return Err(anyhow_error_and_log(format!(
+                return Err(xx_anyhow_error_and_log(format!(
                     "Higher coefficient must be zero but was {}",
                     self.coefs[i]
                 )));
@@ -145,14 +146,14 @@ impl<Z: Clone, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
 
     pub fn from_vec(coefs: Vec<Z>) -> anyhow::Result<Self> {
         if coefs.len() != EXTENSION_DEGREE {
-            return Err(anyhow_error_and_log(format!(
+            return Err(xx_anyhow_error_and_log(format!(
                 "Error: required {EXTENSION_DEGREE} coefficients, but got {}",
                 coefs.len()
             )));
         }
         Ok(ResiduePoly {
             coefs: coefs.try_into().map_err(|_| {
-                anyhow_error_and_log("Error converting coefficient vector into Z64Poly")
+                xx_anyhow_error_and_log("Error converting coefficient vector into Z64Poly")
             })?,
         })
     }
@@ -578,7 +579,7 @@ where
 {
     fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
         if idx >= (1 << EXTENSION_DEGREE) {
-            return Err(anyhow_error_and_log(format!(
+            return Err(xx_anyhow_error_and_log(format!(
                 "Value {idx} is too large to be embedded!"
             )));
         }
@@ -706,7 +707,7 @@ where
     /// invert and lift an Integer to the large Ring
     fn invert(self) -> anyhow::Result<Self> {
         if self == Self::ZERO {
-            return Err(anyhow_error_and_log("Cannot invert 0"));
+            return Err(xx_anyhow_error_and_log("Cannot invert 0"));
         }
 
         let alpha_k = self.bit_compose(0);
@@ -775,7 +776,7 @@ where
         // Validate the result, i.e. x+x^2 = input
         //Note: This is a sanity check, we don't explicitly need it
         if v != &(x + x * x) {
-            return Err(anyhow_error_and_log(
+            return Err(xx_anyhow_error_and_log(
                 "The outer Newton Raphson inversion computation in solve() failed",
             ));
         }
