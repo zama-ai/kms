@@ -22,31 +22,20 @@ pub fn bench_bgv(
     sk: SecretKey,
     pk: PublicBgvKeySet,
 ) {
+    let plaintext_modulus = PLAINTEXT_MODULUS.get().0;
     let mut seeder = new_seeder();
     let seed = seeder.seed().0;
     let mut rng = XofWrapper::new_bgv_enc(seed);
 
     let plaintext_vec_a: Vec<u32> = (0..N65536::VALUE)
-        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
+        .map(|_| (rng.next_u64() % plaintext_modulus) as u32)
         .collect();
     let plaintext_vec_b: Vec<u32> = (0..N65536::VALUE)
-        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
+        .map(|_| (rng.next_u64() % plaintext_modulus) as u32)
         .collect();
 
-    let ct_a = bgv_enc(
-        &mut rng,
-        &plaintext_vec_a,
-        &pk.a,
-        &pk.b,
-        PLAINTEXT_MODULUS.get().0,
-    );
-    let ct_b = bgv_enc(
-        &mut rng,
-        &plaintext_vec_b,
-        &pk.a,
-        &pk.b,
-        PLAINTEXT_MODULUS.get().0,
-    );
+    let ct_a = bgv_enc(&mut rng, &plaintext_vec_a, &pk.a, &pk.b, plaintext_modulus);
+    let ct_b = bgv_enc(&mut rng, &plaintext_vec_b, &pk.a, &pk.b, plaintext_modulus);
 
     {
         bench_group.bench_function("mul(bgv)", |b| {
@@ -63,7 +52,7 @@ pub fn bench_bgv(
                     &plaintext_vec_a,
                     &pk.a,
                     &pk.b,
-                    PLAINTEXT_MODULUS.get().0,
+                    plaintext_modulus,
                 ))
             });
         });
@@ -77,8 +66,7 @@ pub fn bench_bgv(
 }
 
 fn main() {
-    let mut seeder = new_seeder();
-    let seed = seeder.seed().0;
+    let seed = 1995;
     let mut xof = XofWrapper::new_bgv_kg(seed);
     let (pk, sk) = keygen::<_, LevelEll, LevelKsw, N65536>(&mut xof, PLAINTEXT_MODULUS.get().0);
 

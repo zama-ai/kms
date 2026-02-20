@@ -1,14 +1,9 @@
 use crate::experimental::algebra::levels::CryptoModulus;
-use crate::experimental::algebra::levels::GenericModulus;
-use crate::experimental::algebra::levels::LevelEll;
-use crate::experimental::algebra::levels::LevelOne;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::Uint;
 use crypto_bigint::Zero;
-use crypto_bigint::U128;
 use crypto_bigint::U2304;
-use crypto_bigint::U768;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Add;
@@ -282,45 +277,6 @@ impl ZeroCenteredRem for IntQ {
     }
 }
 
-// Above could be made more generic, but BGV is very much for exposition only
-
-/// this computes abs(x) mod q * sign(x) % LevelOne::R
-impl ModReduction<LevelOne> for IntQ {
-    fn mod_reduction(&self) -> LevelOne {
-        // assuming inputs are bounded by q since are computed from division
-        let x: U128 = (&(self.data)).into();
-        let cheap_mod = x.rem(LevelOne::MODULUS.as_nz_ref());
-
-        if self.is_negative {
-            LevelOne {
-                value: GenericModulus(cheap_mod.neg_mod(&LevelOne::MODULUS)),
-            }
-        } else {
-            LevelOne {
-                value: GenericModulus(cheap_mod),
-            }
-        }
-    }
-}
-
-impl ModReduction<LevelEll> for IntQ {
-    fn mod_reduction(&self) -> LevelEll {
-        // assuming inputs are bounded by q since are computed from division
-        let x: U768 = (&(self.data)).into();
-        let cheap_mod = x.rem(LevelEll::MODULUS.as_nz_ref());
-
-        if self.is_negative {
-            LevelEll {
-                value: GenericModulus(cheap_mod.neg_mod(&LevelEll::MODULUS)),
-            }
-        } else {
-            LevelEll {
-                value: GenericModulus(cheap_mod),
-            }
-        }
-    }
-}
-
 pub trait ModReduction<T> {
     fn mod_reduction(&self) -> T;
 }
@@ -330,6 +286,7 @@ mod tests {
     use super::*;
     use crate::algebra::structure_traits::Sample;
     use crate::experimental::algebra::cyclotomic::{RingElement, RqElement};
+    use crate::experimental::algebra::levels::LevelOne;
     use crate::experimental::algebra::ntt::{Const, N65536};
     use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;

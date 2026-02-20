@@ -34,6 +34,7 @@ use std::sync::RwLock;
 use crate::experimental::algebra::crt::from_crt;
 use crate::experimental::algebra::crt::to_crt;
 use crate::experimental::algebra::crt::LevelKswCrtRepresentation;
+use crate::experimental::algebra::integers::{IntQ, ModReduction};
 use crate::experimental::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
@@ -257,6 +258,24 @@ macro_rules! impl_ring_level {
                     Ok(Self {
                         value: GenericModulus(<$uint_type>::deserialize(deserializer)?),
                     })
+                }
+            }
+        }
+
+        impl ModReduction<$name> for IntQ {
+            fn mod_reduction(&self) -> $name {
+                // assuming inputs are bounded by q since are computed from division
+                let x: $uint_type = (&(self.data)).into();
+                let cheap_mod = x.rem($name::MODULUS.as_nz_ref());
+
+                if self.is_negative {
+                    $name {
+                        value: GenericModulus(cheap_mod.neg_mod(&$name::MODULUS)),
+                    }
+                } else {
+                    $name {
+                        value: GenericModulus(cheap_mod),
+                    }
                 }
             }
         }

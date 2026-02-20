@@ -9,7 +9,7 @@ use crate::experimental::algebra::integers::ModReduction;
 use crate::experimental::algebra::integers::PositiveConv;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
 use crate::experimental::algebra::levels::{
-    GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor, Q, QR,
+    GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor, Q, Q1, QR,
 };
 use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
@@ -330,13 +330,13 @@ fn key_switch(
     modulus_switch::<LevelEll, LevelKsw, N65536>(&new_ct, q, big_q, *PLAINTEXT_MODULUS)
 }
 
-// NOTE: We return a ctxt at the Ell level (highest one) because we only care
+// NOTE: We return a ctxt at the level one (lowest one) because we only care
 // about supporting one level of multiplication as this is for exposition purposes only.
 pub fn multiply_ctxt(
     ct_a: &LevelledCiphertext<LevelEll, N65536>,
     ct_b: &LevelledCiphertext<LevelEll, N65536>,
     pk: &PublicBgvKeySet,
-) -> LevelledCiphertext<LevelEll, N65536> {
+) -> LevelledCiphertext<LevelOne, N65536> {
     let (c_a_0, c_a_1) = (ct_a.get_c0(), ct_a.get_c1());
     let (c_b_0, c_b_1) = (ct_b.get_c0(), ct_b.get_c1());
 
@@ -344,7 +344,17 @@ pub fn multiply_ctxt(
     let d_1 = c_a_0 * c_b_1 + c_a_1 * c_b_0;
     let d_2 = (c_a_1 * c_b_1).neg();
 
-    key_switch(d_0, d_1, d_2, pk)
+    let relinearized = key_switch(d_0, d_1, d_2, pk);
+
+    let q = LevelOne {
+        value: GenericModulus(*Q1::MODULUS.as_ref()),
+    };
+    let big_q = LevelEll {
+        value: GenericModulus(*Q::MODULUS.as_ref()),
+    };
+
+    //Note: Spec say this should go to LevelEll - 1, but we go all the way down to LevelOne for simplicity.
+    modulus_switch::<LevelOne, LevelEll, N65536>(&relinearized, q, big_q, *PLAINTEXT_MODULUS)
 }
 
 #[cfg(test)]
