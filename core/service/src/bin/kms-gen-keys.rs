@@ -346,6 +346,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         awskms_client.clone(),
                         security_module.as_ref().map(Arc::clone),
                         Some(&pub_proxy_storage),
+                        false,
                     )
                 }),
         )

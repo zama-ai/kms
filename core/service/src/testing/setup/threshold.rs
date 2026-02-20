@@ -341,6 +341,7 @@ impl ThresholdTestEnvBuilder {
                             None,
                             None,
                             Some(&pub_proxy),
+                            false,
                         )
                         .await?,
                     )
