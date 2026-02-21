@@ -1892,13 +1892,17 @@ async fn real_preproc_and_keygen_isolated(
         download_all: false,
     };
 
+    let t0 = std::time::Instant::now();
     println!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
+    println!(
+        "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
 
     // Step 2: Key generation using preprocessing result
     let keygen_config = CmdConfig {
@@ -1913,11 +1917,12 @@ async fn real_preproc_and_keygen_isolated(
         download_all: false,
     };
 
+    let t1 = std::time::Instant::now();
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Key-gen done");
+    println!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -2903,29 +2908,24 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-// #[cfg(feature = "k8s_tests")]
-// #[tokio::test]
-// #[serial] // PRSS requires sequential execution
-// async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
-//     init_testing();
+#[cfg(feature = "k8s_tests")]
+#[tokio::test]
+#[serial] // PRSS requires sequential execution
+async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
+    init_testing();
 
-//     // Setup isolated threshold KMS servers (4 parties for default context) with PRSS enabled
-//     let (material_dir, _servers, config_path) =
-//         setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
+    // Setup isolated threshold KMS servers (4 parties for Default context) with PRSS enabled
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
-//     // Run sequential partial preprocessing (1%) and keygen with Default FHE params
-//     // 1% of 785M bits ≈ 7.8M bits — manageable in CI
-//     let keys_folder = material_dir.path();
-//     let key_id_1 =
-//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
-//     let key_id_2 =
-//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
+    // Single round: two rounds with Default params take ~4-6h, exceeding the 2h CI timeout.
+    // The Test-param variant already covers sequential 2-round behavior.
+    let keys_folder = material_dir.path();
+    let key_id = real_preproc_and_keygen_isolated(&config_path, keys_folder, 200).await?;
+    assert!(!key_id.is_empty());
 
-//     // Verify different key IDs generated
-//     assert_ne!(key_id_1, key_id_2);
-
-//     Ok(())
-// }
+    Ok(())
+}
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)

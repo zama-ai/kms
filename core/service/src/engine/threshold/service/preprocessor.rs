@@ -35,6 +35,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
+    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, BaseKmsStruct},
@@ -46,7 +47,7 @@ use crate::{
         validation::{parse_grpc_request_id, validate_preproc_request, RequestIdParsingErr},
     },
     util::{
-        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
+        meta_store::{add_req_to_meta_store, retrieve_from_meta_store_with_timeout, MetaStore},
         rate_limiter::RateLimiter,
     },
 };
@@ -406,10 +407,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
                     )
                 })?;
 
-        let preproc_data = retrieve_from_meta_store(
+        let preproc_data = retrieve_from_meta_store_with_timeout(
             self.preproc_buckets.read().await,
             &request_id,
             OP_KEYGEN_PREPROC_RESULT,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         )
         .await?;
 
