@@ -301,6 +301,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     /// - `session`: the session that holds necessary information for networking
     /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
     /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    /// - `existing_compression_sk`: Optional reference to an existing compression private key share.
     ///
     /// Outputs:
     /// - A [`FhePubKeySet`] composed of a [`tfhe::CompactPublicKey`] and a [`tfhe::ServerKey`]
@@ -328,12 +329,30 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
 
+    #[allow(private_bounds)]
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<FhePubKeySet>
+    where
+        Z: BaseRing,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
+
     /// Runs the distributed key generation protocol for compressed keys.
     ///
     /// Inputs:
     /// - `session`: the session that holds necessary information for networking
     /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
     /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    /// - `existing_compression_sk`: Optional reference to an existing compression private key share.
     ///
     /// Outputs:
     /// - A [`CompressedFhePubKeySet`] composed of a [`tfhe::CompressedCompactPublicKey`] and a [`tfhe::CompressedServerKey`] as well as the seed of the XOF to decompress the keys.
@@ -374,23 +393,6 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         tag: tfhe::Tag,
         existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
     ) -> anyhow::Result<CompressedXofKeySet>
-    where
-        Z: BaseRing,
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
-
-    #[allow(private_bounds)]
-    async fn keygen_from_existing_private_keyset<
-        S: BaseSessionHandles,
-        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    >(
-        session: &mut S,
-        preprocessing: &mut P,
-        params: DKGParams,
-        tag: tfhe::Tag,
-        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
-    ) -> anyhow::Result<FhePubKeySet>
     where
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,

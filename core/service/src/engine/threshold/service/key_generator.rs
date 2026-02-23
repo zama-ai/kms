@@ -305,7 +305,9 @@ impl<
             .time_operation(op_tag)
             .tag(TAG_PARTY_ID, my_role.to_string());
 
-        // Create the sessions necessary to run the DKG
+        // Create the sessions necessary to run the DKG.
+        // Note that not all the sessions is going to be needed,
+        // but to keep the code clean, we just make all the possible sessions.
         let dkg_sessions = {
             let session_id_z64 = req_id.derive_session_id_with_counter(DKG_Z64_SESSION_COUNTER)?;
             let session_id_z128 =
@@ -342,11 +344,10 @@ impl<
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
         let epoch_id_clone = epoch_id;
-        let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
-        let opt_existing_keyset_info = internal_keyset_config
-            .get_existing_keyset_id_and_epoch_id()
-            .ok();
         let preproc_bucket = self.preproc_buckets.clone();
+
+        // we must validate the parameter before passing it into the background process
+        internal_keyset_config.validate()?;
 
         let keygen_background = async move {
             // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
@@ -384,8 +385,7 @@ impl<
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
-                        opt_compression_key_id,
-                        opt_existing_keyset_info,
+                        &internal_keyset_config,
                         eip712_domain_copy,
                         permit,
                         op_tag,
@@ -1151,8 +1151,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
-        compression_key_id: Option<RequestId>,
-        existing_keyset_info: Option<(RequestId, EpochId)>,
+        internal_keyset_config: &InternalKeySetConfig,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
@@ -1233,13 +1232,19 @@ impl<
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
+                        let compression_key_id = internal_keyset_config.get_existing_compression_key_id()
+                            .expect("validated")
+                            .expect("validated: compression key ID must be set");
+                        let compression_epoch_id = internal_keyset_config.get_existing_compression_epoch_id()
+                            .expect("validated")
+                            .unwrap_or(*epoch_id);
                         Self::key_gen_from_existing_compression_sk(
                             req_id,
-                            epoch_id,
+                            &compression_epoch_id,
                             &mut dkg_sessions.session_z128.base_session,
                             crypto_storage.clone(),
                             params,
-                            compression_key_id.expect("compression key ID must be set for secure key generation and should have been validated before starting key generation"),
+                            compression_key_id,
                             preproc_handle.as_mut(),
                         )
                         .await
@@ -1264,8 +1269,11 @@ impl<
                     (
                         ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::None
                     ) => {
-                        let (existing_keyset_id, existing_epoch_id) = existing_keyset_info
-                            .expect("existing keyset info must be set and should have been validated");
+                        let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()
+                            .expect("validated");
+                        let existing_epoch_id = internal_keyset_config.get_existing_epoch_id()
+                            .expect("validated")
+                            .unwrap_or(*epoch_id);
                         Self::key_gen_from_existing_private_keyset(
                             req_id,
                             &mut dkg_sessions,
@@ -1283,8 +1291,11 @@ impl<
                         ddec_keyset_config::ComputeKeyType::Cpu,
                         ddec_keyset_config::CompressedKeyConfig::All,
                     ) => {
-                        let (existing_keyset_id, existing_epoch_id) = existing_keyset_info
-                            .expect("existing keyset info must be set and should have been validated");
+                        let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()
+                            .expect("validated");
+                        let existing_epoch_id = internal_keyset_config.get_existing_epoch_id()
+                            .expect("validated")
+                            .unwrap_or(*epoch_id);
                         Self::compressed_key_gen_from_existing_private_keyset(
                             req_id,
                             &mut dkg_sessions,

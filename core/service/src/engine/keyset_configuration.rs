@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetType};
+use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
@@ -95,10 +95,7 @@ impl InternalKeySetConfig {
     /// Creates a new `InternalKeySetConfig` instance.
     ///
     /// If `keyset_config` is `None`, it defaults to [`KeySetConfig::Standard`].
-    /// If `keyset_config` is set to `DecompressionOnly`, `keyset_added_info` must be provided.
-    ///     Furthermore, within `keyset_added_info` the `from_keyset_id_decompression_only` and `to_keyset_id_decompression_only` must be set.
-    /// If `keyset_config` is set to `Standard` with `KeyGenSecretKeyConfig::UseExisting`,
-    ///     then `keyset_added_info` must be provided and must have `existing_keyset_id` and `existing_epoch_id` set.
+    /// Runs [`Self::validate`] to ensure all required fields are present and parseable.
     ///
     /// # Arguments
     /// * `keyset_config` - Optional keyset configuration.
@@ -111,95 +108,16 @@ impl InternalKeySetConfig {
         keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
         keyset_added_info: Option<KeySetAddedInfo>,
     ) -> anyhow::Result<Self> {
-        // Ensure a fail-fast approach
-        match keyset_config {
-            Some(inner) => {
-                match inner.keyset_type() {
-                    KeySetType::Standard => match &inner.standard_keyset_config {
-                        Some(config) => {
-                            let secret_key_config =
-                                kms_grpc::kms::v1::KeyGenSecretKeyConfig::try_from(
-                                    config.secret_key_config,
-                                );
-                            if secret_key_config
-                                    == Ok(kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey)
-                                {
-                                    match &keyset_added_info {
-                                        Some(inner_key_set_added_info) => {
-                                            if inner_key_set_added_info
-                                                .compression_keyset_id
-                                                .is_none()
-                                            {
-                                                return Err(anyhow!(
-                                                    "`keyset_added_info` must contain `compression_keyset_id` when `keyset_config` is set to `Standard` with `UseExistingCompressionSecretKey`",
-                                                ));
-                                            }
-                                        }
-                                        None => {
-                                            return Err(anyhow!(
-                                                "`keyset_added_info` must be provided when `keyset_config` is set to `Standard` with `UseExistingCompressionSecretKey`",
-                                            ));
-                                        }
-                                    }
-                                }
-                            if secret_key_config
-                                == Ok(kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting)
-                            {
-                                match &keyset_added_info {
-                                    Some(inner_key_set_added_info) => {
-                                        if inner_key_set_added_info.existing_keyset_id.is_none()
-                                            || inner_key_set_added_info.existing_epoch_id.is_none()
-                                        {
-                                            return Err(anyhow!(
-                                                    "`keyset_added_info` must contain `existing_keyset_id` and `existing_epoch_id` when `keyset_config` is set to `Standard` with `UseExisting`",
-                                                ));
-                                        }
-                                    }
-                                    None => {
-                                        return Err(anyhow!(
-                                                "`keyset_added_info` must be provided when `keyset_config` is set to `Standard` with `UseExisting`",
-                                            ));
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            return Err(anyhow!(
-                                    "`standard_keyset_config` must be provided for Standard KeySetConfig",
-                                ));
-                        }
-                    },
-                    KeySetType::DecompressionOnly => {
-                        match &keyset_added_info {
-                            Some(inner_added_info) => {
-                                // If keyset_config is set to DecompressionOnly, we need the added info
-                                if inner_added_info.from_keyset_id_decompression_only.is_none()
-                                    || inner_added_info.to_keyset_id_decompression_only.is_none()
-                                {
-                                    return Err(anyhow!(
-                                        "`keyset_added_info` must contain `from_keyset_id_decompression_only` and `to_keyset_id_decompression_only` when `keyset_config` is set to `DecompressionOnly`",
-                                    ));
-                                }
-                            }
-                            None => {
-                                return Err(anyhow!(
-                                "`keyset_added_info` must be provided when `keyset_config` is set to `DecompressionOnly`",
-                            ));
-                            }
-                        }
-                    }
-                }
-            }
-            None => {
-                // Default to Standard KeySetConfig
-                tracing::info!("No keyset config provided, defaulting to Standard KeySetConfig");
-            }
+        if keyset_config.is_none() {
+            tracing::info!("No keyset config provided, defaulting to Standard KeySetConfig");
         }
-        Ok(Self {
+        let result = Self {
             keyset_config: preproc_proto_to_keyset_config(&keyset_config)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?,
             keyset_added_info,
-        })
+        };
+        result.validate()?;
+        Ok(result)
     }
 
     pub fn keyset_config(&self) -> &ddec_keyset_config::KeySetConfig {
@@ -242,11 +160,11 @@ impl InternalKeySetConfig {
 
     /// Retrieves the compression keyset ID from the added info.
     /// Will always return Some request ID if [`KeySetCofig::Standard`] is used with the [`KeyGenSecretKeyConfig::UseExistingCompressionSecretKey`] setting.
-    pub fn get_compression_id(&self) -> anyhow::Result<Option<RequestId>> {
+    pub fn get_existing_compression_key_id(&self) -> anyhow::Result<Option<RequestId>> {
         if let Some(inner) = self
             .keyset_added_info
             .as_ref()
-            .and_then(|info| info.compression_keyset_id.clone())
+            .and_then(|info| info.existing_compression_keyset_id.clone())
         {
             let key_id = parse_grpc_request_id(
                 &inner,
@@ -261,11 +179,12 @@ impl InternalKeySetConfig {
     /// Retrieves the existing keyset ID and epoch ID from the added info.
     /// Will always return Ok if [`KeySetConfig::Standard`] is used with the [`KeyGenSecretKeyConfig::UseExisting`] setting
     /// and validation passed in [`InternalKeySetConfig::new`].
-    pub fn get_existing_keyset_id_and_epoch_id(&self) -> anyhow::Result<(RequestId, EpochId)> {
+    pub fn get_existing_keyset_id(&self) -> anyhow::Result<RequestId> {
         let added_info = self
             .keyset_added_info
             .as_ref()
-            .ok_or_else(|| anyhow!("keyset_added_info is required for UseExisting"))?;
+            .ok_or_else(|| anyhow!("keyset_added_info is required for UseExisting"))
+            .map_err(|e| anyhow::anyhow!("Failed to parse keyset_added_info: {}", e))?;
         let keyset_id = parse_grpc_request_id(
             added_info
                 .existing_keyset_id
@@ -274,15 +193,70 @@ impl InternalKeySetConfig {
             RequestIdParsingErr::Other("invalid existing keyset ID".to_string()),
         )
         .map_err(|e| anyhow::anyhow!("Failed to parse existing keyset ID: {}", e))?;
-        let epoch_id: EpochId = parse_grpc_request_id(
-            added_info
-                .existing_epoch_id
-                .as_ref()
-                .ok_or_else(|| anyhow!("missing existing_epoch_id"))?,
-            RequestIdParsingErr::Other("invalid existing epoch ID".to_string()),
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to parse existing epoch ID: {}", e))?;
-        Ok((keyset_id, epoch_id))
+        Ok(keyset_id)
+    }
+
+    pub fn get_existing_compression_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
+        let added_info = self.keyset_added_info.as_ref().ok_or_else(|| {
+            anyhow!("keyset_added_info is required for UseExistingCompressionSecretKey")
+        })?;
+        let epoch_id: Option<EpochId> = added_info
+            .compression_epoch_id
+            .as_ref()
+            .map(|inner| {
+                parse_grpc_request_id(
+                    inner,
+                    RequestIdParsingErr::Other("invalid compression epoch ID".to_string()),
+                )
+            })
+            .transpose()?;
+        Ok(epoch_id)
+    }
+
+    pub fn get_existing_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
+        let added_info = self
+            .keyset_added_info
+            .as_ref()
+            .ok_or_else(|| anyhow!("keyset_added_info is required for UseExisting"))?;
+        let epoch_id: Option<EpochId> = added_info
+            .existing_epoch_id
+            .as_ref()
+            .map(|inner| {
+                parse_grpc_request_id(
+                    inner,
+                    RequestIdParsingErr::Other("invalid existing keyset ID".to_string()),
+                )
+            })
+            .transpose()?;
+        Ok(epoch_id)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        match &self.keyset_config {
+            ddec_keyset_config::KeySetConfig::Standard(inner) => match inner.secret_key_config {
+                ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll => {}
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                    // Must have a parseable compression key ID
+                    let id = self.get_existing_compression_key_id()?;
+                    anyhow::ensure!(
+                        id.is_some(),
+                        "existing_compression_keyset_id must be set for UseExistingCompressionSecretKey"
+                    );
+                    // Optional compression epoch ID must be parseable if set
+                    self.get_existing_compression_epoch_id()?;
+                }
+                ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting => {
+                    // Must have a parseable existing keyset ID
+                    self.get_existing_keyset_id()?;
+                    // Optional existing epoch ID must be parseable if set
+                    self.get_existing_epoch_id()?;
+                }
+            },
+            ddec_keyset_config::KeySetConfig::DecompressionOnly => {
+                self.get_from_and_to()?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -368,7 +342,7 @@ pub(crate) mod tests {
                 ..Default::default()
             };
             let result = InternalKeySetConfig::new(Some(keyset_config), Some(keyset_added_info));
-            assert!(result.is_err());
+            assert!(result.is_ok());
         }
         {
             let keyset_added_info = KeySetAddedInfo {
@@ -464,5 +438,158 @@ pub(crate) mod tests {
         // None config should default to Standard
         let result = InternalKeySetConfig::new(None, None);
         assert!(result.is_ok());
+    }
+
+    const VALID_ID: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    const VALID_ID_2: &str = "1112030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    const INVALID_ID: &str = "not-a-valid-hex-id";
+
+    fn request_id(id: &str) -> kms_grpc::kms::v1::RequestId {
+        kms_grpc::kms::v1::RequestId {
+            request_id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_new_use_existing_unparseable_epoch_id() {
+        // Valid keyset ID but unparseable epoch ID should be rejected
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::Standard as i32,
+                standard_keyset_config: Some(StandardKeySetConfig {
+                    compute_key_type: 0,
+                    secret_key_config: KeyGenSecretKeyConfig::UseExisting as i32,
+                    compressed_key_config: 0,
+                }),
+            }),
+            Some(KeySetAddedInfo {
+                existing_keyset_id: Some(request_id(VALID_ID)),
+                existing_epoch_id: Some(request_id(INVALID_ID)),
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_use_existing_compression_sk_valid() {
+        // Valid compression keyset ID, no epoch
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::Standard as i32,
+                standard_keyset_config: Some(StandardKeySetConfig {
+                    compute_key_type: 0,
+                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
+                        as i32,
+                    compressed_key_config: 0,
+                }),
+            }),
+            Some(KeySetAddedInfo {
+                existing_compression_keyset_id: Some(request_id(VALID_ID)),
+                compression_epoch_id: None,
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_new_use_existing_compression_sk_with_epoch() {
+        // Valid compression keyset ID and epoch
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::Standard as i32,
+                standard_keyset_config: Some(StandardKeySetConfig {
+                    compute_key_type: 0,
+                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
+                        as i32,
+                    compressed_key_config: 0,
+                }),
+            }),
+            Some(KeySetAddedInfo {
+                existing_compression_keyset_id: Some(request_id(VALID_ID)),
+                compression_epoch_id: Some(request_id(VALID_ID_2)),
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_new_use_existing_compression_sk_unparseable_epoch() {
+        // Valid compression keyset ID but unparseable epoch should be rejected
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::Standard as i32,
+                standard_keyset_config: Some(StandardKeySetConfig {
+                    compute_key_type: 0,
+                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
+                        as i32,
+                    compressed_key_config: 0,
+                }),
+            }),
+            Some(KeySetAddedInfo {
+                existing_compression_keyset_id: Some(request_id(VALID_ID)),
+                compression_epoch_id: Some(request_id(INVALID_ID)),
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_use_existing_compression_sk_unparseable_key_id() {
+        // Unparseable compression keyset ID should be rejected
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::Standard as i32,
+                standard_keyset_config: Some(StandardKeySetConfig {
+                    compute_key_type: 0,
+                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
+                        as i32,
+                    compressed_key_config: 0,
+                }),
+            }),
+            Some(KeySetAddedInfo {
+                existing_compression_keyset_id: Some(request_id(INVALID_ID)),
+                compression_epoch_id: None,
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_decompression_only_unparseable_from_id() {
+        // Unparseable from ID should be rejected
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly as i32,
+                standard_keyset_config: None,
+            }),
+            Some(KeySetAddedInfo {
+                from_keyset_id_decompression_only: Some(request_id(INVALID_ID)),
+                to_keyset_id_decompression_only: Some(request_id(VALID_ID)),
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_decompression_only_unparseable_to_id() {
+        // Unparseable to ID should be rejected
+        let result = InternalKeySetConfig::new(
+            Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly as i32,
+                standard_keyset_config: None,
+            }),
+            Some(KeySetAddedInfo {
+                from_keyset_id_decompression_only: Some(request_id(VALID_ID)),
+                to_keyset_id_decompression_only: Some(request_id(INVALID_ID)),
+                ..Default::default()
+            }),
+        );
+        assert!(result.is_err());
     }
 }

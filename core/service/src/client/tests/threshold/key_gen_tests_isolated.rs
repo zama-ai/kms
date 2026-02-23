@@ -391,15 +391,10 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 /// gRPC service layer.
 ///
 /// **Workflow:**
-/// 1. Standard keygen (preprocessing + online) to produce secret shares
-/// 2. Preprocessing for compressed keygen from existing
+/// 1. Standard keygen (preprocessing + online) to produce the first keyset
+/// 2. Preprocessing for compressed keygen from existing shares
 /// 3. Compressed keygen from existing shares
-/// 4. Verify both keygens completed on all parties
-///
-/// **Requires:**
-/// - `slow_tests` feature flag
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_compressed_keygen_from_existing_isolated`
+/// 4. Verify both keygens completed on all parties using ddec
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<()> {
@@ -559,13 +554,8 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
 /// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
 /// 4. Verify all keys generated successfully
 /// 5. Perform public decryption to validate keys are functional
-///
-/// **Requires:**
-/// - `slow_tests` and `insecure` feature flags (PRSS generation at runtime)
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing,insecure test_insecure_threshold_decompression_keygen_isolated`
 #[tokio::test]
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
     use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -650,7 +640,8 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 standard_keyset_config: None,
             }),
             keyset_added_info: Some(KeySetAddedInfo {
-                compression_keyset_id: None,
+                existing_compression_keyset_id: None,
+                compression_epoch_id: None,
                 from_keyset_id_decompression_only: Some(key_id_1.into()),
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,

@@ -334,7 +334,7 @@ pub fn generate_fhe_keys(
                 }
             }
             KeyGenSecretKeyConfig::UseExisting => {
-                todo!()
+                anyhow::bail!("This is not implemented yet")
             }
         };
 

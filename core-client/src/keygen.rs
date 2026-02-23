@@ -47,8 +47,8 @@ pub(crate) async fn do_keygen(
         cc_conf.num_majority
     };
 
-    //NOTE: If we do not use dummy_domain here, then
-    //this needs changing too in the KeyGenResult command.
+    // NOTE: If we do not use dummy_domain here, then
+    // this needs changing too in the KeyGenResult command.
     let keyset_config = if shared_config.compressed || shared_config.keyset_type.is_some() {
         Some(kms_grpc::kms::v1::KeySetConfig {
             keyset_type: shared_config
@@ -58,7 +58,7 @@ pub(crate) async fn do_keygen(
                 .unwrap_or(kms_grpc::kms::v1::KeySetType::Standard as i32),
             standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
                 compute_key_type: 0,  // CPU
-                secret_key_config: 0, // Generate
+                secret_key_config: 0, // Generate all secret keys
                 compressed_key_config: if shared_config.compressed {
                     kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
                 } else {
