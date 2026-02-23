@@ -233,7 +233,10 @@ mod tests {
     };
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z64,
-        sharing::{shamir::ShamirSharings, share::Share},
+        sharing::{
+            shamir::{InputOp, ShamirSharings},
+            share::Share,
+        },
         structure_traits::Ring,
     };
 
@@ -241,7 +244,6 @@ mod tests {
         encrypt_glwe_ciphertext_assign, GlweCiphertextShare, GlweSecretKeyShare,
         MPCEncryptionRandomGenerator,
     };
-    use crate::execution::sharing::shamir::InputOp;
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs
     #[tokio::test]

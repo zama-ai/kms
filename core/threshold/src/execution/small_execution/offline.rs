@@ -408,7 +408,6 @@ mod test {
     use crate::execution::large_execution::vss::SecureVss;
     use crate::execution::runtime::sessions::base_session::ToBaseSession;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
-    use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
     use crate::execution::small_execution::offline::reconstruct_d_values;
     use crate::execution::small_execution::prss::{
@@ -444,7 +443,10 @@ mod test {
     };
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        sharing::share::Share,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
         structure_traits::{ErrorCorrect, Invert, Ring},
     };
 

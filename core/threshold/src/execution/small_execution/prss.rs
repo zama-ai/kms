@@ -1051,7 +1051,6 @@ mod tests {
     use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
@@ -1086,7 +1085,10 @@ mod tests {
     use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-        sharing::{shamir::ShamirSharings, share::Share},
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
         structure_traits::{One, Zero},
     };
     use futures_util::future::{join, join_all};

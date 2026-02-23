@@ -378,6 +378,7 @@ mod tests {
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
+    use crate::{execution::tfhe_internals::parameters::TUniformBound, networking::NetworkMode};
     use crate::{
         execution::{
             online::{
@@ -402,13 +403,9 @@ mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
-    use crate::{
-        execution::{sharing::shamir::InputOp, tfhe_internals::parameters::TUniformBound},
-        networking::NetworkMode,
-    };
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z64,
-        sharing::{shamir::ShamirSharings, share::Share},
+        sharing::{shamir::InputOp, shamir::ShamirSharings, share::Share},
         structure_traits::Ring,
     };
 

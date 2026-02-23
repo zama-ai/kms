@@ -130,11 +130,11 @@ mod tests {
             BitPreprocessing,
         },
         runtime::party::Role,
-        sharing::shamir::{RevealOp, ShamirSharings},
     };
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
+        sharing::shamir::{RevealOp, ShamirSharings},
         structure_traits::{Derive, ErrorCorrect, Invert, One, Solve, Zero},
     };
 

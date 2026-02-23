@@ -1,6 +1,9 @@
-use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
+use algebra::{
+    galois_rings::degree_4::ResiduePolyF4Z64,
+    sharing::shamir::{InputOp, RevealOp, ShamirSharings},
+    structure_traits::Ring,
+};
 use rand::{CryptoRng, Rng};
-use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp, ShamirSharings};
 
 use super::error::BackupError;
 
