@@ -2,6 +2,7 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
+use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
     identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
@@ -14,7 +15,6 @@ use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_fhe::{
-    algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
         endpoints::keygen::SecureOnlineDistributedKeyGen128,
         online::preprocessing::{

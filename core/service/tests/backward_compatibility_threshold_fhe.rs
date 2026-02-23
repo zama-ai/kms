@@ -7,6 +7,11 @@ mod common;
 use common::load_and_unversionize;
 
 use aes_prng::AesRng;
+use algebra::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Ring},
+};
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -20,13 +25,8 @@ use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        structure_traits::{ErrorCorrect, Invert, Ring},
-    },
     execution::{
         runtime::party::Role,
-        sharing::share::Share,
         small_execution::{
             prf::{PRSSConversions, PrfKey},
             prss::{PRSSSetup, PrssSet, PrssSetV0},

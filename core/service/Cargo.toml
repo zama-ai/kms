@@ -42,6 +42,7 @@ aes.workspace = true
 aes-gcm.workspace = true
 aes-gcm-siv.workspace = true
 aes-prng.workspace = true
+algebra.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true

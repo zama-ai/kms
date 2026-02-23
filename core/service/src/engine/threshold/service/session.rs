@@ -7,6 +7,7 @@ use std::{
 use aes_prng::AesRng;
 // === External Crates ===
 use crate::engine::{context::ContextInfo, utils::MetricedError};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     RequestId,
@@ -16,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
-    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::{
             party::{

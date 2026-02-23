@@ -3,6 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
+use algebra::base_ring::Z64;
 use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
@@ -17,7 +18,6 @@ use observability::{
     },
 };
 use threshold_fhe::{
-    algebra::base_ring::Z64,
     execution::{
         runtime::sessions::{
             base_session::BaseSession, session_parameters::GenericParameterHandles,
@@ -483,17 +483,15 @@ impl<
 mod tests {
     use std::time::Duration;
 
+    use algebra::structure_traits::Ring;
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        algebra::structure_traits::Ring,
-        execution::{
-            runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
-            zk::ceremony::FinalizedInternalPublicParameter,
-        },
+    use threshold_fhe::execution::{
+        runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+        zk::ceremony::FinalizedInternalPublicParameter,
     };
 
     use crate::{
