@@ -1602,8 +1602,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "backward-compatibility-generate-v0-13-1"
-version = "0.13.1"
+name = "backward-compatibility-generate-v0-13-10"
+version = "0.13.10"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
