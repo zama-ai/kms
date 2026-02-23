@@ -902,6 +902,7 @@ type ConstMontyFormQR = crypto_bigint::modular::ConstMontyForm<QR, { U1536::LIMB
 impl_from_u128_big!(LevelKsw, U1536);
 impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000");
 
+// Note: These are the factors of Q, and not the partial products as the term Level might suggest.
 impl_modulus!(Q1, U128, "00000000400040000000001400140001");
 type ConstMontyFormQ1 = crypto_bigint::modular::ConstMontyForm<Q1, { U128::LIMBS }>;
 impl_from_u128_big!(LevelOne, U128);
