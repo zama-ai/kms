@@ -798,7 +798,7 @@ impl Invert for LevelKsw {
     }
 }
 
-impl LevelR {
+impl FieldR {
     fn pow(&self, exp: Self) -> Self {
         let mut res = Self::ONE;
         let mut x = *self;
@@ -818,7 +818,7 @@ impl LevelR {
 
 impl LargestPrimeFactor for LevelKsw {
     fn mod_largest_prime(v: &Self) -> Self {
-        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
+        let modulus_r: U1536 = FieldR::MODULUS.as_ref().into();
         Self {
             value: GenericModulus(v.value.0.rem(&NonZero::new(modulus_r).unwrap())),
         }
@@ -829,13 +829,13 @@ impl LargestPrimeFactor for LevelKsw {
         v_mod_largest_prime != Self::ZERO
     }
 
-    /// Projects a [`LevelKsw`] value onto the field defined by its largest prime factor [`LevelR::MODULUS`],
+    /// Projects a [`LevelKsw`] value onto the field defined by its largest prime factor [`FieldR::MODULUS`],
     /// and computes its square root.
     ///
     ///
     /// Uses the Tonelli-Shanks algorithm, which requires:
-    /// - factoring [`LevelR::MODULUS`] - 1 as 2^S * Q with Q odd
-    /// - finding a quadratic non-residue in the field defined by [`LevelR::MODULUS`]
+    /// - factoring [`FieldR::MODULUS`] - 1 as 2^S * Q with Q odd
+    /// - finding a quadratic non-residue in the field defined by [`FieldR::MODULUS`]
     ///
     /// We can thus precomputes some values that are defined as constants:
     /// - ODD_DIV: corresponds to the Q in the factorisation above
@@ -843,16 +843,16 @@ impl LargestPrimeFactor for LevelKsw {
     /// - POW_2: corresponds to the S in the factorisation above
     /// - QUADRATIC_NON_RESIDUE_TO_ODD_DIV: corresponds to the quadratic non-residue above to the power Q
     fn largest_prime_factor_sqrt(v: &Self) -> Self {
-        const ODD_DIV : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
+        const ODD_DIV : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
 
-        const ODD_DIV_PLUS_ONE_DIV_TWO : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
+        const ODD_DIV_PLUS_ONE_DIV_TWO : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
 
-        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: LevelR = LevelR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
+        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: FieldR = FieldR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
 
         const POW_2: u128 = 17_u128;
 
-        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
-        let value_level_r = LevelR {
+        let modulus_r: U1536 = FieldR::MODULUS.as_ref().into();
+        let value_level_r = FieldR {
             value: GenericModulus((&v.value.0.rem(&NonZero::new(modulus_r).unwrap())).into()),
         };
 
@@ -860,22 +860,22 @@ impl LargestPrimeFactor for LevelKsw {
         let mut c = QUADRATIC_NON_RESIDUE_TO_ODD_DIV;
         let mut t = value_level_r.pow(ODD_DIV);
         let mut r = value_level_r.pow(ODD_DIV_PLUS_ONE_DIV_TWO);
-        while t != LevelR::ONE {
+        while t != FieldR::ONE {
             let i = {
                 let mut i = 1;
-                while t.pow(LevelR::from_u128(1 << i)) != LevelR::ONE {
+                while t.pow(FieldR::from_u128(1 << i)) != FieldR::ONE {
                     i += 1;
                 }
                 assert!(i < m);
                 i
             };
 
-            let b = c.pow(LevelR::from_u128(1 << (m - i - 1)));
+            let b = c.pow(FieldR::from_u128(1 << (m - i - 1)));
             c = b * b;
             t *= c;
             r *= b;
             m = i;
-            assert!(t != LevelR::ZERO);
+            assert!(t != FieldR::ZERO);
         }
 
         Self {
@@ -953,6 +953,7 @@ type ConstMontyFormQR = crypto_bigint::modular::ConstMontyForm<QR, { U1536::LIMB
 impl_from_u128_big!(LevelKsw, U1536);
 impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000");
 
+pub type FieldOne = LevelOne;
 impl_modulus!(Q1, U128, "00000000400040000000001400140001");
 type ConstMontyFormQ1 = crypto_bigint::modular::ConstMontyForm<Q1, { U128::LIMBS }>;
 impl_from_u128_big!(LevelOne, U128);
@@ -964,8 +965,6 @@ impl_field_level!(
     ConstMontyFormQ1,
     "00000000400040000000001400140000"
 );
-
-pub type FieldOne = LevelOne;
 
 impl_modulus!(Q2, U64, "0001003500340001");
 type ConstMontyFormQ2 = crypto_bigint::modular::ConstMontyForm<Q2, { U64::LIMBS }>;
@@ -1251,10 +1250,8 @@ impl_ring_level!(LevelFifteen, U768, ModulusSize768, QProd15, ConstMontyFormQPro
 
 impl_modulus!(R, U768, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001");
 type ConstMontyFormR = crypto_bigint::modular::ConstMontyForm<R, { U768::LIMBS }>;
-impl_from_u128_big!(LevelR, U768);
-impl_field_level!(LevelR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
-
-pub type FieldR = LevelR;
+impl_from_u128_big!(FieldR, U768);
+impl_field_level!(FieldR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {
@@ -1482,10 +1479,10 @@ mod tests {
     fn test_pow_level_r() {
         let mut rng = AesRng::seed_from_u64(0);
         let exp = 1238501;
-        let x = LevelR::sample(&mut rng);
-        let x_pow = x.pow(LevelR::from_u128(exp));
+        let x = FieldR::sample(&mut rng);
+        let x_pow = x.pow(FieldR::from_u128(exp));
 
-        let mut res = LevelR::ONE;
+        let mut res = FieldR::ONE;
         for _ in 0..exp {
             res *= x;
         }
