@@ -1095,6 +1095,255 @@ pub mod tests {
             .unwrap();
     }
 
+    /// Test that `all_epoch_ids_for_data` and `all_data_ids` correctly distinguish
+    /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
+    /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
+    /// `key_id` is used in both locations.
+    pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
+        storage: &mut S,
+    ) {
+        let mut rng = AesRng::seed_from_u64(77777);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Use the SAME key_id for both epoched and non-epoched data
+        let shared_key_id = derive_request_id("SHARED_KEY").unwrap();
+        let epoch_only_key_id = derive_request_id("EPOCH_ONLY_KEY").unwrap();
+        let non_epoch_only_key_id = derive_request_id("NON_EPOCH_ONLY_KEY").unwrap();
+
+        let data_a = TestType { i: 10 };
+        let data_b = TestType { i: 20 };
+        let data_c = TestType { i: 30 };
+        let data_d = TestType { i: 40 };
+        let data_e = TestType { i: 50 };
+
+        // --- Setup: store data at both epoch and non-epoch paths ---
+
+        // Store shared_key_id under epoch1 (epoched)
+        storage
+            .store_data_at_epoch(&data_a, &shared_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        // Store shared_key_id under epoch2 (epoched)
+        storage
+            .store_data_at_epoch(&data_b, &shared_key_id, &epoch2, &data_type)
+            .await
+            .unwrap();
+        // Store epoch_only_key_id under epoch1 (epoched only)
+        storage
+            .store_data_at_epoch(&data_c, &epoch_only_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        // Store shared_key_id without an epoch (non-epoched)
+        storage
+            .store_data(&data_d, &shared_key_id, &data_type)
+            .await
+            .unwrap();
+        // Store non_epoch_only_key_id without an epoch (non-epoched only)
+        storage
+            .store_data(&data_e, &non_epoch_only_key_id, &data_type)
+            .await
+            .unwrap();
+
+        // --- Test all_epoch_ids_for_data ---
+        // Should return only epoch1 and epoch2, NOT be confused by
+        // the non-epoched shared_key_id or non_epoch_only_key_id
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert_eq!(
+            epoch_ids.len(),
+            2,
+            "Expected exactly 2 epoch IDs, got {:?}",
+            epoch_ids
+        );
+        assert!(epoch_ids.contains(&epoch1));
+        assert!(epoch_ids.contains(&epoch2));
+
+        // --- Test all_data_ids (non-epoch) ---
+        // Should return only shared_key_id and non_epoch_only_key_id,
+        // NOT epoch_only_key_id or any epoch IDs
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert_eq!(
+            data_ids.len(),
+            2,
+            "Expected exactly 2 non-epoch data IDs, got {:?}",
+            data_ids
+        );
+        assert!(data_ids.contains(&shared_key_id));
+        assert!(data_ids.contains(&non_epoch_only_key_id));
+
+        // --- Test all_data_ids_at_epoch ---
+        // epoch1 should have shared_key_id and epoch_only_key_id
+        let epoch1_data_ids = storage
+            .all_data_ids_at_epoch(&epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            epoch1_data_ids.len(),
+            2,
+            "Expected 2 data IDs at epoch1, got {:?}",
+            epoch1_data_ids
+        );
+        assert!(epoch1_data_ids.contains(&shared_key_id));
+        assert!(epoch1_data_ids.contains(&epoch_only_key_id));
+
+        // epoch2 should have only shared_key_id
+        let epoch2_data_ids = storage
+            .all_data_ids_at_epoch(&epoch2, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            epoch2_data_ids.len(),
+            1,
+            "Expected 1 data ID at epoch2, got {:?}",
+            epoch2_data_ids
+        );
+        assert!(epoch2_data_ids.contains(&shared_key_id));
+
+        // --- Verify that all_data_ids_from_all_epochs detects the inconsistency ---
+        // Since we have data in both epoch and non-epoch storage, this should error
+        let result = storage.all_data_ids_from_all_epochs(&data_type).await;
+        assert!(
+            result.is_err(),
+            "Expected error when both epoch and non-epoch data exist"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("inconsistent storage"));
+
+        // --- Clean up ---
+        storage
+            .delete_data_at_epoch(&shared_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&shared_key_id, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&epoch_only_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data(&shared_key_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data(&non_epoch_only_key_id, &data_type)
+            .await
+            .unwrap();
+
+        // Verify cleanup: no epoch IDs remain
+        let epoch_ids_after = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert!(
+            epoch_ids_after.is_empty(),
+            "Expected no epoch IDs after cleanup"
+        );
+        // Verify cleanup: no non-epoch data IDs remain
+        let data_ids_after = storage.all_data_ids(&data_type).await.unwrap();
+        assert!(
+            data_ids_after.is_empty(),
+            "Expected no data IDs after cleanup"
+        );
+    }
+
+    /// Test `all_epoch_ids_for_data` when only non-epoched data exists.
+    /// No epoch IDs should be returned, even though data exists under the data_type.
+    pub async fn test_all_epoch_ids_for_data_with_only_non_epoch_data<S: StorageExt>(
+        storage: &mut S,
+    ) {
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let key_id1 = derive_request_id("NON_EPOCH_1").unwrap();
+        let key_id2 = derive_request_id("NON_EPOCH_2").unwrap();
+        let data1 = TestType { i: 60 };
+        let data2 = TestType { i: 70 };
+
+        // Store non-epoched data only
+        storage
+            .store_data(&data1, &key_id1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data(&data2, &key_id2, &data_type)
+            .await
+            .unwrap();
+
+        // all_epoch_ids_for_data should return empty set
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert!(
+            epoch_ids.is_empty(),
+            "Expected no epoch IDs when only non-epoch data exists, got {:?}",
+            epoch_ids
+        );
+
+        // all_data_ids should return both key IDs
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert_eq!(data_ids.len(), 2);
+        assert!(data_ids.contains(&key_id1));
+        assert!(data_ids.contains(&key_id2));
+
+        // Clean up
+        storage.delete_data(&key_id1, &data_type).await.unwrap();
+        storage.delete_data(&key_id2, &data_type).await.unwrap();
+    }
+
+    /// Test `all_data_ids` when only epoched data exists.
+    /// No non-epoch data IDs should be returned.
+    pub async fn test_all_data_ids_with_only_epoch_data<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(88888);
+        let epoch1 = EpochId::new_random(&mut rng);
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let key_id1 = derive_request_id("EPOCH_DATA_1").unwrap();
+        let key_id2 = derive_request_id("EPOCH_DATA_2").unwrap();
+        let data1 = TestType { i: 80 };
+        let data2 = TestType { i: 90 };
+
+        // Store only epoched data
+        storage
+            .store_data_at_epoch(&data1, &key_id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data2, &key_id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+
+        // all_data_ids (non-epoch) should return empty set
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert!(
+            data_ids.is_empty(),
+            "Expected no non-epoch data IDs when only epoch data exists, got {:?}",
+            data_ids
+        );
+
+        // all_epoch_ids_for_data should return epoch1
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert_eq!(epoch_ids.len(), 1);
+        assert!(epoch_ids.contains(&epoch1));
+
+        // all_data_ids_at_epoch should return both key IDs
+        let epoch1_ids = storage
+            .all_data_ids_at_epoch(&epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(epoch1_ids.len(), 2);
+        assert!(epoch1_ids.contains(&key_id1));
+        assert!(epoch1_ids.contains(&key_id2));
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&key_id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&key_id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+    }
+
     #[test]
     fn ordered_map() {
         let mut om = StorageCache::new(2).unwrap();

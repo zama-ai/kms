@@ -817,6 +817,31 @@ mod tests {
         crate::vault::storage::tests::test_store_load_bytes_at_epoch(&mut priv_storage).await;
     }
 
+    #[tokio::test]
+    async fn test_mixed_epoch_and_non_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        crate::vault::storage::tests::test_all_epoch_ids_and_data_ids_with_mixed_storage(
+            &mut priv_storage,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_epoch_ids_with_only_non_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        crate::vault::storage::tests::test_all_epoch_ids_for_data_with_only_non_epoch_data(
+            &mut priv_storage,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_data_ids_with_only_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        crate::vault::storage::tests::test_all_data_ids_with_only_epoch_data(&mut priv_storage)
+            .await;
+    }
+
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
