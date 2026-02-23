@@ -3,11 +3,23 @@
 use anyhow::anyhow;
 use futures::FutureExt;
 use rayon::ThreadPoolBuilder;
+use std::any::Any;
 use std::time::Duration;
 use tokio::{sync::OnceCell, task::JoinHandle};
 use tracing::error;
 
 use error_utils::anyhow_error_and_log;
+
+/// Extract a human-readable message from a panic payload.
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(s) => return *s,
+        Err(payload) => match payload.downcast::<&str>() {
+            Ok(s) => return (*s).to_owned(),
+            Err(_) => "unknown cause".to_owned(),
+        },
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct ThreadHandleGroup {
@@ -34,12 +46,9 @@ impl ThreadHandleGroup {
                 if e.is_panic() {
                     // Get panic message if available
                     let panic_msg = e.into_panic();
-                    if let Some(msg) = panic_msg.downcast_ref::<String>() {
-                        error!("Task panicked: {}", msg);
-                    } else {
-                        error!("Task panicked with unknown message");
-                    }
-                    return Err(anyhow!("Task panicked"));
+                    let msg = panic_message(panic_msg);
+                    error!(msg);
+                    return Err(anyhow!("Thread panicked: {}", msg));
                 }
                 return Err(anyhow!("Task failed: {}", e));
             }
@@ -70,8 +79,9 @@ impl ThreadHandleGroup {
                 Some(Ok(_)) => (),
                 Some(Err(e)) => {
                     if e.is_panic() {
-                        error!("Task panicked during cleanup");
-                        return Err(anyhow!("Task panicked during cleanup"));
+                        let msg = panic_message(e.into_panic());
+                        error!("Task panicked during cleanup: {}", msg);
+                        return Err(anyhow!("Task panicked during cleanup: {}", msg));
                     }
                     if !e.is_cancelled() {
                         // Ignore cancellation errors from our abort
@@ -115,12 +125,9 @@ where
     pub fn join_all(self) -> anyhow::Result<()> {
         for handle in self.handles {
             if let Err(e) = handle.join() {
-                if let Some(msg) = e.downcast_ref::<String>() {
-                    error!("Thread panicked: {}", msg);
-                } else {
-                    error!("Thread panicked with unknown message");
-                }
-                return Err(anyhow!("Thread panicked"));
+                let msg = panic_message(e);
+                error!(msg);
+                return Err(anyhow!("Thread panicked: {}", msg));
             }
         }
         Ok(())
@@ -133,12 +140,9 @@ where
             match handle.join() {
                 Ok(result) => results.push(result),
                 Err(e) => {
-                    if let Some(msg) = e.downcast_ref::<String>() {
-                        error!("Thread panicked: {}", msg);
-                    } else {
-                        error!("Thread panicked with unknown message");
-                    }
-                    return Err(anyhow!("Thread panicked"));
+                    let msg = panic_message(e);
+                    error!(msg);
+                    return Err(anyhow!("Thread panicked: {}", msg));
                 }
             }
         }
@@ -148,13 +152,9 @@ where
 
 static MPC_RAYON_THREAD_POOL: OnceCell<rayon::ThreadPool> = OnceCell::const_new();
 
-// Try to initialize the global rayon thread pool with the given number of threads.
-// Returns the number of threads in the pool.
+/// Try to initialize the global rayon thread pool with the given number of threads.
+/// Returns the number of threads in the pool.
 pub async fn init_rayon_thread_pool(num_threads: usize) -> anyhow::Result<usize> {
-    if MPC_RAYON_THREAD_POOL.initialized() {
-        return Err(anyhow!("Rayon thread pool already initialized"));
-    }
-
     let pool = MPC_RAYON_THREAD_POOL
         .get_or_try_init(|| async { ThreadPoolBuilder::new().num_threads(num_threads).build() })
         .await?;

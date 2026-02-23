@@ -23,7 +23,7 @@ pub mod grpc;
 #[cfg(any(test, feature = "malicious_strategies"))]
 pub mod malicious_execution;
 #[cfg(feature = "non-wasm")]
-pub mod thread_handles;
+pub use thread_handles;
 #[cfg(feature = "non-wasm")]
 pub mod tls_certs;
 
