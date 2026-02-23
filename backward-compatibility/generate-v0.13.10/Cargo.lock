@@ -1673,7 +1673,7 @@ checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=0df879d73732f0a98f22e65133bd8dec02b70fba#0df879d73732f0a98f22e65133bd8dec02b70fba"
+source = "git+https://github.com/zama-ai/kms.git?rev=7421e29669d3546bd62856328e644d878e4696b3#7421e29669d3546bd62856328e644d878e4696b3"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -2062,15 +2062,15 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.15.18"
+version = "0.15.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "180e549344080374f9b32ed41bf3b6b57885ff6a289367b3dbc10eea8acc1918"
+checksum = "b30fa8254caad766fc03cb0ccae691e14bf3bd72bfff27f72802ce729551b3d6"
 dependencies = [
  "async-trait",
  "convert_case",
  "json5",
  "pathdiff",
- "ron 0.8.1",
+ "ron 0.12.0",
  "rust-ini",
  "serde-untagged",
  "serde_core",
@@ -3805,7 +3805,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.13.0-rc.3"
-source = "git+https://github.com/zama-ai/kms.git?rev=0df879d73732f0a98f22e65133bd8dec02b70fba#0df879d73732f0a98f22e65133bd8dec02b70fba"
+source = "git+https://github.com/zama-ai/kms.git?rev=7421e29669d3546bd62856328e644d878e4696b3#7421e29669d3546bd62856328e644d878e4696b3"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3886,7 +3886,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.13.0-rc.3"
-source = "git+https://github.com/zama-ai/kms.git?rev=0df879d73732f0a98f22e65133bd8dec02b70fba#0df879d73732f0a98f22e65133bd8dec02b70fba"
+source = "git+https://github.com/zama-ai/kms.git?rev=7421e29669d3546bd62856328e644d878e4696b3#7421e29669d3546bd62856328e644d878e4696b3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4384,7 +4384,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.13.0-rc.3"
-source = "git+https://github.com/zama-ai/kms.git?rev=0df879d73732f0a98f22e65133bd8dec02b70fba#0df879d73732f0a98f22e65133bd8dec02b70fba"
+source = "git+https://github.com/zama-ai/kms.git?rev=7421e29669d3546bd62856328e644d878e4696b3#7421e29669d3546bd62856328e644d878e4696b3"
 dependencies = [
  "anyhow",
  "axum",
@@ -4400,6 +4400,7 @@ dependencies = [
  "opentelemetry_sdk",
  "prometheus",
  "serde",
+ "serde_json",
  "strum",
  "strum_macros",
  "sysinfo",
@@ -5556,18 +5557,6 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
-dependencies = [
- "base64 0.21.7",
- "bitflags 2.9.4",
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "ron"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "beceb6f7bf81c73e73aeef6dd1356d9a1b2b4909e1f0fc3e59b034f9572d7b7f"
@@ -5576,6 +5565,20 @@ dependencies = [
  "bitflags 2.9.4",
  "serde",
  "serde_derive",
+ "unicode-ident",
+]
+
+[[package]]
+name = "ron"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd490c5b18261893f14449cbd28cb9c0b637aebf161cd77900bfdedaff21ec32"
+dependencies = [
+ "bitflags 2.9.4",
+ "once_cell",
+ "serde",
+ "serde_derive",
+ "typeid",
  "unicode-ident",
 ]
 
@@ -6005,9 +6008,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.226"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dca6411025b24b60bfa7ec1fe1f8e710ac09782dca409ee8237ba74b51295fd"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
@@ -6058,18 +6061,18 @@ dependencies = [
 
 [[package]]
 name = "serde_core"
-version = "1.0.226"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba2ba63999edb9dac981fb34b3e5c0d111a69b0924e253ed29d83f7c99e966a4"
+checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.226"
+version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8db53ae22f34573731bafa1db20f04027b2d25e02d8205921b569171699cdb33"
+checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6715,7 +6718,7 @@ dependencies = [
 [[package]]
 name = "threshold-fhe"
 version = "0.13.0-rc.3"
-source = "git+https://github.com/zama-ai/kms.git?rev=0df879d73732f0a98f22e65133bd8dec02b70fba#0df879d73732f0a98f22e65133bd8dec02b70fba"
+source = "git+https://github.com/zama-ai/kms.git?rev=7421e29669d3546bd62856328e644d878e4696b3#7421e29669d3546bd62856328e644d878e4696b3"
 dependencies = [
  "aes",
  "aes-prng",

@@ -9,8 +9,8 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-# TODO the references in this file to 0df879d73732f0a98f22e65133bd8dec02b70fba should be updated to the release tag of 0.13.10 once it is made
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "0df879d73732f0a98f22e65133bd8dec02b70fba" }
+# TODO the references in this file to 7421e29669d3546bd62856328e644d878e4696b3 should be updated to the release tag of 0.13.10 once it is made
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "7421e29669d3546bd62856328e644d878e4696b3" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
@@ -19,9 +19,9 @@ bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # TODO observe that the commit is only temporary to make the new tests work and must be updated when cutting the real 0.13.10 release
 # Observe that modification here also requires temporarily removing the `--locked` flag in the `generate-backward-compatibility-v0.13.10` in Makefile in order to properly update and compile the correct verison of the KMS to test
-kms_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "0df879d73732f0a98f22e65133bd8dec02b70fba"}
-kms_grpc_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "0df879d73732f0a98f22e65133bd8dec02b70fba"}
-threshold_fhe_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "0df879d73732f0a98f22e65133bd8dec02b70fba", features = [
+kms_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "7421e29669d3546bd62856328e644d878e4696b3"}
+kms_grpc_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "7421e29669d3546bd62856328e644d878e4696b3"}
+threshold_fhe_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "7421e29669d3546bd62856328e644d878e4696b3", features = [
     "testing",
 ] }
 
@@ -41,7 +41,7 @@ itertools = "=0.14.0"
 # Note: This serde version is used for metadata types imported from backward-compatibility crate.
 # The old KMS types (kms_0_11) will use their own serde 1.0.210 from their dependency tree.
 # Both serde versions coexist in the same binary - this is intentional and correct!
-serde = { version = "=1.0.226", features = ["derive"] }
+serde = { version = "=1.0.228", features = ["derive"] }
 # bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.12.2)
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
