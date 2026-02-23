@@ -10,7 +10,7 @@ PARAMS_MAP = {
     "NIST_PARAMS_P8_SNS_FGLWE":"TFHE_Clear_P8_FGLWE.csv",
     "NIST_PARAMS_P8_SNS_LWE":"TFHE_Clear_P8_LWE.csv",
     "BC_PARAMS_SNS":"TFHE_Clear_BC_FGLWE.csv",
-    "bgv":"BGV.csv"
+    "bgv":"BGV_Clear.csv"
 }
 
 # Maps the experiment name to the corresponding row in the csv file
