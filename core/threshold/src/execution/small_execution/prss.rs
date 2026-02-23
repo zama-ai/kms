@@ -467,6 +467,64 @@ impl<Z: Default + Clone + Serialize> PRSSSetup<Z> {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
+    /// Initializes the epoch for a single party (without actual networking).
+    /// Useful for testing PRSS setup without a full distributed runtime.
+    pub async fn testing_party_epoch_init(
+        num_parties: usize,
+        threshold: usize,
+        party_role: Role,
+    ) -> anyhow::Result<Self> {
+        use crate::execution::small_execution::agree_random::{AgreeRandom, DummyAgreeRandom};
+        use crate::tests::helper::testing::get_networkless_base_session_for_parties;
+
+        let binom_nt = num_integer::binomial(num_parties, threshold);
+
+        if binom_nt > PRSS_SIZE_MAX {
+            return Err(anyhow_error_and_log(
+                "PRSS set size is too large!".to_string(),
+            ));
+        }
+
+        let all_roles = (1..=num_parties)
+            .map(Role::indexed_from_one)
+            .collect::<Vec<_>>();
+        let party_sets = create_sets(&all_roles, threshold)
+            .into_iter()
+            .filter(|aset| aset.contains(&party_role))
+            .collect::<Vec<_>>();
+
+        let mut sess =
+            get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
+        let random_agreed_keys = DummyAgreeRandom::default()
+            .execute(&mut sess)
+            .await
+            .unwrap();
+
+        let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
+        let alpha_powers = embed_parties_and_compute_alpha_powers(num_parties, threshold)?;
+
+        let sets: Vec<PrssSet<Z>> = party_sets
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| PrssSet {
+                parties: s.to_vec(),
+
+                set_key: random_agreed_keys[idx].clone(),
+                f_a_points: f_a_points[idx].clone(),
+            })
+            .collect();
+
+        tracing::debug!("epoch init: {:?}", sets);
+
+        Ok(PRSSSetup {
+            sets: Arc::new(sets),
+            alpha_powers: Arc::new(alpha_powers),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PRSSCounters {
     pub mask_ctr: u128,
@@ -1122,60 +1180,6 @@ mod tests {
         }
 
         Some(hm)
-    }
-
-    //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
-    impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
-        // initializes the epoch for a single party (without actual networking)
-        pub async fn testing_party_epoch_init(
-            num_parties: usize,
-            threshold: usize,
-            party_role: Role,
-        ) -> anyhow::Result<Self> {
-            let binom_nt = num_integer::binomial(num_parties, threshold);
-
-            if binom_nt > PRSS_SIZE_MAX {
-                return Err(anyhow_error_and_log(
-                    "PRSS set size is too large!".to_string(),
-                ));
-            }
-
-            let all_roles = (1..=num_parties)
-                .map(Role::indexed_from_one)
-                .collect::<Vec<_>>();
-            let party_sets = create_sets(&all_roles, threshold)
-                .into_iter()
-                .filter(|aset| aset.contains(&party_role))
-                .collect::<Vec<_>>();
-
-            let mut sess =
-                get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
-            let random_agreed_keys = DummyAgreeRandom::default()
-                .execute(&mut sess)
-                .await
-                .unwrap();
-
-            let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
-            let alpha_powers = embed_parties_and_compute_alpha_powers(num_parties, threshold)?;
-
-            let sets: Vec<PrssSet<Z>> = party_sets
-                .iter()
-                .enumerate()
-                .map(|(idx, s)| PrssSet {
-                    parties: s.to_vec(),
-
-                    set_key: random_agreed_keys[idx].clone(),
-                    f_a_points: f_a_points[idx].clone(),
-                })
-                .collect();
-
-            tracing::debug!("epoch init: {:?}", sets);
-
-            Ok(PRSSSetup {
-                sets: Arc::new(sets),
-                alpha_powers: Arc::new(alpha_powers),
-            })
-        }
     }
 
     #[test]
