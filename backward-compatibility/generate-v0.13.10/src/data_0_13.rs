@@ -74,7 +74,7 @@ use threshold_fhe_0_13_10::{
         small_execution::prss::{PrssSet, PrssSetV0},
         tfhe_internals::{
             parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
-            test_feature::initialize_compressed_key_material,
+            test_feature::insecure_initialize_key_material,
         },
     },
     networking::tls::ReleasePCRValues,
@@ -1185,7 +1185,7 @@ impl KmsV0_13_10 {
 
         let rt = Runtime::new().unwrap();
         let (fhe_pub_key_set, private_key_set) = rt.block_on(async {
-            initialize_compressed_key_material(&mut base_session, dkg_params, Tag::default())
+            insecure_initialize_key_material(&mut base_session, dkg_params, Tag::default())
                 .await
                 .unwrap()
         });
