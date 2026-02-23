@@ -39,12 +39,11 @@ extension_degree_8 =[]
 non-wasm = []
 
 all_extension_degrees = [
-"extension_degree_3",
-"extension_degree_4",
-"extension_degree_5",
-"extension_degree_6",
-"extension_degree_7",
-"extension_degree_8",
+	"extension_degree_3",
+	"extension_degree_4",
+	"extension_degree_5",
+	"extension_degree_6",
+	"extension_degree_7",
+	"extension_degree_8",
 ]
-testing = ["non-wasm"]
-slow_tests = ["testing", "all_extension_degrees"]
+slow_tests = ["non-wasm", "all_extension_degrees"]
