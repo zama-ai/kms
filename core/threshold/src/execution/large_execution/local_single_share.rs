@@ -6,12 +6,13 @@ use super::{
 use crate::{
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
+        runtime::sessions::large_session::LargeSessionHandles,
     },
     networking::value::BroadcastValue,
     ProtocolDescription,
 };
 use algebra::{
+    role::Role,
     sharing::{
         shamir::{RevealOp, ShamirSharings},
         share::Share,
@@ -466,22 +467,22 @@ pub(crate) mod tests {
     };
     use crate::networking::NetworkMode;
     use crate::{
-        execution::{
-            runtime::party::Role,
-            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
-        },
+        execution::runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
     };
-    use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
-    use algebra::sharing::shamir::RevealOp;
-    use algebra::sharing::{shamir::ShamirSharings, share::Share};
-    use algebra::structure_traits::{ErrorCorrect, Invert};
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
 
     use aes_prng::AesRng;
-    use algebra::structure_traits::Ring;
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;

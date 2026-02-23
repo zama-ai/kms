@@ -307,10 +307,7 @@ mod tests {
                 vss::{RealVss, SecureVss, Vss},
             },
             online::triple::Triple,
-            runtime::{
-                party::Role,
-                sessions::large_session::{LargeSession, LargeSessionHandles},
-            },
+            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
             sharing::open::{RobustOpen, SecureRobustOpen},
             small_execution::offline::Preprocessing,
         },
@@ -319,12 +316,14 @@ mod tests {
             tests_and_benches::execute_protocol_large,
         },
     };
-    use algebra::sharing::shamir::RevealOp;
-    use algebra::structure_traits::{Derive, ErrorCorrect, Invert};
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        sharing::{shamir::ShamirSharings, share::Share},
-        structure_traits::Ring,
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring},
     };
     use rstest::rstest;
     use std::collections::HashSet;

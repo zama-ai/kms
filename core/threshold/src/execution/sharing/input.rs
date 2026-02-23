@@ -1,12 +1,12 @@
 use crate::{
-    execution::runtime::{party::Role, sessions::base_session::BaseSessionHandles},
-    networking::value::NetworkValue,
+    execution::runtime::sessions::base_session::BaseSessionHandles, networking::value::NetworkValue,
 };
 use error_utils::anyhow_error_and_log;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{task::JoinSet, time::timeout_at};
 
 use algebra::{
+    role::Role,
     sharing::{
         shamir::{InputOp, ShamirSharings},
         share::Share,

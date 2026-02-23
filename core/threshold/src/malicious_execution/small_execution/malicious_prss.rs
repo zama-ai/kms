@@ -8,7 +8,7 @@ use crate::{
     execution::{
         communication::broadcast::Broadcast,
         large_execution::vss::Vss,
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
         small_execution::{
             agree_random::AgreeRandomFromShare,
             prf::PRSSConversions,
@@ -21,7 +21,10 @@ use crate::{
     session_id::SessionId,
     ProtocolDescription,
 };
-use algebra::structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero};
+use algebra::{
+    role::Role,
+    structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero},
+};
 
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// (i.e. the whole PRSS suite of traits)

@@ -11,13 +11,14 @@ use crate::{
             round_1, round_2, round_3, round_4, sample_secret_polys, DoublePoly, MapRoleDoublePoly,
             Round1VSSOutput, Vss,
         },
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
     },
     ProtocolDescription,
 };
 use algebra::{
     bivariate::{BivariateEval, BivariatePoly},
     poly::Poly,
+    role::Role,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
 

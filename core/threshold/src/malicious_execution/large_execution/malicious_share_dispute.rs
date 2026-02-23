@@ -6,12 +6,15 @@ use crate::{
             send_and_receive_share_dispute_single, share_secrets, ShareDispute, ShareDisputeOutput,
             ShareDisputeOutputDouble,
         },
-        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
+        runtime::sessions::large_session::LargeSessionHandles,
     },
     networking::value::NetworkValue,
     ProtocolDescription,
 };
-use algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence};
+use algebra::{
+    role::Role,
+    structure_traits::{Invert, Ring, RingWithExceptionalSequence},
+};
 use async_trait::async_trait;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};

@@ -24,7 +24,7 @@ cfg_if::cfg_if! {
         use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
         use std::collections::HashMap;
         use tfhe::safe_serialization::safe_deserialize;
-        use threshold_fhe::execution::runtime::party::Role;
+        use algebra::role::Role;
         use tokio::task::JoinSet;
         use tonic::transport::Channel;
     }

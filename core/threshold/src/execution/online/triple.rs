@@ -176,7 +176,6 @@ mod tests {
                 },
                 triple::{mult, mult_list, open_list},
             },
-            runtime::party::Role,
             runtime::sessions::{
                 session_parameters::GenericParameterHandles, small_session::SmallSession,
             },
@@ -196,6 +195,7 @@ mod tests {
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
         structure_traits::Ring,
     };
     use paste::paste;

@@ -3,11 +3,11 @@ use super::{
     single_sharing::init_vdm,
 };
 use crate::{
-    execution::runtime::{party::Role, sessions::large_session::LargeSessionHandles},
-    ProtocolDescription,
+    execution::runtime::sessions::large_session::LargeSessionHandles, ProtocolDescription,
 };
 use algebra::{
     bivariate::MatrixMul,
+    role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;
@@ -231,12 +231,13 @@ pub(crate) mod tests {
     use crate::{
         execution::{
             large_execution::double_sharing::{DoubleShare, DoubleSharing},
-            runtime::{party::Role, sessions::large_session::LargeSession},
+            runtime::sessions::large_session::LargeSession,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

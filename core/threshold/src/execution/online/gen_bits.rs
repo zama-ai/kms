@@ -96,7 +96,6 @@ mod tests {
                 },
                 triple::open_list,
             },
-            runtime::party::Role,
             runtime::sessions::{
                 session_parameters::GenericParameterHandles, small_session::SmallSession,
             },
@@ -117,6 +116,7 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use algebra::{
+        role::Role,
         sharing::share::Share,
         structure_traits::{One, Ring, Sample, ZConsts, Zero},
     };

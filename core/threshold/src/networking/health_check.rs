@@ -1,13 +1,11 @@
-use super::gen::gnetworking_client::GnetworkingClient;
+use super::ggen::gnetworking_client::GnetworkingClient;
 use observability::telemetry::ContextPropagator;
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;
 use tonic::{service::interceptor::InterceptedService, transport::Channel, Status};
 
-use crate::{
-    execution::runtime::party::{Identity, RoleTrait},
-    networking::grpc::HealthTag,
-};
+use crate::{execution::runtime::party::Identity, networking::grpc::HealthTag};
+use algebra::role::RoleTrait;
 use error_utils::anyhow_error_and_log;
 
 pub struct HealthCheckSession<R: RoleTrait> {
@@ -78,7 +76,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
             );
             tasks.spawn(async move {
                 let start = std::time::Instant::now();
-                let request = tonic::Request::new(super::gen::HealthCheckRequest {
+                let request = tonic::Request::new(super::ggen::HealthCheckRequest {
                     tag: tag_serialized,
                 });
                 let response =

@@ -9,7 +9,6 @@ pub mod tests_and_benches {
     use crate::{
         execution::{
             runtime::{
-                party::{Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::base_session::{BaseSession, GenericBaseSession},
                 test_runtime::generate_fixed_roles_two_sets_with_intersection,
             },
@@ -18,6 +17,7 @@ pub mod tests_and_benches {
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
+    use algebra::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures::Future;
     use rand::SeedableRng;
@@ -340,7 +340,6 @@ pub mod testing {
     use crate::{
         execution::{
             runtime::{
-                party::Role,
                 sessions::{base_session::BaseSession, session_parameters::SessionParameters},
                 test_runtime::generate_fixed_roles,
             },
@@ -354,7 +353,10 @@ pub mod testing {
         session_id::SessionId,
     };
     use aes_prng::AesRng;
-    use algebra::structure_traits::{ErrorCorrect, Invert};
+    use algebra::{
+        role::Role,
+        structure_traits::{ErrorCorrect, Invert},
+    };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use tokio::runtime::Runtime;
@@ -416,7 +418,6 @@ pub mod tests {
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::{Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::{
                     base_session::{BaseSession, GenericBaseSession},
                     large_session::{LargeSession, LargeSessionHandles},
@@ -442,7 +443,10 @@ pub mod tests {
         },
     };
     use aes_prng::AesRng;
-    use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
+    use algebra::{
+        role::{Role, TwoSetsRole, TwoSetsThreshold},
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
     use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
     use rand::SeedableRng;

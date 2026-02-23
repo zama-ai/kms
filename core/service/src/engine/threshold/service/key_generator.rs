@@ -749,10 +749,10 @@ impl<
         glwe_shares: GlweSecretKeyShare<Z128, 4>,
         compression_shares: CompressionPrivateKeyShares<Z128, 4>,
     ) -> anyhow::Result<DecompressionKey> {
+        use algebra::role::Role;
         use itertools::Itertools;
         use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
         use threshold_fhe::execution::{
-            runtime::party::Role,
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
                 to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,

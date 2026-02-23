@@ -13,9 +13,8 @@ use crate::{
             single_sharing::init_vdm,
             vss::{SecureVss, Vss},
         },
-        runtime::{
-            party::Role,
-            sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
@@ -27,6 +26,7 @@ use crate::{
 use algebra::{
     bivariate::{compute_powers_list, MatrixMul},
     poly::Poly,
+    role::Role,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use anyhow::Context;
@@ -1068,7 +1068,6 @@ mod tests {
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
-            runtime::party::Role,
             runtime::{
                 sessions::{
                     session_parameters::GenericParameterHandles, small_session::SmallSession,
@@ -1085,6 +1084,7 @@ mod tests {
     use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

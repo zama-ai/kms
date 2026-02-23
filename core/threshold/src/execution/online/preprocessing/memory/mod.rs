@@ -172,11 +172,12 @@ mod tests {
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
     use crate::execution::online::triple::Triple;
-    use crate::execution::runtime::party::Role;
-    use algebra::base_ring::Z128;
-    use algebra::base_ring::Z64;
-    use algebra::galois_rings::degree_4::ResiduePolyF4;
-    use algebra::sharing::share::Share;
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::degree_4::ResiduePolyF4,
+        role::Role,
+        sharing::share::Share,
+    };
     use itertools::Itertools;
     use paste::paste;
     use std::num::Wrapping;

@@ -7,6 +7,7 @@
 mod common;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::role::Role;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -70,10 +71,7 @@ use std::{
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::{
-    execution::{
-        runtime::party::Role, small_execution::prss::PRSSSetup,
-        tfhe_internals::public_keysets::FhePubKeySet,
-    },
+    execution::{small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet},
     networking::tls::ReleasePCRValues,
 };
 

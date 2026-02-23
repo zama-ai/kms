@@ -10,7 +10,7 @@ use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcas
 use crate::{
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_parties},
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
@@ -18,6 +18,7 @@ use crate::{
 use algebra::{
     bivariate::{BivariateEval, BivariatePoly},
     poly::Poly,
+    role::Role,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
 use error_utils::anyhow_error_and_log;
@@ -1163,11 +1164,11 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 pub(crate) mod tests {
     use super::*;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::large_session::LargeSession;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
     use crate::execution::small_execution::prf::PRSSConversions;
-    use crate::execution::{runtime::party::Role, runtime::sessions::large_session::LargeSession};
     use crate::malicious_execution::large_execution::malicious_vss::{
         WrongDegreeSharingVss, WrongSecretLenVss,
     };
@@ -1177,13 +1178,16 @@ pub(crate) mod tests {
         execute_protocol_large_w_disputes_and_malicious, TestingParameters,
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
-    use algebra::bivariate::BivariateEval;
-    use algebra::galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64};
-    use algebra::sharing::{
-        shamir::{RevealOp, ShamirSharings},
-        share::Share,
+    use algebra::{
+        bivariate::BivariateEval,
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{ErrorCorrect, Invert},
     };
-    use algebra::structure_traits::{ErrorCorrect, Invert};
     use futures_util::future::join;
     use rstest::rstest;
     use std::num::Wrapping;

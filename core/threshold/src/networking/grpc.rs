@@ -1,11 +1,11 @@
 //! gRPC-based networking.
 
-use super::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
-use super::gen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
+use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
+use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
-use crate::execution::runtime::party::{MpcIdentity, RoleAssignment, RoleKind, RoleTrait};
+use crate::execution::runtime::party::{MpcIdentity, RoleAssignment};
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -13,10 +13,11 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG, SESSION_CLEANUP_INTERVAL_SECS,
     SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
-use crate::networking::gen::Status;
+use crate::networking::ggen::Status;
 use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
+use algebra::role::{RoleKind, RoleTrait};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -1198,7 +1199,8 @@ pub struct HealthTag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+    use crate::execution::runtime::party::{Identity, RoleAssignment};
+    use algebra::role::Role;
     use dashmap::DashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc::channel;

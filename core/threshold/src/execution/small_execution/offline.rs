@@ -13,13 +13,14 @@ use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::thread_handles::spawn_compute_bound;
 use crate::{
     execution::{
-        communication::broadcast::Broadcast, online::triple::Triple, runtime::party::Role,
+        communication::broadcast::Broadcast, online::triple::Triple,
         runtime::sessions::small_session::SmallSessionHandles,
     },
     networking::value::BroadcastValue,
     ProtocolDescription,
 };
 use algebra::{
+    role::Role,
     sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
     structure_traits::{ErrorCorrect, Ring},
 };
@@ -429,9 +430,8 @@ mod test {
                 preprocessing::{RandomPreprocessing, TriplePreprocessing},
                 triple::Triple,
             },
-            runtime::{
-                party::Role,
-                sessions::{base_session::GenericBaseSessionHandles, small_session::SmallSession},
+            runtime::sessions::{
+                base_session::GenericBaseSessionHandles, small_session::SmallSession,
             },
             small_execution::{
                 offline::{BatchParams, Preprocessing, SecureSmallPreprocessing},
@@ -443,6 +443,7 @@ mod test {
     };
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

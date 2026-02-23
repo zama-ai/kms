@@ -12,6 +12,7 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
+use algebra::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     error_correction::MemoizedExceptionals,
@@ -34,7 +35,6 @@ use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
-use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};

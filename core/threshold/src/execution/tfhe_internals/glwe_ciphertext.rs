@@ -215,11 +215,8 @@ mod tests {
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::{
-                party::Role,
-                sessions::{
-                    large_session::LargeSession, session_parameters::GenericParameterHandles,
-                },
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
             },
             tfhe_internals::{
                 parameters::{EncryptionType, TUniformBound},
@@ -233,6 +230,7 @@ mod tests {
     };
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z64,
+        role::Role,
         sharing::{
             shamir::{InputOp, ShamirSharings},
             share::Share,

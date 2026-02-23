@@ -5,9 +5,8 @@ use crate::{
             p2p::generic_receive_from_all_senders_with_role_transform,
         },
         online::preprocessing::BasePreprocessing,
-        runtime::{
-            party::{Role, TwoSetsRole},
-            sessions::base_session::{BaseSession, BaseSessionHandles, GenericBaseSessionHandles},
+        runtime::sessions::base_session::{
+            BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
         },
         sharing::open::{ExternalOpeningInfo, RobustOpen, SecureRobustOpen},
     },
@@ -17,6 +16,7 @@ use crate::{
 use algebra::{
     galois_rings::common::ResiduePoly,
     poly::Poly,
+    role::{Role, TwoSetsRole},
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome, Zero,
@@ -1213,7 +1213,6 @@ mod tests {
     use super::*;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::triple::open_list;
-    use crate::execution::runtime::party::{DualRole, TwoSetsThreshold};
     use crate::execution::runtime::sessions::base_session::{
         BaseSession, GenericBaseSession, TwoSetsBaseSession,
     };
@@ -1236,6 +1235,7 @@ mod tests {
     use crate::tests::helper::tests::execute_protocol_two_sets_w_malicious;
     use algebra::base_ring::Z128;
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use algebra::role::{DualRole, TwoSetsThreshold};
     use algebra::structure_traits::FromU128;
 
     use std::collections::HashMap;

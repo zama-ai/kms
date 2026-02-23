@@ -550,11 +550,11 @@ pub mod tests {
     use std::num::Wrapping;
 
     use crate::execution::online::triple::Triple;
-    use crate::execution::runtime::party::Role;
     use algebra::{
         base_ring::{Z128, Z64},
         galois_fields::gf16::GF16,
         galois_rings::degree_4::ResiduePolyF4,
+        role::Role,
         sharing::share::Share,
     };
 

@@ -7,6 +7,7 @@ mod common;
 use common::load_and_unversionize;
 
 use aes_prng::AesRng;
+use algebra::role::Role;
 use algebra::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     sharing::share::Share,
@@ -25,12 +26,9 @@ use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
-    execution::{
-        runtime::party::Role,
-        small_execution::{
-            prf::{PRSSConversions, PrfKey},
-            prss::{PRSSSetup, PrssSet, PrssSetV0},
-        },
+    execution::small_execution::{
+        prf::{PRSSConversions, PrfKey},
+        prss::{PRSSSetup, PrssSet, PrssSetV0},
     },
     networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},

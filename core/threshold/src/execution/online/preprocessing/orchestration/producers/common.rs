@@ -80,10 +80,7 @@ pub(crate) mod tests {
                 },
                 triple::Triple,
             },
-            runtime::{
-                party::Role,
-                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-            },
+            runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         networking::NetworkMode,
         session_id::SessionId,
@@ -92,6 +89,7 @@ pub(crate) mod tests {
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
+        role::Role,
         sharing::share::Share,
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };

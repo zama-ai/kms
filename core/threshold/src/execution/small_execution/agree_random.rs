@@ -6,14 +6,14 @@ use crate::{
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
     hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
     ProtocolDescription,
 };
-use algebra::{base_ring::Z64, structure_traits::ErrorCorrect};
+use algebra::{base_ring::Z64, role::Role, structure_traits::ErrorCorrect};
 use anyhow::Context;
 use async_trait::async_trait;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
@@ -630,11 +630,8 @@ mod tests {
             commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
         },
         execution::{
-            runtime::{
-                party::Role,
-                sessions::{
-                    session_parameters::GenericParameterHandles, small_session::SmallSession,
-                },
+            runtime::sessions::{
+                session_parameters::GenericParameterHandles, small_session::SmallSession,
             },
             sharing::open::test::deterministically_compute_my_shares,
             small_execution::{
@@ -662,6 +659,7 @@ mod tests {
     use algebra::{
         base_ring::Z64,
         galois_rings::degree_4::ResiduePolyF4Z128,
+        role::Role,
         structure_traits::{ErrorCorrect, Invert, Ring},
     };
     use itertools::Itertools;

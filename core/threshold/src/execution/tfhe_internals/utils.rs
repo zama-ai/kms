@@ -12,8 +12,8 @@ use tfhe::{
 };
 
 use crate::execution::online::triple::{open, open_list};
-use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
+use algebra::role::Role;
 use algebra::{
     galois_rings::common::ResiduePoly,
     poly::Poly,
@@ -287,19 +287,17 @@ pub(super) async fn compute_hamming_weight_glwe_sk<
 
 #[cfg(test)]
 pub mod tests {
-    use crate::execution::{
-        runtime::party::Role,
-        tfhe_internals::{
-            glwe_key::GlweSecretKeyShare,
-            parameters::{DKGParams, DKGParamsBasics},
-            private_keysets::PrivateKeySet,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
-        },
+    use crate::execution::tfhe_internals::{
+        glwe_key::GlweSecretKeyShare,
+        parameters::{DKGParams, DKGParamsBasics},
+        private_keysets::PrivateKeySet,
+        sns_compression_key::SnsCompressionPrivateKeyShares,
     };
     use crate::file_handling::tests::read_element;
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
+        role::Role,
         sharing::share::Share,
         structure_traits::ErrorCorrect,
     };

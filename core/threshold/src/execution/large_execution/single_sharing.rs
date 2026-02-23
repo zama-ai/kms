@@ -1,10 +1,10 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::{
-    execution::runtime::{party::Role, sessions::large_session::LargeSessionHandles},
-    ProtocolDescription,
+    execution::runtime::sessions::large_session::LargeSessionHandles, ProtocolDescription,
 };
 use algebra::{
     bivariate::{compute_powers, MatrixMul},
+    role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;
@@ -209,7 +209,6 @@ pub(crate) mod tests {
     use crate::{
         execution::{
             large_execution::{single_sharing::SecureSingleSharing, single_sharing::SingleSharing},
-            runtime::party::Role,
             runtime::sessions::large_session::LargeSession,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
@@ -218,7 +217,11 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::ResiduePolyF8;
     use algebra::{
-        sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
         structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
     #[cfg(feature = "extension_degree_8")]

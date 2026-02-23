@@ -1,13 +1,14 @@
 use crate::{
     execution::{
         communication::p2p::{receive_from_parties_w_dispute, send_to_honest_parties},
-        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
+        runtime::sessions::large_session::LargeSessionHandles,
     },
     networking::value::NetworkValue,
     ProtocolDescription,
 };
 use algebra::{
     poly::Poly,
+    role::Role,
     structure_traits::{Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;
@@ -417,7 +418,7 @@ pub(crate) mod tests {
             large_execution::share_dispute::{
                 interpolate_poly_w_punctures, RealShareDispute, ShareDispute,
             },
-            runtime::{party::Role, sessions::large_session::LargeSession},
+            runtime::sessions::large_session::LargeSession,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
@@ -427,6 +428,7 @@ pub(crate) mod tests {
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
         poly::Poly,
+        role::Role,
         sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
         structure_traits::{ErrorCorrect, Invert, Ring, Zero},
     };

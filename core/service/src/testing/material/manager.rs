@@ -12,12 +12,12 @@ use crate::consts::{
     TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
+use algebra::role::Role;
 use anyhow::{anyhow, Context, Result};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
 use tempfile::TempDir;
-use threshold_fhe::execution::runtime::party::Role;
 use tokio::fs;
 
 /// Helper function to compute storage path like FileStorage does

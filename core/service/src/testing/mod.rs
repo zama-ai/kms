@@ -15,7 +15,7 @@
 //!         .with_test_name("my_test")
 //!         .build()
 //!         .await?;
-//!     
+//!
 //!     // Use env.server, env.client, env.material_dir
 //!     // Automatic cleanup on drop
 //!     Ok(())
@@ -101,6 +101,6 @@ pub mod prelude {
     pub use anyhow::{Context, Result};
 
     pub use crate::vault::storage::{file::FileStorage, Storage, StorageType};
+    pub use algebra::role::Role;
     pub use tempfile::TempDir;
-    pub use threshold_fhe::execution::runtime::party::Role;
 }

@@ -1,5 +1,4 @@
 use super::p2p::{generic_receive_from_all, generic_receive_from_all_senders, send_to_all};
-use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 use crate::networking::value::BcastHash;
@@ -9,7 +8,7 @@ use crate::thread_handles::spawn_compute_bound;
 use crate::ProtocolDescription;
 use error_utils::anyhow_error_and_log;
 
-use algebra::structure_traits::Ring;
+use algebra::{role::Role, structure_traits::Ring};
 use std::collections::{HashMap, HashSet};
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;

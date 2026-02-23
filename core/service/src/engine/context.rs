@@ -1,10 +1,11 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
+use algebra::role::Role;
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
+use threshold_fhe::networking::tls::ReleasePCRValues;
 
 use crate::{
     cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},

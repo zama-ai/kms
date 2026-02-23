@@ -5,15 +5,15 @@ use tonic::async_trait;
 
 use crate::{
     execution::{
-        runtime::{
-            party::TwoSetsRole,
-            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
-        },
+        runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
         sharing::open::{ExternalOpeningInfo, OpeningKind, RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,
 };
-use algebra::structure_traits::{ErrorCorrect, Ring};
+use algebra::{
+    role::TwoSetsRole,
+    structure_traits::{ErrorCorrect, Ring},
+};
 
 /// Malicious implementation of the [`RobustOpen`] protocol
 /// that simply does nothing

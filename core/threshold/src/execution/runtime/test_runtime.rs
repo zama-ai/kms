@@ -1,14 +1,10 @@
-use super::party::Role;
 use crate::{
     execution::{
-        runtime::{
-            party::{DualRole, RoleKind, RoleTrait, TwoSetsRole},
-            sessions::{
-                base_session::{BaseSession, GenericBaseSession},
-                large_session::LargeSession,
-                session_parameters::{GenericParameterHandles, GenericSessionParameters},
-                small_session::SmallSession,
-            },
+        runtime::sessions::{
+            base_session::{BaseSession, GenericBaseSession},
+            large_session::LargeSession,
+            session_parameters::{GenericParameterHandles, GenericSessionParameters},
+            small_session::SmallSession,
         },
         small_execution::{
             agree_random::DummyAgreeRandom,
@@ -25,7 +21,10 @@ use crate::{
     tests::helper::tests_and_benches::get_seed_for_two_sets_role,
 };
 use aes_prng::AesRng;
-use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
+use algebra::{
+    role::{DualRole, Role, RoleKind, RoleTrait, TwoSetsRole},
+    structure_traits::{ErrorCorrect, Invert, Ring},
+};
 use rand::SeedableRng;
 use std::{
     collections::{HashMap, HashSet},

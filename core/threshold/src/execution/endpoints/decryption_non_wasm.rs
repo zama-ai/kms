@@ -9,8 +9,6 @@ use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFl
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
-#[cfg(any(test, feature = "testing"))]
-use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSession;
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -36,14 +34,13 @@ use crate::session_id::SessionId;
 use crate::thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
-use algebra::sharing::share::Share;
-use algebra::structure_traits::Derive;
-use algebra::structure_traits::Ring;
-use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+#[cfg(any(test, feature = "testing"))]
+use algebra::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
-    structure_traits::Zero,
+    sharing::share::Share,
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Solve, Zero},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -1306,20 +1303,20 @@ mod tests {
     use crate::{
         execution::{
             constants::SMALL_TEST_KEY_PATH,
-            runtime::{
-                party::Role,
-                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-            },
+            runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         file_handling::tests::read_element,
     };
     use aes_prng::AesRng;
-    use algebra::sharing::shamir::RevealOp;
-    use algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
-        sharing::{shamir::ShamirSharings, share::Share},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};

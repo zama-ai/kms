@@ -1,16 +1,13 @@
 use crate::{
     execution::{
-        runtime::{
-            party::Role,
-            sessions::{
-                base_session::{
-                    BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
-                    SingleSetNetworkingImpl, ToBaseSession,
-                },
-                session_parameters::{
-                    DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
-                    SessionParameters,
-                },
+        runtime::sessions::{
+            base_session::{
+                BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
+                SingleSetNetworkingImpl, ToBaseSession,
+            },
+            session_parameters::{
+                DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
+                SessionParameters,
             },
         },
         small_execution::{
@@ -25,6 +22,7 @@ use crate::{
 use aes_prng::AesRng;
 use algebra::{
     base_ring::{Z128, Z64},
+    role::Role,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use std::collections::HashSet;

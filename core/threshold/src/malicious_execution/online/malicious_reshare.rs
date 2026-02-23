@@ -7,15 +7,13 @@ use crate::{
             preprocessing::BasePreprocessing,
             reshare::{Expected, NotExpected, Reshare},
         },
-        runtime::{
-            party::TwoSetsRole,
-            sessions::base_session::{BaseSession, GenericBaseSession},
-        },
+        runtime::sessions::base_session::{BaseSession, GenericBaseSession},
     },
     ProtocolDescription,
 };
 use algebra::{
     galois_rings::common::ResiduePoly,
+    role::TwoSetsRole,
     sharing::share::Share,
     structure_traits::{BaseRing, ErrorCorrect, Invert, Syndrome},
 };

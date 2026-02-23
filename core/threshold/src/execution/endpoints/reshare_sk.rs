@@ -7,10 +7,7 @@ use crate::execution::{
             SecureTwoSetsReshareAsSet1, SecureTwoSetsReshareAsSet2,
         },
     },
-    runtime::{
-        party::TwoSetsRole,
-        sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
-    },
+    runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     tfhe_internals::{
         compression_decompression_key::CompressionPrivateKeyShares,
         glwe_key::GlweSecretKeyShare,
@@ -22,6 +19,7 @@ use crate::execution::{
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
+    role::TwoSetsRole,
     structure_traits::{ErrorCorrect, Invert, Syndrome},
 };
 use error_utils::anyhow_error_and_log;
@@ -619,7 +617,6 @@ mod tests {
     use super::*;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
-    use crate::execution::runtime::party::{Role, TwoSetsThreshold};
     use crate::execution::runtime::sessions::base_session::{BaseSession, GenericBaseSession};
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
@@ -640,6 +637,7 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
+        role::{Role, TwoSetsThreshold},
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,

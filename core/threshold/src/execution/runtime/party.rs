@@ -1,10 +1,6 @@
+use algebra::role::RoleTrait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-pub use algebra::role::Role;
-pub use algebra::role::{
-    DualRole, RoleKind, RoleTrait, RoleVersioned, TwoSetsRole, TwoSetsThreshold,
-};
 
 /// The identity of a MPC party.
 ///

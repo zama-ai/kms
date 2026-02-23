@@ -120,20 +120,18 @@ mod tests {
 
     use itertools::Itertools;
 
-    use crate::execution::{
-        online::preprocessing::{
-            memory::InMemoryBitPreprocessing,
-            orchestration::producers::common::tests::{
-                test_production_large, test_production_small, ReceiverChannelCollectionWithTracker,
-                Typeproduction, TEST_NUM_LOOP,
-            },
-            BitPreprocessing,
+    use crate::execution::online::preprocessing::{
+        memory::InMemoryBitPreprocessing,
+        orchestration::producers::common::tests::{
+            test_production_large, test_production_small, ReceiverChannelCollectionWithTracker,
+            Typeproduction, TEST_NUM_LOOP,
         },
-        runtime::party::Role,
+        BitPreprocessing,
     };
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
+        role::Role,
         sharing::shamir::{RevealOp, ShamirSharings},
         structure_traits::{Derive, ErrorCorrect, Invert, One, Solve, Zero},
     };

@@ -10,10 +10,11 @@ use crate::execution::{
     communication::broadcast::{Broadcast, SyncReliableBroadcast},
     runtime::sessions::large_session::LargeSessionHandles,
 };
-use crate::{
-    execution::runtime::party::Role, networking::value::BroadcastValue, ProtocolDescription,
+use crate::{networking::value::BroadcastValue, ProtocolDescription};
+use algebra::{
+    role::Role,
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
-use algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence};
 use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
@@ -400,7 +401,6 @@ pub(crate) mod tests {
     use crate::{
         execution::{
             large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
-            runtime::party::Role,
             runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
         },
         tests::helper::tests::{
@@ -408,11 +408,15 @@ pub(crate) mod tests {
         },
     };
     use aes_prng::AesRng;
-    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-    use algebra::sharing::shamir::RevealOp;
-    use algebra::sharing::{shamir::ShamirSharings, share::Share};
-    use algebra::structure_traits::{
-        Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
+
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     };
     use futures_util::future::join;
     use itertools::Itertools;

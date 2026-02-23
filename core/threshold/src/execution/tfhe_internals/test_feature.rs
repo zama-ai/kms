@@ -27,11 +27,8 @@ use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::{
     execution::{
-        runtime::{
-            party::Role,
-            sessions::{
-                base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
-            },
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
         },
         sharing::input::robust_input,
         tfhe_internals::{
@@ -44,6 +41,7 @@ use crate::{
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
+    role::Role,
     sharing::{
         shamir::{InputOp, ShamirSharings},
         share::Share,
