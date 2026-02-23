@@ -1,4 +1,3 @@
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
@@ -14,6 +13,7 @@ use crate::experimental::bgv::ddec::keygen_shares;
 use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::value::NetworkValue;
 use aes_prng::AesRng;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::SeedableRng;
 use std::sync::Arc;

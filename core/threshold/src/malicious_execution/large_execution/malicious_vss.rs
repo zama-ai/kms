@@ -5,11 +5,6 @@ use std::collections::HashSet;
 use tonic::async_trait;
 
 use crate::{
-    algebra::{
-        bivariate::{BivariateEval, BivariatePoly},
-        poly::Poly,
-        structure_traits::{Ring, RingWithExceptionalSequence},
-    },
     execution::{
         communication::broadcast::Broadcast,
         large_execution::vss::{
@@ -19,6 +14,11 @@ use crate::{
         runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     },
     ProtocolDescription,
+};
+use algebra::{
+    bivariate::{BivariateEval, BivariatePoly},
+    poly::Poly,
+    structure_traits::{Ring, RingWithExceptionalSequence},
 };
 
 ///Does nothing, and output an empty Vec

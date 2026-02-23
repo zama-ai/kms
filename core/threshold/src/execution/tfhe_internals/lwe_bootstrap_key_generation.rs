@@ -8,16 +8,14 @@ use tfhe::{
 };
 use tracing::instrument;
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    execution::{
-        online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::parameters::BKParams,
-    },
+use crate::execution::{
+    online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::parameters::BKParams,
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 use super::{
@@ -281,9 +279,6 @@ mod tests {
     };
 
     use crate::{
-        algebra::{
-            base_ring::Z128, galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring,
-        },
         execution::{
             online::{
                 preprocessing::dummy::DummyPreprocessing,
@@ -306,6 +301,9 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        base_ring::Z128, galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring,
     };
 
     use super::allocate_and_generate_lwe_bootstrap_key;

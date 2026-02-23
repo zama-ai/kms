@@ -310,11 +310,11 @@ pub trait ModReduction<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::Sample;
     use crate::experimental::algebra::cyclotomic::{RingElement, RqElement};
     use crate::experimental::algebra::ntt::{Const, N65536};
     use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
+    use algebra::structure_traits::Sample;
     use rand::SeedableRng;
 
     #[test]

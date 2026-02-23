@@ -12,19 +12,17 @@
 //! See [`ggsw_encode_message`]
 use std::{ops::Neg, sync::Arc};
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::{preprocessing::TriplePreprocessing, triple::mult_list},
-        runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-        tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
-    },
+use crate::execution::{
+    online::{preprocessing::TriplePreprocessing, triple::mult_list},
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{
     glwe_ciphertext::{
@@ -381,7 +379,6 @@ mod tests {
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
@@ -394,7 +391,6 @@ mod tests {
                     large_session::LargeSession, session_parameters::GenericParameterHandles,
                 },
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 parameters::EncryptionType,
@@ -409,6 +405,11 @@ mod tests {
     use crate::{
         execution::{sharing::shamir::InputOp, tfhe_internals::parameters::TUniformBound},
         networking::NetworkMode,
+    };
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        sharing::{shamir::ShamirSharings, share::Share},
+        structure_traits::Ring,
     };
 
     use super::{encrypt_constant_ggsw_ciphertext, ggsw_encode_message, GgswCiphertextShare};

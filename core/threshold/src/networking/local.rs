@@ -1,4 +1,4 @@
-use crate::error::error_handler::anyhow_error_and_log;
+use error_utils::anyhow_error_and_log;
 
 use super::*;
 use constants::{

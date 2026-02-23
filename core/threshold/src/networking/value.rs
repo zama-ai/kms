@@ -1,5 +1,3 @@
-use crate::algebra::structure_traits::{Ring, Zero};
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::large_execution::local_double_share::MapsDoubleSharesChallenges;
 use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
@@ -18,6 +16,8 @@ use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
 };
+use algebra::structure_traits::{Ring, Zero};
+use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]
@@ -248,11 +248,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        algebra::base_ring::Z128,
         execution::{constants::SMALL_TEST_KEY_PATH, tfhe_internals::test_feature::KeySet},
         file_handling::tests::read_element,
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
     };
+    use algebra::base_ring::Z128;
     use std::collections::HashSet;
 
     #[tokio::test]

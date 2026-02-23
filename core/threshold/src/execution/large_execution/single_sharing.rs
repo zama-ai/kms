@@ -1,14 +1,14 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::{
-    algebra::{
-        bivariate::{compute_powers, MatrixMul},
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     ProtocolDescription,
 };
+use algebra::{
+    bivariate::{compute_powers, MatrixMul},
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
@@ -202,23 +202,24 @@ fn compute_next_batch<Z: Ring>(
 pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use super::init_vdm;
-    use crate::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-    #[cfg(feature = "extension_degree_8")]
-    use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
     use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
         execution::{
             large_execution::{single_sharing::SecureSingleSharing, single_sharing::SingleSharing},
             runtime::party::Role,
             runtime::sessions::large_session::LargeSession,
-            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+    #[cfg(feature = "extension_degree_8")]
+    use algebra::galois_rings::degree_8::ResiduePolyF8;
+    use algebra::{
+        sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
     #[cfg(feature = "extension_degree_8")]
     use ndarray::Ix2;

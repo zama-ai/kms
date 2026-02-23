@@ -5,26 +5,25 @@ use tonic::async_trait;
 use tracing::instrument;
 
 use super::prss::PRSSPrimitives;
-use crate::error::error_handler::log_error_wrapper;
 use crate::execution::communication::broadcast::SyncReliableBroadcast;
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
-use crate::execution::sharing::shamir::RevealOp;
 use crate::thread_handles::spawn_compute_bound;
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
-        communication::broadcast::Broadcast,
-        online::triple::Triple,
-        runtime::party::Role,
+        communication::broadcast::Broadcast, online::triple::Triple, runtime::party::Role,
         runtime::sessions::small_session::SmallSessionHandles,
-        sharing::{shamir::ShamirSharings, share::Share},
     },
     networking::value::BroadcastValue,
     ProtocolDescription,
 };
+use algebra::{
+    sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+    structure_traits::{ErrorCorrect, Ring},
+};
+use error_utils::log_error_wrapper;
 
 #[async_trait]
 pub trait Preprocessing<Z: Clone, S: BaseSessionHandles>:
@@ -405,7 +404,6 @@ mod test {
     use rstest::rstest;
     use std::{collections::HashMap, num::Wrapping};
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
     use crate::execution::large_execution::vss::SecureVss;
     use crate::execution::runtime::sessions::base_session::ToBaseSession;
@@ -427,7 +425,6 @@ mod test {
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
-        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
             online::{
                 preprocessing::{RandomPreprocessing, TriplePreprocessing},
@@ -437,7 +434,6 @@ mod test {
                 party::Role,
                 sessions::{base_session::GenericBaseSessionHandles, small_session::SmallSession},
             },
-            sharing::share::Share,
             small_execution::{
                 offline::{BatchParams, Preprocessing, SecureSmallPreprocessing},
                 prf::PRSSConversions,
@@ -445,6 +441,11 @@ mod test {
         },
         networking::value::BroadcastValue,
         tests::helper::testing::get_networkless_base_session_for_parties,
+    };
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::share::Share,
+        structure_traits::{ErrorCorrect, Invert, Ring},
     };
 
     use super::RealSmallPreprocessing;

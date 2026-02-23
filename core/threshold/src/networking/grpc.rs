@@ -332,7 +332,7 @@ impl GrpcNetworkingManager {
 
         #[cfg(not(feature = "testing"))]
         if tls_conf.is_none() {
-            return Err(crate::error::error_handler::anyhow_error_and_log(
+            return Err(error_utils::anyhow_error_and_log(
                 "TLS configuration must be provided in non-testing environments",
             ));
         }

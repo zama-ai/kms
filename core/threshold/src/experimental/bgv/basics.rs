@@ -1,4 +1,3 @@
-use crate::algebra::structure_traits::{Ring, ZConsts};
 use crate::execution::sharing::share::Share;
 use crate::experimental::algebra::cyclotomic::NewHopeTernarySampler;
 use crate::experimental::algebra::cyclotomic::RingElement;
@@ -13,6 +12,7 @@ use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::constants::PLAINTEXT_MODULUS;
+use algebra::structure_traits::{Ring, ZConsts};
 use crypto_bigint::{Limb, NonZero};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};

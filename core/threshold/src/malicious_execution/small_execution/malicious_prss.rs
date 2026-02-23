@@ -5,7 +5,6 @@ use std::{collections::HashMap, sync::Arc};
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero},
     execution::{
         communication::broadcast::Broadcast,
         large_execution::vss::Vss,
@@ -22,6 +21,7 @@ use crate::{
     session_id::SessionId,
     ProtocolDescription,
 };
+use algebra::structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero};
 
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// (i.e. the whole PRSS suite of traits)

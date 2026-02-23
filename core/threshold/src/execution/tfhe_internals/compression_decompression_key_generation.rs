@@ -1,24 +1,20 @@
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
+use crate::execution::{
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{
+        compression_decompression_key::CompressionPrivateKeyShares,
+        glwe_key::GlweSecretKeyShare,
+        lwe_bootstrap_key_generation::{generate_bootstrap_key, generate_compressed_bootstrap_key},
+        lwe_key::LweSecretKeyShare,
+        lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
+        lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key,
+        parameters::{DKGParams, DistributedCompressionParameters, EncryptionType},
+        randomness::MPCEncryptionRandomGenerator,
     },
-    execution::{
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares,
-            glwe_key::GlweSecretKeyShare,
-            lwe_bootstrap_key_generation::{
-                generate_bootstrap_key, generate_compressed_bootstrap_key,
-            },
-            lwe_key::LweSecretKeyShare,
-            lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
-            lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key,
-            parameters::{DKGParams, DistributedCompressionParameters, EncryptionType},
-            randomness::MPCEncryptionRandomGenerator,
-        },
-    },
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 use itertools::Itertools;

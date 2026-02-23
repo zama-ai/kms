@@ -1,8 +1,4 @@
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    },
     execution::{
         runtime::{
             party::Role,
@@ -27,12 +23,16 @@ use crate::{
     session_id::SessionId,
 };
 use aes_prng::AesRng;
+use algebra::{
+    base_ring::{Z128, Z64},
+    structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
 use std::collections::HashSet;
 
 pub type SmallSession64<const EXTENSION_DEGREE: usize> =
-    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z64, EXTENSION_DEGREE>>;
+    SmallSession<algebra::galois_rings::common::ResiduePoly<Z64, EXTENSION_DEGREE>>;
 pub type SmallSession128<const EXTENSION_DEGREE: usize> =
-    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
+    SmallSession<algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
 
 pub trait SmallSessionHandles<Z: Ring>: BaseSessionHandles {
     type PRSSPrimitivesType: PRSSPrimitives<Z>;

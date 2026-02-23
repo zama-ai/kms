@@ -61,11 +61,6 @@ pub(crate) mod tests {
     use tokio::sync::mpsc::{channel, Receiver, Sender};
 
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::common::ResiduePoly,
-            structure_traits::{Derive, ErrorCorrect, Invert, Solve},
-        },
         execution::{
             online::{
                 preprocessing::orchestration::{
@@ -89,11 +84,16 @@ pub(crate) mod tests {
                 party::Role,
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
-            sharing::share::Share,
         },
         networking::NetworkMode,
         session_id::SessionId,
         thread_handles::OsThreadGroup,
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::share::Share,
+        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
 
     pub type TripleChannels<R> = (Vec<Sender<Vec<Triple<R>>>>, Vec<Receiver<Vec<Triple<R>>>>);

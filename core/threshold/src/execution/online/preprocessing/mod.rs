@@ -1,9 +1,6 @@
 use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
 use super::secret_distributions::{RealSecretDistributions, SecretDistributions};
 use super::triple::Triple;
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
@@ -12,10 +9,11 @@ use crate::execution::runtime::sessions::session_parameters::GenericParameterHan
 use crate::execution::runtime::sessions::{base_session::BaseSession, small_session::SmallSession};
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
-use crate::{
-    algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
-    execution::sharing::share::Share,
-};
+use algebra::base_ring::{Z128, Z64};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use algebra::{sharing::share::Share, structure_traits::Ring};
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 
 use async_trait::async_trait;

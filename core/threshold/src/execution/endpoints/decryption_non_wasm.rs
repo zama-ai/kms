@@ -1,6 +1,3 @@
-use crate::algebra::structure_traits::Derive;
-use crate::algebra::structure_traits::Ring;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::constants::B_SWITCH_SQUASH;
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
@@ -21,10 +18,15 @@ use crate::execution::runtime::sessions::session_parameters::GenericParameterHan
 use crate::execution::runtime::sessions::session_parameters::SessionParameters;
 use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
 use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
-use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use crate::execution::{
+    constants::{LOG_B_SWITCH_SQUASH, STATSEC},
+    runtime::sessions::{
+        base_session::BaseSessionHandles, large_session::LargeSession, small_session::SmallSession,
+    },
+};
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions,
@@ -32,25 +34,20 @@ use crate::execution::{
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
 use crate::thread_handles::spawn_compute_bound;
-use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::Zero,
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        constants::{LOG_B_SWITCH_SQUASH, STATSEC},
-        runtime::sessions::{
-            base_session::BaseSessionHandles, large_session::LargeSession,
-            small_session::SmallSession,
-        },
-    },
-};
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::Derive;
+use algebra::structure_traits::Ring;
+use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    structure_traits::Zero,
+};
 use anyhow::Context;
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
@@ -1299,29 +1296,31 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
     use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::execution::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::base_ring::{Z128, Z64},
-        algebra::galois_rings::common::ResiduePoly,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
                 party::Role,
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
-            sharing::{shamir::ShamirSharings, share::Share},
         },
         file_handling::tests::read_element,
     };
     use aes_prng::AesRng;
+    use algebra::sharing::shamir::RevealOp;
+    use algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::{shamir::ShamirSharings, share::Share},
+    };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;

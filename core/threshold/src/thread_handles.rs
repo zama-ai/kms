@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::{sync::OnceCell, task::JoinHandle};
 use tracing::error;
 
-use crate::error::error_handler::anyhow_error_and_log;
+use error_utils::anyhow_error_and_log;
 
 #[derive(Debug, Default)]
 pub struct ThreadHandleGroup {

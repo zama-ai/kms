@@ -14,6 +14,7 @@ license.workspace = true
 # Maintain alphabetical order
 aes.workspace = true
 aes-prng.workspace = true
+algebra = { workspace = true, default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
@@ -26,6 +27,7 @@ const_format.workspace = true
 crypto-bigint = { workspace = true, optional = true }
 dashmap.workspace = true
 derive_more.workspace = true
+error-utils.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 g2p.workspace = true
@@ -218,17 +220,20 @@ harness = false
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["dep:tokio", "non-wasm"]
-slow_tests = ["testing", "all_extension_degrees"]
+testing = ["dep:tokio", "non-wasm", "algebra/testing"]
+slow_tests = ["testing", "all_extension_degrees", "algebra/slow_tests"]
 experimental = ["dep:crypto-bigint", "choreographer", "testing"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies"]
 measure_memory = ["dep:peak_alloc", "choreographer"]
 malicious_strategies = ["testing"]
-# put all the dependencies that does not work well with wasm
+
+# put all the dependencies that do not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
+		"algebra/non-wasm",
+		"error-utils/non-wasm",
     "dep:attestation-doc-validation",
     "dep:hyper-rustls-ring",
     "dep:tokio",
@@ -246,6 +251,14 @@ non-wasm = [
     "dep:tfhe-zk-pok",
     "dep:x509-parser",
 ]
+
+extension_degree_3 = ["algebra/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8"]
+
 all_extension_degrees = [
     "extension_degree_3",
     "extension_degree_4",
@@ -254,9 +267,3 @@ all_extension_degrees = [
     "extension_degree_7",
     "extension_degree_8",
 ]
-extension_degree_8 = []
-extension_degree_7 = []
-extension_degree_6 = []
-extension_degree_5 = []
-extension_degree_4 = []
-extension_degree_3 = []

@@ -5,10 +5,10 @@ use tokio::task::JoinSet;
 use tonic::{service::interceptor::InterceptedService, transport::Channel, Status};
 
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Identity, RoleTrait},
     networking::grpc::HealthTag,
 };
+use error_utils::anyhow_error_and_log;
 
 pub struct HealthCheckSession<R: RoleTrait> {
     /// My own [`Identity`]

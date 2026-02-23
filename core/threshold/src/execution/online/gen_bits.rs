@@ -5,9 +5,12 @@ use super::{
     triple::{mult_list, open_list},
 };
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Solve},
-    execution::{runtime::sessions::base_session::BaseSessionHandles, sharing::share::Share},
+    execution::runtime::sessions::base_session::BaseSessionHandles,
     thread_handles::spawn_compute_bound,
+};
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Solve},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -82,22 +85,9 @@ impl BitGenEven for SecureBitGenEven {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "extension_degree_3")]
-    use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
-    use crate::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-    #[cfg(feature = "extension_degree_5")]
-    use crate::algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
-    #[cfg(feature = "extension_degree_6")]
-    use crate::algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
-    #[cfg(feature = "extension_degree_7")]
-    use crate::algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
-    #[cfg(feature = "extension_degree_8")]
-    use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
-    use crate::algebra::structure_traits::Ring;
     use crate::execution::online::gen_bits::BitGenEven;
     use crate::execution::online::gen_bits::SecureBitGenEven;
     use crate::{
-        algebra::structure_traits::{One, Sample, ZConsts, Zero},
         execution::{
             online::{
                 gen_bits::Solve,
@@ -110,12 +100,26 @@ mod tests {
             runtime::sessions::{
                 session_parameters::GenericParameterHandles, small_session::SmallSession,
             },
-            sharing::share::Share,
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
     use aes_prng::AesRng;
+    #[cfg(feature = "extension_degree_3")]
+    use algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
+    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+    #[cfg(feature = "extension_degree_5")]
+    use algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
+    #[cfg(feature = "extension_degree_6")]
+    use algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
+    #[cfg(feature = "extension_degree_7")]
+    use algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
+    #[cfg(feature = "extension_degree_8")]
+    use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
+    use algebra::{
+        sharing::share::Share,
+        structure_traits::{One, Ring, Sample, ZConsts, Zero},
+    };
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;

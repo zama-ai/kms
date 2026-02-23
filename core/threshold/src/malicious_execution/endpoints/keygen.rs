@@ -2,19 +2,16 @@ use aes_prng::AesRng;
 use rand::SeedableRng;
 use tfhe::xof_key_set::CompressedXofKeySet;
 
-use crate::{
-    algebra::{base_ring::Z128, galois_rings::common::ResiduePoly, structure_traits::ErrorCorrect},
-    execution::{
-        endpoints::keygen::OnlineDistributedKeyGen,
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares, parameters::DKGParams,
-            private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
-            test_feature::gen_key_set,
-        },
+use crate::execution::{
+    endpoints::keygen::OnlineDistributedKeyGen,
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{
+        compression_decompression_key::CompressionPrivateKeyShares, parameters::DKGParams,
+        private_keysets::PrivateKeySet, public_keysets::FhePubKeySet, test_feature::gen_key_set,
     },
 };
+use algebra::{base_ring::Z128, galois_rings::common::ResiduePoly, structure_traits::ErrorCorrect};
 
 pub struct DroppingOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 

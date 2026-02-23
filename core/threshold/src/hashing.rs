@@ -4,6 +4,7 @@ use sha3::{
     Shake256,
 };
 
+// TODO(dp): Move to its own crate? Some sort of "types_and_consts" crate perhaps?
 /// Domain separator for hashing elements.
 /// This is used to ensure that the hash is unique to the context in which it is used.
 pub type DomainSep = [u8; DSEP_LEN];

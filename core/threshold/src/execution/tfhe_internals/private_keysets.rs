@@ -1,14 +1,12 @@
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::structure_traits::ErrorCorrect;
-use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 #[cfg(feature = "testing")]
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
-use crate::{
-    algebra::galois_rings::common::ResiduePoly,
-    execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
-};
+use crate::execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
+use algebra::base_ring::{Z128, Z64};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::ErrorCorrect;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 

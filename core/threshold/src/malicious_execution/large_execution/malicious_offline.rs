@@ -3,7 +3,6 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::small_execution::offline::Preprocessing;
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Ring},
     execution::{
         large_execution::{
             double_sharing::DoubleSharing, offline::next_random_batch,
@@ -11,9 +10,13 @@ use crate::{
         },
         online::triple::Triple,
         runtime::sessions::large_session::LargeSessionHandles,
-        sharing::{open::RobustOpen, share::Share},
+        sharing::open::RobustOpen,
     },
     ProtocolDescription,
+};
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{Derive, ErrorCorrect, Ring},
 };
 use itertools::Itertools;
 use tonic::async_trait;

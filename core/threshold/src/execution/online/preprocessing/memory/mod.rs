@@ -1,8 +1,3 @@
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::Ring;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
@@ -11,7 +6,12 @@ use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::triple::Triple;
-use crate::execution::sharing::share::Share;
+use algebra::base_ring::{Z128, Z64};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::Ring;
+use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use error_utils::anyhow_error_and_log;
 
 use self::dkg::InMemoryDKGPreprocessing;
 
@@ -168,15 +168,15 @@ impl<Z: Ring> BasePreprocessing<Z> for InMemoryBasePreprocessing<Z> {}
 #[cfg(test)]
 mod tests {
 
-    use crate::algebra::base_ring::Z128;
-    use crate::algebra::base_ring::Z64;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
     use crate::execution::online::triple::Triple;
     use crate::execution::runtime::party::Role;
-    use crate::execution::sharing::share::Share;
+    use algebra::base_ring::Z128;
+    use algebra::base_ring::Z64;
+    use algebra::galois_rings::degree_4::ResiduePolyF4;
+    use algebra::sharing::share::Share;
     use itertools::Itertools;
     use paste::paste;
     use std::num::Wrapping;

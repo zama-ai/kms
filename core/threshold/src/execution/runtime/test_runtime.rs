@@ -1,6 +1,5 @@
 use super::party::Role;
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
         runtime::{
             party::{DualRole, RoleKind, RoleTrait, TwoSetsRole},
@@ -26,6 +25,7 @@ use crate::{
     tests::helper::tests_and_benches::get_seed_for_two_sets_role,
 };
 use aes_prng::AesRng;
+use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
 use rand::SeedableRng;
 use std::{
     collections::{HashMap, HashSet},

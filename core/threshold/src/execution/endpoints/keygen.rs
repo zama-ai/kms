@@ -1,10 +1,4 @@
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring},
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
@@ -50,6 +44,12 @@ use crate::{
     },
     hashing::DomainSep,
 };
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, Ring},
+};
+use error_utils::anyhow_error_and_log;
 use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,
@@ -1185,11 +1185,10 @@ pub mod conformance {
 pub mod tests {
     use super::OnlineDistributedKeyGen;
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::common::ResiduePoly,
-            structure_traits::{ErrorCorrect, Invert, Solve},
-        },
+        execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
+        networking::NetworkMode,
+    };
+    use crate::{
         execution::{
             endpoints::keygen::conformance::check_drift_technique_key,
             online::preprocessing::dummy::DummyPreprocessing,
@@ -1206,10 +1205,6 @@ pub mod tests {
         tests::helper::tests_and_benches::execute_protocol_large_w_extra_data,
     };
     use crate::{
-        execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
-        networking::NetworkMode,
-    };
-    use crate::{
         execution::{
             random::{get_rng, seed_from_rng},
             tfhe_internals::{
@@ -1224,6 +1219,11 @@ pub mod tests {
             },
         },
         file_handling::tests::write_element,
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{ErrorCorrect, Invert, Solve},
     };
     use itertools::Itertools;
     use std::path::Path;

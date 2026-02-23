@@ -1,14 +1,16 @@
+use algebra::sharing::share::Share;
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::degree_4::ResiduePolyF4,
+};
 use ctor::ctor;
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
-use threshold_fhe::algebra::base_ring::{Z128, Z64};
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::online::preprocessing::{create_redis_factory, PreprocessorFactory};
 use threshold_fhe::execution::online::triple::Triple;
 use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::sharing::share::Share;
 
 #[cfg(feature = "testing")]
 use threshold_fhe::{
@@ -239,9 +241,9 @@ fn test_dkg_orchestrator_large(
     params: DKGParams,
     tag: tfhe::Tag,
 ) {
+    use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
     use itertools::Itertools;
     use threshold_fhe::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
             online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
@@ -372,8 +374,8 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use threshold_fhe::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::online::preprocessing::{
             dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing, TriplePreprocessing,
         },

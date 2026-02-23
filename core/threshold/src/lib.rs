@@ -12,12 +12,10 @@ pub mod session_id;
 pub mod tests;
 #[cfg(feature = "non-wasm")]
 pub use tokio;
-pub mod algebra;
 #[cfg(all(feature = "non-wasm", feature = "measure_memory"))]
 pub mod allocator;
 #[cfg(feature = "non-wasm")]
 pub mod conf;
-pub mod error;
 #[cfg(feature = "experimental")]
 pub mod experimental;
 #[cfg(feature = "non-wasm")]

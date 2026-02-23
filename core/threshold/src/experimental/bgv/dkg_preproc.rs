@@ -1,7 +1,6 @@
 use tonic::async_trait;
 
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         online::{
@@ -22,6 +21,7 @@ use crate::{
         gen_bits_odd::{BitGenOdd, RealBitGenOdd},
     },
 };
+use error_utils::anyhow_error_and_log;
 
 #[async_trait]
 impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw> {

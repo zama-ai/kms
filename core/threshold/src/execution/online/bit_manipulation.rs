@@ -3,18 +3,16 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::instrument;
 
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{BaseRing, BitExtract, ErrorCorrect, Solve, ZConsts};
-use crate::{
-    algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
-    execution::runtime::sessions::base_session::BaseSessionHandles,
-};
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::{BaseRing, BitExtract, ErrorCorrect, Ring, Solve, ZConsts};
+use error_utils::anyhow_error_and_log;
 
 use super::preprocessing::TriplePreprocessing;
 use super::triple::mult_list;
 use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::triple::open_list;
-use crate::execution::sharing::share::Share;
 
 // Dummy struct used to access the bit manipulation methods
 pub struct Bits<Z> {
@@ -511,16 +509,12 @@ mod tests {
     use std::num::Wrapping;
     use std::sync::Arc;
 
-    use crate::algebra::structure_traits::Ring;
-    use crate::execution::sharing::shamir::ShamirSharings;
     use crate::networking::NetworkMode;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
 
-    use crate::algebra::base_ring::Z64;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::execution::online::bit_manipulation::bit_dec_batch;
     use crate::execution::online::bit_manipulation::BatchedBits;
     use crate::execution::online::bit_manipulation::Bits;
@@ -528,9 +522,11 @@ mod tests {
     use crate::execution::online::triple::open_list;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
-    use crate::execution::sharing::shamir::InputOp;
-    use crate::execution::sharing::share::Share;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
+    use algebra::{
+        base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, sharing::shamir::InputOp,
+        sharing::shamir::ShamirSharings, sharing::share::Share, structure_traits::Ring,
+    };
 
     /// Helper method to get a sharing of a simple u64 value
     fn get_my_share(val: u64, session: &SmallSession<ResiduePolyF4Z64>) -> Share<ResiduePolyF4Z64> {

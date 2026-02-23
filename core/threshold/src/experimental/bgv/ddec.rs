@@ -4,9 +4,6 @@ use tracing::instrument;
 
 use super::basics::PrivateBgvKeySet;
 use super::dkg::BGVShareSecretKey;
-use crate::algebra::poly::Poly;
-use crate::algebra::structure_traits::ZConsts;
-use crate::algebra::structure_traits::{One, Zero};
 use crate::execution::runtime::party::Role;
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::experimental::algebra::cyclotomic::TernaryEntry;
@@ -32,6 +29,9 @@ use crate::{
         bgv::basics::modulus_switch,
     },
 };
+use algebra::poly::Poly;
+use algebra::structure_traits::ZConsts;
+use algebra::structure_traits::{One, Zero};
 
 fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
     c0: &RqElement<LevelOne, N>,
@@ -160,10 +160,6 @@ pub fn keygen_shares<R: Rng + CryptoRng>(
 mod tests {
     use std::sync::Arc;
 
-    use crate::algebra::structure_traits::One;
-    use crate::algebra::structure_traits::Ring;
-    use crate::algebra::structure_traits::ZConsts;
-    use crate::algebra::structure_traits::Zero;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::test_runtime::generate_fixed_roles;
     use crate::execution::runtime::test_runtime::DistributedTestRuntime;
@@ -181,6 +177,10 @@ mod tests {
     use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
     use aes_prng::AesRng;
+    use algebra::structure_traits::One;
+    use algebra::structure_traits::Ring;
+    use algebra::structure_traits::ZConsts;
+    use algebra::structure_traits::Zero;
     use std::collections::HashMap;
     use tokio::task::JoinSet;
 

@@ -9,8 +9,6 @@ use tonic::async_trait;
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::ErrorCorrect,
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
@@ -26,13 +24,17 @@ use crate::{
     thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
-
-use super::{
-    shamir::{
-        fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync, ShamirSharings,
+use algebra::{
+    sharing::{
+        shamir::{
+            fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync,
+            ShamirSharings,
+        },
+        share::Share,
     },
-    share::Share,
+    structure_traits::ErrorCorrect,
 };
+use error_utils::anyhow_error_and_log;
 
 /// Enum to state whether we want to open
 /// only to some designated parties or
@@ -574,15 +576,11 @@ pub(crate) mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
-    use crate::algebra::structure_traits::{
-        ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
-    };
     use crate::execution::runtime::party::{Role, TwoSetsRole, TwoSetsThreshold};
     use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::open::ExternalOpeningInfo;
-    use crate::execution::sharing::shamir::InputOp;
     use crate::execution::small_execution::prf::PRSSConversions;
     use crate::malicious_execution::open::malicious_open::{
         MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
@@ -592,10 +590,9 @@ pub(crate) mod test {
         execute_protocol_small_w_malicious, execute_protocol_two_sets_w_malicious,
         TestingParameters,
     };
-    use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z128,
-        execution::sharing::shamir::ShamirSharings,
-    };
+    use algebra::sharing::shamir::InputOp;
+    use algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence};
+    use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, sharing::shamir::ShamirSharings};
 
     use super::{RobustOpen, SecureRobustOpen};
 

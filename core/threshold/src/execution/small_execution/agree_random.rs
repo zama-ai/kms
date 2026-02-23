@@ -3,9 +3,7 @@ use super::{
     prss::create_sets,
 };
 use crate::{
-    algebra::{base_ring::Z64, structure_traits::ErrorCorrect},
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
-    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
         runtime::{party::Role, sessions::base_session::BaseSessionHandles},
@@ -15,8 +13,10 @@ use crate::{
     networking::value::{AgreeRandomValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{base_ring::Z64, structure_traits::ErrorCorrect};
 use anyhow::Context;
 use async_trait::async_trait;
+use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -626,11 +626,6 @@ mod tests {
         RobustRealAgreeRandom, RobustSecureAgreeRandom,
     };
     use crate::{
-        algebra::{
-            base_ring::Z64,
-            galois_rings::degree_4::ResiduePolyF4Z128,
-            structure_traits::{ErrorCorrect, Invert, Ring},
-        },
         commitment::{
             commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
         },
@@ -663,6 +658,11 @@ mod tests {
             testing::get_networkless_base_session_for_parties,
             tests::{execute_protocol_small_w_malicious, TestingParameters},
         },
+    };
+    use algebra::{
+        base_ring::Z64,
+        galois_rings::degree_4::ResiduePolyF4Z128,
+        structure_traits::{ErrorCorrect, Invert, Ring},
     };
     use itertools::Itertools;
     use std::collections::{HashMap, HashSet, VecDeque};

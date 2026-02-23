@@ -4,19 +4,19 @@ use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 use tracing::instrument;
 
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
             preprocessing::memory::InMemoryBitPreprocessing,
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
-        sharing::share::Share,
         tfhe_internals::parameters::NoiseInfo,
     },
     thread_handles::spawn_compute_bound,
 };
+use algebra::{sharing::share::Share, structure_traits::Ring};
+use error_utils::anyhow_error_and_log;
 
-use crate::{algebra::structure_traits::Ring, execution::online::preprocessing::DKGPreprocessing};
+use crate::execution::online::preprocessing::DKGPreprocessing;
 
 /// Custom Bit consumer that transform the bits into the different
 /// noises required for TFHE-rs DKG

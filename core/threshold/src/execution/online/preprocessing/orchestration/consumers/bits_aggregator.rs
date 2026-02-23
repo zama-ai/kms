@@ -2,10 +2,9 @@ use std::sync::{Arc, RwLock};
 
 use tokio::sync::{mpsc::Receiver, Mutex};
 
-use crate::{
-    error::error_handler::anyhow_error_and_log,
-    execution::{online::preprocessing::BitPreprocessing, sharing::share::Share},
-};
+use crate::execution::online::preprocessing::BitPreprocessing;
+use algebra::sharing::share::Share;
+use error_utils::anyhow_error_and_log;
 
 /// Simple Bit consumer that aggregate `num_bits` bits
 /// into a single [`BitPreprocessing`] struct

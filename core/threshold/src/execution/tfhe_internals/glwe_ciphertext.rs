@@ -3,7 +3,7 @@ use tfhe::{
     core_crypto::commons::traits::ParallelByteRandomGenerator, shortint::parameters::PolynomialSize,
 };
 
-use crate::algebra::{
+use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
@@ -209,7 +209,6 @@ mod tests {
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
@@ -222,7 +221,6 @@ mod tests {
                     large_session::LargeSession, session_parameters::GenericParameterHandles,
                 },
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 parameters::{EncryptionType, TUniformBound},
                 randomness::{MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
@@ -232,6 +230,11 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        sharing::{shamir::ShamirSharings, share::Share},
+        structure_traits::Ring,
     };
 
     use super::{

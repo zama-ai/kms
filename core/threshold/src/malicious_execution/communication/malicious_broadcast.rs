@@ -5,8 +5,6 @@ use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
-    algebra::{poly::Poly, structure_traits::Ring},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::{
             broadcast::{
@@ -21,6 +19,8 @@ use crate::{
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{poly::Poly, structure_traits::Ring};
+use error_utils::anyhow_error_and_log;
 
 /// Malicious implementation of the [`Broadcast`] protocol
 /// that simply does nothing.

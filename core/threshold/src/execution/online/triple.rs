@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::sessions::base_session::BaseSessionHandles,
-        sharing::{
-            open::{RobustOpen, SecureRobustOpen},
-            share::Share,
-        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
     },
     thread_handles::spawn_compute_bound,
 };
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Ring},
+};
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -168,21 +168,7 @@ pub async fn open_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
 #[cfg(test)]
 mod tests {
     use super::Share;
-    #[cfg(feature = "extension_degree_3")]
-    use crate::algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
-    #[cfg(feature = "extension_degree_5")]
-    use crate::algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
-    #[cfg(feature = "extension_degree_6")]
-    use crate::algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
-    #[cfg(feature = "extension_degree_7")]
-    use crate::algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
-    #[cfg(feature = "extension_degree_8")]
-    use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::Ring,
-        },
         execution::{
             online::{
                 preprocessing::{
@@ -197,6 +183,20 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
+    };
+    #[cfg(feature = "extension_degree_3")]
+    use algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
+    #[cfg(feature = "extension_degree_5")]
+    use algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
+    #[cfg(feature = "extension_degree_6")]
+    use algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
+    #[cfg(feature = "extension_degree_7")]
+    use algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
+    #[cfg(feature = "extension_degree_8")]
+    use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        structure_traits::Ring,
     };
     use paste::paste;
     use std::num::Wrapping;

@@ -1,8 +1,8 @@
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Role, RoleTrait, TwoSetsRole},
     session_id::SessionId,
 };
+use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 

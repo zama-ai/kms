@@ -1,9 +1,7 @@
-use crate::algebra::base_ring::Z64;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
-use crate::{
-    algebra::galois_rings::common::ResiduePoly, error::error_handler::anyhow_error_and_log,
-    execution::sharing::share::Share,
-};
+use algebra::base_ring::Z64;
+use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use algebra::{galois_rings::common::ResiduePoly, sharing::share::Share};
+use error_utils::anyhow_error_and_log;
 
 use super::{BasePreprocessing, TriplePreprocessing};
 use crate::execution::online::gen_bits::BitGenEven;
@@ -133,10 +131,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::online::preprocessing::dummy::DummyPreprocessing, networking::NetworkMode,
         tests::helper::tests::get_base_session,
     };
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
 
     use super::*;
 

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
         runtime::{
             party::Role,
@@ -24,6 +23,7 @@ use crate::{
     },
     session_id::SessionId,
 };
+use algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence};
 
 /// Defines a generic small session
 /// that accepts any arbitrary PRSS strategy

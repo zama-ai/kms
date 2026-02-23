@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 
-use crate::{
-    error::error_handler::anyhow_error_and_log,
-    execution::online::{preprocessing::TriplePreprocessing, triple::Triple},
-};
+use crate::execution::online::{preprocessing::TriplePreprocessing, triple::Triple};
+use error_utils::anyhow_error_and_log;
 
 /// Simple Triples consumer that aggregate `num_triples` triples
 /// into a single [`TriplePreprocessing`] struct

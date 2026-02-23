@@ -1,5 +1,4 @@
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
         communication::p2p::send_to_honest_parties,
         large_execution::share_dispute::{
@@ -12,6 +11,7 @@ use crate::{
     networking::value::NetworkValue,
     ProtocolDescription,
 };
+use algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence};
 use async_trait::async_trait;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};

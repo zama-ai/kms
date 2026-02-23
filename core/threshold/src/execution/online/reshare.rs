@@ -1,13 +1,4 @@
 use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        poly::Poly,
-        structure_traits::{
-            BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome, Zero,
-        },
-        syndrome::lagrange_numerators,
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::{
             broadcast::{Broadcast, SyncReliableBroadcast},
@@ -18,15 +9,21 @@ use crate::{
             party::{Role, TwoSetsRole},
             sessions::base_session::{BaseSession, BaseSessionHandles, GenericBaseSessionHandles},
         },
-        sharing::{
-            open::{ExternalOpeningInfo, RobustOpen, SecureRobustOpen},
-            shamir::ShamirSharings,
-            share::Share,
-        },
+        sharing::open::{ExternalOpeningInfo, RobustOpen, SecureRobustOpen},
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    poly::Poly,
+    sharing::{shamir::ShamirSharings, share::Share},
+    structure_traits::{
+        BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome, Zero,
+    },
+    syndrome::lagrange_numerators,
+};
+use error_utils::anyhow_error_and_log;
 use itertools::{izip, Itertools};
 use std::{
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
@@ -1214,9 +1211,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::base_ring::Z128;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use crate::algebra::structure_traits::FromU128;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::triple::open_list;
     use crate::execution::runtime::party::{DualRole, TwoSetsThreshold};
@@ -1240,6 +1234,9 @@ mod tests {
     };
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests::execute_protocol_two_sets_w_malicious;
+    use algebra::base_ring::Z128;
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use algebra::structure_traits::FromU128;
 
     use std::collections::HashMap;
 

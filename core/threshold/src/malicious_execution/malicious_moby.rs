@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use tonic::transport::server::Router;
 
-use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome};
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::Role;
 use crate::grpc::server::SecureGrpcChoreography;
+use algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome};
 
 use crate::networking::grpc::GrpcNetworkingManager;
 use crate::{

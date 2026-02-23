@@ -6,13 +6,6 @@ use super::DKGPreprocessing;
 use super::InMemoryBitDecPreprocessing;
 use super::NoiseBounds;
 use super::NoiseFloodPreprocessing;
-use crate::algebra::base_ring::Z128;
-use crate::algebra::base_ring::Z64;
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::ErrorCorrect;
-use crate::algebra::structure_traits::Invert;
-use crate::algebra::structure_traits::RingWithExceptionalSequence;
-use crate::algebra::structure_traits::Solve;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
 use crate::execution::keyset_config::KeySetConfig;
@@ -27,21 +20,24 @@ use crate::execution::runtime::sessions::base_session::BaseSession;
 use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
 use crate::execution::runtime::sessions::session_parameters::SessionParameters;
 use crate::execution::runtime::sessions::small_session::SmallSession;
-use crate::execution::sharing::shamir::RevealOp;
-use crate::execution::sharing::shamir::ShamirSharings;
 use crate::execution::small_execution::offline::Preprocessing;
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::parameters::TUniformBound;
-use crate::{
-    algebra::poly::Poly,
-    algebra::structure_traits::Ring,
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        runtime::party::Role, runtime::sessions::session_parameters::ParameterHandles,
-        sharing::share::Share,
-    },
+use crate::execution::{
+    runtime::party::Role, runtime::sessions::session_parameters::ParameterHandles,
 };
 use aes_prng::AesRng;
+use algebra::base_ring::Z128;
+use algebra::base_ring::Z64;
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::sharing::shamir::RevealOp;
+use algebra::sharing::shamir::ShamirSharings;
+use algebra::structure_traits::ErrorCorrect;
+use algebra::structure_traits::Invert;
+use algebra::structure_traits::RingWithExceptionalSequence;
+use algebra::structure_traits::Solve;
+use algebra::{poly::Poly, sharing::share::Share, structure_traits::Ring};
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tonic::async_trait;
@@ -535,14 +531,13 @@ pub fn reconstruct<Z: Ring + ErrorCorrect, Ses: ParameterHandles>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
-            structure_traits::Zero,
-        },
-        networking::NetworkMode,
-        tests::helper::testing::get_networkless_base_session_for_parties,
+        networking::NetworkMode, tests::helper::testing::get_networkless_base_session_for_parties,
         tests::helper::tests::get_base_session,
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
+        structure_traits::Zero,
     };
     use paste::paste;
     use std::num::Wrapping;

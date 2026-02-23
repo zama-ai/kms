@@ -24,12 +24,12 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
+use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Identity, RoleKind, RoleTrait},
     networking::r#gen::Status,
 };
-use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
+use error_utils::anyhow_error_and_log;
 
 use super::gen::SendValueRequest;
 #[cfg(feature = "choreographer")]

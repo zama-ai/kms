@@ -1,12 +1,10 @@
 use tfhe::{integer::block_decomposition::BlockRecomposer, shortint::ClassicPBSParameters};
 
-use crate::{
-    algebra::{base_ring::Z128, galois_rings::common::ResiduePoly},
-    error::error_handler::anyhow_error_and_log,
-    execution::tfhe_internals::{
-        parameters::AugmentedCiphertextParameters, switch_and_squash::from_expanded_msg,
-    },
+use crate::execution::tfhe_internals::{
+    parameters::AugmentedCiphertextParameters, switch_and_squash::from_expanded_msg,
 };
+use algebra::{base_ring::Z128, galois_rings::common::ResiduePoly};
+use error_utils::anyhow_error_and_log;
 
 /// Reconstructs a vector of plaintexts from raw, opened ciphertexts,
 /// by using the constant term of the `openeds` and mapping it down
@@ -91,7 +89,7 @@ where
 
 #[test]
 fn test_recomposer() {
-    use crate::algebra::structure_traits::FromU128;
+    use algebra::structure_traits::FromU128;
     let out =
         combine_decryptions::<tfhe::integer::U256>(1, vec![Z128::from_u128(1), Z128::from_u128(3)])
             .unwrap();

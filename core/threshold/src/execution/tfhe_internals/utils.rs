@@ -12,18 +12,13 @@ use tfhe::{
 };
 
 use crate::execution::online::triple::{open, open_list};
+use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
-use crate::execution::sharing::shamir::RevealOp;
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        poly::Poly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
-    },
-    execution::{
-        runtime::party::Role,
-        sharing::{shamir::ShamirSharings, share::Share},
-    },
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    poly::Poly,
+    sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+    structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
 };
 
 use super::glwe_key::GlweSecretKeyShare;
@@ -292,16 +287,21 @@ pub(super) async fn compute_hamming_weight_glwe_sk<
 
 #[cfg(test)]
 pub mod tests {
-    use crate::algebra::base_ring::{Z128, Z64};
-    use crate::algebra::galois_rings::common::ResiduePoly;
-    use crate::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
-    use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
-    use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
-    use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
+    use crate::execution::{
+        runtime::party::Role,
+        tfhe_internals::{
+            glwe_key::GlweSecretKeyShare,
+            parameters::{DKGParams, DKGParamsBasics},
+            private_keysets::PrivateKeySet,
+            sns_compression_key::SnsCompressionPrivateKeyShares,
+        },
+    };
     use crate::file_handling::tests::read_element;
-    use crate::{
-        algebra::structure_traits::ErrorCorrect,
-        execution::{runtime::party::Role, sharing::share::Share},
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::share::Share,
+        structure_traits::ErrorCorrect,
     };
     use itertools::Itertools;
     use std::collections::HashMap;

@@ -1,9 +1,4 @@
 use crate::{
-    algebra::{
-        poly::Poly,
-        structure_traits::{Invert, Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{receive_from_parties_w_dispute, send_to_honest_parties},
         runtime::{party::Role, sessions::large_session::LargeSessionHandles},
@@ -11,7 +6,12 @@ use crate::{
     networking::value::NetworkValue,
     ProtocolDescription,
 };
+use algebra::{
+    poly::Poly,
+    structure_traits::{Invert, Ring, RingWithExceptionalSequence},
+};
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
@@ -411,26 +411,25 @@ where
 pub(crate) mod tests {
     use super::evaluate_w_new_roots;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-            poly::Poly,
-            structure_traits::{ErrorCorrect, Invert, Ring, Zero},
-        },
         execution::{
             large_execution::share_dispute::{
                 interpolate_poly_w_punctures, RealShareDispute, ShareDispute,
             },
             runtime::{party::Role, sessions::large_session::LargeSession},
-            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
     };
     use aes_prng::AesRng;
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        poly::Poly,
+        sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+        structure_traits::{ErrorCorrect, Invert, Ring, Zero},
+    };
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;

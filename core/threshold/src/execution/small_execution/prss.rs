@@ -4,13 +4,8 @@ use super::{
     },
     prf::{ChiAes, PRSSConversions, PrfKey, PsiAes},
 };
+
 use crate::{
-    algebra::{
-        bivariate::{compute_powers_list, MatrixMul},
-        poly::Poly,
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         constants::{PRSS_SIZE_MAX, STATSEC},
@@ -29,7 +24,13 @@ use crate::{
     thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
+use algebra::{
+    bivariate::{compute_powers_list, MatrixMul},
+    poly::Poly,
+    structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
 use anyhow::Context;
+use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
@@ -1064,10 +1065,6 @@ mod tests {
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::{One, Zero},
-        },
         commitment::KEY_BYTE_LEN,
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
@@ -1079,7 +1076,6 @@ mod tests {
                 },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             small_execution::agree_random::{
                 AbortSecureAgreeRandom, AgreeRandom, DummyAgreeRandom,
             },
@@ -1088,6 +1084,11 @@ mod tests {
         tests::helper::testing::get_networkless_base_session_for_parties,
     };
     use aes_prng::AesRng;
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{shamir::ShamirSharings, share::Share},
+        structure_traits::{One, Zero},
+    };
     use futures_util::future::{join, join_all};
     use rand::SeedableRng;
     use rstest::rstest;

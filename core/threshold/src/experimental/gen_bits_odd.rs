@@ -3,20 +3,18 @@ use std::sync::Arc;
 use tonic::async_trait;
 use tracing::instrument;
 
-use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, ZConsts},
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        constants::STATSEC,
-        online::{
-            preprocessing::BasePreprocessing,
-            triple::{mult_list, open_list},
-        },
-        runtime::sessions::small_session::SmallSessionHandles,
-        sharing::share::Share,
-        small_execution::{prf::PRSSConversions, prss::PRSSPrimitives},
+use crate::execution::{
+    constants::STATSEC,
+    online::{
+        preprocessing::BasePreprocessing,
+        triple::{mult_list, open_list},
     },
+    runtime::sessions::small_session::SmallSessionHandles,
+    sharing::share::Share,
+    small_execution::{prf::PRSSConversions, prss::PRSSPrimitives},
 };
+use algebra::structure_traits::{ErrorCorrect, Invert, ZConsts};
+use error_utils::anyhow_error_and_log;
 
 ///This trait defines methods required to generate bits in
 ///in the subfield defined by the largest prime factor of a ring.

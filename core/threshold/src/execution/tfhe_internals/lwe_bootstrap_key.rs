@@ -23,17 +23,15 @@ use tfhe::{
 };
 use tfhe_csprng::seeders::XofSeed;
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-    },
+use crate::execution::{
+    online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{ggsw_ciphertext::GgswCiphertextShare, parameters::EncryptionType};
 

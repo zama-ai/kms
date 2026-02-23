@@ -4,7 +4,6 @@ use aes_prng::AesRng;
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
         runtime::{
             party::TwoSetsRole,
@@ -14,6 +13,7 @@ use crate::{
     },
     ProtocolDescription,
 };
+use algebra::structure_traits::{ErrorCorrect, Ring};
 
 /// Malicious implementation of the [`RobustOpen`] protocol
 /// that simply does nothing

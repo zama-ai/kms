@@ -2,8 +2,6 @@
 //! that is used in our zero-knowledge proofs for proving plaintext knowledge.
 
 use crate::{
-    algebra::structure_traits::Ring,
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         runtime::sessions::base_session::BaseSessionHandles,
@@ -12,7 +10,9 @@ use crate::{
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
 };
+use algebra::structure_traits::Ring;
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
@@ -969,7 +969,6 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
 mod tests {
     use super::*;
     use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::{
             runtime::{
                 sessions::{
@@ -988,6 +987,7 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
