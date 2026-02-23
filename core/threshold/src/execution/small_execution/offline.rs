@@ -10,7 +10,6 @@ use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
-use crate::thread_handles::spawn_compute_bound;
 use crate::{
     execution::{
         communication::broadcast::Broadcast, online::triple::Triple,
@@ -25,6 +24,7 @@ use algebra::{
     structure_traits::{ErrorCorrect, Ring},
 };
 use error_utils::log_error_wrapper;
+use thread_handles::spawn_compute_bound;
 
 #[async_trait]
 pub trait Preprocessing<Z: Clone, S: BaseSessionHandles>:

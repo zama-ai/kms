@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    execution::{
-        runtime::sessions::base_session::BaseSessionHandles,
-        sharing::open::{RobustOpen, SecureRobustOpen},
-    },
-    thread_handles::spawn_compute_bound,
+use crate::execution::{
+    runtime::sessions::base_session::BaseSessionHandles,
+    sharing::open::{RobustOpen, SecureRobustOpen},
 };
 use algebra::{
     sharing::share::Share,
@@ -14,6 +11,7 @@ use algebra::{
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]

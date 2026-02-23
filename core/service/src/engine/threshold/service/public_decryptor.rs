@@ -26,6 +26,7 @@ use observability::{
     },
 };
 use tfhe::FheTypes;
+use thread_handles::spawn_compute_bound;
 use threshold_fhe::{
     execution::{
         endpoints::decryption::{
@@ -37,7 +38,6 @@ use threshold_fhe::{
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     session_id::SessionId,
-    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;

@@ -4,16 +4,14 @@ use super::{
     preprocessing::BasePreprocessing,
     triple::{mult_list, open_list},
 };
-use crate::{
-    execution::runtime::sessions::base_session::BaseSessionHandles,
-    thread_handles::spawn_compute_bound,
-};
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use algebra::{
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Solve},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
 #[async_trait]

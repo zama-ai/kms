@@ -84,7 +84,6 @@ pub(crate) mod tests {
         },
         networking::NetworkMode,
         session_id::SessionId,
-        thread_handles::OsThreadGroup,
     };
     use algebra::{
         base_ring::{Z128, Z64},
@@ -93,6 +92,7 @@ pub(crate) mod tests {
         sharing::share::Share,
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
+    use thread_handles::OsThreadGroup;
 
     pub type TripleChannels<R> = (Vec<Sender<Vec<Triple<R>>>>, Vec<Receiver<Vec<Triple<R>>>>);
     pub type ShareChannels<R> = (Vec<Sender<Vec<Share<R>>>>, Vec<Receiver<Vec<Share<R>>>>);

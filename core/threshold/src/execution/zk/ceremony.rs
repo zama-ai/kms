@@ -8,7 +8,6 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
-    thread_handles::spawn_compute_bound,
 };
 use algebra::structure_traits::Ring;
 use async_trait::async_trait;
@@ -31,6 +30,7 @@ use tfhe::{
 };
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
+use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
 use super::constants::{

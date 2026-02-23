@@ -105,6 +105,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 thiserror.workspace = true
+thread-handles.workspace = true
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }

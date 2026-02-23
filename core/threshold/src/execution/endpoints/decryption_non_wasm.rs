@@ -31,7 +31,6 @@ use crate::execution::{
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
-use crate::thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 #[cfg(any(test, feature = "testing"))]
@@ -62,6 +61,7 @@ use tfhe::integer::ServerKey;
 use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
+use thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};

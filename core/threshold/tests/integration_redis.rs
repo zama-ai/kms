@@ -244,6 +244,7 @@ fn test_dkg_orchestrator_large(
 ) {
     use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
     use itertools::Itertools;
+    use thread_handles::OsThreadGroup;
     use threshold_fhe::{
         execution::{
             endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
@@ -251,7 +252,6 @@ fn test_dkg_orchestrator_large(
         },
         file_handling::tests::write_element,
         networking::NetworkMode,
-        thread_handles::OsThreadGroup,
     };
 
     let params_basics_handles = params.get_params_basics_handle();

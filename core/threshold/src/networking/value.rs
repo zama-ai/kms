@@ -11,7 +11,6 @@ use crate::execution::zk::ceremony;
 #[cfg(feature = "experimental")]
 use crate::experimental::bgv::basics::PublicBgvKeySet;
 use crate::hashing::{serialize_hash_element, DomainSep};
-use crate::thread_handles::spawn_compute_bound;
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -25,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]
 use tfhe::zk::CompactPkeCrs;
+use thread_handles::spawn_compute_bound;
 
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];

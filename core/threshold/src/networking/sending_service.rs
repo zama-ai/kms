@@ -37,7 +37,7 @@ use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
-use crate::thread_handles::ThreadHandleGroup;
+use thread_handles::ThreadHandleGroup;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,

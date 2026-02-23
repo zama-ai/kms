@@ -20,7 +20,6 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
-    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 use algebra::{
@@ -38,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
+use thread_handles::spawn_compute_bound;
 use tonic::async_trait;
 use tracing::{instrument, Instrument};
 

@@ -18,7 +18,6 @@ use crate::{
         runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
     networking::value::NetworkValue,
-    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 use algebra::{
@@ -33,6 +32,7 @@ use algebra::{
     structure_traits::ErrorCorrect,
 };
 use error_utils::anyhow_error_and_log;
+use thread_handles::spawn_compute_bound;
 
 /// Enum to state whether we want to open
 /// only to some designated parties or
