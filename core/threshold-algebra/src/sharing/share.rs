@@ -1,11 +1,10 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
-use tfhe::Versionize;
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::Zeroize;
 
-use crate::{algebra::structure_traits::Ring, execution::runtime::party::Role};
+use super::super::{role::Role, structure_traits::Ring};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ShareVersioned<Z: Clone> {
@@ -204,10 +203,7 @@ impl<Z: Ring> Mul<u128> for Share<Z> {
 mod tests {
     use std::num::Wrapping;
 
-    use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z128,
-        execution::{runtime::party::Role, sharing::share::Share},
-    };
+    use crate::{galois_rings::degree_4::ResiduePolyF4Z128, role::Role, sharing::share::Share};
 
     #[test]
     fn op_overload() {

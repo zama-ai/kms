@@ -8,6 +8,7 @@ license.workspace   = true
 anyhow.workspace   = true
 bc2wrap.workspace   = true
 g2p.workspace   = true
+error-utils.workspace   = true
 itertools.workspace   = true # TODO: get rid of this
 lazy_static.workspace   = true # TODO: get rid of this
 ndarray.workspace   = true
@@ -16,18 +17,26 @@ serde.workspace   = true # TODO: wouldn't it be nice to not have to have this he
 sha3.workspace   = true
 tracing.workspace   = true
 zeroize.workspace   = true
+tfhe-versionable.workspace = true
 
 [dev-dependencies]
+aes-prng.workspace = true
+paste.workspace = true
 proptest.workspace = true
+rstest.workspace = true
+num-traits.workspace = true
 
+# TODO(dp): figure out if all of these features are really needed in this crate. I think
+# that given that it's not doing any IO anymore, the "non-wasm" stuff isn't really needed?
 [features]
-default = ["extension_degree_4"]
+default = ["non-wasm", "extension_degree_4"]
 extension_degree_3 =[]
 extension_degree_4 =[]
 extension_degree_5 =[]
 extension_degree_6 =[]
 extension_degree_7 =[]
 extension_degree_8 =[]
+non-wasm = []
 
 all_extension_degrees = [
 "extension_degree_3",
@@ -37,3 +46,5 @@ all_extension_degrees = [
 "extension_degree_7",
 "extension_degree_8",
 ]
+testing = ["non-wasm"]
+slow_tests = ["testing", "all_extension_degrees"]

@@ -314,7 +314,7 @@ mod tests {
     use super::karatsuba_7;
     #[cfg(feature = "extension_degree_8")]
     use super::karatsuba_8;
-    use crate::algebra::structure_traits::Zero;
+    use crate::structure_traits::Zero;
 
     fn naive_mult<Z>(a: &[Z], b: &[Z]) -> Vec<Z>
     where

@@ -1,7 +1,4 @@
-use crate::{
-    algebra::{structure_traits::Field, syndrome::decode_syndrome},
-    execution::sharing::shamir::ShamirFieldPoly,
-};
+use crate::{sharing::shamir::ShamirFieldPoly, structure_traits::Field, syndrome::decode_syndrome};
 
 pub fn syndrome_decoding_z2<F: Field + From<u8>>(
     parties: &[usize],

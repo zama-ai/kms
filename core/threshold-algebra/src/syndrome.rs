@@ -1,8 +1,8 @@
 use super::{
+    bivariate::compute_powers_list,
     poly::Poly,
     structure_traits::{Field, Ring},
 };
-use crate::algebra::bivariate::compute_powers_list;
 use std::ops::Neg;
 
 /// computes all polys L_i(Z) = \prod_{i \neq j} (Z - alpha_j) for the given list of points.
@@ -171,16 +171,16 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
 mod tests {
     use super::*;
     #[cfg(feature = "extension_degree_7")]
-    use crate::algebra::galois_fields::gf128::GF128;
+    use crate::galois_fields::gf128::GF128;
     #[cfg(feature = "extension_degree_8")]
-    use crate::algebra::galois_fields::gf256::GF256;
+    use crate::galois_fields::gf256::GF256;
     #[cfg(feature = "extension_degree_5")]
-    use crate::algebra::galois_fields::gf32::GF32;
+    use crate::galois_fields::gf32::GF32;
     #[cfg(feature = "extension_degree_6")]
-    use crate::algebra::galois_fields::gf64::GF64;
+    use crate::galois_fields::gf64::GF64;
     #[cfg(feature = "extension_degree_3")]
-    use crate::algebra::galois_fields::gf8::GF8;
-    use crate::algebra::{
+    use crate::galois_fields::gf8::GF8;
+    use crate::{
         galois_fields::gf16::GF16,
         poly::{gao_decoding, lagrange_interpolation},
     };

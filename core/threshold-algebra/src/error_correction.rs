@@ -4,14 +4,13 @@ use super::{
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
-    xx_anyhow_error_and_log,
 };
+use error_utils::anyhow_error_and_log;
 
-#[cfg(test)]
-use crate::execution::runtime::party::Role;
-use crate::execution::sharing::shamir::ShamirFieldPoly;
-use crate::execution::sharing::shamir::ShamirSharings;
-use crate::{algebra::poly::BitwisePoly, execution::sharing::share::Share};
+use super::sharing::shamir::ShamirFieldPoly;
+use super::sharing::shamir::ShamirSharings;
+use super::sharing::share::Share;
+use crate::poly::BitwisePoly;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -41,14 +40,14 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
                         lock_exceptional_set_store.insert((index, degree), powers.clone());
                         Ok(powers)
                     } else {
-                        Err(xx_anyhow_error_and_log(
+                        Err(anyhow_error_and_log(
                             "Error writing exceptional store 64".to_string(),
                         ))
                     }
                 }
             }
         } else {
-            Err(xx_anyhow_error_and_log(
+            Err(anyhow_error_and_log(
                 "Error reading exceptional store".to_string(),
             ))
         }
@@ -78,7 +77,7 @@ fn shamir_error_correct<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
     max_errs: usize,
-    #[cfg(test)] err_indices: Option<&mut Vec<(Role, usize)>>,
+    #[cfg(test)] err_indices: Option<&mut Vec<(super::role::Role, usize)>>,
 ) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
@@ -217,39 +216,34 @@ pub fn error_correction<F: Field>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::role::Role;
     use std::num::Wrapping;
 
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
     #[cfg(feature = "extension_degree_7")]
-    use crate::algebra::galois_fields::gf128::GF128;
+    use crate::galois_fields::gf128::GF128;
     #[cfg(feature = "extension_degree_8")]
-    use crate::algebra::galois_fields::gf256::GF256;
+    use crate::galois_fields::gf256::GF256;
     #[cfg(feature = "extension_degree_5")]
-    use crate::algebra::galois_fields::gf32::GF32;
+    use crate::galois_fields::gf32::GF32;
     #[cfg(feature = "extension_degree_6")]
-    use crate::algebra::galois_fields::gf64::GF64;
+    use crate::galois_fields::gf64::GF64;
     #[cfg(feature = "extension_degree_3")]
-    use crate::algebra::galois_fields::gf8::GF8;
+    use crate::galois_fields::gf8::GF8;
     use crate::{
-        algebra::{
-            base_ring::Z64,
-            error_correction::{error_correction, shamir_error_correct},
-            galois_fields::gf16::GF16,
-            galois_rings::common::{LutMulReduction, ResiduePoly},
-            poly::{BitWiseEval, BitwisePoly, Poly},
-            structure_traits::{
-                Field, FromU128, One, QuotientMaximalIdeal, RingWithExceptionalSequence, ZConsts,
-                Zero,
-            },
+        base_ring::Z64,
+        error_correction::{error_correction, shamir_error_correct},
+        galois_fields::gf16::GF16,
+        galois_rings::common::{LutMulReduction, ResiduePoly},
+        poly::{BitWiseEval, BitwisePoly, Poly},
+        sharing::{
+            shamir::{InputOp, ShamirFieldPoly, ShamirSharings},
+            share::Share,
         },
-        execution::{
-            runtime::party::Role,
-            sharing::{
-                shamir::{InputOp, ShamirFieldPoly, ShamirSharings},
-                share::Share,
-            },
+        structure_traits::{
+            Field, FromU128, One, QuotientMaximalIdeal, RingWithExceptionalSequence, ZConsts, Zero,
         },
     };
 

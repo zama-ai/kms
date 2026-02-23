@@ -3088,6 +3088,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-utils"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "tracing",
+ "tracing-test",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4319,6 +4328,7 @@ dependencies = [
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
+ "threshold-algebra",
  "threshold-fhe",
  "tokio",
  "tokio-rustls 0.26.2",
@@ -7682,16 +7692,22 @@ dependencies = [
 name = "threshold-algebra"
 version = "0.13.0-rc.3"
 dependencies = [
+ "aes-prng",
  "anyhow",
  "bc2wrap",
+ "error-utils",
  "g2p",
  "itertools 0.14.0",
  "lazy_static",
  "ndarray",
+ "num-traits",
+ "paste",
  "proptest",
  "rand 0.8.5",
+ "rstest",
  "serde",
  "sha3",
+ "tfhe-versionable",
  "tracing",
  "zeroize",
 ]
@@ -7717,6 +7733,7 @@ dependencies = [
  "ctor",
  "dashmap",
  "derive_more",
+ "error-utils",
  "futures",
  "futures-util",
  "g2p",
@@ -7757,6 +7774,7 @@ dependencies = [
  "tfhe-csprng",
  "tfhe-versionable",
  "tfhe-zk-pok",
+ "threshold-algebra",
  "threshold-fhe",
  "tokio",
  "tokio-rustls 0.26.2",

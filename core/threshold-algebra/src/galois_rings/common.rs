@@ -1,6 +1,5 @@
-use super::super::xx_anyhow_error_and_log;
 use super::utils::ArrayVisitor;
-use crate::algebra::{
+use crate::{
     base_ring::ToZ64,
     bivariate::compute_powers_list,
     poly::Poly,
@@ -10,22 +9,18 @@ use crate::algebra::{
     },
     syndrome::lagrange_numerators,
 };
+use error_utils::anyhow_error_and_log;
 
+use crate::structure_traits::Field;
 #[cfg(feature = "non-wasm")]
-use crate::execution::small_execution::prf::PRSSConversions;
-use crate::{algebra::structure_traits::Field, execution::sharing::shamir::ShamirFieldPoly};
+use crate::PRSSConversions;
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_fields::common::syndrome_decoding_z2,
-    },
-    execution::{
-        runtime::party::Role,
-        sharing::{shamir::ShamirSharings, share::Share},
-    },
+    base_ring::{Z128, Z64},
+    galois_fields::common::syndrome_decoding_z2,
+    role::Role,
+    sharing::shamir::{ShamirFieldPoly, ShamirSharings},
+    sharing::share::Share,
 };
-#[cfg(feature = "non-wasm")]
-use ::std::num::Wrapping;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
@@ -34,14 +29,15 @@ use sha3::{
     Shake256,
 };
 use std::marker::PhantomData;
+#[cfg(feature = "non-wasm")]
+use std::num::Wrapping;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     iter::Sum,
     ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
 };
-use tfhe::Versionize;
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::Zeroize;
 
 /// Represents an element Z_{2^bitlen}[X]/F[X]
@@ -131,7 +127,7 @@ impl<Z: Clone, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
     {
         for i in 1..EXTENSION_DEGREE {
             if self.coefs[i] != Z::ZERO {
-                return Err(xx_anyhow_error_and_log(format!(
+                return Err(anyhow_error_and_log(format!(
                     "Higher coefficient must be zero but was {}",
                     self.coefs[i]
                 )));
@@ -146,14 +142,14 @@ impl<Z: Clone, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE> {
 
     pub fn from_vec(coefs: Vec<Z>) -> anyhow::Result<Self> {
         if coefs.len() != EXTENSION_DEGREE {
-            return Err(xx_anyhow_error_and_log(format!(
+            return Err(anyhow_error_and_log(format!(
                 "Error: required {EXTENSION_DEGREE} coefficients, but got {}",
                 coefs.len()
             )));
         }
         Ok(ResiduePoly {
             coefs: coefs.try_into().map_err(|_| {
-                xx_anyhow_error_and_log("Error converting coefficient vector into Z64Poly")
+                anyhow_error_and_log("Error converting coefficient vector into Z64Poly")
             })?,
         })
     }
@@ -579,7 +575,7 @@ where
 {
     fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
         if idx >= (1 << EXTENSION_DEGREE) {
-            return Err(xx_anyhow_error_and_log(format!(
+            return Err(anyhow_error_and_log(format!(
                 "Value {idx} is too large to be embedded!"
             )));
         }
@@ -707,7 +703,7 @@ where
     /// invert and lift an Integer to the large Ring
     fn invert(self) -> anyhow::Result<Self> {
         if self == Self::ZERO {
-            return Err(xx_anyhow_error_and_log("Cannot invert 0"));
+            return Err(anyhow_error_and_log("Cannot invert 0"));
         }
 
         let alpha_k = self.bit_compose(0);
@@ -776,7 +772,7 @@ where
         // Validate the result, i.e. x+x^2 = input
         //Note: This is a sanity check, we don't explicitly need it
         if v != &(x + x * x) {
-            return Err(xx_anyhow_error_and_log(
+            return Err(anyhow_error_and_log(
                 "The outer Newton Raphson inversion computation in solve() failed",
             ));
         }
