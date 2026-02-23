@@ -1,10 +1,6 @@
 //! Choreographer is a GRPC client that communicates with
 //! the kms-core (with the moby binary) parties to do benchmarks.
 //! It is a trusted entity and should not be used with production kms-core.
-use crate::choreography::grpc::gen::{
-    CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ReshareRequest,
-    ThresholdDecryptRequest, ThresholdKeyGenResultRequest,
-};
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
 use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
@@ -12,7 +8,6 @@ use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::compute_witness_dim;
 use crate::{
-    choreography::grpc::gen::choreography_client::ChoreographyClient,
     execution::{
         runtime::party::{Identity, Role},
         zk::ceremony::InternalPublicParameter,
@@ -30,9 +25,11 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
 use tracing::{instrument, Instrument};
 
-use super::grpc::gen::{
-    PreprocKeyGenRequest, PrssInitRequest, StatusCheckRequest, ThresholdDecryptResultRequest,
-    ThresholdKeyGenRequest,
+use super::grpc::ggen::{
+    choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
+    PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
+    StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
+    ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
 use super::grpc::SupportedRing;
 use super::requests::{
