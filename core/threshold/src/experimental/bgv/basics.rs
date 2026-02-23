@@ -9,13 +9,12 @@ use crate::experimental::algebra::integers::ModReduction;
 use crate::experimental::algebra::integers::PositiveConv;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
 use crate::experimental::algebra::levels::{
-    GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor, Q, Q1, QR,
+    CryptoModulus, GenericModulus, LevelEll, LevelFourteen, LevelKsw, LevelOne, ScalingFactor,
 };
 use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::constants::PLAINTEXT_MODULUS;
-use crypto_bigint::modular::ConstMontyParams;
 use crypto_bigint::{Limb, NonZero, U1536};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
@@ -193,18 +192,19 @@ pub fn bgv_dec<ModQ, N>(
     p_mod: &NonZero<Limb>,
 ) -> PlaintextVec
 where
-    N: Const,
-    N: NTTConstants<ModQ>,
-    ModQ: Ring,
-    RqElement<ModQ, N>: From<TernaryElement>,
-    IntQ: From<ModQ>,
+    N: Const + NTTConstants<LevelOne>,
+    ModQ: Ring + CryptoModulus,
+    RqElement<LevelOne, N>: Clone,
+    IntQ: From<ModQ> + PositiveConv<ModQ>,
     IntQ: Into<u64>,
-    for<'l> &'l RqElement<ModQ, N>: Mul<RqElement<ModQ, N>, Output = RqElement<ModQ, N>>,
-    for<'l, 'r> &'l RqElement<ModQ, N>: Sub<&'r RqElement<ModQ, N>, Output = RqElement<ModQ, N>>,
-    for<'l> &'l RqElement<ModQ, N>: Mul<RqElement<ModQ, N>, Output = RqElement<ModQ, N>>,
 {
-    let sk_mod_q = RqElement::<ModQ, N>::from(sk.sk);
-    let p = ct.get_c0() - &(ct.get_c1() * sk_mod_q);
+    let q = LevelOne::get_self_modulus();
+    let big_q = ModQ::get_self_modulus();
+
+    let level_one_ctxt = modulus_switch::<LevelOne, ModQ, N>(ct, q, big_q, *PLAINTEXT_MODULUS);
+
+    let sk_mod_q = RqElement::<LevelOne, N>::from(sk.sk);
+    let p = level_one_ctxt.get_c0() - &(level_one_ctxt.get_c1() * sk_mod_q);
     // reinterpret this as integer over (-p/2, p/2] and do the final plaintext reduction p_mod.
     let p_red = RingElement::<IntQ>::from(p).zero_centered_rem(*p_mod);
     let supported_ptxt: Vec<u32> = p_red
@@ -320,12 +320,9 @@ fn key_switch(
         c1: c1_prime,
     };
 
-    let q = LevelEll {
-        value: GenericModulus(*Q::MODULUS.as_ref()),
-    };
-    let big_q = LevelKsw {
-        value: GenericModulus(*QR::MODULUS.as_ref()),
-    };
+    let q = LevelEll::get_self_modulus();
+
+    let big_q = LevelKsw::get_self_modulus();
 
     modulus_switch::<LevelEll, LevelKsw, N65536>(&new_ct, q, big_q, *PLAINTEXT_MODULUS)
 }
@@ -336,7 +333,7 @@ pub fn multiply_ctxt(
     ct_a: &LevelledCiphertext<LevelEll, N65536>,
     ct_b: &LevelledCiphertext<LevelEll, N65536>,
     pk: &PublicBgvKeySet,
-) -> LevelledCiphertext<LevelOne, N65536> {
+) -> LevelledCiphertext<LevelFourteen, N65536> {
     let (c_a_0, c_a_1) = (ct_a.get_c0(), ct_a.get_c1());
     let (c_b_0, c_b_1) = (ct_b.get_c0(), ct_b.get_c1());
 
@@ -346,15 +343,11 @@ pub fn multiply_ctxt(
 
     let relinearized = key_switch(d_0, d_1, d_2, pk);
 
-    let q = LevelOne {
-        value: GenericModulus(*Q1::MODULUS.as_ref()),
-    };
-    let big_q = LevelEll {
-        value: GenericModulus(*Q::MODULUS.as_ref()),
-    };
+    let q = LevelFourteen::get_self_modulus();
+    let big_q = LevelEll::get_self_modulus();
 
     //Note: Spec say this should go to LevelEll - 1, but we go all the way down to LevelOne for simplicity.
-    modulus_switch::<LevelOne, LevelEll, N65536>(&relinearized, q, big_q, *PLAINTEXT_MODULUS)
+    modulus_switch::<LevelFourteen, LevelEll, N65536>(&relinearized, q, big_q, *PLAINTEXT_MODULUS)
 }
 
 #[cfg(test)]
