@@ -2747,8 +2747,8 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());

@@ -12,7 +12,6 @@ use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::compute_witness_dim;
 use crate::{
-    algebra::base_ring::Z64,
     choreography::grpc::gen::choreography_client::ChoreographyClient,
     execution::{
         runtime::party::{Identity, Role},
@@ -21,6 +20,7 @@ use crate::{
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
     session_id::SessionId,
 };
+use algebra::base_ring::Z64;
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
