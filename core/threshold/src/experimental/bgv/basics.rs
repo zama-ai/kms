@@ -275,41 +275,24 @@ fn key_switch(
     c2: RqElement<LevelEll, N65536>,
     pk: &PublicBgvKeySet,
 ) -> LevelledCiphertext<LevelEll, N65536> {
-    let converted_c0 = RqElement::from(
-        c0.data
-            .iter()
-            .map(|v| {
-                let value: U1536 = (&v.value.0).into();
-                LevelKsw {
-                    value: GenericModulus(value),
-                }
-            })
-            .collect_vec(),
-    );
+    let lift_to_level_ksw = |ct: RqElement<LevelEll, N65536>| {
+        RqElement::<LevelKsw, N65536>::from(
+            ct.data
+                .iter()
+                .map(|v| {
+                    let value: U1536 = (&v.value.0).into();
+                    LevelKsw {
+                        value: GenericModulus(value),
+                    }
+                })
+                .collect_vec(),
+        )
+    };
+    let converted_c0 = lift_to_level_ksw(c0);
 
-    let converted_c1 = RqElement::from(
-        c1.data
-            .iter()
-            .map(|v| {
-                let value: U1536 = (&v.value.0).into();
-                LevelKsw {
-                    value: GenericModulus(value),
-                }
-            })
-            .collect_vec(),
-    );
+    let converted_c1 = lift_to_level_ksw(c1);
 
-    let converted_c2 = RqElement::from(
-        c2.data
-            .iter()
-            .map(|v| {
-                let value: U1536 = (&v.value.0).into();
-                LevelKsw {
-                    value: GenericModulus(value),
-                }
-            })
-            .collect_vec(),
-    );
+    let converted_c2 = lift_to_level_ksw(c2);
 
     let c0_prime = (pk.b_prime.clone() * &converted_c2) + (converted_c0 * &LevelKsw::FACTOR);
 
