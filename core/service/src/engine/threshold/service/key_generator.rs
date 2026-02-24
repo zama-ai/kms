@@ -73,7 +73,7 @@ use crate::{
     util::{
         meta_store::{
             add_req_to_meta_store, handle_res, retrieve_from_meta_store,
-            update_err_req_in_meta_store, MetaStore,
+            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store, MetaStore,
         },
         rate_limiter::RateLimiter,
     },
@@ -586,10 +586,11 @@ impl<
         let request_id =
             parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
-        let key_gen_res = retrieve_from_meta_store(
+        let key_gen_res = retrieve_from_meta_store_with_timeout(
             self.dkg_pubinfo_meta_store.read().await,
             &request_id,
             op_tag,
+            crate::consts::DURATION_WAITING_ON_KEYGEN_RESULT_SECONDS,
         )
         .await?;
 

@@ -12,11 +12,15 @@
 //! - Centralized (4): keygen, CRS, backup/restore, custodian backup
 //! - Threshold (5): sequential CRS, concurrent CRS, Default CRS, backup/restore, custodian backup
 //!
-//! **PRSS Tests (7 tests, K8s CI only, sequential execution)**:
-//! - Threshold: keygen, sequential preprocessing, concurrent preprocessing,
-//!   Default preprocessing, MPC context init, MPC context switch, reshare
-//! - Disabled locally due to PRSS networking requirements
-//! - Enable: `cargo test --features k8s_tests,testing -- --test-threads=1`
+//! **Threshold Tests (8 tests, enabled via `threshold_tests`, sequential execution)**:
+//! - keygen (with PRSS), sequential preproc+keygen, concurrent preproc+keygen,
+//!   Default preproc+keygen, MPC context init, MPC context switch (6-party), reshare
+//! - Enable: `cargo nextest run --features threshold_tests`
+//! - This flag only gates code/tests; it does NOT generate key material.
+//! - For Default-param tests: pre-generated PRSS required in `test-material/default`
+//!   (run `make generate-test-material-default`); missing PRSS is a hard error.
+//! - Context init/switch/reshare tests generate PRSS live via `new_prss_isolated`
+//!   and do NOT require pre-generated startup PRSS.
 //!
 //! ## Architecture
 //!
@@ -32,8 +36,18 @@
 //! - CLI commands unchanged (testing actual CLI functionality)
 //!
 //! **Feature Flags:**
-//! - `k8s_tests`: Enables PRSS tests (requires stable network environment)
-//! - `testing`: Enables test helper functions (required for compilation)
+//! - `threshold_tests`: Enables threshold PRSS tests and their setup helpers (`run_prss=true`).
+//!   Implies `testing`. Does NOT enable Kind/Kubernetes tests.
+//! - `kind_tests`: Enables Kind/Kubernetes cluster tests under `tests/kind-testing/`.
+//! - `testing`: Base test helpers (required for compilation of all test targets).
+//!
+//! **Gating patterns:**
+//! - `#[cfg(feature = "threshold_tests")]` on the fn — used when the test body calls
+//!   feature-gated helpers (e.g. `setup_*_with_prss`, `real_preproc_and_keygen_isolated`).
+//!   The test is invisible to `cargo test` without the feature.
+//! - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]` on the fn — used when the
+//!   test body compiles without the feature (e.g. `test_threshold_mpc_context_init`,
+//!   `test_threshold_mpc_context_switch_6`). The test is visible but skipped without the feature.
 //!
 //! ## How Tests Execute
 //!
@@ -146,18 +160,30 @@
 //! - Real TCP communication between parties over localhost
 //! - Efficient: Can run many parties without OS thread overhead
 //!
-//! ### PRSS Test Example
+//! ### Threshold Test Example (calls feature-gated helper → use `#[cfg(feature)]`)
+//!
+//! ```no_run
+//! #[cfg(feature = "threshold_tests")]
+//! #[tokio::test]
+//! #[serial]
+//! async fn test_my_threshold_feature() -> Result<()> {
+//!     let (material_dir, _servers, config_path) =
+//!         setup_isolated_threshold_cli_test_with_prss("my_test", 4).await?;
+//!     // Run PRSS operations (keygen, preprocessing, etc.)
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### Threshold Test Example (body compiles without feature → use `#[cfg_attr]`)
 //!
 //! ```no_run
 //! #[tokio::test]
-//! #[serial]  // Required: Sequential execution for PRSS
-//! #[cfg_attr(not(feature = "k8s_tests"), ignore)]  // Required: K8s CI only
-//! async fn test_my_prss_feature() -> Result<()> {
-//!     // Setup with PRSS enabled
+//! #[serial]
+//! #[cfg_attr(not(feature = "threshold_tests"), ignore)]
+//! async fn test_my_context_feature() -> Result<()> {
 //!     let (material_dir, _servers, config_path) =
-//!         setup_isolated_threshold_cli_test_with_prss("my_test", 4).await?;
-//!
-//!     // Run PRSS operations (keygen, preprocessing, etc.)
+//!         setup_isolated_threshold_cli_test_signing_only("my_test", 4).await?;
+//!     new_prss_isolated(&config_path, context_id, epoch_id, test_path).await?;
 //!     Ok(())
 //! }
 //! ```
@@ -187,14 +213,14 @@
 //! ## Running Tests
 //!
 //! ```bash
-//! # All tests (excluding PRSS)
-//! cargo test --test integration_test_isolated --features testing
+//! # Fast tests only (no PRSS)
+//! cargo nextest run --test integration_test_isolated --features testing
 //!
-//! # All tests (including PRSS, sequential)
-//! cargo test --test integration_test_isolated --features k8s_tests,testing -- --test-threads=1
+//! # All threshold tests (requires pre-generated Default PRSS for full_gen_tests_*)
+//! cargo nextest run --test integration_test_isolated --features threshold_tests
 //!
 //! # Specific test
-//! cargo test --test integration_test_isolated --features testing test_centralized_insecure
+//! cargo nextest run --test integration_test_isolated --features testing -E 'test(test_centralized_insecure)'
 //! ```
 
 use anyhow::Result;
@@ -223,10 +249,10 @@ use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
-// Additional imports for reshare test (only needed with k8s_tests feature)
-#[cfg(feature = "k8s_tests")]
+// Additional imports for reshare test (only needed with threshold_tests feature)
+#[cfg(feature = "threshold_tests")]
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
@@ -445,15 +471,24 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// * `PathBuf` - Path to generated CLI config file (for --config flag)
 ///
 /// # Note
-/// Requires `k8s_tests` feature. Tests using this must be marked with:
+/// Requires `threshold_tests` feature. Tests using this must be marked with:
 /// - `#[serial]` - Sequential execution required (PRSS network coordination)
-/// - `#[cfg_attr(not(feature = "k8s_tests"), ignore)]` - Only runs in K8s CI
+/// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
+///
+/// This helper enables `run_prss=true` during server startup. The test material copy
+/// includes pre-generated PRSS (from `test-material`). At startup, the server checks
+/// whether the loaded PRSS profile matches the context shape; if it does, live MPC
+/// PRSS init is skipped entirely.
+///
+/// With **Test params** (`FheParameter::Test`), missing PRSS can be initialized live.
+/// For **Default params**, use `setup_isolated_threshold_cli_test_with_prss_default`,
+/// which requires pre-generated PRSS material under `test-material/default`.
 ///
 /// # Example
 /// ```no_run
 /// #[tokio::test]
 /// #[serial]
-/// #[cfg_attr(not(feature = "k8s_tests"), ignore)]
+/// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
 ///         setup_isolated_threshold_cli_test_with_prss("my_prss_test", 4).await?;
@@ -461,7 +496,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///     Ok(())
 /// }
 /// ```
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
@@ -533,7 +568,9 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 /// * `PathBuf` - Path to generated CLI config file (for --config flag)
 ///
 /// # Note
-/// Uses Default FHE parameters (production-like, slower than Test params)
+/// Uses Default FHE parameters (production-like, slower than Test params) with `run_prss=false`.
+/// Internally uses `TestMaterialSpec::threshold_default_no_prss` — PRSS is excluded from
+/// required material and is not used at all (no pre-generated PRSS needed).
 ///
 /// # Example
 /// ```no_run
@@ -560,7 +597,12 @@ async fn setup_isolated_threshold_cli_test_default(
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters and PRSS enabled
-#[cfg(feature = "k8s_tests")]
+///
+/// Uses `run_prss=true` with `FheParameter::Default`.
+///
+/// Requires pre-generated Default PRSS material in `test-material/default`
+/// (for example via `make generate-test-material-default`), otherwise setup fails fast.
+#[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
@@ -764,9 +806,16 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
         .with_test_name(test_name)
         .with_party_count(party_count);
 
-    if let Some(spec) = material_spec {
-        builder = builder.with_material_spec(spec);
-    }
+    let default_material_spec = match (fhe_params, run_prss) {
+        (FheParameter::Default, true) => {
+            kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
+        }
+        (FheParameter::Default, false) => {
+            kms_lib::testing::material::TestMaterialSpec::threshold_default_no_prss(party_count)
+        }
+        _ => kms_lib::testing::material::TestMaterialSpec::threshold_basic(party_count),
+    };
+    builder = builder.with_material_spec(material_spec.unwrap_or(default_material_spec));
 
     if run_prss {
         builder = builder.with_prss();
@@ -1872,8 +1921,8 @@ async fn restore_from_backup_isolated(config_path: &Path, test_path: &Path) -> R
 }
 
 /// Helper to run preprocessing and keygen via CLI (isolated version)
-/// Only used by PRSS tests which are gated by k8s_tests feature
-#[cfg(feature = "k8s_tests")]
+/// Only used by PRSS tests which are gated by threshold_tests feature
+#[cfg(feature = "threshold_tests")]
 async fn real_preproc_and_keygen_isolated(
     config_path: &Path,
     test_path: &Path,
@@ -1892,13 +1941,17 @@ async fn real_preproc_and_keygen_isolated(
         download_all: false,
     };
 
+    let t0 = std::time::Instant::now();
     println!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
+    println!(
+        "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
 
     // Step 2: Key generation using preprocessing result
     let keygen_config = CmdConfig {
@@ -1913,11 +1966,12 @@ async fn real_preproc_and_keygen_isolated(
         download_all: false,
     };
 
+    let t1 = std::time::Instant::now();
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Key-gen done");
+    println!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -1928,67 +1982,73 @@ async fn real_preproc_and_keygen_isolated(
     Ok(key_id.to_string())
 }
 
-// /// Helper to run partial preprocessing and keygen via CLI (isolated version)
-// /// Uses PartialPreprocKeyGen with a small percentage_offline to avoid generating
-// /// the full 785M bits with Default FHE params. store_dummy_preprocessing=true
-// /// allows keygen to proceed with the partial material.
-// #[cfg(feature = "k8s_tests")]
-// async fn real_partial_preproc_and_keygen_isolated(
-//     config_path: &Path,
-//     test_path: &Path,
-//     percentage_offline: u32,
-//     max_iter: usize,
-// ) -> Result<String> {
-//     // Step 1: Partial preprocessing
-//     let preproc_config = CmdConfig {
-//         file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
-//         command: CCCommand::PartialPreprocKeyGen(PartialKeyGenPreprocParameters {
-//             context_id: None,
-//             epoch_id: None,
-//             percentage_offline,
-//             store_dummy_preprocessing: true,
-//         }),
-//         logs: true,
-//         max_iter,
-//         expect_all_responses: true,
-//         download_all: false,
-//     };
+/// Helper to run partial preprocessing and keygen via CLI (isolated version)
+///
+/// Uses `PartialPreprocKeyGen` with reduced offline generation to keep runtime
+/// manageable for Default FHE parameters in CI while still exercising the
+/// keygen flow.
+#[cfg(feature = "threshold_tests")]
+async fn real_partial_preproc_and_keygen_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    percentage_offline: u32,
+    max_iter: usize,
+) -> Result<String> {
+    // Step 1: Partial preprocessing
+    let preproc_config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::PartialPreprocKeyGen(PartialKeyGenPreprocParameters {
+            context_id: None,
+            epoch_id: None,
+            percentage_offline,
+            store_dummy_preprocessing: true,
+        }),
+        logs: true,
+        max_iter,
+        expect_all_responses: true,
+        download_all: false,
+    };
 
-//     println!("Doing partial preprocessing ({percentage_offline}%)");
-//     let mut preproc_result = execute_cmd(&preproc_config, test_path)
-//         .await
-//         .map_err(|e| anyhow::anyhow!("{}", e))?;
-//     assert_eq!(preproc_result.len(), 1);
-//     let (preproc_id, _) = preproc_result.pop().unwrap();
-//     println!("Partial preprocessing done with ID {preproc_id:?}");
+    let t0 = std::time::Instant::now();
+    println!("Doing partial preprocessing ({percentage_offline}%)");
+    let mut preproc_result = execute_cmd(&preproc_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    assert_eq!(preproc_result.len(), 1);
+    let (preproc_id, _) = preproc_result.pop().unwrap();
+    println!(
+        "Partial preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
 
-//     // Step 2: Key generation using preprocessing result
-//     let keygen_config = CmdConfig {
-//         file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
-//         command: CCCommand::KeyGen(KeyGenParameters {
-//             preproc_id: preproc_id.unwrap(),
-//             shared_args: SharedKeyGenParameters::default(),
-//         }),
-//         logs: true,
-//         max_iter,
-//         expect_all_responses: true,
-//         download_all: false,
-//     };
+    // Step 2: Key generation using preprocessing result
+    let keygen_config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::KeyGen(KeyGenParameters {
+            preproc_id: preproc_id.unwrap(),
+            shared_args: SharedKeyGenParameters::default(),
+        }),
+        logs: true,
+        max_iter,
+        expect_all_responses: true,
+        download_all: false,
+    };
 
-//     println!("Doing key-gen");
-//     let key_gen_results = execute_cmd(&keygen_config, test_path)
-//         .await
-//         .map_err(|e| anyhow::anyhow!("{}", e))?;
-//     println!("Key-gen done");
-//     assert_eq!(key_gen_results.len(), 1);
+    let t1 = std::time::Instant::now();
+    println!("Doing key-gen");
+    let key_gen_results = execute_cmd(&keygen_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
+    assert_eq!(key_gen_results.len(), 1);
 
-//     let key_id = match key_gen_results.first().unwrap() {
-//         (Some(value), _) => value,
-//         _ => panic!("Error doing keygen"),
-//     };
+    let key_id = match key_gen_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing keygen"),
+    };
 
-//     Ok(key_id.to_string())
-// }
+    Ok(key_id.to_string())
+}
 
 // ============================================================================
 // MPC CONTEXT HELPER FUNCTIONS
@@ -2143,7 +2203,7 @@ async fn real_preproc_and_keygen_with_context_isolated(
 
 /// Helper to run preprocessing and keygen with context/epoch via CLI (isolated version)
 /// Returns both key_id and preproc_id for reshare operations
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 async fn real_preproc_and_keygen_with_context_isolated_full(
     config_path: &Path,
     test_path: &Path,
@@ -2206,7 +2266,7 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
 }
 
 /// Helper to run reshare operation via CLI (isolated version)
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 #[allow(clippy::too_many_arguments)]
 async fn reshare_isolated(
     config_path: &Path,
@@ -2653,28 +2713,22 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure key generation via CLI
+/// Test threshold insecure key generation via CLI (Default FHE params, with PRSS)
+///
+/// Requires pre-generated Default PRSS material in `test-material/default`.
+#[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
+#[serial]
 async fn test_threshold_insecure() -> Result<()> {
     init_testing();
 
-    // Setup isolated threshold KMS servers (4 parties) with Default FHE params
-    #[cfg(feature = "k8s_tests")]
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
 
-    #[cfg(not(feature = "k8s_tests"))]
-    let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_default("threshold_insecure", 4).await?;
-
-    // Run CLI commands against native threshold servers (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
 
-    // Also test with compressed keys
     let compressed_key_id = insecure_key_gen_compressed_isolated(&config_path, keys_folder).await?;
     integration_test_commands_compressed_isolated(&config_path, keys_folder, compressed_key_id)
         .await?;
@@ -2683,9 +2737,9 @@ async fn test_threshold_insecure() -> Result<()> {
 }
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
+#[serial]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 
@@ -2705,9 +2759,9 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
+#[serial]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_testing();
 
@@ -2903,29 +2957,48 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-// #[cfg(feature = "k8s_tests")]
-// #[tokio::test]
-// #[serial] // PRSS requires sequential execution
-// async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
-//     init_testing();
+/// Full generation test - threshold sequential preprocessing and keygen with Default params.
+///
+/// Requires pre-generated PRSS material in the test-material/default directory
+/// (produced by `generate-test-material --features slow_tests -- default`).
+/// With pre-generated PRSS, `run_prss=true` loads from storage instead of running
+/// live MPC PRSS init (which would take hours with Default params).
+///
+/// Uses partial preprocessing to keep this test comfortably below CI timeout
+/// while still validating Default-parameter preproc+keygen end-to-end.
+/// Single round only: two rounds with Default params take ~4-6h, exceeding the 2h CI timeout.
+/// The Test-param variant (`nightly_tests_threshold_sequential_preproc_keygen`) covers
+/// sequential 2-round behavior.
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+#[serial]
+async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
+    init_testing();
 
-//     // Setup isolated threshold KMS servers (4 parties for default context) with PRSS enabled
-//     let (material_dir, _servers, config_path) =
-//         setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
+    // Tuned for CI runtime budget with buffer.
+    const PARTIAL_PREPROC_PERCENTAGE_OFFLINE: u32 = 1;
 
-//     // Run sequential partial preprocessing (1%) and keygen with Default FHE params
-//     // 1% of 785M bits ≈ 7.8M bits — manageable in CI
-//     let keys_folder = material_dir.path();
-//     let key_id_1 =
-//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
-//     let key_id_2 =
-//         real_partial_preproc_and_keygen_isolated(&config_path, keys_folder, 1, 5000).await?;
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
-//     // Verify different key IDs generated
-//     assert_ne!(key_id_1, key_id_2);
+    let keys_folder = material_dir.path();
+    let t0 = std::time::Instant::now();
+    let key_id = real_partial_preproc_and_keygen_isolated(
+        &config_path,
+        keys_folder,
+        PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
+        200,
+    )
+    .await?;
+    println!(
+        "full_gen_tests_default_threshold_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
+        PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
+        t0.elapsed().as_secs_f64(),
+    );
+    assert!(!key_id.is_empty());
 
-//     Ok(())
-// }
+    Ok(())
+}
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
@@ -2962,7 +3035,7 @@ async fn full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
+#[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_testing();
 
@@ -3005,7 +3078,8 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// Test 6-party MPC context switching with party resharing (ISOLATED, NO TLS)
 ///
 /// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.
-/// For TLS-enabled testing in K8s, see: `kubernetes_test_threshold_context::k8s_test_threshold_context_switch_6_tls`
+/// For TLS-enabled threshold coverage, use Kind tests in
+/// `tests/kind-testing/kubernetes_test_threshold_isolated.rs`.
 ///
 /// This test validates party resharing/remapping across MPC contexts:
 /// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
@@ -3024,10 +3098,10 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// - Servers 5,6,4,3 configured with peers [5,6,4,3] where 5→party1, 6→party2, 4→party3, 3→party4
 ///
 /// **TLS Status:** Disabled (isolated test, localhost only)
-/// **For TLS testing:** Use K8s version in `kubernetes_test_threshold_context.rs`
+/// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold_isolated.rs`.
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
+#[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_testing();
 
@@ -3145,9 +3219,9 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 /// 4. Download key materials (ServerKey, PublicKey)
 /// 5. Compute digests of the key materials
 /// 6. Execute resharing command
-#[cfg(feature = "k8s_tests")]
+#[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
+#[serial]
 async fn test_threshold_reshare() -> Result<()> {
     init_testing();
 

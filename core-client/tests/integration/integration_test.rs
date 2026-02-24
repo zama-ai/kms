@@ -1833,8 +1833,8 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     println!("Old epoch successfully destroyed and verified");
 }
 
-///////// FULL GEN TESTS//////////
-//////////////////////////////////
+////////// FULL GEN TESTS//////////
+///////////////////////////////////
 
 // #[test_context(DockerComposeThresholdDefault)]
 // #[tokio::test]

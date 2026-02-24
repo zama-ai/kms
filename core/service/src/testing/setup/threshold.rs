@@ -177,6 +177,7 @@ pub struct ThresholdTestEnvBuilder {
     with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
     decryption_mode: Option<threshold_fhe::execution::endpoints::decryption::DecryptionMode>,
+    force_isolated: bool,
 }
 
 impl Default for ThresholdTestEnvBuilder {
@@ -192,6 +193,7 @@ impl Default for ThresholdTestEnvBuilder {
             with_custodian_keychain: false,
             rate_limiter_conf: None,
             decryption_mode: None,
+            force_isolated: false,
         }
     }
 }
@@ -261,6 +263,14 @@ impl ThresholdTestEnvBuilder {
         self
     }
 
+    /// Force isolated (temp dir) material even when KMS_TEST_SHARED_MATERIAL=1.
+    /// Use this for tests that require specific material to be absent (e.g. no PRSS),
+    /// since shared mode exposes all pre-generated material.
+    pub fn force_isolated(mut self) -> Self {
+        self.force_isolated = true;
+        self
+    }
+
     /// Build the test environment
     pub async fn build(self) -> Result<ThresholdTestEnv> {
         let test_name = self
@@ -273,8 +283,15 @@ impl ThresholdTestEnvBuilder {
             .material_spec
             .unwrap_or_else(|| TestMaterialSpec::threshold_basic(self.party_count));
 
-        // Setup material (isolated or shared based on KMS_TEST_SHARED_MATERIAL env var)
-        let material_dir = manager.setup_test_material_auto(&spec, &test_name).await?;
+        // Setup material (isolated or shared based on KMS_TEST_SHARED_MATERIAL env var).
+        // force_isolated bypasses shared mode — needed when the test requires specific
+        // material to be absent (e.g. no PRSS), since shared mode exposes everything.
+        let material_dir = if self.force_isolated {
+            let temp_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
+            TestMaterialHandle::Isolated(temp_dir)
+        } else {
+            manager.setup_test_material_auto(&spec, &test_name).await?
+        };
 
         // Create storage for each party
         let mut pub_storages = Vec::new();

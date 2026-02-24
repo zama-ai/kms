@@ -215,25 +215,26 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// * `params` - FHE parameters to use for key generation
 ///
 /// # Returns
-/// * `Ok(())` if key generation succeeded on all parties
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "insecure")]
 pub async fn threshold_insecure_key_gen_isolated(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
     use crate::dummy_domain;
-    use crate::engine::base::derive_request_id;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::kms::v1::KeyGenRequest;
     use tokio::task::JoinSet;
 
     let domain_msg = domain_to_msg(&dummy_domain());
-
-    // For insecure mode, we need a dummy preproc_id because validate_key_gen_request
-    // requires it, even though insecure mode doesn't actually use preprocessing.
-    let dummy_preproc_id = derive_request_id("dummy_preproc_for_insecure")?;
 
     // Use insecure_key_gen endpoint which bypasses preprocessing validation
     let mut keygen_tasks = JoinSet::new();
@@ -242,7 +243,7 @@ pub async fn threshold_insecure_key_gen_isolated(
         let keygen_req = KeyGenRequest {
             request_id: Some((*request_id).into()),
             params: Some(params as i32),
-            preproc_id: Some(dummy_preproc_id.into()),
+            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
             domain: Some(domain_msg.clone()),
             keyset_config: None,
             keyset_added_info: None,
@@ -260,8 +261,9 @@ pub async fn threshold_insecure_key_gen_isolated(
         res??;
     }
 
-    // Wait for key generation to complete on all parties
-    for client in clients.values() {
+    // Wait for key generation to complete on all parties and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
         let mut cur_client = client.clone();
         let mut result = cur_client
             .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
@@ -272,10 +274,10 @@ pub async fn threshold_insecure_key_gen_isolated(
                 .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
                 .await;
         }
-        result?;
+        responses.push((*party_id, result));
     }
 
-    Ok(())
+    Ok(responses)
 }
 
 /// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
@@ -290,7 +292,7 @@ pub async fn threshold_insecure_key_gen_isolated(
 /// * `params` - FHE parameters to use
 ///
 /// # Returns
-/// * `Ok(())` if preprocessing and key generation succeeded on all parties
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
@@ -371,8 +373,9 @@ pub async fn threshold_key_gen_secure_isolated(
         res??;
     }
 
-    // Wait for key generation to complete
-    for client in clients.values() {
+    // Wait for key generation to complete and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
         let mut cur_client = client.clone();
         let mut result = cur_client
             .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
@@ -383,8 +386,8 @@ pub async fn threshold_key_gen_secure_isolated(
                 .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
                 .await;
         }
-        result?;
+        responses.push((*party_id, result));
     }
 
-    Ok(())
+    Ok(responses)
 }

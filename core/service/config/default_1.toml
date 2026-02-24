@@ -216,7 +216,7 @@ session_update_interval_secs = 60
 # The time interval after which we completely forget about completed sessions
 session_cleanup_interval_secs = 86400 # 1 day
 # The time interval after which we discard inactive sessions, or active sessions that have not seen any activity
-discard_inactive_sessions_interval = 900 # 15 min
+discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocessing time ~44 min for Default params)
 # The maximum waiting time we wait for trying to push or fetch a message in the send/rec queue
 max_waiting_time_for_message_queue = 60
 # The maximum number of "Inactive" sessions a party can open at a given time

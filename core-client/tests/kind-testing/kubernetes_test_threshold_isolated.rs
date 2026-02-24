@@ -1,56 +1,56 @@
-//! Kubernetes Cluster Integration Tests - Centralized Mode
+//! Kubernetes Cluster Integration Tests - Threshold Mode
 //!
-//! Tests CLI functionality against a real centralized KMS cluster running in Kubernetes (kind).
-//! These tests verify end-to-end functionality in a production-like environment.
+//! Tests CLI functionality against a real threshold KMS cluster running in Kubernetes (kind).
 //!
 //! ## Purpose
 //!
 //! These tests:
-//! - Connect to actual KMS pods running in Kubernetes cluster
-//! - Test real network communication and service discovery
-//! - Verify CLI works with production-like deployment
-//! - Validate Kubernetes-specific configurations
+//! - Connect to actual threshold KMS pods (4 parties) in Kubernetes
+//! - Test real distributed MPC operations across network
+//! - Verify CLI works with production-like threshold deployment
+//! - Use Default FHE parameters (production-like)
+//! - **Use TLS for MPC (party-to-party) communication** (production-like)
 //!
 //! ## Test Coverage
 //!
-//! **Centralized Mode Tests:**
-//! - `k8s_test_centralized_insecure` - Keygen + CRS generation
-//! - `full_gen_tests_default_k8s_centralized_sequential_crs` - Sequential CRS generation
+//! | Test | Description |
+//! |------|-------------|
+//! | `k8s_test_keygen_and_crs` | Basic keygen + CRS generation |
+//! | `k8s_test_keygen_uniqueness` | Multiple keygens produce unique keys |
+//! | `k8s_test_crs_uniqueness` | Multiple CRS generations produce unique IDs |
 //!
 //! ## Architecture
 //!
-//! **Cluster Setup:**
 //! - Uses kind (Kubernetes in Docker) cluster
-//! - KMS pods deployed via Helm charts
-//! - CLI connects via service endpoints
+//! - 4 KMS pods deployed via Helm charts with TLS enabled
+//! - MPC connections between parties use TLS (mutual TLS)
+//! - CLI connects via port-forwarded service endpoints (plain gRPC)
+//! - Config: `core-client/config/client_local_kind_threshold.toml`
 //!
-//! ## Configuration
+//! ## TLS Configuration
 //!
-//! Tests use: `core-client/config/client_local_kind_centralized.toml`
-//! - Points to KMS service endpoints in kind cluster
-//! - Configured for local kind cluster access
-//! - Must match actual cluster deployment
+//! TLS is **enabled by default** for threshold mode deployments:
 //!
-//! **Test Flow:**
-//! 1. Assumes KMS cluster is already running (deployed separately)
-//! 2. CLI connects to cluster via config file
-//! 3. Executes commands against real KMS services
-//! 4. Validates responses and behavior
+//! 1. **Deployment**: `ci/scripts/lib/kms_deployment.sh` enables TLS automatically
+//!    for threshold mode (`ENABLE_TLS=true` by default)
+//! 2. **Certificates**: Generated and uploaded to K8s secrets during cluster setup
+//! 3. **Pod-to-Pod**: All MPC communication uses mutual TLS (mTLS)
+//! 4. **CLI-to-Pod**: Plain gRPC via kubectl port-forward (secure tunnel)
 //!
-//! This file will eventually replace `kubernetes_test_centralized.rs`.
+//! The test validates MPC operations work correctly over TLS-secured channels.
+//!
+//! This file will eventually replace `kubernetes_test_threshold.rs`
 
-#![cfg(feature = "k8s_tests")]
+#![cfg(feature = "kind_tests")]
 
 use kms_core_client::*;
-use std::path::Path;
-use std::path::PathBuf;
-use std::string::String;
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // TEST INFRASTRUCTURE
 // ============================================================================
 
-/// Test context for K8s centralized tests.
+/// Test context for K8s threshold tests.
 /// Provides consistent setup, logging, and helper methods.
 struct K8sTestContext {
     name: &'static str,
@@ -65,8 +65,8 @@ impl K8sTestContext {
         let temp_dir = tempfile::tempdir().unwrap();
 
         println!("\n========================================");
-        println!("[K8S-CENTRALIZED] TEST: {}", name);
-        println!("[K8S-CENTRALIZED] Workspace: {}", temp_dir.path().display());
+        println!("[K8S-THRESHOLD] TEST: {}", name);
+        println!("[K8S-THRESHOLD] Workspace: {}", temp_dir.path().display());
         println!("========================================\n");
 
         Self {
@@ -83,7 +83,7 @@ impl K8sTestContext {
 
     /// Get the config file path.
     fn config_path(&self) -> PathBuf {
-        Self::root_path().join("core-client/config/client_local_kind_centralized.toml")
+        Self::root_path().join("core-client/config/client_local_kind_threshold.toml")
     }
 
     fn root_path() -> PathBuf {
@@ -110,7 +110,7 @@ impl K8sTestContext {
 
     /// Generate a key using InsecureKeyGen.
     async fn insecure_keygen(&self) -> String {
-        println!("[K8S-CENTRALIZED] Executing InsecureKeyGen...");
+        println!("[K8S-THRESHOLD] Executing InsecureKeyGen...");
         let start = std::time::Instant::now();
 
         let results = self
@@ -126,7 +126,7 @@ impl K8sTestContext {
             .to_string();
 
         println!(
-            "[K8S-CENTRALIZED] ✅ KeyGen completed in {:.2}s: {}",
+            "[K8S-THRESHOLD] ✅ KeyGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             key_id
         );
@@ -135,7 +135,7 @@ impl K8sTestContext {
 
     /// Generate a CRS.
     async fn crs_gen(&self) -> String {
-        println!("[K8S-CENTRALIZED] Executing CrsGen (max_num_bits=2048)...");
+        println!("[K8S-THRESHOLD] Executing CrsGen (max_num_bits=2048)...");
         let start = std::time::Instant::now();
 
         let results = self
@@ -149,7 +149,7 @@ impl K8sTestContext {
             .to_string();
 
         println!(
-            "[K8S-CENTRALIZED] ✅ CrsGen completed in {:.2}s: {}",
+            "[K8S-THRESHOLD] ✅ CrsGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             crs_id
         );
@@ -161,7 +161,7 @@ impl K8sTestContext {
         let duration = self.start_time.elapsed();
         println!("\n========================================");
         println!(
-            "[K8S-CENTRALIZED] ✅ PASSED: {} ({:.2}s)",
+            "[K8S-THRESHOLD] ✅ PASSED: {} ({:.2}s)",
             self.name,
             duration.as_secs_f64()
         );
@@ -174,10 +174,10 @@ impl K8sTestContext {
 // ============================================================================
 
 /// Basic test: Generate a key and CRS.
-/// Validates that the fundamental operations work in K8s.
+/// Validates that the fundamental MPC operations work in K8s.
 #[tokio::test]
-async fn k8s_test_centralized_insecure() {
-    let ctx = K8sTestContext::new("k8s_test_centralized_insecure");
+async fn k8s_test_keygen_and_crs() {
+    let ctx = K8sTestContext::new("k8s_test_keygen_and_crs");
 
     let key_id = ctx.insecure_keygen().await;
     assert!(!key_id.is_empty(), "Key ID must not be empty");
@@ -188,17 +188,35 @@ async fn k8s_test_centralized_insecure() {
     ctx.pass();
 }
 
+/// Test that multiple key generations produce unique keys.
+/// Validates MPC protocol handles sequential operations correctly.
+#[tokio::test]
+async fn k8s_test_keygen_uniqueness() {
+    let ctx = K8sTestContext::new("k8s_test_keygen_uniqueness");
+
+    let key1 = ctx.insecure_keygen().await;
+    let key2 = ctx.insecure_keygen().await;
+    let key3 = ctx.insecure_keygen().await;
+
+    assert_ne!(key1, key2, "Keys must be unique");
+    assert_ne!(key1, key3, "Keys must be unique");
+    assert_ne!(key2, key3, "Keys must be unique");
+
+    println!("[K8S-THRESHOLD] ✅ All 3 keys are unique");
+    ctx.pass();
+}
+
 /// Test that multiple CRS generations produce unique IDs.
 /// Validates CRS generation is independent across calls.
 #[tokio::test]
-async fn full_gen_tests_default_k8s_centralized_sequential_crs() {
-    let ctx = K8sTestContext::new("full_gen_tests_default_k8s_centralized_sequential_crs");
+async fn k8s_test_crs_uniqueness() {
+    let ctx = K8sTestContext::new("k8s_test_crs_uniqueness");
 
     let crs1 = ctx.crs_gen().await;
     let crs2 = ctx.crs_gen().await;
 
     assert_ne!(crs1, crs2, "CRS IDs must be unique");
 
-    println!("[K8S-CENTRALIZED] ✅ Both CRS IDs are unique");
+    println!("[K8S-THRESHOLD] ✅ Both CRS IDs are unique");
     ctx.pass();
 }
