@@ -3,11 +3,6 @@ use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::{Monomials, ResiduePoly},
-        structure_traits::{ErrorCorrect, FromU128},
-    },
     execution::{
         online::{
             bit_manipulation::{BatchedBits, Bits},
@@ -15,9 +10,14 @@ use crate::{
             triple::open_list,
         },
         runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
     },
     ProtocolDescription,
+};
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::{Monomials, ResiduePoly},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, FromU128},
 };
 
 #[async_trait]
@@ -126,11 +126,6 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::common::{Monomials, ResiduePoly},
-            structure_traits::ErrorCorrect,
-        },
         execution::{
             online::{
                 bit_lift::{BitLift, SecureBitLift},
@@ -138,7 +133,6 @@ mod tests {
                 triple::open_list,
             },
             runtime::sessions::large_session::LargeSession,
-            sharing::share::Share,
         },
         malicious_execution::online::malicious_bit_lift::{
             BitLiftAddError, BitLiftDrop, BitLiftWrongAmountTooFew, BitLiftWrongAmountTooMany,
@@ -147,6 +141,12 @@ mod tests {
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::{Monomials, ResiduePoly},
+        sharing::share::Share,
+        structure_traits::ErrorCorrect,
     };
 
     async fn test_bit_lift<const EXTENSION_DEGREE: usize, MaliciousBitLift: BitLift>(

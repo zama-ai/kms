@@ -134,7 +134,6 @@ mod tests {
         execution::online::preprocessing::dummy::DummyPreprocessing, networking::NetworkMode,
         tests::helper::tests::get_base_session,
     };
-    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
 
     use super::*;
 

@@ -1,20 +1,20 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::{Monomials, ResiduePoly},
-        structure_traits::{ErrorCorrect, Sample},
-    },
     execution::{
         online::{
             bit_lift::{BitLift, SecureBitLift},
             preprocessing::{BasePreprocessing, BitPreprocessing},
         },
         runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
     },
     ProtocolDescription,
+};
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::{Monomials, ResiduePoly},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Sample},
 };
 
 /// A malicious implementation of the bit lift protocol that drops all the input bits and returns an empty vector

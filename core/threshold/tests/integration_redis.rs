@@ -375,7 +375,6 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
-    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use threshold_fhe::{
         execution::online::preprocessing::{
             dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing,
