@@ -291,46 +291,6 @@ pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize
     (lwe_dimension.0, lwe_dimension.0)
 }
 
-// /// Generates the lwe private key share and associated public key
-// pub(crate) async fn generate_lwe_key_shares<
-//     Z: BaseRing,
-//     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-//     S: BaseSessionHandles,
-//     Gen: ParallelByteRandomGenerator,
-//     const EXTENSION_DEGREE: usize,
-// >(
-//     params: &DKGParams,
-//     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-//     session: &mut S,
-//     preprocessing: &mut P,
-// ) -> anyhow::Result<(
-//     LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-//     LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>,
-// )>
-// where
-//     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-// {
-//     let param_basic = params.get_params_basics_handle();
-//     let my_role = session.my_role();
-//     //Init the shared LWE secret key
-//     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
-//     let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
-//         param_basic.lwe_hat_dimension(),
-//         preprocessing,
-//         param_basic.get_sk_deviations().map(|d| d.pmax),
-//         session,
-//     )
-//     .await?;
-//     let lwe_public_key_shared = generate_lwe_public_key_shared(
-//         params,
-//         mpc_encryption_rng,
-//         &lwe_secret_key_share,
-//         session,
-//         preprocessing,
-//     ).await?;
-//     Ok((lwe_secret_key_share, lwe_public_key_shared))
-// }
-
 /// Generates the lwe public key share from an existing secret key share
 pub(crate) async fn generate_lwe_public_key_shared<
     Z: BaseRing,

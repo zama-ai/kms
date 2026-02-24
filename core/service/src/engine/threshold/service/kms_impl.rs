@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
-use threshold_fhe::execution::online::bit_lift::SecureBitLift;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
@@ -308,7 +307,6 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
         PubS,
         PrivS,
         SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        SecureBitLift,
     >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
@@ -325,13 +323,11 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
         PubS,
         PrivS,
         SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        SecureBitLift,
     >,
     RealInsecureKeyGenerator<
         PubS,
         PrivS,
         SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        SecureBitLift,
     >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
@@ -655,7 +651,6 @@ where
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
-        _bl: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
     };
 

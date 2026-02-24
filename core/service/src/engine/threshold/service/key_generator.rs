@@ -31,7 +31,7 @@ use threshold_fhe::{
     execution::{
         endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
         keyset_config as ddec_keyset_config,
-        online::{bit_lift::BitLift, preprocessing::DKGPreprocessing},
+        online::preprocessing::DKGPreprocessing,
         runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
         tfhe_internals::{
             parameters::DKGParams,
@@ -126,7 +126,6 @@ pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    BL: BitLift,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -140,7 +139,6 @@ pub struct RealKeyGenerator<
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
-    pub(crate) _bl: PhantomData<BL>,
     // This is a lock to make sure calls to keygen do not happen concurrently.
     // It's needed because we lock the meta store at different times before starting the keygen
     // and if two concurrent keygen calls on the same key ID or preproc ID are made, they can interfere with each other.
@@ -154,9 +152,8 @@ pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    BL: BitLift,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG, BL>,
+    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
 }
 
 #[cfg(feature = "insecure")]
@@ -164,10 +161,9 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        BL: BitLift,
-    > RealInsecureKeyGenerator<PubS, PrivS, KG, BL>
+    > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG, BL>) -> Self {
+    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -179,7 +175,6 @@ impl<
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
-                _bl: std::marker::PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             },
         }
@@ -191,8 +186,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-        BL: BitLift,
-    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG, BL>
+    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
         &self,
@@ -247,8 +241,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-        BL: BitLift,
-    > RealKeyGenerator<PubS, PrivS, KG, BL>
+    > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -1459,8 +1452,7 @@ impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-        BL: BitLift,
-    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG, BL>
+    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(
         &self,
@@ -1486,8 +1478,7 @@ mod tests {
     use rand::rngs::OsRng;
     use threshold_fhe::{
         execution::{
-            online::{bit_lift::SecureBitLift, preprocessing::dummy::DummyPreprocessing},
-            small_execution::prss::PRSSSetup,
+            online::preprocessing::dummy::DummyPreprocessing, small_execution::prss::PRSSSetup,
         },
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
@@ -1508,8 +1499,7 @@ mod tests {
             PubS: Storage + Sync + Send + 'static,
             PrivS: StorageExt + Sync + Send + 'static,
             KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-            BL: BitLift,
-        > RealKeyGenerator<PubS, PrivS, KG, BL>
+        > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1537,7 +1527,6 @@ mod tests {
                 ongoing,
                 rate_limiter,
                 _kg: PhantomData,
-                _bl: PhantomData,
                 serial_lock: Arc::new(Mutex::new(())),
             }
         }
@@ -1551,10 +1540,8 @@ mod tests {
         }
     }
 
-    impl<
-            KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-            BL: BitLift,
-        > RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG, BL>
+    impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         async fn init_ram_keygen(
             base_kms: BaseKmsStruct,
@@ -1570,7 +1557,7 @@ mod tests {
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
         [RequestId; 4],
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG, SecureBitLift>,
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
@@ -1584,7 +1571,7 @@ mod tests {
             &epoch_id,
             base_kms.new_rng().await,
         );
-        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG, SecureBitLift>::init_ram_keygen(
+        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),
         )
