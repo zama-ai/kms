@@ -911,7 +911,7 @@ where
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
+                            update_specific_backup_vault::<PrivS, PrssSetup>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
