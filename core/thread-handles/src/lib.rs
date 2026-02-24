@@ -13,9 +13,9 @@ use error_utils::anyhow_error_and_log;
 /// Extract a human-readable message from a panic payload.
 fn panic_message(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
-        Ok(s) => return *s,
+        Ok(s) => *s,
         Err(payload) => match payload.downcast::<&str>() {
-            Ok(s) => return (*s).to_owned(),
+            Ok(s) => (*s).to_owned(),
             Err(_) => "unknown cause".to_owned(),
         },
     }

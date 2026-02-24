@@ -1,4 +1,3 @@
-use bc2wrap;
 use serde::Serialize;
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
