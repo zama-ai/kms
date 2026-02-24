@@ -1138,9 +1138,7 @@ mod tests {
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
-            small_execution::agree_random::{
-                AbortSecureAgreeRandom, AgreeRandom, DummyAgreeRandom,
-            },
+            small_execution::agree_random::{AbortSecureAgreeRandom, DummyAgreeRandom},
         },
         file_handling::tests::read_element,
         tests::helper::testing::get_networkless_base_session_for_parties,

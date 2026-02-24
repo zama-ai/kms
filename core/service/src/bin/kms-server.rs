@@ -507,26 +507,25 @@ async fn main_exec() -> anyhow::Result<()> {
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
 
     // Migrate legacy FHE keys to epoch-aware format
-    let kms_type = match core_config.threshold {
-        Some(_) => KMSType::Threshold,
-        None => KMSType::Centralized,
+    let (kms_type, num_parties, threshold) = match core_config.threshold {
+        Some(_) => {
+            let num_parties = core_config
+                .threshold
+                .as_ref()
+                .and_then(|t| t.peers.as_ref().map(|p| p.len()))
+                .expect("Peer configuration must be provided for migration");
+            let threshold = core_config
+                .threshold
+                .as_ref()
+                .map(|t| t.threshold)
+                .expect("Threshold configuration must be provided for migration");
+            (KMSType::Threshold, num_parties, threshold)
+        }
+        None => (KMSType::Centralized, 1, 0),
     };
-    migrate_to_0_13_1(
-        &mut private_storage,
-        kms_type,
-        core_config
-            .threshold
-            .as_ref()
-            .map(|t| t.threshold)
-            .expect("Threshold configuration must be provided for migration"),
-        core_config
-            .threshold
-            .as_ref()
-            .and_then(|t| t.peers.as_ref().map(|p| p.len()))
-            .expect("Peer configuration must be provided for migration"),
-    )
-    .await
-    .expect("Could not complete migration: {e}");
+    migrate_to_0_13_1(&mut private_storage, kms_type, threshold, num_parties)
+        .await
+        .expect("Could not complete migration: {e}");
 
     let private_keychain = OptionFuture::from(
         core_config
