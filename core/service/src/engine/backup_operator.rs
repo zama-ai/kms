@@ -711,7 +711,7 @@ where
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                restore_data_type::<PrivS, PrssSetup>(priv_storage, backup_vault, cur_type)
                     .await?;
             }
             PrivDataType::SigningKey => {
