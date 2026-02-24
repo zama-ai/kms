@@ -1982,6 +1982,78 @@ async fn real_preproc_and_keygen_isolated(
     Ok(key_id.to_string())
 }
 
+/// Helper to run preprocessing and keygen with compressed keys via CLI (isolated version)
+///
+/// Same as `real_preproc_and_keygen_isolated` but passes `compressed=true` in
+/// `SharedKeyGenParameters`, matching the Docker-based `test_threshold_compressed_preproc_keygen`.
+#[cfg(feature = "threshold_tests")]
+async fn real_preproc_and_keygen_compressed_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    max_iter: usize,
+) -> Result<String> {
+    // Step 1: Preprocessing
+    let preproc_config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id: None,
+            epoch_id: None,
+        }),
+        logs: true,
+        max_iter,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let t0 = std::time::Instant::now();
+    println!("Doing preprocessing (compressed)");
+    let mut preproc_result = execute_cmd(&preproc_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    assert_eq!(preproc_result.len(), 1);
+    let (preproc_id, _) = preproc_result.pop().unwrap();
+    println!(
+        "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
+
+    // Step 2: Key generation with compressed=true
+    let keygen_config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::KeyGen(KeyGenParameters {
+            preproc_id: preproc_id.unwrap(),
+            shared_args: SharedKeyGenParameters {
+                keyset_type: Some(KeySetType::Standard),
+                compressed: true,
+                context_id: None,
+                epoch_id: None,
+            },
+        }),
+        logs: true,
+        max_iter,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let t1 = std::time::Instant::now();
+    println!("Doing key-gen (compressed)");
+    let key_gen_results = execute_cmd(&keygen_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "Key-gen (compressed) done (elapsed: {:.1}s)",
+        t1.elapsed().as_secs_f64()
+    );
+    assert_eq!(key_gen_results.len(), 1);
+
+    let key_id = match key_gen_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing compressed keygen"),
+    };
+
+    Ok(key_id.to_string())
+}
+
 /// Helper to run partial preprocessing and keygen via CLI (isolated version)
 ///
 /// Uses `PartialPreprocKeyGen` with reduced offline generation to keep runtime
@@ -2850,6 +2922,115 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 
     // Verify different CRS IDs generated
     assert_ne!(res[0].as_ref().unwrap(), res[1].as_ref().unwrap());
+
+    Ok(())
+}
+
+/// Test threshold insecure compressed key generation via CLI (Test FHE params, with PRSS)
+///
+/// Mirrors `test_threshold_insecure_compressed_keygen` in integration_test.rs.
+/// Validates that insecure keygen with `compressed=true` produces a valid key ID
+/// on a threshold cluster using Test FHE parameters.
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+#[serial]
+async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
+    init_testing();
+
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_compressed_keygen", 4)
+            .await?;
+
+    let keys_folder = material_dir.path();
+    let key_id = insecure_key_gen_compressed_isolated(&config_path, keys_folder).await?;
+    assert!(!key_id.is_empty());
+
+    Ok(())
+}
+
+/// Test threshold preprocessing and keygen with compressed keys via CLI (Test FHE params, with PRSS)
+///
+/// Mirrors `test_threshold_compressed_preproc_keygen` in integration_test.rs.
+/// Runs two sequential preproc+keygen cycles with `compressed=true` and asserts
+/// that both produce distinct key IDs.
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+#[serial]
+async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
+    init_testing();
+
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss("threshold_compressed_preproc_keygen", 4)
+            .await?;
+
+    let keys_folder = material_dir.path();
+    let key_id_1 =
+        real_preproc_and_keygen_compressed_isolated(&config_path, keys_folder, 200).await?;
+    let key_id_2 =
+        real_preproc_and_keygen_compressed_isolated(&config_path, keys_folder, 200).await?;
+
+    assert_ne!(key_id_1, key_id_2);
+
+    Ok(())
+}
+
+/// Test threshold MPC context switch via CLI (4-party, Test FHE params, with PRSS)
+///
+/// Mirrors `test_threshold_mpc_context_switch` in integration_test.rs.
+/// Validates that after switching to a new MPC context:
+/// 1. Insecure keygen produces a key
+/// 2. The context can be switched to a new context ID
+/// 3. A public-decrypt request succeeds in the new context
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+#[serial]
+async fn test_threshold_mpc_context_switch() -> Result<()> {
+    init_testing();
+
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss("threshold_mpc_context_switch", 4).await?;
+
+    let test_path = material_dir.path();
+    let context_path = material_dir.path().join("mpc_context_switch.bin");
+
+    // Generate a key in the current (default) context
+    let key_id = insecure_key_gen_isolated(&config_path, test_path).await?;
+
+    // Create and store a new MPC context
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222222222")?;
+    store_mpc_context_in_file_isolated(&context_path, &config_path, context_id).await?;
+
+    // Perform the context switch
+    new_mpc_context_isolated(&config_path, &context_path, test_path).await?;
+
+    // Verify that a public-decrypt request succeeds in the new context
+    let ddec_config = CmdConfig {
+        file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
+        command: CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x1".to_string(),
+            data_type: FheType::Ebool,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id: KeyId::from_str(&key_id)?,
+            context_id: Some(context_id),
+            epoch_id: None,
+            batch_size: 1,
+            num_requests: 1,
+            parallel_requests: 1,
+            ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
+            compressed_keys: false,
+        })),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+    let results = execute_cmd(&ddec_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    assert_eq!(results.len(), 1);
 
     Ok(())
 }
