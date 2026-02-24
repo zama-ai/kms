@@ -63,27 +63,6 @@ struct EncryptionResult {
     pub data_type: FheType,
 }
 
-/// Result of a public-decryption operation.
-///
-/// The library verifies correctness internally via `check_external_decryption_signature`
-/// and panics on mismatch, so `party_responses` being non-empty is sufficient to confirm
-/// success. The count lets tests assert quorum (e.g. all 4 parties responded).
-struct DecryptionResult {
-    /// Number of party responses received.
-    pub party_responses: usize,
-}
-
-impl DecryptionResult {
-    /// Assert that at least `n` parties responded.
-    pub fn assert_responses(&self, n: usize) {
-        assert!(
-            self.party_responses >= n,
-            "Expected at least {n} party responses, got {}",
-            self.party_responses
-        );
-    }
-}
-
 /// Test context for K8s threshold tests.
 /// Provides consistent setup, logging, and helper methods.
 struct K8sTestContext {
@@ -230,11 +209,8 @@ impl K8sTestContext {
     /// Reads the ciphertext file produced by [`Self::encrypt`], sends it to all threshold
     /// parties, and internally calls `check_external_decryption_signature` which compares
     /// every party's decrypted bytes against the original plaintext stored in the file —
-    /// panics on any mismatch.
-    ///
-    /// Returns a [`DecryptionResult`] with the number of party responses received,
-    /// which tests can use to assert quorum (e.g. all 4 parties responded).
-    async fn public_decrypt_from_file(&self, enc: &EncryptionResult) -> DecryptionResult {
+    /// panics on any mismatch. A successful return means decryption is correct.
+    async fn public_decrypt_from_file(&self, enc: &EncryptionResult) {
         println!(
             "[K8S-THRESHOLD] Decrypting {:?} via threshold MPC",
             enc.cipher_path
@@ -253,17 +229,14 @@ impl K8sTestContext {
             )))
             .await;
 
-        let party_responses = results.len();
         assert!(
-            party_responses > 0,
-            "PublicDecrypt must return at least one response"
+            !results.is_empty(),
+            "PublicDecrypt must return at least one result"
         );
         println!(
-            "[K8S-THRESHOLD] ✅ Decryption verified ({} party responses) in {:.2}s",
-            party_responses,
+            "[K8S-THRESHOLD] ✅ Decryption verified in {:.2}s",
             start.elapsed().as_secs_f64()
         );
-        DecryptionResult { party_responses }
     }
 
     /// Generate a CRS.
@@ -306,8 +279,11 @@ impl K8sTestContext {
 // TESTS
 // ============================================================================
 
-/// Basic test: Generate a key and CRS.
-/// Validates that the fundamental MPC operations work in K8s.
+/// Smoke test: Generate a key (insecure DKG, no PRSS) and a CRS.
+///
+/// Uses `InsecureKeyGen` — a testing shortcut that skips PRSS preprocessing.
+/// Production keygen uses `PreprocKeyGen` + `KeyGen`. This test validates that
+/// the fundamental MPC cluster wiring (gRPC, mTLS, party coordination) works.
 #[tokio::test]
 async fn k8s_test_keygen_and_crs() {
     let ctx = K8sTestContext::new("k8s_test_keygen_and_crs");
@@ -321,8 +297,10 @@ async fn k8s_test_keygen_and_crs() {
     ctx.pass();
 }
 
-/// Test that multiple key generations produce unique keys.
-/// Validates MPC protocol handles sequential operations correctly.
+/// Test that sequential insecure key generations produce unique keys.
+///
+/// Uses `InsecureKeyGen` (no PRSS) to verify that the MPC protocol assigns
+/// a fresh, unique key ID on each call. Not representative of production keygen.
 #[tokio::test]
 async fn k8s_test_keygen_uniqueness() {
     let ctx = K8sTestContext::new("k8s_test_keygen_uniqueness");
@@ -339,12 +317,17 @@ async fn k8s_test_keygen_uniqueness() {
     ctx.pass();
 }
 
-/// End-to-end test: keygen → encrypt → threshold public decrypt → verify correctness.
+/// Cluster smoke test: insecure keygen → encrypt → threshold public decrypt → verify.
 ///
-/// Validates the full threshold use case across 4 MPC parties over mTLS:
-/// 1. Generate a threshold FHE key
-/// 2. Encrypt a known plaintext locally → ciphertext file
-/// 3. Send ciphertext to threshold parties for decryption → verify result matches original
+/// Uses `InsecureKeyGen` (no PRSS preprocessing) — a testing shortcut not used in
+/// production, where `PreprocKeyGen` + `KeyGen` is required. The `Encrypt` step
+/// fetches both the `PublicKey` and `ServerKey` from the cluster; in real client
+/// operation only the `PublicKey` is needed for encryption.
+///
+/// What this test validates:
+/// 1. Cluster wiring: all 4 parties reachable, gRPC + mTLS functional
+/// 2. Key material round-trip: keygen → S3 → encrypt → decrypt
+/// 3. MPC decryption correctness: `check_external_decryption_signature` passes
 #[tokio::test]
 async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
     let ctx = K8sTestContext::new("k8s_test_insecure_keygen_encrypt_and_public_decrypt");
@@ -368,18 +351,19 @@ async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
     // Step 4: send ciphertext to all 4 threshold parties for decryption.
     // Internally verifies decrypted result == original `plaintext` bytes;
     // panics on any mismatch → test fails.
-    let dec = ctx.public_decrypt_from_file(&enc).await;
-    dec.assert_responses(4);
+    ctx.public_decrypt_from_file(&enc).await;
 
     ctx.pass();
 }
 
-/// End-to-end test: one key, multiple FHE types — encrypt and decrypt both `Ebool` and `Euint8`.
+/// Cluster smoke test: one insecure key handles multiple FHE types correctly.
 ///
-/// Validates that a single threshold key correctly handles ciphertexts of different types:
+/// Uses `InsecureKeyGen` (no PRSS) — see `k8s_test_insecure_keygen_encrypt_and_public_decrypt`
+/// for caveats. Validates that a single threshold key correctly serves ciphertexts
+/// of different FHE types in sequence:
 /// 1. Generate one threshold FHE key
-/// 2. Encrypt `true` as `Ebool` → decrypt → verify (uses `enc.data_type` in assertion)
-/// 3. Encrypt `0x2a` as `Euint8` → decrypt → verify (uses `enc.data_type` in assertion)
+/// 2. Encrypt `true` as `Ebool` → decrypt → verify (`enc.data_type == Ebool`)
+/// 3. Encrypt `0x2a` as `Euint8` → decrypt → verify (`enc.data_type == Euint8`)
 #[tokio::test]
 async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
     let ctx = K8sTestContext::new("k8s_test_insecure_keygen_encrypt_multiple_types");
@@ -395,8 +379,7 @@ async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
         FheType::Ebool,
         "EncryptionResult must carry the correct FHE type"
     );
-    let dec_bool = ctx.public_decrypt_from_file(&enc_bool).await;
-    dec_bool.assert_responses(4);
+    ctx.public_decrypt_from_file(&enc_bool).await;
 
     // Step 3: encrypt an 8-bit unsigned integer and decrypt it with the same key
     let enc_uint = ctx.encrypt(&key_id, "0x2a", FheType::Euint8).await;
@@ -405,8 +388,7 @@ async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
         FheType::Euint8,
         "EncryptionResult must carry the correct FHE type"
     );
-    let dec_uint = ctx.public_decrypt_from_file(&enc_uint).await;
-    dec_uint.assert_responses(4);
+    ctx.public_decrypt_from_file(&enc_uint).await;
 
     ctx.pass();
 }
