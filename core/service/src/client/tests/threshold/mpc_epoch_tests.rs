@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, PreviousEpochInfo},
+    kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{alloy_to_protobuf_domain, PubDataType},
     ContextId, RequestId,
@@ -155,20 +155,22 @@ pub(crate) async fn new_epoch_with_reshare(
     let previous_epoch = Some(PreviousEpochInfo {
         context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-        key_id: Some(key_req_id.into()),
-        preproc_id: Some(preproc_req_id.into()),
-        key_parameters: parameters.into(),
-        key_digests: vec![
-            kms_grpc::kms::v1::KeyDigest {
-                key_type: PubDataType::ServerKey.to_string(),
-                digest: server_key_digest,
-            },
-            kms_grpc::kms::v1::KeyDigest {
-                key_type: PubDataType::PublicKey.to_string(),
-                digest: public_key_digest,
-            },
-        ],
-        domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+        keys_info: vec![KeyInfo {
+            key_id: Some(key_req_id.into()),
+            preproc_id: Some(preproc_req_id.into()),
+            key_parameters: parameters.into(),
+            key_digests: vec![
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::ServerKey.to_string(),
+                    digest: server_key_digest,
+                },
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::PublicKey.to_string(),
+                    digest: public_key_digest,
+                },
+            ],
+            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+        }],
     });
 
     // Create the new epoch and reshare from previous one
@@ -327,7 +329,12 @@ async fn run_new_epoch(
                 (
                     idx,
                     response.map(|response| {
-                        let response = response.into_inner();
+                        let response = response
+                            .into_inner()
+                            .reshare_responses
+                            .first()
+                            .unwrap()
+                            .clone();
                         Response::new(KeyGenResult {
                             request_id: response.key_id.clone(),
                             preprocessing_id: response.preprocessing_id.clone(),
@@ -339,15 +346,13 @@ async fn run_new_epoch(
             })
             .collect::<Vec<_>>();
 
-        let PreviousEpochInfo {
-            context_id: _,
-            epoch_id: _,
+        let KeyInfo {
             key_id,
             preproc_id,
             key_parameters: _,
             key_digests: _,
             domain: _,
-        } = previous_epoch;
+        } = previous_epoch.keys_info.first().unwrap().clone();
 
         let preproc_id = preproc_id.as_ref().unwrap().try_into().unwrap();
         let key_id = key_id.as_ref().unwrap().try_into().unwrap();
