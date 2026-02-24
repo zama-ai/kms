@@ -27,8 +27,6 @@ proptest.workspace = true
 rstest.workspace = true
 num-traits.workspace = true
 
-# TODO(dp): figure out if all of these features are really needed in this crate. I think
-# that given that it's not doing any IO anymore, the "non-wasm" stuff isn't really needed?
 [features]
 default = ["non-wasm", "extension_degree_4"]
 extension_degree_3 =[]
