@@ -940,10 +940,6 @@ impl PRSSConversions for LevelOne {
 // Having such a root makes it easy to compute NTT over Q to support fast multiplication.
 
 //Represents the Ring for the top level ciphertext (Q = Prod(Q_i))
-//impl_modulus!(Q, U768, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001");
-//type ConstMontyFormQ = crypto_bigint::modular::ConstMontyForm<Q, { U768::LIMBS }>;
-//impl_from_u128_big!(LevelEll, U768);
-//impl_ring_level!(LevelEll, U768, ModulusSize768, Q, ConstMontyFormQ, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000");
 
 pub type Q = QProd15;
 pub type LevelEll = LevelFifteen;

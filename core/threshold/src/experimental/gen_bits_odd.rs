@@ -194,9 +194,6 @@ mod tests {
             let ss_b = ShamirSharings::create(vec_b);
             let b = ss_b.reconstruct(threshold as usize).unwrap();
 
-            //if !(b == LevelKsw::ZERO || b == LevelKsw::ONE) {
-            //    println!("Failed at index {index} with value {b:#?}");
-            //}
             assert!(
                 b == LevelKsw::ZERO || b == LevelKsw::ONE,
                 "Failed at index {index} with value {b:#?}"

@@ -310,8 +310,8 @@ fn key_switch(
     modulus_switch::<LevelEll, LevelKsw, N65536>(&new_ct, q, big_q, *PLAINTEXT_MODULUS)
 }
 
-// NOTE: We return a ctxt at the level one (lowest one) because we only care
-// about supporting one level of multiplication as this is for exposition purposes only.
+// NOTE: Since we do not keep track of the noise growth,
+// this should be called on fresh ctxt only.
 pub fn multiply_ctxt(
     ct_a: &LevelledCiphertext<LevelEll, N65536>,
     ct_b: &LevelledCiphertext<LevelEll, N65536>,
