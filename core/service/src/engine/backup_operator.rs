@@ -913,7 +913,7 @@ where
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            update_legacy_prss::<PrivS>(
+                            update_legacy_prss_13_4::<PrivS>(
                                 &private_storage,
                                 &mut backup_vault,
                                 true, // We MUST overwrite existing data in the backup vault
@@ -957,8 +957,9 @@ where
     }
 }
 
+// *WARNING* this function only works with n=13, t=4
 #[allow(deprecated)]
-pub(crate) async fn update_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
+pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &PrivS,
     backup_vault: &mut Vault,
     overwrite: bool,
@@ -1017,55 +1018,21 @@ pub(crate) async fn update_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
             )
             .await?;
         }
-        (Err(e), Ok(prss_64)) => {
-            tracing::warn!(
-                "PRSS Z128 is not available, cannot update legacy PRSS backup data: {e}"
+        (Err(e), Ok(_prss_64)) => {
+            tracing::error!(
+                "Legacy PRSS Z128 is not available, cannot update PRSS backup data: {e}"
             );
-            // In case we need to overwrite, delete the old data
-            if overwrite {
-                // Delete the old backup data
-                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-                delete_at_request_id(
-                    backup_vault,
-                    &prss_64_id,
-                    &PrivDataType::PrssSetup.to_string(),
-                )
-                .await?;
-            }
-            store_versioned_at_request_id(
-                backup_vault,
-                &prss_64_id,
-                &prss_64,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await?;
         }
-        (Ok(prss_128), Err(e)) => {
-            tracing::warn!("PRSS Z64 is not available, cannot update legacy PRSS backup data: {e}");
-            // In case we need to overwrite, delete the old data
-            if overwrite {
-                // Delete the old backup data
-                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-                delete_at_request_id(
-                    backup_vault,
-                    &prss_128_id,
-                    &PrivDataType::PrssSetup.to_string(),
-                )
-                .await?;
-            }
-            store_versioned_at_request_id(
-                backup_vault,
-                &prss_128_id,
-                &prss_128,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await?;
+        (Ok(_prss_128), Err(e)) => {
+            tracing::error!(
+                "Legacy PRSS Z64 is not available, cannot update PRSS backup data: {e}"
+            );
         }
         (Err(e1), Err(e2)) => {
-            tracing::warn!("Neither PRSS Z128 nor Z64 are available, cannot update legacy PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+            tracing::warn!("Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
         }
     }
-    return Ok(());
+    Ok(())
 }
 
 #[allow(deprecated)]
@@ -1104,30 +1071,18 @@ async fn restore_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
             )
             .await?;
         }
-        (Err(e), Ok(prss_64)) => {
-            tracing::warn!(
-                "PRSS Z128 is not available, cannot update legacy PRSS backup data: {e}"
+        (Err(e), Ok(_prss_64)) => {
+            tracing::error!(
+                "Legacy PRSS Z128 is not available, cannot update PRSS backup data: {e}"
             );
-            store_versioned_at_request_id(
-                priv_storage,
-                &prss_64_id,
-                &prss_64,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await?;
         }
-        (Ok(prss_128), Err(e)) => {
-            tracing::warn!("PRSS Z64 is not available, cannot update legacy PRSS backup data: {e}");
-            store_versioned_at_request_id(
-                priv_storage,
-                &prss_128_id,
-                &prss_128,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await?;
+        (Ok(_prss_128), Err(e)) => {
+            tracing::error!(
+                "Legacy PRSS Z64 is not available, cannot update PRSS backup data: {e}"
+            );
         }
         (Err(e1), Err(e2)) => {
-            tracing::warn!("Neither PRSS Z128 nor Z64 are available, cannot update legacy PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+            tracing::warn!("Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
         }
     }
     Ok(())
