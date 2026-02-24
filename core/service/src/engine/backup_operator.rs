@@ -1228,10 +1228,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_update_backup_vault_without_overwrite() {
         let mut priv_storage = RamStorage::new();
         let mut backup_vault = make_unencrypted_vault();
-        let data_type = PrivDataType::SigningKey;
+        let data_type = PrivDataType::PrssSetup;
         let req_id = derive_request_id("test_backup_2").unwrap();
 
         // Store original data in private storage
@@ -1304,11 +1305,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
     async fn test_update_epoch_backup_vault() {
         let mut priv_storage = RamStorage::new();
         let mut backup_vault = make_unencrypted_vault();
-        let data_type = PrivDataType::PrssSetup;
+        let data_type = PrivDataType::FheKeyInfo;
         let req_id = derive_request_id("multi_epoch").unwrap();
         let epoch_1 = EpochId::from_bytes([10u8; 32]);
         let epoch_2 = EpochId::from_bytes([20u8; 32]);
