@@ -148,8 +148,8 @@ pub async fn ensure_client_keys_exist(
 /// 3. Generates and stores new keys if needed
 ///
 /// # Returns
-/// - `true` if new keys were generated
-/// - `false` if keys already existed
+/// - `Some(RequestId)` if new keys were generated with a request ID that is the digest of the public key (Ethereum Address)
+/// - `None` if keys already existed
 ///
 /// # Panics
 /// - If storage validation fails (inconsistent state)
@@ -159,7 +159,7 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     priv_storage: &mut PrivS,
     req_id: &RequestId,
     deterministic: bool,
-) -> bool
+) -> Option<RequestId>
 where
     PubS: Storage,
     PrivS: Storage,
@@ -170,7 +170,7 @@ where
             Ok(keys) => keys,
             Err(e) => {
                 tracing::error!("Failed to read existing server signing keys: {}", e);
-                return false;
+                return None;
             }
         };
 
@@ -250,7 +250,7 @@ where
             }
         }
 
-        return false;
+        return None;
     }
 
     let mut rng = get_rng(deterministic, Some(0));

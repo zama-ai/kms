@@ -2,9 +2,7 @@
 //!
 //! This module provides reusable helper functions for test setup and utilities.
 use super::material::TestMaterialManager;
-use crate::consts::{
-    DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
-};
+use crate::consts::{DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
 use crate::vault::storage::{file::FileStorage, Storage};
 use anyhow::Result;
