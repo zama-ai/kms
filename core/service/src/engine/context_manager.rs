@@ -6,7 +6,8 @@ use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::backup_operator::{
-    update_legacy_prss_13_4, update_specific_backup_vault, update_specific_backup_vault_for_all_epochs,
+    update_legacy_prss_13_4, update_specific_backup_vault,
+    update_specific_backup_vault_for_all_epochs,
 };
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
