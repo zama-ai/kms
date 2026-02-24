@@ -265,9 +265,13 @@ where
                     }
                     #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
-                        tracing::info!(
-                            "Skipping deprecated PRSS setup type during custodian context creation"
-                        );
+                        update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
                     }
                     PrivDataType::SigningKey => {
                         // TODO(#2862) will eventually be epoched

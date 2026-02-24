@@ -711,7 +711,8 @@ where
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                tracing::info!("Skipping deprecated PRSS setup type during restore");
+                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
@@ -910,9 +911,13 @@ where
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            tracing::info!(
-                                "Skipping deprecated PRSS setup type during backup vault update"
-                            );
+                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
                         }
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched
@@ -1299,10 +1304,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_update_epoch_backup_vault() {
         let mut priv_storage = RamStorage::new();
         let mut backup_vault = make_unencrypted_vault();
-        let data_type = PrivDataType::FheKeyInfo;
+        let data_type = PrivDataType::PrssSetup;
         let req_id = derive_request_id("multi_epoch").unwrap();
         let epoch_1 = EpochId::from_bytes([10u8; 32]);
         let epoch_2 = EpochId::from_bytes([20u8; 32]);
