@@ -265,8 +265,8 @@ where
                     }
                     #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
-                        update_legacy_prss(
-                            &*guarded_priv_storage,
+                        update_legacy_prss::<PrivS>(
+                            &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             true, // We MUST overwrite existing data in the backup vault
                         )

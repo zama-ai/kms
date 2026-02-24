@@ -914,7 +914,7 @@ where
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
                             update_legacy_prss::<PrivS>(
-                                &*private_storage,
+                                &private_storage,
                                 &mut backup_vault,
                                 true, // We MUST overwrite existing data in the backup vault
                             )
@@ -966,7 +966,7 @@ pub(crate) async fn update_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
     let prss_128_id = derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
     let prss_64_id = derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
     let prss_128_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z128>>(
-        &priv_storage,
+        priv_storage,
         &prss_128_id,
         &PrivDataType::PrssSetup.to_string(),
     )
@@ -975,7 +975,7 @@ pub(crate) async fn update_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
         tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
     });
     let prss_64_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z64>>(
-        &priv_storage,
+        priv_storage,
         &prss_64_id,
         &PrivDataType::PrssSetup.to_string(),
     )
