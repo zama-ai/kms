@@ -18,7 +18,8 @@
 //! | `k8s_test_keygen_and_crs` | Basic keygen + CRS generation |
 //! | `k8s_test_keygen_uniqueness` | Multiple keygens produce unique keys |
 //! | `k8s_test_crs_uniqueness` | Multiple CRS generations produce unique IDs |
-//! | `k8s_test_keygen_and_public_decrypt` | End-to-end: keygen → encrypt → public decrypt |
+//! | `k8s_test_insecure_keygen_encrypt_and_public_decrypt` | End-to-end: insecure keygen → encrypt → public decrypt |
+//! | `k8s_test_insecure_keygen_encrypt_multiple_types` | One key, multiple FHE types: encrypt + decrypt `Ebool` and `Euint8` |
 //!
 //! ## Architecture
 //!
@@ -51,6 +52,38 @@ use std::path::{Path, PathBuf};
 // TEST INFRASTRUCTURE
 // ============================================================================
 
+/// Result of an encryption operation, carrying the ciphertext file path and
+/// the original plaintext so tests can compose encrypt→decrypt→compare scenarios.
+struct EncryptionResult {
+    /// Path to the serialised `CipherWithParams` file (ciphertext + plaintext metadata).
+    pub cipher_path: PathBuf,
+    /// The original plaintext hex string that was encrypted.
+    pub plaintext: String,
+    /// The FHE data type that was encrypted.
+    pub data_type: FheType,
+}
+
+/// Result of a public-decryption operation.
+///
+/// The library verifies correctness internally via `check_external_decryption_signature`
+/// and panics on mismatch, so `party_responses` being non-empty is sufficient to confirm
+/// success. The count lets tests assert quorum (e.g. all 4 parties responded).
+struct DecryptionResult {
+    /// Number of party responses received.
+    pub party_responses: usize,
+}
+
+impl DecryptionResult {
+    /// Assert that at least `n` parties responded.
+    pub fn assert_responses(&self, n: usize) {
+        assert!(
+            self.party_responses >= n,
+            "Expected at least {n} party responses, got {}",
+            self.party_responses
+        );
+    }
+}
+
 /// Test context for K8s threshold tests.
 /// Provides consistent setup, logging, and helper methods.
 struct K8sTestContext {
@@ -77,7 +110,20 @@ impl K8sTestContext {
         }
     }
 
-    /// Get the test workspace path.
+    /// Returns the path to the temporary workspace directory for this test.
+    ///
+    /// The workspace is a per-test `tempdir` that is automatically cleaned up after
+    /// the test completes. All output files (ciphertext, keys, etc.) are written here.
+    ///
+    /// Used internally by [`Self::execute`] and [`Self::encrypt`]. Call it directly in
+    /// tests that need to inspect or reference output files — for example, to check that
+    /// a file was written, read its contents, or pass its path to another operation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let enc = ctx.encrypt(&key_id, "0x1", FheType::Ebool).await;
+    /// assert!(ctx.workspace().join("ciphertext_ebool.bin").exists());
+    /// ```
     fn workspace(&self) -> &Path {
         self.temp_dir.path()
     }
@@ -134,14 +180,15 @@ impl K8sTestContext {
         key_id
     }
 
-    /// Step 1 of the encrypt→decrypt round-trip: encrypt a plaintext and write the
-    /// ciphertext (plus original plaintext params) to a file in the workspace.
+    /// Encrypt a plaintext and write the ciphertext (plus original plaintext params) to a
+    /// file in the workspace.
     ///
     /// Fetches the public FHE key for `key_id` from the cluster, encrypts `plaintext`
-    /// locally, and serialises the result to `<workspace>/ciphertext.bin`.
-    /// Returns the path to the ciphertext file.
-    async fn encrypt(&self, key_id: &str, plaintext: &str, data_type: FheType) -> PathBuf {
-        let cipher_path = self.workspace().join("ciphertext.bin");
+    /// locally, and serialises the result to `<workspace>/ciphertext_<type>.bin`.
+    /// Returns an [`EncryptionResult`] carrying the ciphertext path and original plaintext
+    /// for use in subsequent decrypt or comparison steps.
+    async fn encrypt(&self, key_id: &str, plaintext: &str, data_type: FheType) -> EncryptionResult {
+        let cipher_path = self.workspace().join(format!("ciphertext_{data_type}.bin"));
         println!(
             "[K8S-THRESHOLD] Encrypting (key={}, plaintext={}, type={:?}) → {:?}",
             key_id, plaintext, data_type, cipher_path
@@ -170,27 +217,34 @@ impl K8sTestContext {
             "Ciphertext file must have been written"
         );
         println!("[K8S-THRESHOLD] ✅ Ciphertext written to {:?}", cipher_path);
-        cipher_path
+        EncryptionResult {
+            cipher_path,
+            plaintext: plaintext.to_string(),
+            data_type,
+        }
     }
 
-    /// Step 2 of the encrypt→decrypt round-trip: decrypt a ciphertext file via
-    /// threshold MPC and verify the result matches the original plaintext.
+    /// Decrypt a ciphertext file via threshold MPC, verifying the result matches the
+    /// original plaintext.
     ///
-    /// Reads the ciphertext file produced by `encrypt()`, sends it to all threshold
-    /// parties, and internally calls `check_external_decryption_signature` which
-    /// compares every party's decrypted bytes against the original plaintext stored
-    /// in the file — returns `Err` (panics via `.unwrap()`) on any mismatch.
-    async fn public_decrypt_from_file(&self, cipher_path: PathBuf) {
+    /// Reads the ciphertext file produced by [`Self::encrypt`], sends it to all threshold
+    /// parties, and internally calls `check_external_decryption_signature` which compares
+    /// every party's decrypted bytes against the original plaintext stored in the file —
+    /// panics on any mismatch.
+    ///
+    /// Returns a [`DecryptionResult`] with the number of party responses received,
+    /// which tests can use to assert quorum (e.g. all 4 parties responded).
+    async fn public_decrypt_from_file(&self, enc: &EncryptionResult) -> DecryptionResult {
         println!(
-            "[K8S-THRESHOLD] Decrypting from file {:?} via threshold MPC",
-            cipher_path
+            "[K8S-THRESHOLD] Decrypting {:?} via threshold MPC",
+            enc.cipher_path
         );
         let start = std::time::Instant::now();
 
         let results = self
             .execute(CCCommand::PublicDecrypt(CipherArguments::FromFile(
                 CipherFile {
-                    input_path: cipher_path,
+                    input_path: enc.cipher_path.clone(),
                     batch_size: 1,
                     num_requests: 1,
                     inter_request_delay_ms: 0,
@@ -199,14 +253,17 @@ impl K8sTestContext {
             )))
             .await;
 
+        let party_responses = results.len();
         assert!(
-            !results.is_empty(),
+            party_responses > 0,
             "PublicDecrypt must return at least one response"
         );
         println!(
-            "[K8S-THRESHOLD] ✅ Decryption verified in {:.2}s",
+            "[K8S-THRESHOLD] ✅ Decryption verified ({} party responses) in {:.2}s",
+            party_responses,
             start.elapsed().as_secs_f64()
         );
+        DecryptionResult { party_responses }
     }
 
     /// Generate a CRS.
@@ -289,8 +346,8 @@ async fn k8s_test_keygen_uniqueness() {
 /// 2. Encrypt a known plaintext locally → ciphertext file
 /// 3. Send ciphertext to threshold parties for decryption → verify result matches original
 #[tokio::test]
-async fn k8s_test_keygen_and_public_decrypt() {
-    let ctx = K8sTestContext::new("k8s_test_keygen_and_public_decrypt");
+async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
+    let ctx = K8sTestContext::new("k8s_test_insecure_keygen_encrypt_and_public_decrypt");
 
     // Step 1: define the plaintext value that will be encrypted and later verified
     let plaintext = "0x1"; // true, encoded as Ebool
@@ -301,13 +358,55 @@ async fn k8s_test_keygen_and_public_decrypt() {
     assert!(!key_id.is_empty(), "Key ID must not be empty");
 
     // Step 3: encrypt `plaintext` with the generated key — fetches public FHE key from
-    // the cluster, encrypts locally, writes ciphertext to workspace/ciphertext.bin
-    let cipher_path = ctx.encrypt(&key_id, plaintext, data_type).await;
+    // the cluster, encrypts locally, writes ciphertext to workspace/ciphertext_ebool.bin
+    let enc = ctx.encrypt(&key_id, plaintext, data_type).await;
+    assert_eq!(
+        enc.plaintext, plaintext,
+        "EncryptionResult must carry original plaintext"
+    );
 
     // Step 4: send ciphertext to all 4 threshold parties for decryption.
     // Internally verifies decrypted result == original `plaintext` bytes;
     // panics on any mismatch → test fails.
-    ctx.public_decrypt_from_file(cipher_path).await;
+    let dec = ctx.public_decrypt_from_file(&enc).await;
+    dec.assert_responses(4);
+
+    ctx.pass();
+}
+
+/// End-to-end test: one key, multiple FHE types — encrypt and decrypt both `Ebool` and `Euint8`.
+///
+/// Validates that a single threshold key correctly handles ciphertexts of different types:
+/// 1. Generate one threshold FHE key
+/// 2. Encrypt `true` as `Ebool` → decrypt → verify (uses `enc.data_type` in assertion)
+/// 3. Encrypt `0x2a` as `Euint8` → decrypt → verify (uses `enc.data_type` in assertion)
+#[tokio::test]
+async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
+    let ctx = K8sTestContext::new("k8s_test_insecure_keygen_encrypt_multiple_types");
+
+    // Step 1: generate one threshold FHE key used for all encryptions below
+    let key_id = ctx.insecure_keygen().await;
+    assert!(!key_id.is_empty(), "Key ID must not be empty");
+
+    // Step 2: encrypt a boolean value and decrypt it
+    let enc_bool = ctx.encrypt(&key_id, "0x1", FheType::Ebool).await;
+    assert_eq!(
+        enc_bool.data_type,
+        FheType::Ebool,
+        "EncryptionResult must carry the correct FHE type"
+    );
+    let dec_bool = ctx.public_decrypt_from_file(&enc_bool).await;
+    dec_bool.assert_responses(4);
+
+    // Step 3: encrypt an 8-bit unsigned integer and decrypt it with the same key
+    let enc_uint = ctx.encrypt(&key_id, "0x2a", FheType::Euint8).await;
+    assert_eq!(
+        enc_uint.data_type,
+        FheType::Euint8,
+        "EncryptionResult must carry the correct FHE type"
+    );
+    let dec_uint = ctx.public_decrypt_from_file(&enc_uint).await;
+    dec_uint.assert_responses(4);
 
     ctx.pass();
 }

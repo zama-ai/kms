@@ -134,7 +134,7 @@ K8s tests connect to a real kind cluster.
 
 ### Writing a K8s test
 
-K8s tests use `K8sTestContext`, a lightweight struct defined at the top of each `kubernetes_test_*_isolated.rs` file. There is no server setup code — the cluster must already be running before the tests start. The current threshold tests cover: basic keygen+CRS, keygen uniqueness, CRS uniqueness, and a full end-to-end keygen→encrypt→decrypt round-trip.
+K8s tests use `K8sTestContext`, a lightweight struct defined at the top of each `kubernetes_test_*_isolated.rs` file. There is no server setup code — the cluster must already be running before the tests start. The current threshold tests cover: basic keygen+CRS, keygen uniqueness, CRS uniqueness, a full end-to-end keygen→encrypt→decrypt round-trip, and a multi-type scenario (encrypt `Ebool` and `Euint8` with the same key).
 
 Test names must start with `k8s_` so that CI can skip them in non-Kind environments via `--skip k8s_`.
 
@@ -162,8 +162,9 @@ async fn k8s_test_keygen_and_crs() {
 | `new(name)` | Create context, print test header |
 | `insecure_keygen()` | Run `InsecureKeyGen`, return key ID |
 | `crs_gen()` | Run `CrsGen`, return CRS ID |
-| `encrypt(key_id, plaintext, FheType)` | Fetch public FHE key from cluster, encrypt locally, write ciphertext to workspace file; returns path |
-| `public_decrypt_from_file(path)` | Send ciphertext file to threshold parties, verify decrypted result matches original plaintext — panics on mismatch |
+| `encrypt(key_id, plaintext, FheType)` | Fetch public FHE key from cluster, encrypt locally, write ciphertext to workspace; returns `EncryptionResult` (path + original plaintext + type) |
+| `public_decrypt_from_file(enc)` | Send ciphertext from `EncryptionResult` to threshold parties, verify result matches original — panics on mismatch; returns `DecryptionResult` (party response count) |
+| `workspace()` | Path to the per-test temp directory; use directly to inspect or reference output files (e.g. ciphertext files written by `encrypt()`) |
 | `execute(CCCommand)` | Run any CLI command, return results |
 | `config_path()` | Path to cluster config TOML |
 | `pass(self)` | Print elapsed time and PASSED summary |
