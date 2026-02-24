@@ -306,15 +306,6 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        if self.session_maker.epoch_exists(&epoch_id).await {
-            return Err(MetricedError::new(
-                OP_INIT,
-                Some(epoch_id.into()),
-                anyhow::anyhow!("Epoch {epoch_id} already exists"),
-                tonic::Code::AlreadyExists,
-            ));
-        }
-
         self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
             MetricedError::new(
                 OP_INIT,
