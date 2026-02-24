@@ -497,7 +497,7 @@ pub async fn file_backup_vault(
         make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
-            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)
                 .await
                 .unwrap(),
         ),

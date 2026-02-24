@@ -405,10 +405,16 @@ mod tests {
         //Make sure malicious parties are detected as such
         if params.should_be_detected {
             for role in &malicious_roles_with_dispute {
-                assert!(ref_malicious_set.contains(role));
+                assert!(
+                    ref_malicious_set.contains(role),
+                    "malicious role {role:?} not detected as malicious"
+                );
             }
         } else {
-            assert!(ref_malicious_set.is_empty());
+            assert!(
+                ref_malicious_set.is_empty(),
+                " no malicious parties should be detected, but found {ref_malicious_set:?}"
+            );
         }
 
         //Check that everything reconstructs, and that triples are triples

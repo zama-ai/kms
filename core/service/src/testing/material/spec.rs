@@ -80,6 +80,24 @@ impl TestMaterialSpec {
         }
     }
 
+    /// Create specification for threshold test with signing keys only (no FHE keys)
+    ///
+    /// Use this for tests that generate FHE keys dynamically (e.g., party resharing tests)
+    /// and only need signing keys for authentication.
+    pub fn threshold_signing_only(party_count: usize) -> Self {
+        let mut required_keys = HashSet::new();
+        required_keys.insert(KeyType::ClientKeys);
+        required_keys.insert(KeyType::SigningKeys);
+        required_keys.insert(KeyType::ServerSigningKeys);
+
+        Self {
+            material_type: MaterialType::Testing,
+            required_keys,
+            party_count: Some(party_count),
+            include_slow_material: false,
+        }
+    }
+
     /// Create specification for comprehensive test with all material
     pub fn comprehensive(party_count: Option<usize>) -> Self {
         let mut required_keys = HashSet::new();

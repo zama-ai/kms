@@ -141,9 +141,10 @@ mod tests {
     #[test]
     fn test_cast_fail_memory_bit_dec_preprocessing() {
         let session = get_base_session(NetworkMode::Sync);
-        let mut dummy_preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
+        let mut dummy_preprocessing = DummyPreprocessing::new(42, &session);
 
-        let casted_from_dummy = dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
+        let casted_from_dummy: InMemoryBitDecPreprocessing<4> =
+            dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
 
         let mut in_memory_bit_dec_preprocessing = InMemoryBitDecPreprocessing {
             available_triples: casted_from_dummy.available_triples,

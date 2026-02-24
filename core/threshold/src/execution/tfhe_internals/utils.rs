@@ -287,19 +287,17 @@ pub(super) async fn compute_hamming_weight_glwe_sk<
 
 #[cfg(test)]
 pub mod tests {
-    use crate::execution::tfhe_internals::{
-        glwe_key::GlweSecretKeyShare,
-        parameters::{DKGParams, DKGParamsBasics},
-        private_keysets::PrivateKeySet,
-        sns_compression_key::SnsCompressionPrivateKeyShares,
-    };
+    use crate::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
+    use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
+    use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
+    use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use crate::file_handling::tests::read_element;
     use algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
         role::Role,
         sharing::share::Share,
-        structure_traits::ErrorCorrect,
+        structure_traits::{ErrorCorrect, Ring},
     };
     use itertools::Itertools;
     use std::collections::HashMap;
@@ -362,6 +360,7 @@ pub mod tests {
     ) -> LweSecretKeyOwned<u64>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
     {
         let mut sk_shares = HashMap::new();
         for party in 1..=parties {
@@ -378,8 +377,25 @@ pub mod tests {
         for (role, sk) in sk_shares {
             lwe_key_shares.insert(role, Vec::new());
             let lwe_key_shares = lwe_key_shares.get_mut(&role).unwrap();
-            for key_share in sk.lwe_compute_secret_key_share.data.into_iter() {
-                (*lwe_key_shares).push(key_share);
+            match sk.lwe_compute_secret_key_share {
+                crate::execution::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z64(
+                    inner,
+                ) => {
+                    for key_share in inner.data.into_iter() {
+                        (*lwe_key_shares).push(key_share);
+                    }
+                }
+                crate::execution::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
+                    inner,
+                ) => {
+                    for key_share in inner.data.into_iter() {
+                        //We cast down to u64, since everything is a bit
+                        let value = key_share.value().to_residuepoly64();
+                        let owner = key_share.owner();
+                        let key_share = Share::new(owner, value);
+                        (*lwe_key_shares).push(key_share);
+                    }
+                }
             }
         }
 

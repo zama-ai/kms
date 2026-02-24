@@ -196,15 +196,29 @@ where
     /// Check if FHE keys exist (for central server).
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
+    /// This checks for both standard keys (PublicKey) and compressed keys (CompressedXofKeySet),
+    /// since compressed keygen only stores CompressedXofKeySet publicly.
     pub async fn fhe_keys_exist(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<bool> {
+        let standard = self
+            .data_exists_at_epoch(
+                key_id,
+                epoch_id,
+                &PubDataType::PublicKey.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await?;
+        if standard {
+            return Ok(true);
+        }
+        // Fallback: check for compressed keys
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &PubDataType::PublicKey.to_string(),
+            &PubDataType::CompressedXofKeySet.to_string(),
             &PrivDataType::FhePrivateKey.to_string(),
         )
         .await

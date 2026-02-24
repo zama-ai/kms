@@ -350,6 +350,10 @@ impl<
             }
         } else {
             // secure ceremony (insecure = false)
+            // CRS ceremony with production-sized params (e.g. 2048 bits) is CPU-intensive,
+            // each party's turn can take minutes. Increase the timeout to match BK SNS generation
+            // to prevent other parties from timing out and marking the computing party as corrupt.
+            base_session.network.set_timeout_for_bk_sns().await;
             let real_ceremony = C::default();
             let internal_pp = real_ceremony
                 .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)

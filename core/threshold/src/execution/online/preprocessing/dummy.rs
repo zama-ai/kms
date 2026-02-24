@@ -46,32 +46,27 @@ use tonic::async_trait;
 /// with `threshold` degree.
 /// Its implementation is deterministic but pseudorandomly and fully derived using the `seed`.
 #[derive(Clone)]
-pub struct DummyPreprocessing<Z> {
+pub struct DummyPreprocessing {
     seed: u64,
     parameters: SessionParameters,
     pub rnd_ctr: u64,
     pub trip_ctr: u64,
-    _phantom: std::marker::PhantomData<Z>,
 }
 
-impl<Z> DummyPreprocessing<Z>
-where
-    Z: RingWithExceptionalSequence,
-{
+impl DummyPreprocessing {
     /// Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
-        DummyPreprocessing::<Z> {
+        DummyPreprocessing {
             seed,
             parameters: session.to_parameters(),
             rnd_ctr: 0,
             trip_ctr: 0,
-            _phantom: Default::default(),
         }
     }
 
     /// Helper method for computing the Shamir shares of a `secret`.
     /// Returns a vector of the shares 0-indexed based on [Role]
-    pub fn share(
+    pub fn share<Z: RingWithExceptionalSequence>(
         parties: usize,
         threshold: u8,
         secret: Z,
@@ -94,14 +89,14 @@ where
     }
 }
 
-impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
+impl crate::ProtocolDescription for DummyPreprocessing {
     fn protocol_desc(depth: usize) -> String {
         let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyPreprocessing")
     }
 }
 
-impl<Z> Default for DummyPreprocessing<Z> {
+impl Default for DummyPreprocessing {
     fn default() -> Self {
         let role_assignments = HashSet::from_iter([Role::indexed_from_one(1)]);
         DummyPreprocessing {
@@ -115,7 +110,6 @@ impl<Z> Default for DummyPreprocessing<Z> {
             .unwrap(),
             rnd_ctr: 0,
             trip_ctr: 0,
-            _phantom: Default::default(),
         }
     }
 }
@@ -124,7 +118,7 @@ impl<Z> Default for DummyPreprocessing<Z> {
 impl<
         Z: ErrorCorrect + RingWithExceptionalSequence,
         S: crate::execution::runtime::sessions::base_session::BaseSessionHandles,
-    > Preprocessing<Z, S> for DummyPreprocessing<Z>
+    > Preprocessing<Z, S> for DummyPreprocessing
 {
     async fn execute(
         &mut self,
@@ -142,7 +136,7 @@ impl<
     }
 }
 
-impl<Z> TriplePreprocessing<Z> for DummyPreprocessing<Z>
+impl<Z> TriplePreprocessing<Z> for DummyPreprocessing
 where
     Z: RingWithExceptionalSequence,
 {
@@ -153,7 +147,7 @@ where
         // Use a new RNG based on the seed and counter
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
         let a = Z::sample(&mut rng);
-        let a_vec = DummyPreprocessing::<Z>::share(
+        let a_vec = DummyPreprocessing::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             a,
@@ -165,7 +159,7 @@ where
             .get_from(&a_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         let b = Z::sample(&mut rng);
-        let b_vec = DummyPreprocessing::<Z>::share(
+        let b_vec = DummyPreprocessing::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             b,
@@ -176,7 +170,7 @@ where
             .get_from(&b_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         // Compute the c shares based on the true values of a and b
-        let c_vec = DummyPreprocessing::<Z>::share(
+        let c_vec = DummyPreprocessing::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             a * b,
@@ -208,7 +202,7 @@ where
     }
 }
 
-impl<Z> RandomPreprocessing<Z> for DummyPreprocessing<Z>
+impl<Z> RandomPreprocessing<Z> for DummyPreprocessing
 where
     Z: RingWithExceptionalSequence,
 {
@@ -252,9 +246,9 @@ where
     }
 }
 
-impl<Z> BasePreprocessing<Z> for DummyPreprocessing<Z> where Z: RingWithExceptionalSequence {}
+impl<Z> BasePreprocessing<Z> for DummyPreprocessing where Z: RingWithExceptionalSequence {}
 
-impl<Z> BitPreprocessing<Z> for DummyPreprocessing<Z>
+impl<Z> BitPreprocessing<Z> for DummyPreprocessing
 where
     Z: RingWithExceptionalSequence,
 {
@@ -271,13 +265,13 @@ where
         let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
         let mut res = Vec::with_capacity(amount);
         let my_role = self.parameters.my_role();
-        let my_share_zero = DummyPreprocessing::<Z>::share(
+        let my_share_zero = DummyPreprocessing::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             Z::ZERO,
             &mut rng,
         )?[&my_role];
-        let my_share_one = DummyPreprocessing::<Z>::share(
+        let my_share_one = DummyPreprocessing::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             Z::ONE,
@@ -297,8 +291,7 @@ where
 }
 
 #[async_trait]
-impl<const EXTENSION_DEGREE: usize> BitDecPreprocessing<EXTENSION_DEGREE>
-    for DummyPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
+impl<const EXTENSION_DEGREE: usize> BitDecPreprocessing<EXTENSION_DEGREE> for DummyPreprocessing
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
@@ -330,8 +323,7 @@ where
 }
 
 #[async_trait]
-impl<const EXTENSION_DEGREE: usize> NoiseFloodPreprocessing<EXTENSION_DEGREE>
-    for DummyPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
+impl<const EXTENSION_DEGREE: usize> NoiseFloodPreprocessing<EXTENSION_DEGREE> for DummyPreprocessing
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
@@ -349,11 +341,15 @@ where
     ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         Ok(
-            RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
-                .into_iter()
-                .tuples()
-                .map(|(a, b)| a.value() + b.value())
-                .collect(),
+            RealSecretDistributions::t_uniform::<ResiduePoly<Z128, EXTENSION_DEGREE>, _>(
+                2 * amount,
+                TUniformBound(bound_d),
+                self,
+            )?
+            .into_iter()
+            .tuples()
+            .map(|(a, b)| a.value() + b.value())
+            .collect(),
         )
     }
 
@@ -388,7 +384,7 @@ where
 }
 
 #[async_trait]
-impl<Z> DKGPreprocessing<Z> for DummyPreprocessing<Z>
+impl<Z> DKGPreprocessing<Z> for DummyPreprocessing
 where
     Z: RingWithExceptionalSequence,
 {
@@ -619,7 +615,7 @@ mod tests {
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePolyF4::<$z>::from_scalar(Wrapping(42));
                     let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_from_one(1));
-                    let shares = DummyPreprocessing::<ResiduePolyF4<$z>>::share(
+                    let shares = DummyPreprocessing::share::<ResiduePolyF4<$z>>(
                         session.num_parties(),
                         session.threshold(),
                         msg,
@@ -637,7 +633,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
+                        preps.push(DummyPreprocessing::new(42, &session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
                     // Check that the values are different
@@ -650,7 +646,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
+                    preps: &mut [DummyPreprocessing],
                 ) -> Vec<ResiduePolyF4<$z>> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(1));
                     let mut res = Vec::new();
@@ -678,7 +674,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
+                        preps.push(DummyPreprocessing::new(42, &session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
                     assert_ne!(trips[0], trips[1]);
@@ -688,7 +684,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
+                    preps: &mut [DummyPreprocessing],
                 ) -> Vec<(ResiduePolyF4<$z>, ResiduePolyF4<$z>, ResiduePolyF4<$z>)> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(1));
                     let mut res = Vec::new();
@@ -728,7 +724,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
+                        preps.push(DummyPreprocessing::new(42, &session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];
                     let trip_a = [<get_trip_ $z:lower>](parties, threshold, 1, &mut preps)[0];

@@ -72,7 +72,7 @@ fn bit_dec_online(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut prep = DummyPreprocessing::<ResiduePolyF8Z64>::new(42, &session);
+                        let mut prep = DummyPreprocessing::new(42, &session);
 
                         let input_a = get_my_share(
                             2,

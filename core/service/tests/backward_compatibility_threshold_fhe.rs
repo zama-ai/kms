@@ -7,9 +7,9 @@ mod common;
 use common::load_and_unversionize;
 
 use aes_prng::AesRng;
-use algebra::role::Role;
 use algebra::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    role::Role,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring},
 };
@@ -17,8 +17,8 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, PrfKeyTest, PrssSetTest, ReleasePCRValuesTest, ShareTest, TestMetadataDD,
-    TestType, Testcase,
+    PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
+    TestMetadataDD, TestType, Testcase,
 };
 use kms_lib::engine::context::SoftwareVersion;
 use rand::{RngCore, SeedableRng};
@@ -26,9 +26,12 @@ use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
 use threshold_fhe::{
-    execution::small_execution::{
-        prf::{PRSSConversions, PrfKey},
-        prss::{PRSSSetup, PrssSet, PrssSetV0},
+    execution::{
+        small_execution::{
+            prf::{PRSSConversions, PrfKey},
+            prss::{PRSSSetup, PrssSet, PrssSetV0},
+        },
+        tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
     },
     networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
@@ -249,6 +252,28 @@ fn test_release_pcr_values(
     }
 }
 
+fn test_private_key_gen(
+    dir: &Path,
+    test: &PrivateKeySetTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PrivateKeySet<4> = load_and_unversionize(dir, test, format)?;
+
+    // If the key comes from an old version, the encryption and compute key
+    // shares were stored as Z64, so we check that they are indeed Z64 after unversionizing.
+    assert!(matches!(
+        original_versionized.lwe_encryption_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
+
+    assert!(matches!(
+        original_versionized.lwe_compute_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
+
+    Ok(test.success(format))
+}
+
 struct ThresholdFhe;
 impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
@@ -268,6 +293,9 @@ impl TestedModule for ThresholdFhe {
             Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
             Self::Metadata::ReleasePCRValues(test) => {
                 test_release_pcr_values(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrivateKeySet(test) => {
+                test_private_key_gen(test_dir.as_ref(), test, format).into()
             }
         }
     }

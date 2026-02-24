@@ -1,3 +1,8 @@
+// DEPRECATED: Isolated equivalents in `key_gen_tests_isolated.rs`
+// - test_insecure_dkg → test_insecure_dkg_isolated
+// - test_insecure_threshold_decompression_keygen → test_insecure_threshold_decompression_keygen_isolated
+// TODO: Remove after migration complete.
+
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::tests::common::{OptKeySetConfigAccessor, standard_keygen_config};
@@ -1205,10 +1210,20 @@ fn try_reconstruct_shares(
     };
 
     let param_handle = param.get_params_basics_handle();
+    // Cast to Z64 before reconstruction
     let lwe_shares = all_threshold_fhe_keys
         .iter()
-        .map(|(k, v)| (*k, v.private_keys.lwe_compute_secret_key_share.data.clone()))
-        .collect::<HashMap<_, _>>();
+        .map(|(k, v)| {
+            (
+                *k,
+                v.private_keys
+                    .lwe_compute_secret_key_share
+                    .clone()
+                    .convert_to_z64()
+                    .data,
+            )
+        })
+        .collect();
     let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
     let lwe_secret_key =
         tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
@@ -1218,10 +1233,14 @@ fn try_reconstruct_shares(
         .map(|(k, v)| {
             (
                 *k,
-                v.private_keys.lwe_encryption_secret_key_share.data.clone(),
+                v.private_keys
+                    .lwe_encryption_secret_key_share
+                    .clone()
+                    .convert_to_z64()
+                    .data,
             )
         })
-        .collect::<HashMap<_, _>>();
+        .collect();
     _ = reconstruct_bit_vec(
         lwe_enc_shares,
         param_handle.lwe_hat_dimension().0,

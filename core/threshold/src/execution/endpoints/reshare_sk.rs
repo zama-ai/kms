@@ -13,7 +13,10 @@ use crate::execution::{
         glwe_key::GlweSecretKeyShare,
         lwe_key::LweSecretKeyShare,
         parameters::{DKGParams, DKGParamsBasics, DkgMode},
-        private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
+        private_keysets::{
+            CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
+            PrivateKeySet,
+        },
     },
 };
 use algebra::{
@@ -36,20 +39,22 @@ impl ResharePreprocRequired {
     /// Computes the number of randoms needed to reshare a private key set
     /// where `num_parties_reshare_from` is the number of parties holding the input shares
     /// (i.e. everyone in same set resharing, or the first set in two sets resharing)
+    ///
+    /// NOTE: A [`PrivateKeySet`] is expected to be either all Z64 or all Z128 depending on the DKG parameters.
     pub fn new(num_parties_reshare_from: usize, parameters: DKGParams) -> Self {
         let params = parameters.get_params_basics_handle();
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
 
-        num_randoms_64 += params.lwe_hat_dimension().0;
-
-        num_randoms_64 += params.lwe_dimension().0;
-
         match parameters.get_params_basics_handle().get_dkg_mode() {
             DkgMode::Z64 => {
+                num_randoms_64 += params.lwe_hat_dimension().0;
+                num_randoms_64 += params.lwe_dimension().0;
                 num_randoms_64 += params.glwe_sk_num_bits() + params.compression_sk_num_bits()
             }
             DkgMode::Z128 => {
+                num_randoms_128 += params.lwe_hat_dimension().0;
+                num_randoms_128 += params.lwe_dimension().0;
                 num_randoms_128 += params.glwe_sk_num_bits() + params.compression_sk_num_bits();
                 if let DKGParams::WithSnS(p) = parameters {
                     num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
@@ -351,35 +356,99 @@ where
 
     // Reshare the LWE compute key
     let expected_key_size = basic_params_handle.lwe_dimension().0;
-    let maybe_key = input_share
-        .as_mut()
-        .map(|s| s.lwe_compute_secret_key_share.data.as_mut());
-    let data = reshare
-        .execute(
-            sessions,
-            &mut preproc64,
-            &mut R::MaybeExpectedInputShares::from(maybe_key),
-            expected_key_size,
-        )
-        .await?;
-    let lwe_compute_secret_key_share = data.into().map(|data| LweSecretKeyShare { data });
+    let lwe_compute_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+        DkgMode::Z64 => {
+            let maybe_key = input_share
+                .as_mut()
+                .map(|s| {
+                    s.lwe_compute_secret_key_share
+                        .try_cast_mut_to_z64()
+                        .map(|key| key.data.as_mut())
+                })
+                .transpose()
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc64,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            data.into()
+                .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data }))
+        }
+        DkgMode::Z128 => {
+            let maybe_key = input_share
+                .as_mut()
+                .map(|s| {
+                    s.lwe_compute_secret_key_share
+                        .try_cast_mut_to_z128()
+                        .map(|key| key.data.as_mut())
+                })
+                .transpose()
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc128,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            data.into()
+                .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data }))
+        }
+    };
 
     // Reshare the LWE PKe key
     let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
     let polynomial_size = basic_params_handle.polynomial_size();
-    let maybe_key = input_share
-        .as_mut()
-        .map(|s| s.lwe_encryption_secret_key_share.data.as_mut());
-    let data = reshare
-        .execute(
-            sessions,
-            &mut preproc64,
-            &mut R::MaybeExpectedInputShares::from(maybe_key),
-            expected_key_size,
-        )
-        .await?;
-
-    let lwe_encryption_secret_key_share = data.into().map(|data| LweSecretKeyShare { data });
+    let lwe_encryption_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode()
+    {
+        DkgMode::Z64 => {
+            let maybe_key = input_share
+                .as_mut()
+                .map(|s| {
+                    s.lwe_encryption_secret_key_share
+                        .try_cast_mut_to_z64()
+                        .map(|key| key.data.as_mut())
+                })
+                .transpose()
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc64,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            data.into()
+                .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data }))
+        }
+        DkgMode::Z128 => {
+            let maybe_key = input_share
+                .as_mut()
+                .map(|s| {
+                    s.lwe_encryption_secret_key_share
+                        .try_cast_mut_to_z128()
+                        .map(|key| key.data.as_mut())
+                })
+                .transpose()
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+            let data = reshare
+                .execute(
+                    sessions,
+                    &mut preproc128,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            data.into()
+                .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data }))
+        }
+    };
 
     // Reshare the GLWE compute key
     let expected_key_size = basic_params_handle.glwe_sk_num_bits();
@@ -833,24 +902,21 @@ mod tests {
             .unwrap();
 
             let party_keyshare = session.my_role().get_from(&key_shares).unwrap().clone();
-            let mut preproc128 =
-                DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
-            let mut preproc64 =
-                DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(43, &session);
+            let mut preproc = DummyPreprocessing::new(42, &session);
 
             //Testing ResharePreprocRequired
             let preproc_required = ResharePreprocRequired::new(session.num_parties(), new_params);
 
             let mut new_preproc_64 = InMemoryBasePreprocessing {
                 available_triples: Vec::new(),
-                available_randoms: preproc64
+                available_randoms: preproc
                     .next_random_vec(preproc_required.batch_params_64.randoms)
                     .unwrap(),
             };
 
             let mut new_preproc_128 = InMemoryBasePreprocessing {
                 available_triples: Vec::new(),
-                available_randoms: preproc128
+                available_randoms: preproc
                     .next_random_vec(preproc_required.batch_params_128.randoms)
                     .unwrap(),
             };
@@ -963,14 +1029,7 @@ mod tests {
             let (mut preproc_64, mut preproc_128) = if let Some(session_set_2) =
                 session_set_2.as_ref()
             {
-                let mut preproc128 = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    42,
-                    session_set_2,
-                );
-                let mut preproc64 = DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
-                    43,
-                    session_set_2,
-                );
+                let mut preproc = DummyPreprocessing::new(42, session_set_2);
 
                 //Testing ResharePreprocRequired
                 let num_parties_set_1 = common_session
@@ -983,14 +1042,14 @@ mod tests {
 
                 let new_preproc_64 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
-                    available_randoms: preproc64
+                    available_randoms: preproc
                         .next_random_vec(preproc_required.batch_params_64.randoms)
                         .unwrap(),
                 };
 
                 let new_preproc_128 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
-                    available_randoms: preproc128
+                    available_randoms: preproc
                         .next_random_vec(preproc_required.batch_params_128.randoms)
                         .unwrap(),
                 };
@@ -1327,15 +1386,40 @@ mod tests {
             .map(|x| x.0)
             .collect_vec();
 
-        // reconstruct the 64-bit lwe key
-        let shares64 = shares
-            .iter()
-            .map(|x| x.lwe_compute_secret_key_share.clone().data_as_raw_vec())
-            .collect_vec();
-        let lwe_sk64 = reconstruct_shares_to_scalar(shares64, threshold, max_errors)
-            .into_iter()
-            .map(|x| x.0)
-            .collect_vec();
+        // reconstruct the lwe key which may have 64-bit or 128-bit shares
+        // so we need to this workaround to handle both cases
+        let lwe_sk64 = match shares[0].lwe_compute_secret_key_share {
+            LweSecretKeyShareEnum::Z64(_) => {
+                let shares64 = shares
+                    .iter()
+                    .map(|x| {
+                        x.lwe_compute_secret_key_share
+                            .clone()
+                            .unsafe_cast_to_z64()
+                            .data_as_raw_vec()
+                    })
+                    .collect_vec();
+                reconstruct_shares_to_scalar(shares64, threshold, max_errors)
+                    .into_iter()
+                    .map(|x| x.0)
+                    .collect_vec()
+            }
+            LweSecretKeyShareEnum::Z128(_) => {
+                let shares128 = shares
+                    .iter()
+                    .map(|x| {
+                        x.lwe_compute_secret_key_share
+                            .clone()
+                            .unsafe_cast_to_z128()
+                            .data_as_raw_vec()
+                    })
+                    .collect_vec();
+                reconstruct_shares_to_scalar(shares128, threshold, max_errors)
+                    .into_iter()
+                    .map(|x| x.0 as u64)
+                    .collect_vec()
+            }
+        };
 
         // reconstruct the glwe key, which may have 64-bit or 128-bit shares
         // so we need to this workaround to handle both cases
@@ -1405,24 +1489,24 @@ mod tests {
 
         if add_error {
             key_shares[0] = PrivateKeySet {
-                lwe_compute_secret_key_share: LweSecretKeyShare {
+                lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                     data: vec![
                         Share::new(
                             Role::indexed_from_zero(0),
-                            ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
+                            ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng)
                         );
-                        key_shares[1].lwe_compute_secret_key_share.data.len()
+                        key_shares[1].lwe_compute_secret_key_share.len()
                     ],
-                },
-                lwe_encryption_secret_key_share: LweSecretKeyShare {
+                }),
+                lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                     data: vec![
                         Share::new(
                             Role::indexed_from_zero(0),
-                            ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
+                            ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng)
                         );
-                        key_shares[1].lwe_encryption_secret_key_share.data.len()
+                        key_shares[1].lwe_encryption_secret_key_share.len()
                     ],
-                },
+                }),
                 glwe_secret_key_share: match key_shares[0].glwe_secret_key_share {
                     GlweSecretKeyShareEnum::Z64(_) => {
                         GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
