@@ -2969,9 +2969,14 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Single round only: two rounds with Default params take ~4-6h, exceeding the 2h CI timeout.
 /// The Test-param variant (`nightly_tests_threshold_sequential_preproc_keygen`) covers
 /// sequential 2-round behavior.
+///
+// Extremely heavy test — requires dedicated infra with pre-generated Default-param
+// PRSS material and multi-hour runtime budget. Do NOT run in regular CI or local dev.
+// Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
+#[ignore]
 async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 
@@ -2983,7 +2988,14 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<
 
     let keys_folder = material_dir.path();
     let t0 = std::time::Instant::now();
-    let key_id = real_partial_preproc_and_keygen_isolated(
+    let key_id_1 = real_partial_preproc_and_keygen_isolated(
+        &config_path,
+        keys_folder,
+        PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
+        200,
+    )
+    .await?;
+    let key_id_2 = real_partial_preproc_and_keygen_isolated(
         &config_path,
         keys_folder,
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
@@ -2995,7 +3007,7 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         t0.elapsed().as_secs_f64(),
     );
-    assert!(!key_id.is_empty());
+    assert_ne!(key_id_1, key_id_2);
 
     Ok(())
 }
