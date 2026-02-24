@@ -340,15 +340,18 @@ impl Monomials for ResiduePoly<Z128, 5> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base_ring::{Z128, Z64};
-    use crate::execution::small_execution::prf::PRSSConversions;
-    use crate::galois_rings::common::{pack_residue_poly, TryFromWrapper};
-    use crate::poly::Poly;
-    use crate::sharing::{
-        shamir::{InputOp, RevealOp, ShamirSharings},
-        share::Share,
+    use crate::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::{pack_residue_poly, TryFromWrapper},
+        poly::Poly,
+        role::Role,
+        sharing::{
+            shamir::{InputOp, RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{ErrorCorrect, Sample, Syndrome},
+        PRSSConversions,
     };
-    use crate::structure_traits::{ErrorCorrect, Sample, Syndrome};
     use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;

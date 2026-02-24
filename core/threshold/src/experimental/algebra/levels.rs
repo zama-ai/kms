@@ -1,16 +1,13 @@
-use crate::execution::sharing::shamir::ShamirSharings;
-use crate::execution::sharing::share::Share;
-use crate::execution::small_execution::prf::PRSSConversions;
-use algebra::error_correction::error_correction;
-use algebra::poly::lagrange_polynomials;
-use algebra::poly::Poly;
-use algebra::structure_traits::ErrorCorrect;
-use algebra::structure_traits::FromU128;
-use algebra::structure_traits::Invert;
-use algebra::structure_traits::Ring;
-use algebra::structure_traits::RingWithExceptionalSequence;
-use algebra::structure_traits::ZConsts;
-use algebra::structure_traits::{Field, One, Sample, Zero};
+use algebra::{
+    error_correction::error_correction,
+    poly::{lagrange_polynomials, Poly},
+    sharing::{shamir::ShamirSharings, share::Share},
+    structure_traits::{
+        ErrorCorrect, Field, FromU128, Invert, One, Ring, RingWithExceptionalSequence, Sample,
+        ZConsts, Zero,
+    },
+    PRSSConversions,
+};
 use crypto_bigint::impl_modulus;
 use crypto_bigint::modular::ConstMontyParams;
 use crypto_bigint::Limb;
@@ -1071,15 +1068,15 @@ impl ScalingFactor for LevelKsw {
 mod tests {
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-    use crate::execution::runtime::party::Role;
     use crate::execution::runtime::sessions::small_session::SmallSession;
-    use crate::execution::sharing::shamir::{InputOp, RevealOp};
-    use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use aes_prng::AesRng;
     use algebra::poly::lagrange_interpolation;
+    use algebra::role::Role;
+    use algebra::sharing::shamir::{InputOp, RevealOp};
+    use algebra::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use rand::SeedableRng;
 
     use super::*;

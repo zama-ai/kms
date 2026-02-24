@@ -1,12 +1,5 @@
-#! Pure-logic version of a Role and associated types. See `threshold/execution` for versionized version.
+#! Pure-logic version of a Role and associated types.
 
-// TODO(dp): Move `Role` here from execution, minus the versionizing aspects.
-// I think it's a pretty terrible fit for the algebra crate, but babysteps...
-// The algebra code uses the Role in `structure_traits` in the following places:
-// -	Syndrome::syndrome_decode
-// - 	RingWithExceptionalSequence::embed_role_to_exceptional_sequence
-// I think the role stuff needs to go into its own crate, this is a mess.
-// -------
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -281,7 +274,6 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
 
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
 
     #[test]

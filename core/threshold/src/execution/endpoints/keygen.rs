@@ -1861,11 +1861,11 @@ pub mod tests {
         n: usize,
         t: usize,
         rng: &mut R,
-    ) -> Vec<Vec<crate::execution::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+    ) -> Vec<Vec<algebra::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        use crate::execution::sharing::shamir::{InputOp, ShamirSharings};
+        use algebra::sharing::shamir::{InputOp, ShamirSharings};
         use std::num::Wrapping;
         transpose2(
             v.into_iter()
@@ -1931,7 +1931,6 @@ pub mod tests {
         use crate::{
             execution::{
                 endpoints::keygen::distributed_decompression_keygen_z128,
-                sharing::share::Share,
                 tfhe_internals::{
                     compression_decompression_key::CompressionPrivateKeyShares,
                     glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
@@ -1939,6 +1938,7 @@ pub mod tests {
             },
             file_handling::tests::{read_element, write_element},
         };
+        use algebra::sharing::share::Share;
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;

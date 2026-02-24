@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use aes_prng::AesRng;
+use algebra::{galois_rings::degree_8::ResiduePolyF8Z128, role::Role};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::SeedableRng;
 use threshold_fhe::{
-    algebra::galois_rings::degree_8::ResiduePolyF8Z128,
     execution::{
         large_execution::vss::DummyVss,
         runtime::{
-            party::Role,
             sessions::{
                 base_session::BaseSession,
                 session_parameters::{GenericParameterHandles, SessionParameters},

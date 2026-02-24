@@ -957,7 +957,7 @@ mod tests {
         .await;
 
         // we need to sort by identities and then reconstruct
-        results.sort_by(|a, b| a.0.cmp(&(b.0)));
+        results.sort_by_key(|a| a.0);
         let (new_shares, (old_shares, expected_sks)): (Vec<_>, (Vec<_>, Vec<_>)) =
             results.into_iter().map(|(_, b, c, d)| (b, (c, d))).unzip();
         let actual_sk = reconstruct_sk(new_shares.clone(), threshold, 0);
@@ -1128,7 +1128,7 @@ mod tests {
             });
 
         // we need to sort by identities and then reconstruct
-        results_set_2_and_both.sort_by(|a, b| a.0.cmp(&(b.0)));
+        results_set_2_and_both.sort_by_key(|a| a.0);
         let new_shares: Vec<_> = results_set_2_and_both
             .into_iter()
             .map(|(_, b, _)| b)

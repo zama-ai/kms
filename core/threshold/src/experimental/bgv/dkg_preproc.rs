@@ -13,7 +13,6 @@ use crate::{
             triple::Triple,
         },
         runtime::sessions::small_session::SmallSession,
-        sharing::share::Share,
     },
     experimental::{
         algebra::levels::LevelKsw,
@@ -21,6 +20,7 @@ use crate::{
         gen_bits_odd::{BitGenOdd, RealBitGenOdd},
     },
 };
+use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
 
 #[async_trait]

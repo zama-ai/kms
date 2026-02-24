@@ -508,7 +508,7 @@ async fn wait_for_keygen_result(
         }
     }
 
-    finished.sort_by(|(i, _), (j, _)| i.cmp(j));
+    finished.sort_by_key(|a| a.0);
     assert_eq!(finished.len(), kms_clients.len());
 
     let mut out = None;

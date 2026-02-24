@@ -10,10 +10,13 @@ use crate::execution::{
         triple::{mult_list, open_list},
     },
     runtime::sessions::small_session::SmallSessionHandles,
-    sharing::share::Share,
-    small_execution::{prf::PRSSConversions, prss::PRSSPrimitives},
+    small_execution::prss::PRSSPrimitives,
 };
-use algebra::structure_traits::{ErrorCorrect, Invert, ZConsts};
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, ZConsts},
+    PRSSConversions,
+};
 use error_utils::anyhow_error_and_log;
 
 ///This trait defines methods required to generate bits in
@@ -141,15 +144,17 @@ impl BitGenOdd for RealBitGenOdd {
 mod tests {
 
     use crate::{
-        algebra::structure_traits::{One, Ring, Zero},
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::sessions::small_session::SmallSession,
-            sharing::shamir::{RevealOp, ShamirSharings},
         },
         experimental::algebra::levels::LevelKsw,
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
+    };
+    use algebra::{
+        sharing::shamir::{RevealOp, ShamirSharings},
+        structure_traits::{One, Ring, Zero},
     };
 
     use super::*;

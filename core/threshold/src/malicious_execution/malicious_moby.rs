@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tonic::transport::server::Router;
 
 use crate::execution::online::preprocessing::PreprocessorFactory;
-use crate::execution::runtime::party::Role;
 use crate::grpc::server::SecureGrpcChoreography;
+use algebra::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,

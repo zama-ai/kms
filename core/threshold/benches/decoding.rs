@@ -1,4 +1,15 @@
 use aes_prng::AesRng;
+use algebra::role::Role;
+use algebra::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
+use algebra::sharing::share::Share;
+use algebra::structure_traits::RingWithExceptionalSequence;
+use algebra::structure_traits::{FromU128, Sample};
+use algebra::{
+    error_correction::error_correction,
+    galois_fields::gf256::GF256,
+    galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    sharing::shamir::ShamirSharings,
+};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use itertools::Itertools;
 use pprof::criterion::Output;
@@ -6,20 +17,7 @@ use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
-use threshold_fhe::algebra::structure_traits::RingWithExceptionalSequence;
-use threshold_fhe::algebra::structure_traits::{FromU128, Sample};
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
-use threshold_fhe::execution::sharing::share::Share;
 use threshold_fhe::experimental::algebra::levels::LevelOne;
-use threshold_fhe::{
-    algebra::{
-        error_correction::error_correction,
-        galois_fields::gf256::GF256,
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
-    },
-    execution::sharing::shamir::ShamirSharings,
-};
 
 fn bench_decode_z2(c: &mut Criterion) {
     let degrees = vec![2_usize, 4, 8, 16, 32, 64];

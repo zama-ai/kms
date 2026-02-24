@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::anyhow_error_and_log;
+use error_utils::anyhow_error_and_log;
 
 use crate::poly::lagrange_polynomials;
 
@@ -107,14 +107,14 @@ impl Field for GF64 {
                         lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
                         Ok(lagrange_pols)
                     } else {
-                        Err(xx_anyhow_error_and_log(
+                        Err(anyhow_error_and_log(
                             "Error writing LAGRANGE_STORE".to_string(),
                         ))
                     }
                 }
             }
         } else {
-            Err(xx_anyhow_error_and_log(
+            Err(anyhow_error_and_log(
                 "Error reading LAGRANGE_STORE".to_string(),
             ))
         }

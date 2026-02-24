@@ -584,10 +584,12 @@ pub(crate) mod test {
         execute_protocol_small_w_malicious, execute_protocol_two_sets_w_malicious,
         TestingParameters,
     };
-    use algebra::role::{Role, TwoSetsRole, TwoSetsThreshold};
-    use algebra::sharing::shamir::InputOp;
-    use algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence};
-    use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, sharing::shamir::ShamirSharings};
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z128,
+        role::{Role, TwoSetsRole, TwoSetsThreshold},
+        sharing::shamir::{InputOp, ShamirSharings},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+    };
 
     use super::{RobustOpen, SecureRobustOpen};
 

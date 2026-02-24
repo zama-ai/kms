@@ -50,7 +50,7 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
     PreprocessorFactory,
 };
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::sessions::large_session::LargeSession;
@@ -73,6 +73,7 @@ use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
 use algebra::base_ring::{Z128, Z64};
 use algebra::galois_rings::common::ResiduePoly;
+use algebra::role::Role;
 use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -443,6 +444,7 @@ where
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn create_base_session(
         &self,
         request_sid: SessionId,

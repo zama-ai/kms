@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use super::super::xx_anyhow_error_and_log;
 use crate::poly::lagrange_polynomials;
 use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
+use error_utils::anyhow_error_and_log;
 use g2p::{g2p, GaloisField};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -105,14 +105,14 @@ impl Field for GF32 {
                         lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
                         Ok(lagrange_pols)
                     } else {
-                        Err(xx_anyhow_error_and_log(
+                        Err(anyhow_error_and_log(
                             "Error writing LAGRANGE_STORE".to_string(),
                         ))
                     }
                 }
             }
         } else {
-            Err(xx_anyhow_error_and_log(
+            Err(anyhow_error_and_log(
                 "Error reading LAGRANGE_STORE".to_string(),
             ))
         }
