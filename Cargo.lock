@@ -4331,6 +4331,7 @@ dependencies = [
  "thread-handles",
  "threshold-algebra",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tokio-rustls 0.26.2",
  "tokio-util",
@@ -4380,6 +4381,7 @@ dependencies = [
  "test-context",
  "tfhe",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
@@ -4409,6 +4411,7 @@ dependencies = [
  "tfhe-versionable",
  "thiserror 2.0.12",
  "threshold-fhe",
+ "threshold-hashing",
  "tonic 0.13.1",
  "tonic-build",
  "tracing",
@@ -7721,6 +7724,7 @@ dependencies = [
  "serde",
  "sha3",
  "tfhe-versionable",
+ "threshold-hashing",
  "tracing",
  "zeroize",
 ]
@@ -7790,6 +7794,7 @@ dependencies = [
  "thread-handles",
  "threshold-algebra",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tokio-rustls 0.26.2",
  "tonic 0.13.1",
@@ -7802,6 +7807,17 @@ dependencies = [
  "tracing-test",
  "x509-parser 0.18.0",
  "zeroize",
+]
+
+[[package]]
+name = "threshold-hashing"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "bc2wrap",
+ "serde",
+ "sha3",
+ "tracing",
 ]
 
 [[package]]

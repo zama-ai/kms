@@ -10,7 +10,6 @@ use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony;
 #[cfg(feature = "experimental")]
 use crate::experimental::bgv::basics::PublicBgvKeySet;
-use crate::hashing::{serialize_hash_element, DomainSep};
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -20,6 +19,7 @@ use algebra::{
     structure_traits::{Ring, Zero},
 };
 use error_utils::anyhow_error_and_log;
+use hashing::{serialize_hash_element, DomainSep};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]

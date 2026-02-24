@@ -32,6 +32,7 @@ futures.workspace = true
 futures-util.workspace = true
 g2p.workspace = true
 getrandom.workspace = true
+hashing.workspace = true
 hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true

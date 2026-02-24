@@ -1,3 +1,4 @@
+use bc2wrap;
 use serde::Serialize;
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
@@ -90,7 +91,7 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::DomainSep;
-    use crate::hashing::{hash_element, serialize_hash_element, unsafe_hash_list};
+    use crate::{hash_element, serialize_hash_element, unsafe_hash_list};
 
     const DSEP_TEST: DomainSep = *b"test_1__";
     const DSEP_TEST2: DomainSep = *b"test_2__";

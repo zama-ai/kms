@@ -1,48 +1,43 @@
-use crate::{
-    execution::{
-        online::{
-            preprocessing::{DKGPreprocessing, RandomPreprocessing},
-            triple::open_list,
+use crate::execution::{
+    online::{
+        preprocessing::{DKGPreprocessing, RandomPreprocessing},
+        triple::open_list,
+    },
+    runtime::sessions::{
+        base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+    },
+    tfhe_internals::{
+        compression_decompression_key::CompressionPrivateKeyShares,
+        compression_decompression_key_generation::{
+            distributed_keygen_compressed_compression_material,
+            distributed_keygen_compression_material, generate_compressed_decompression_keys,
+            generate_decompression_keys,
         },
-        runtime::sessions::{
-            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+        glwe_key::GlweSecretKeyShare,
+        lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
+        lwe_bootstrap_key_generation::{generate_bootstrap_key, generate_compressed_bootstrap_key},
+        lwe_key::{
+            generate_lwe_private_compressed_public_key_pair, generate_lwe_private_public_key_pair,
+            LweSecretKeyShare,
         },
-        tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares,
-            compression_decompression_key_generation::{
-                distributed_keygen_compressed_compression_material,
-                distributed_keygen_compression_material, generate_compressed_decompression_keys,
-                generate_decompression_keys,
-            },
-            glwe_key::GlweSecretKeyShare,
-            lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
-            lwe_bootstrap_key_generation::{
-                generate_bootstrap_key, generate_compressed_bootstrap_key,
-            },
-            lwe_key::{
-                generate_lwe_private_compressed_public_key_pair,
-                generate_lwe_private_public_key_pair, LweSecretKeyShare,
-            },
-            lwe_keyswitch_key_generation::{
-                generate_compressed_key_switch_key, generate_key_switch_key,
-            },
-            modulus_switch_noise_reduction_key_generation::{
-                generate_compressed_mod_switch_noise_reduction_key,
-                generate_mod_switch_noise_reduction_key,
-            },
-            parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
-            private_keysets::{GenericPrivateKeySet, PrivateKeySet},
-            public_keysets::{
-                CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
-                RawPubKeySet, ReRandomizationRawKeySwitchingKey,
-            },
-            randomness::MPCEncryptionRandomGenerator,
-            sns_compression_key_generation::{
-                generate_compressed_sns_compression_keys, generate_sns_compression_keys,
-            },
+        lwe_keyswitch_key_generation::{
+            generate_compressed_key_switch_key, generate_key_switch_key,
+        },
+        modulus_switch_noise_reduction_key_generation::{
+            generate_compressed_mod_switch_noise_reduction_key,
+            generate_mod_switch_noise_reduction_key,
+        },
+        parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
+        private_keysets::{GenericPrivateKeySet, PrivateKeySet},
+        public_keysets::{
+            CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+            RawPubKeySet, ReRandomizationRawKeySwitchingKey,
+        },
+        randomness::MPCEncryptionRandomGenerator,
+        sns_compression_key_generation::{
+            generate_compressed_sns_compression_keys, generate_sns_compression_keys,
         },
     },
-    hashing::DomainSep,
 };
 use algebra::{
     base_ring::{Z128, Z64},
@@ -50,6 +45,7 @@ use algebra::{
     structure_traits::{BaseRing, ErrorCorrect, Ring},
 };
 use error_utils::anyhow_error_and_log;
+use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,

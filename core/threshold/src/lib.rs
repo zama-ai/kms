@@ -4,7 +4,6 @@ pub mod choreography;
 pub mod commitment;
 pub mod execution;
 pub mod file_handling;
-pub mod hashing;
 #[cfg(feature = "non-wasm")]
 pub mod networking;
 pub mod session_id;

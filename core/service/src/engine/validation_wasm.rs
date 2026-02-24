@@ -1,12 +1,12 @@
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
+use hashing::DomainSep;
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
 use std::collections::{HashMap, HashSet};
-use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,

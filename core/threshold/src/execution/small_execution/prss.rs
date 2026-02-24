@@ -1056,7 +1056,6 @@ mod tests {
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
-    use crate::hashing::hash_element_w_size;
     use crate::malicious_execution::small_execution::malicious_prss::{
         MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
     };
@@ -1092,6 +1091,7 @@ mod tests {
         structure_traits::{One, Zero},
     };
     use futures_util::future::{join, join_all};
+    use hashing::hash_element_w_size;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::num::Wrapping;

@@ -10,6 +10,7 @@ use crate::cryptography::{
 use crate::engine::validation::{parse_optional_grpc_request_id, RequestIdParsingErr};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use algebra::role::Role;
+use hashing::DomainSep;
 use kms_grpc::kms::v1::{
     CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
 };
@@ -21,7 +22,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::hashing::DomainSep;
 
 use super::{
     error::BackupError,

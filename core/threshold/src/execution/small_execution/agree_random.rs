@@ -9,7 +9,6 @@ use crate::{
         runtime::sessions::base_session::BaseSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
-    hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
     ProtocolDescription,
 };
@@ -17,6 +16,7 @@ use algebra::{base_ring::Z64, role::Role, structure_traits::ErrorCorrect};
 use anyhow::Context;
 use async_trait::async_trait;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
+use hashing::{hash_element, hash_element_w_size, DomainSep};
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;

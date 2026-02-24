@@ -21,6 +21,7 @@ use crate::cryptography::signatures::{
     SigningSchemeType, SIG_SIZE,
 };
 use ::signature::Verifier;
+use hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::de::DeserializeOwned;
@@ -28,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";

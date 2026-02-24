@@ -9,12 +9,6 @@ pub mod sharing;
 pub mod structure_traits;
 pub mod syndrome;
 
-// TODO(dp): Temporarily move this here so we have a local version before extraction.
-/// Domain separator for hashing elements.
-/// This is used to ensure that the hash is unique to the context in which it is used.
-pub(crate) type DomainSep = [u8; DSEP_LEN];
-pub(crate) const DSEP_LEN: usize = 8;
-
 // TODO(dp): Shamir stuff from execution:
 // shamir::{ShamirSharings, InputOp, RevealOp, ShamirFieldPoly}
 // share::Share

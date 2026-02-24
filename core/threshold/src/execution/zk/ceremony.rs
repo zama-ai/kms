@@ -866,7 +866,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
             let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
             if *role == my_role {
                 let mut xof = RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(
-                    session.rng().gen::<u128>(),
+                    session.rng().r#gen::<u128>(),
                     ZK_DSEP_CRS_UPDA,
                 ));
 

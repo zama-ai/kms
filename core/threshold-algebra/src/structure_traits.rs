@@ -1,7 +1,7 @@
 use super::poly::Poly;
 use super::role::Role;
 use super::sharing::shamir::ShamirSharings;
-use super::DomainSep;
+use hashing::DomainSep;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};

@@ -27,6 +27,7 @@ use algebra::{
     role::Role,
     sharing::{shamir::ShamirSharings, share::Share},
 };
+use hashing::DomainSep;
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
     RequestId,
@@ -40,7 +41,6 @@ use std::{
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::hashing::DomainSep;
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
