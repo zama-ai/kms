@@ -1,12 +1,13 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
+use crate::consts::DEFAULT_EPOCH_ID;
+use crate::engine::base::{derive_request_id, CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{
-    delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id,
-    StorageExt, StorageReaderExt,
+    delete_at_request_and_epoch_id, delete_at_request_id, read_versioned_at_request_id,
+    store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
 };
 use crate::{
     anyhow_error_and_log,
@@ -52,7 +53,9 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+use threshold_fhe::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Code, Request, Response, Status};
 
@@ -711,8 +714,7 @@ where
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                restore_data_type::<PrivS, PrssSetup>(priv_storage, backup_vault, cur_type)
-                    .await?;
+                restore_legacy_prss::<PrivS>(priv_storage, backup_vault).await?;
             }
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
@@ -911,11 +913,10 @@ where
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            update_specific_backup_vault::<PrivS, PrssSetup>(
-                                &private_storage,
+                            update_legacy_prss::<PrivS>(
+                                &*private_storage,
                                 &mut backup_vault,
-                                cur_type,
-                                overwrite,
+                                true, // We MUST overwrite existing data in the backup vault
                             )
                             .await?;
                         }
@@ -954,6 +955,182 @@ where
             None => Ok(()),
         }
     }
+}
+
+#[allow(deprecated)]
+pub(crate) async fn update_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
+    priv_storage: &PrivS,
+    backup_vault: &mut Vault,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let prss_128_id = derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_64_id = derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_128_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z128>>(
+        &priv_storage,
+        &prss_128_id,
+        &PrivDataType::PrssSetup.to_string(),
+    )
+    .await
+    .inspect_err(|e| {
+        tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
+    });
+    let prss_64_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z64>>(
+        &priv_storage,
+        &prss_64_id,
+        &PrivDataType::PrssSetup.to_string(),
+    )
+    .await
+    .inspect_err(|e| {
+        tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+    });
+    match (prss_128_res, prss_64_res) {
+        (Ok(prss_128), Ok(prss_64)) => {
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_128_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_64_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+            }
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e), Ok(prss_64)) => {
+            tracing::warn!(
+                "PRSS Z128 is not available, cannot update legacy PRSS backup data: {e}"
+            );
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_64_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+            }
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Ok(prss_128), Err(e)) => {
+            tracing::warn!("PRSS Z64 is not available, cannot update legacy PRSS backup data: {e}");
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_128_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+            }
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::warn!("Neither PRSS Z128 nor Z64 are available, cannot update legacy PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+        }
+    }
+    return Ok(());
+}
+
+#[allow(deprecated)]
+async fn restore_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
+    priv_storage: &mut PrivS,
+    backup_vault: &Vault,
+) -> anyhow::Result<()> {
+    let prss_128_id = derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_64_id = derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_128_res: anyhow::Result<PRSSSetup<ResiduePolyF4Z128>> = backup_vault
+        .read_data(&prss_128_id, &PrivDataType::PrssSetup.to_string())
+        .await
+        .inspect_err(|e| {
+            tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
+        });
+    let prss_64_res: anyhow::Result<PRSSSetup<ResiduePolyF4Z64>> = backup_vault
+        .read_data(&prss_64_id, &PrivDataType::PrssSetup.to_string())
+        .await
+        .inspect_err(|e| {
+            tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+        });
+    match (prss_128_res, prss_64_res) {
+        (Ok(prss_128), Ok(prss_64)) => {
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e), Ok(prss_64)) => {
+            tracing::warn!(
+                "PRSS Z128 is not available, cannot update legacy PRSS backup data: {e}"
+            );
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Ok(prss_128), Err(e)) => {
+            tracing::warn!("PRSS Z64 is not available, cannot update legacy PRSS backup data: {e}");
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::warn!("Neither PRSS Z128 nor Z64 are available, cannot update legacy PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+        }
+    }
+    Ok(())
 }
 
 async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>) -> bool {
@@ -1228,11 +1405,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
     async fn test_update_backup_vault_without_overwrite() {
         let mut priv_storage = RamStorage::new();
         let mut backup_vault = make_unencrypted_vault();
-        let data_type = PrivDataType::PrssSetup;
+        let data_type = PrivDataType::SigningKey;
         let req_id = derive_request_id("test_backup_2").unwrap();
 
         // Store original data in private storage
