@@ -106,7 +106,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 thiserror.workspace = true
-thread-handles.workspace = true
+thread-handles = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
@@ -156,6 +156,7 @@ testing = ["dep:tempfile"]
 non-wasm = [
     "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
+    "dep:thread-handles",
     "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
