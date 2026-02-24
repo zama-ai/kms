@@ -260,7 +260,7 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<LevelKsw>::new(0, &session);
+            let mut prep = DummyPreprocessing::new(0, &session);
 
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
@@ -296,7 +296,7 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut dummy_preproc = DummyPreprocessing::<LevelKsw>::new(0, &session);
+            let mut dummy_preproc = DummyPreprocessing::new(0, &session);
 
             session
                 .network()

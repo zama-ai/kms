@@ -24,7 +24,7 @@ use crate::{
 };
 
 #[async_trait]
-impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw> {
+impl BGVDkgPreprocessing for DummyPreprocessing {
     async fn fill_from_base_preproc(
         &mut self,
         _poly_size: usize,

@@ -1386,12 +1386,12 @@ mod tests {
         R2: for<'a> Reshare<
             ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
             MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = NotExpected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
-            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing> = Expected<&'a mut DummyPreprocessing>,
         > + 'static,
         R3: for<'a> Reshare<
             ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
             MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
-            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing> = Expected<&'a mut DummyPreprocessing>,
         > + 'static,
         const EXTENSION_DEGREE: usize,
     >(
@@ -1493,12 +1493,12 @@ mod tests {
         R2: for<'a> Reshare<
             ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
             MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = NotExpected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
-            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing> = Expected<&'a mut DummyPreprocessing>,
         > + 'static,
         R3: for<'a> Reshare<
             ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
             MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
-            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing> = Expected<&'a mut DummyPreprocessing>,
         > + 'static,
         const EXTENSION_DEGREE: usize,
     >(
@@ -1531,8 +1531,7 @@ mod tests {
         };
 
         let mut preproc = if let Some(set_2_session) = set_2_session.as_ref() {
-            let preproc =
-                DummyPreprocessing::<ResiduePoly<Z, EXTENSION_DEGREE>>::new(42, set_2_session);
+            let preproc = DummyPreprocessing::new(42, set_2_session);
             Some(preproc)
         } else {
             None

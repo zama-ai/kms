@@ -100,7 +100,11 @@ pub enum AgreeRandomValue {
     KeyValue(Vec<PrfKey>),
 }
 
-/// a value that is sent via network
+/// A value that is sent via network.
+///
+/// IMPORTANT: when adding new variants, they must be added to the *end*
+/// of the enum for bincode to behave in a backward compatible way.
+/// Otherwise we will have issues when performing a rolling upgrade.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(any(test, feature = "testing"))]
@@ -113,8 +117,6 @@ pub enum NetworkValue<Z: Eq + Zero> {
     DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
     #[cfg(any(test, feature = "testing"))]
     SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
-    #[cfg(any(test, feature = "testing"))]
-    CompressedXofKeySet(Box<tfhe::xof_key_set::CompressedXofKeySet>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),
@@ -125,6 +127,8 @@ pub enum NetworkValue<Z: Eq + Zero> {
     Bot,
     Empty,
     Round1VSS(ExchangedDataRound1<Z>),
+    #[cfg(any(test, feature = "testing"))]
+    CompressedXofKeySet(Box<tfhe::xof_key_set::CompressedXofKeySet>),
 }
 
 impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
@@ -155,11 +159,6 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
                 .finish(),
-            #[cfg(any(test, feature = "testing"))]
-            NetworkValue::CompressedXofKeySet(_) => f
-                .debug_tuple(self.network_type_name())
-                .field(&"...")
-                .finish(),
             NetworkValue::RingValue(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
             NetworkValue::VecRingValue(v) => {
                 f.debug_tuple(self.network_type_name()).field(v).finish()
@@ -176,6 +175,11 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
             NetworkValue::Bot => f.write_str(self.network_type_name()),
             NetworkValue::Empty => f.write_str(self.network_type_name()),
             NetworkValue::Round1VSS(v) => f.debug_tuple(self.network_type_name()).field(v).finish(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::CompressedXofKeySet(_) => f
+                .debug_tuple(self.network_type_name())
+                .field(&"...")
+                .finish(),
         }
     }
 }
@@ -226,8 +230,6 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
             NetworkValue::DecompressionKey(_) => "DecompressionKey",
             #[cfg(any(test, feature = "testing"))]
             NetworkValue::SnsCompressionKey(_) => "SnsCompressionKey",
-            #[cfg(any(test, feature = "testing"))]
-            NetworkValue::CompressedXofKeySet(_) => "CompressedXofKeySet",
             NetworkValue::RingValue(_) => "RingValue",
             NetworkValue::VecRingValue(_) => "VecRingValue",
             NetworkValue::VecPairRingValue(_) => "VecPairRingValue",
@@ -238,6 +240,8 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
             NetworkValue::Bot => "Bot",
             NetworkValue::Empty => "Empty",
             NetworkValue::Round1VSS(_) => "Round1VSS",
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::CompressedXofKeySet(_) => "CompressedXofKeySet",
         }
     }
 }

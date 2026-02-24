@@ -1016,20 +1016,18 @@ where
             }
             (DKGParams::WithoutSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
-                        &mut base_session,
-                        &mut preproc,
-                        dkg_params,
-                        tag,
-                        None,
-                    )
-                    .await
-                    .unwrap();
+                    let keys =
+                        SecureOnlineDistributedKeyGen::<Z128, EXTENSION_DEGREE>::compressed_keygen(
+                            &mut base_session,
+                            &mut preproc,
+                            dkg_params,
+                            tag,
+                            None,
+                        )
+                        .await
+                        .unwrap();
                     key_store.insert(
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
@@ -1079,20 +1077,18 @@ where
             }
             (DKGParams::WithSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
-                        &mut base_session,
-                        &mut preproc,
-                        dkg_params,
-                        tag,
-                        None,
-                    )
-                    .await
-                    .unwrap();
+                    let keys =
+                        SecureOnlineDistributedKeyGen::<Z128, EXTENSION_DEGREE>::compressed_keygen(
+                            &mut base_session,
+                            &mut preproc,
+                            dkg_params,
+                            tag,
+                            None,
+                        )
+                        .await
+                        .unwrap();
                     key_store.insert(
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
