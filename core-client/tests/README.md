@@ -37,8 +37,7 @@
 - `threshold_tests` turns on `run_prss=true` setup paths; servers load PRSS from test material at startup.
 - For **Test** params, missing PRSS can be initialized live.
 - For **Default** params (`setup_isolated_threshold_cli_test_with_prss_default` / `full_gen_tests_default_*`), PRSS must be pre-generated in `test-material/default`. Missing PRSS for Default material is a **hard error** — setup fails immediately with a message pointing to `make generate-test-material-default`.
-- Some `threshold_tests` generate PRSS live during the test (via `new_prss_isolated`) instead of loading it at startup — these do **not** require pre-generated PRSS.
-  - Examples: `test_threshold_mpc_context_init`, `test_threshold_mpc_context_switch_6`, `test_threshold_reshare`.
+- Some `threshold_tests` generate PRSS live during the test (via `new_prss_isolated`) instead of loading it at startup — these do **not** require pre-generated PRSS. This pattern is used by MPC context init/switch and reshare tests.
 - Tests using Default params without PRSS (`run_prss=false`) do **not** use PRSS at all — no pre-generated material needed.
 - Generate Default PRSS locally with `make generate-test-material-default` (or `make generate-test-material-all`).
 
@@ -56,6 +55,30 @@ CI uses `--skip` prefix matching to exclude certain test groups from regular run
 - `full_gen_tests_*` — skipped in regular CI, run only in nightly schedule
 - `k8s_*` — skipped in native CI, run only in Kind cluster CI
 - `isolated_test_example` — demo test, always skipped in CI
+
+### CLI commands (`CCCommand`)
+
+The client binary accepts these commands (passed as `CCCommand` in tests via `execute_cmd`). The `execute_cmd` helper automatically polls the corresponding `*Result` variant — test code only needs the initiating command.
+
+| Command | Description | Requires epoch | Requires PRSS |
+|---------|-------------|----------------|---------------|
+| `InsecureKeyGen` | Threshold DKG, no preprocessing (insecure) | ✅ | ❌ |
+| `KeyGen` | Threshold DKG with preprocessing (secure) | ✅ | ✅ |
+| `PreprocKeyGen` | Offline preprocessing phase for DKG | ✅ | ✅ |
+| `CrsGen` | Generate CRS (ZK ceremony, secure) | ✅ | ✅ |
+| `InsecureCrsGen` | Generate CRS (insecure, no ZK) | ✅ | ❌ |
+| `PublicDecrypt` | Public-key decryption | ✅ | ❌ |
+| `UserDecrypt` | User-key decryption | ✅ | ❌ |
+| `Encrypt` | Encrypt plaintext locally; fetches public FHE key from server | ❌ | ❌ |
+| `NewEpoch` | Initialize or reshare a PRSS epoch | ❌ | ❌ |
+| `NewMpcContext` | Register a new MPC context | ❌ | ❌ |
+| `DestroyMpcContext` | Remove an MPC context | ❌ | ❌ |
+| `DestroyMpcEpoch` | Remove an epoch | ❌ | ❌ |
+| `BackupRestore` | Restore keys from backup vault | ❌ | ❌ |
+| `NewCustodianContext` | Set up custodian key-recovery context | ❌ | ❌ |
+| `CustodianRecoveryInit` | Initiate custodian recovery | ❌ | ❌ |
+| `CustodianBackupRecovery` | Complete custodian recovery | ❌ | ❌ |
+| `GetOperatorPublicKey` | Fetch operator verification key | ❌ | ❌ |
 
 ---
 
@@ -109,37 +132,41 @@ K8s tests connect to a real kind cluster.
 - **Threshold tests** → `core-client/tests/kind-testing/kubernetes_test_threshold_isolated.rs`
 - **Centralized tests** → `core-client/tests/kind-testing/kubernetes_test_centralized_isolated.rs`
 
-### Example Test (Threshold)
+### Writing a K8s test
+
+K8s tests use `K8sTestContext`, a lightweight struct defined at the top of each `kubernetes_test_*_isolated.rs` file. There is no server setup code — the cluster must already be running before the tests start. The current threshold tests cover: basic keygen+CRS, keygen uniqueness, CRS uniqueness, and a full end-to-end keygen→encrypt→decrypt round-trip.
+
+Test names must start with `k8s_` so that CI can skip them in non-Kind environments via `--skip k8s_`.
+
+#### Example
 
 ```rust
-/// Test that keygen and CRS generation work correctly in K8s cluster.
 #[tokio::test]
 async fn k8s_test_keygen_and_crs() {
     let ctx = K8sTestContext::new("k8s_test_keygen_and_crs");
 
-    // Generate FHE key
     let key_id = ctx.insecure_keygen().await;
-    assert!(!key_id.is_empty(), "Key generation should return valid ID");
+    assert!(!key_id.is_empty(), "Key ID must not be empty");
 
-    // Generate CRS (Common Reference String)
     let crs_id = ctx.crs_gen().await;
-    assert!(!crs_id.is_empty(), "CRS generation should return valid ID");
-
-    // Verify they are different (independent operations)
-    assert_ne!(key_id, crs_id, "Key ID and CRS ID should be different");
+    assert!(!crs_id.is_empty(), "CRS ID must not be empty");
 
     ctx.pass();
 }
 ```
 
-### K8sTestContext Methods
+#### `K8sTestContext` methods
 
 | Method | Description |
 |--------|-------------|
-| `insecure_keygen()` | Generate FHE key |
-| `crs_gen()` | Generate CRS |
-| `execute(command)` | Run any CLI command |
-| `pass()` | Mark test passed |
+| `new(name)` | Create context, print test header |
+| `insecure_keygen()` | Run `InsecureKeyGen`, return key ID |
+| `crs_gen()` | Run `CrsGen`, return CRS ID |
+| `encrypt(key_id, plaintext, FheType)` | Fetch public FHE key from cluster, encrypt locally, write ciphertext to workspace file; returns path |
+| `public_decrypt_from_file(path)` | Send ciphertext file to threshold parties, verify decrypted result matches original plaintext — panics on mismatch |
+| `execute(CCCommand)` | Run any CLI command, return results |
+| `config_path()` | Path to cluster config TOML |
+| `pass(self)` | Print elapsed time and PASSED summary |
 
 ---
 
