@@ -96,6 +96,14 @@ impl StandardKeySetConfig {
         }
     }
 
+    pub fn use_existing_sk() -> Self {
+        Self {
+            computation_key_type: ComputeKeyType::default(),
+            secret_key_config: KeyGenSecretKeyConfig::UseExisting,
+            compressed_key_config: CompressedKeyConfig::default(),
+        }
+    }
+
     pub fn is_using_existing_compression_sk(&self) -> bool {
         self.secret_key_config == KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
     }

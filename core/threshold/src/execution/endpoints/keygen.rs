@@ -731,6 +731,10 @@ where
         .clone()
         .into_lwe_secret_key();
 
+    //Computing and opening BK can take a while, so we increase the timeout.
+    //This must be set before compression key generation, which internally generates a BK.
+    session.network().set_timeout_for_bk().await;
+
     // Generate compression public keys if compression params exist
     let compression_keys =
         if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
@@ -767,9 +771,6 @@ where
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
-
-    //Computing and opening BK can take a while, so we increase the timeout
-    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
         &private_key_set.glwe_secret_key_share,
@@ -1009,6 +1010,10 @@ where
         .clone()
         .into_lwe_secret_key();
 
+    //Computing and opening BK can take a while, so we increase the timeout.
+    //This must be set before compression key generation, which internally generates a BK.
+    session.network().set_timeout_for_bk().await;
+
     // Generate compression public keys if compression params exist
     let compression_keys =
         if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
@@ -1047,9 +1052,6 @@ where
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
-
-    //Computing and opening BK can take a while, so we increase the timeout
-    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_compressed_bootstrap_key(
         &private_key_set.glwe_secret_key_share,
@@ -1612,6 +1614,8 @@ pub mod conformance {
 #[cfg(test)]
 pub mod tests {
     use super::OnlineDistributedKeyGen;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
@@ -1620,6 +1624,7 @@ pub mod tests {
         },
         execution::{
             endpoints::keygen::conformance::check_drift_technique_key,
+            keyset_config::StandardKeySetConfig,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::sessions::{
                 large_session::LargeSession, session_parameters::GenericParameterHandles,
@@ -2469,10 +2474,6 @@ pub mod tests {
             use strum::IntoEnumIterator;
             use tfhe::shortint::parameters::CompressionParameters;
 
-            use crate::execution::runtime::sessions::{
-                base_session::GenericBaseSessionHandles,
-                session_parameters::GenericParameterHandles,
-            };
             for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
                 assert_eq!(0, dkg_preproc.noise_len(bound));
             }
@@ -3243,5 +3244,186 @@ pub mod tests {
 
             assert_eq!(clear_a.wrapping_add(clear_b), dec);
         }
+    }
+
+    /// Phase 1: normal keygen to obtain a `PrivateKeySet`, using dummy preproc
+    /// Phase 2: keygen from the existing `PrivateKeySet` to regenerate public keys
+    /// Saves the results (phase 1 private keys, phase 2 public keys) to file.
+    #[cfg(feature = "slow_tests")]
+    async fn run_dkg_from_existing_sk_and_save<const EXTENSION_DEGREE: usize>(
+        params: DKGParams,
+        tag: tfhe::Tag,
+        num_parties: usize,
+        threshold: usize,
+        prefix_path: &Path,
+        run_compressed: bool,
+    ) where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+                        tag: Option<String>| async move {
+            let my_role = session.my_role();
+            let tag = tag
+                .map(|s| {
+                    let mut tag = tfhe::Tag::default();
+                    tag.set_data(s.as_bytes());
+                    tag
+                })
+                .unwrap_or_default();
+
+            // Phase 1: normal keygen to obtain a PrivateKeySet,
+            // note that this is *not* compressed
+            let mut phase1_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
+            let (_pk_phase1, sk) =
+                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                    &mut session,
+                    &mut phase1_preproc,
+                    params,
+                    tag.clone(),
+                    None,
+                )
+                .await
+                .unwrap();
+
+            // Phase 2: regenerate public keys from the existing PrivateKeySet
+            let keyset_config = KeySetConfig::Standard(StandardKeySetConfig::use_existing_sk());
+            session
+                .network()
+                .set_timeout_for_next_round(Duration::from_secs(240))
+                .await;
+            let mut phase2_preproc =
+                generate_preproc_from_params(&params, keyset_config, &mut session).await;
+
+            assert_ne!(0, phase2_preproc.bits_len());
+            assert_ne!(0, phase2_preproc.triples_len());
+            assert_ne!(0, phase2_preproc.randoms_len());
+            let pk = if run_compressed {
+                let compressed_pk =
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen_from_existing_private_keyset(
+                        &mut session,
+                        &mut phase2_preproc,
+                        params,
+                        tag,
+                        Some(&sk),
+                    )
+                    .await
+                    .unwrap();
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                FhePubKeySet {
+                    public_key,
+                    server_key,
+                }
+            } else {
+                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen_from_existing_private_keyset(
+                    &mut session,
+                    &mut phase2_preproc,
+                    params,
+                    tag,
+                    Some(&sk),
+                )
+                .await
+                .unwrap()
+            };
+
+            (my_role, pk, sk)
+        };
+
+        let results =
+            execute_protocol_small::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
+                num_parties,
+                threshold as u8,
+                None,
+                NetworkMode::Sync,
+                None,
+                &mut task,
+                Some(std::str::from_utf8(tag.as_slice()).unwrap().to_string()),
+            )
+            .await;
+
+        let pk_ref = results[0].1.clone();
+
+        for (role, pk, sk) in results {
+            assert_eq!(pk, pk_ref);
+            write_element(
+                prefix_path.join(format!("sk_p{}.der", role.one_based())),
+                &sk,
+            )
+            .unwrap();
+        }
+
+        write_element(prefix_path.join("pk.der"), &pk_ref).unwrap();
+    }
+
+    /// Tests keygen from an existing private keyset using [`PARAMS_TEST_BK_SNS`].
+    /// Runs the two-phase DKG, then verifies the resulting keys with TFHE operations.
+    #[cfg(feature = "slow_tests")]
+    async fn integration_keygen_from_existing_test_bk_sns<const EXTENSION_DEGREE: usize>(
+        run_compressed: bool,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
+    {
+        let params = PARAMS_TEST_BK_SNS;
+        let num_parties = 4;
+        let threshold = 1;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tag = {
+            let mut tag = tfhe::Tag::default();
+            tag.set_data("hello tag".as_bytes());
+            tag
+        };
+
+        run_dkg_from_existing_sk_and_save::<EXTENSION_DEGREE>(
+            params,
+            tag.clone(),
+            num_parties,
+            threshold,
+            temp_dir.path(),
+            run_compressed,
+        )
+        .await;
+
+        run_switch_and_squash::<EXTENSION_DEGREE>(
+            temp_dir.path(),
+            params.try_into().unwrap(),
+            tag.clone(),
+            num_parties,
+            threshold,
+        );
+
+        run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
+            temp_dir.path(),
+            params,
+            num_parties,
+            threshold,
+            true,
+        );
+
+        run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
+            temp_dir.path(),
+            params,
+            num_parties,
+            threshold,
+            true,
+            true,
+        );
+
+        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
+    }
+
+    // #[tokio::test]
+    // #[serial_test::serial]
+    // #[cfg(feature = "slow_tests")]
+    // async fn keygen_from_existing_private_keyset_bk_sns_f4() {
+    //     keygen_from_existing_test_bk_sns::<4>(false).await
+    // }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[cfg(feature = "slow_tests")]
+    #[tracing_test::traced_test]
+    async fn integration_compressed_keygen_from_existing_private_keyset_bk_sns_f4() {
+        integration_keygen_from_existing_test_bk_sns::<4>(true).await
     }
 }
