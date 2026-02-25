@@ -22,6 +22,8 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 
 use serde::{Deserialize, Serialize};
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConf {
     pub host: String,

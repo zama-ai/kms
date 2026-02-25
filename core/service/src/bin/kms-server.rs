@@ -625,8 +625,9 @@ async fn main_exec() -> anyhow::Result<()> {
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
-                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done as TLS is not available!\n
-                Make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done and TLS must not be available!\n
+                Make sure to use a configuration file without TLS configured and\n
+                make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
@@ -649,7 +650,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let mpc_listener = make_mpc_listener(threshold_config).await;
 
             let tls_identity = match &threshold_config.tls {
-                Some(tls_config) => Some({
+                Some(tls_config) => Some(
                     build_tls_config(
                         &threshold_config.peers,
                         tls_config,
@@ -663,8 +664,8 @@ async fn main_exec() -> anyhow::Result<()> {
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
-                    .await?
-                }),
+                    .await?,
+                ),
                 None => {
                     tracing::warn!(
                         "No TLS identity - using plaintext communication between MPC nodes"

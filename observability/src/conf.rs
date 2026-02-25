@@ -23,6 +23,8 @@ lazy_static::lazy_static! {
     static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(TRACER_DEFAULT_SCHEDULED_DELAY_MS);
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Debug, Deserialize, Serialize, Validate, Clone, TypedBuilder, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[serde(rename = "telemetry")]
