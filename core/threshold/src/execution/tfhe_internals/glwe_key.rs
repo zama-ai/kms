@@ -6,17 +6,15 @@ use tfhe::{
 };
 use tfhe_versionable::VersionsDispatch;
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    execution::{
-        online::preprocessing::BitPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-        tfhe_internals::{parameters::compute_min_max_hw, utils::compute_hamming_weight_glwe_sk},
-    },
+use crate::execution::{
+    online::preprocessing::BitPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{parameters::compute_min_max_hw, utils::compute_hamming_weight_glwe_sk},
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 use super::lwe_key::LweSecretKeyShare;
@@ -156,10 +154,6 @@ mod tests {
     use tfhe::shortint::parameters::{GlweDimension, PolynomialSize};
 
     use crate::{
-        algebra::{
-            galois_rings::degree_4::ResiduePolyF4Z64,
-            structure_traits::{One, Ring, Zero},
-        },
         execution::{
             online::preprocessing::{dummy::DummyPreprocessing, memory::InMemoryBitPreprocessing},
             runtime::sessions::{
@@ -169,6 +163,10 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        structure_traits::{One, Ring, Zero},
     };
 
     use super::GlweSecretKeyShare;

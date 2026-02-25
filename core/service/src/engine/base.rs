@@ -14,6 +14,9 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_element;
+use hashing::serialize_hash_element;
+use hashing::DomainSep;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
@@ -58,9 +61,6 @@ use threshold_fhe::execution::endpoints::decryption::{
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
-use threshold_fhe::hashing::hash_element;
-use threshold_fhe::hashing::serialize_hash_element;
-use threshold_fhe::hashing::DomainSep;
 use tokio::sync::Mutex;
 use tracing::error;
 

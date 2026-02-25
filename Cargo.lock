@@ -3088,6 +3088,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "error-utils"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "tracing",
+ "tracing-test",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4319,7 +4328,10 @@ dependencies = [
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
+ "thread-handles",
+ "threshold-algebra",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tokio-rustls 0.26.2",
  "tokio-util",
@@ -4370,6 +4382,7 @@ dependencies = [
  "test-context",
  "tfhe",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
@@ -4399,6 +4412,7 @@ dependencies = [
  "tfhe-versionable",
  "thiserror 2.0.12",
  "threshold-fhe",
+ "threshold-hashing",
  "tonic 0.13.1",
  "tonic-build",
  "tracing",
@@ -7662,6 +7676,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "thread-handles"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "error-utils",
+ "futures",
+ "rayon",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "thread_local"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7677,6 +7703,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
+]
+
+[[package]]
+name = "threshold-algebra"
+version = "0.13.0-rc.3"
+dependencies = [
+ "aes-prng",
+ "anyhow",
+ "bc2wrap",
+ "error-utils",
+ "g2p",
+ "itertools 0.14.0",
+ "lazy_static",
+ "ndarray",
+ "num-traits",
+ "paste",
+ "proptest",
+ "rand 0.8.5",
+ "rstest",
+ "serde",
+ "sha3",
+ "tfhe-versionable",
+ "threshold-hashing",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -7700,6 +7751,7 @@ dependencies = [
  "ctor",
  "dashmap",
  "derive_more",
+ "error-utils",
  "futures",
  "futures-util",
  "g2p",
@@ -7740,7 +7792,10 @@ dependencies = [
  "tfhe-csprng",
  "tfhe-versionable",
  "tfhe-zk-pok",
+ "thread-handles",
+ "threshold-algebra",
  "threshold-fhe",
+ "threshold-hashing",
  "tokio",
  "tokio-rustls 0.26.2",
  "tonic 0.13.1",
@@ -7753,6 +7808,17 @@ dependencies = [
  "tracing-test",
  "x509-parser 0.18.0",
  "zeroize",
+]
+
+[[package]]
+name = "threshold-hashing"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "bc2wrap",
+ "serde",
+ "sha3",
+ "tracing",
 ]
 
 [[package]]

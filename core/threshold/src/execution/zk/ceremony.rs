@@ -2,17 +2,16 @@
 //! that is used in our zero-knowledge proofs for proving plaintext knowledge.
 
 use crate::{
-    algebra::structure_traits::Ring,
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         runtime::sessions::base_session::BaseSessionHandles,
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
-    thread_handles::spawn_compute_bound,
 };
+use algebra::structure_traits::Ring;
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
@@ -31,6 +30,7 @@ use tfhe::{
 };
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
+use thread_handles::spawn_compute_bound;
 use tracing::instrument;
 
 use super::constants::{
@@ -866,7 +866,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
             let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
             if *role == my_role {
                 let mut xof = RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(
-                    session.rng().gen::<u128>(),
+                    session.rng().r#gen::<u128>(),
                     ZK_DSEP_CRS_UPDA,
                 ));
 
@@ -969,7 +969,6 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
 mod tests {
     use super::*;
     use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::{
             runtime::{
                 sessions::{
@@ -988,6 +987,7 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
+    use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;

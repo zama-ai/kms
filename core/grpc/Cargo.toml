@@ -21,6 +21,7 @@ alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
 bc2wrap.workspace = true
 cfg-if.workspace = true
+hashing.workspace = true
 hex.workspace = true
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }

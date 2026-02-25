@@ -1,7 +1,5 @@
-use crate::{
-    execution::runtime::party::Role,
-    hashing::{hash_element, DomainSep},
-};
+use algebra::role::Role;
+use hashing::{hash_element, DomainSep};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 

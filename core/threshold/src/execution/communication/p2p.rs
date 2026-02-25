@@ -9,17 +9,17 @@ use tokio::{
 use tracing::Instrument;
 
 use crate::{
-    algebra::structure_traits::Ring,
-    error::error_handler::anyhow_error_and_log,
-    execution::runtime::{
-        party::{Role, RoleTrait},
-        sessions::{
-            base_session::{BaseSessionHandles, GenericBaseSessionHandles},
-            large_session::LargeSessionHandles,
-        },
+    execution::runtime::sessions::{
+        base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+        large_session::LargeSessionHandles,
     },
     networking::value::NetworkValue,
 };
+use algebra::{
+    role::{Role, RoleTrait},
+    structure_traits::Ring,
+};
+use error_utils::anyhow_error_and_log;
 
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.
 /// Returns true if everything is fine.

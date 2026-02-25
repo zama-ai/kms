@@ -5,8 +5,6 @@ use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
-    algebra::{poly::Poly, structure_traits::Ring},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::{
             broadcast::{
@@ -16,11 +14,13 @@ use crate::{
             p2p::send_to_all,
         },
         large_execution::{local_single_share::MapsSharesChallenges, vss::ValueOrPoly},
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{poly::Poly, role::Role, structure_traits::Ring};
+use error_utils::anyhow_error_and_log;
 
 /// Malicious implementation of the [`Broadcast`] protocol
 /// that simply does nothing.

@@ -1,11 +1,11 @@
-use crate::algebra::structure_traits::{One, ZConsts};
-use crate::algebra::structure_traits::{Sample, Zero};
 use crate::experimental::algebra::integers::{IntQ, ModReduction, ZeroCenteredRem};
 use crate::experimental::algebra::ntt::hadamard_product;
 use crate::experimental::algebra::ntt::Const;
 use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{ntt_inv, ntt_iter2};
 use crate::experimental::random::approximate_gaussian;
+use algebra::structure_traits::{One, ZConsts};
+use algebra::structure_traits::{Sample, Zero};
 use crypto_bigint::Limb;
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
@@ -496,8 +496,8 @@ impl RingElement<IntQ> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::FromU128;
     use crate::experimental::algebra::levels::LevelOne;
+    use algebra::structure_traits::FromU128;
     use crypto_bigint::NonZero;
 
     fn level_one_mapping(x: &i128) -> LevelOne {

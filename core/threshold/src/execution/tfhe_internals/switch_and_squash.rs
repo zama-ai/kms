@@ -2,7 +2,7 @@ use num_traits::AsPrimitive;
 use std::num::Wrapping;
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
 
-use crate::algebra::{base_ring::Z128, structure_traits::Zero};
+use algebra::{base_ring::Z128, structure_traits::Zero};
 
 // Map a raw, decrypted message to its real value by dividing by the appropriate shift, delta, assuming padding
 pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
@@ -45,7 +45,6 @@ mod tests {
     };
 
     use crate::{
-        algebra::base_ring::Z128,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             tfhe_internals::{
@@ -56,6 +55,7 @@ mod tests {
         },
         file_handling::tests::read_element,
     };
+    use algebra::base_ring::Z128;
 
     /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.
     /// The function assumes padding will be used.

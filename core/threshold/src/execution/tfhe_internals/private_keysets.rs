@@ -1,6 +1,3 @@
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::Monomials;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::online::bit_lift::{BitLift, SecureBitLift};
 use crate::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
@@ -8,16 +5,17 @@ use crate::execution::online::preprocessing::memory::bit_lift::InMemoryBitLiftPr
 use crate::execution::online::preprocessing::{BasePreprocessing, BitPreprocessing};
 use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
-use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
-use crate::{
-    algebra::galois_rings::common::ResiduePoly,
-    execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
+use crate::execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::{Monomials, ResiduePoly},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Ring, Solve},
 };
-
 use serde::{Deserialize, Serialize};
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
@@ -758,21 +756,12 @@ mod test {
     use tokio::task::JoinSet;
 
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::{
-                common::ResiduePoly,
-                degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-            },
-            structure_traits::Ring,
-        },
         execution::{
             online::triple::open_list,
             runtime::{
                 sessions::small_session::{SmallSession128, SmallSession64},
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
-            sharing::share::Share,
             tfhe_internals::{
                 parameters::BC_PARAMS_SNS,
                 private_keysets::{
@@ -784,6 +773,15 @@ mod test {
         },
         networking::NetworkMode,
         session_id::SessionId,
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::{
+            common::ResiduePoly,
+            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        },
+        sharing::share::Share,
+        structure_traits::Ring,
     };
 
     // Note this fn is very much tailored for the test below
@@ -957,18 +955,16 @@ mod test {
         use super::super::{
             Definalizable, GlweSecretKeyShareEnum, LweSecretKeyShareEnum, PrivateKeySet,
         };
-        use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-        use crate::{
-            algebra::base_ring::{Z128, Z64},
-            execution::{
-                runtime::party::Role,
-                sharing::share::Share,
-                tfhe_internals::{
-                    glwe_key::GlweSecretKeyShare,
-                    lwe_key::LweSecretKeyShare,
-                    parameters::{BC_PARAMS_NO_SNS, PARAMS_TEST_BK_SNS},
-                },
-            },
+        use crate::execution::tfhe_internals::{
+            glwe_key::GlweSecretKeyShare,
+            lwe_key::LweSecretKeyShare,
+            parameters::{BC_PARAMS_NO_SNS, PARAMS_TEST_BK_SNS},
+        };
+        use algebra::{
+            base_ring::{Z128, Z64},
+            galois_rings::degree_4::ResiduePolyF4Z128,
+            role::Role,
+            sharing::share::Share,
         };
         use std::num::Wrapping;
 

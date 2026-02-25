@@ -3,20 +3,20 @@ use super::{
     prss::create_sets,
 };
 use crate::{
-    algebra::{base_ring::Z64, structure_traits::ErrorCorrect},
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
-    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
-    hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{base_ring::Z64, role::Role, structure_traits::ErrorCorrect};
 use anyhow::Context;
 use async_trait::async_trait;
+use error_utils::{anyhow_error_and_log, log_error_wrapper};
+use hashing::{hash_element, hash_element_w_size, DomainSep};
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -626,20 +626,12 @@ mod tests {
         RobustRealAgreeRandom, RobustSecureAgreeRandom,
     };
     use crate::{
-        algebra::{
-            base_ring::Z64,
-            galois_rings::degree_4::ResiduePolyF4Z128,
-            structure_traits::{ErrorCorrect, Invert, Ring},
-        },
         commitment::{
             commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
         },
         execution::{
-            runtime::{
-                party::Role,
-                sessions::{
-                    session_parameters::GenericParameterHandles, small_session::SmallSession,
-                },
+            runtime::sessions::{
+                session_parameters::GenericParameterHandles, small_session::SmallSession,
             },
             sharing::open::test::deterministically_compute_my_shares,
             small_execution::{
@@ -663,6 +655,12 @@ mod tests {
             testing::get_networkless_base_session_for_parties,
             tests::{execute_protocol_small_w_malicious, TestingParameters},
         },
+    };
+    use algebra::{
+        base_ring::Z64,
+        galois_rings::degree_4::ResiduePolyF4Z128,
+        role::Role,
+        structure_traits::{ErrorCorrect, Invert, Ring},
     };
     use itertools::Itertools;
     use std::collections::{HashMap, HashSet, VecDeque};

@@ -6,11 +6,11 @@ use crate::{
     client::client_wasm::Client,
 };
 use aes_prng::AesRng;
+use algebra::role::Role;
 use kms_grpc::{
     kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
     RequestId,
 };
-use threshold_fhe::execution::runtime::party::Role;
 
 impl Client {
     pub fn new_custodian_context_request(

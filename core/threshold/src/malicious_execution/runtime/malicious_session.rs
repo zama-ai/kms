@@ -1,21 +1,17 @@
 use std::collections::HashSet;
 
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
-        runtime::{
-            party::Role,
-            sessions::{
-                base_session::{
-                    BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
-                    SingleSetNetworkingImpl, ToBaseSession,
-                },
-                session_parameters::{
-                    DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
-                    SessionParameters,
-                },
-                small_session::{SmallSession, SmallSessionHandles},
+        runtime::sessions::{
+            base_session::{
+                BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
+                SingleSetNetworkingImpl, ToBaseSession,
             },
+            session_parameters::{
+                DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
+                SessionParameters,
+            },
+            small_session::{SmallSession, SmallSessionHandles},
         },
         small_execution::{
             prf::PRSSConversions,
@@ -23,6 +19,10 @@ use crate::{
         },
     },
     session_id::SessionId,
+};
+use algebra::{
+    role::Role,
+    structure_traits::{Invert, Ring, RingWithExceptionalSequence},
 };
 
 /// Defines a generic small session

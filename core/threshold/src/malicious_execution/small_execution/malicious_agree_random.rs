@@ -1,9 +1,8 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::ErrorCorrect,
     execution::{
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
         small_execution::{
             agree_random::{AgreeRandom, AgreeRandomFromShare},
             prf::PrfKey,
@@ -11,6 +10,7 @@ use crate::{
     },
     ProtocolDescription,
 };
+use algebra::{role::Role, structure_traits::ErrorCorrect};
 
 // Malicious implementation of both [`AgreeRandom`] and [`AgreeRandomFromShare`]
 // that simply does nothing

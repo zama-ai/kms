@@ -4,15 +4,15 @@ use rand::SeedableRng;
 use tracing::instrument;
 
 use super::vss::{SecureVss, Vss};
-use crate::algebra::structure_traits::{ErrorCorrect, Ring};
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::sessions::large_session::LargeSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,
 };
+use algebra::structure_traits::{ErrorCorrect, Ring};
+use error_utils::anyhow_error_and_log;
 
 /// Secure implementation of Coinflip as defined in NIST document
 ///
@@ -119,21 +119,22 @@ pub(crate) mod tests {
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
     };
 
+    use crate::networking::NetworkMode;
     use crate::{
-        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::runtime::{
-            party::Role, sessions::large_session::LargeSession, test_runtime::generate_fixed_roles,
+            sessions::large_session::LargeSession, test_runtime::generate_fixed_roles,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious,
             get_networkless_large_session_for_parties, TestingParameters,
         },
     };
-    use crate::{
-        algebra::structure_traits::{ErrorCorrect, Ring},
-        networking::NetworkMode,
-    };
     use aes_prng::AesRng;
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        structure_traits::{ErrorCorrect, Ring},
+    };
     use rand::SeedableRng;
     use rstest::rstest;
     use tokio::task::JoinSet;

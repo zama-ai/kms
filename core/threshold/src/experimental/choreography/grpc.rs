@@ -2,9 +2,9 @@
 //! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
 //! as this is meant for testing and benchmarking, and definitely not for production use.
 
-use crate::choreography::grpc::gen::choreography_server::{Choreography, ChoreographyServer};
+use crate::choreography::grpc::ggen::choreography_server::{Choreography, ChoreographyServer};
 
-use crate::choreography::grpc::gen::{
+use crate::choreography::grpc::ggen::{
     CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
     PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
     PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
@@ -12,7 +12,7 @@ use crate::choreography::grpc::gen::{
     ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
-use crate::choreography::grpc::r#gen::{ReshareRequest, ReshareResponse};
+use crate::choreography::grpc::ggen::{ReshareRequest, ReshareResponse};
 use crate::choreography::grpc::{
     create_small_sessions, fill_network_memory_info_multiple_sessions,
     fill_network_memory_info_single_session, gen_random_sid,
@@ -20,7 +20,7 @@ use crate::choreography::grpc::{
 use crate::choreography::requests::Status;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::BaseSession;
 use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
 use crate::execution::runtime::sessions::session_parameters::SessionParameters;
@@ -44,6 +44,7 @@ use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::{grpc::GrpcNetworkingManager, NetworkMode};
 use crate::session_id::SessionId;
 use aes_prng::AesRng;
+use algebra::role::Role;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::TryFutureExt;
@@ -158,6 +159,7 @@ impl ExperimentalGrpcChoreography {
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn create_base_session(
         &self,
         request_sid: SessionId,

@@ -8,15 +8,15 @@ use aes_prng::AesRng;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
 use rand::SeedableRng;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use strum_macros::Display;
-use tfhe::{named::Named, Versionize};
-use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::hashing::DomainSep;
+use tfhe::named::Named;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
 use zeroize::Zeroize;
 

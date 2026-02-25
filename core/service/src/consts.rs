@@ -38,7 +38,7 @@ pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
 #[cfg(not(feature = "slow_tests"))]
 pub const DEFAULT_THRESHOLD: usize = 1;
 
-pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
+pub const SAFE_SER_SIZE_LIMIT: u64 = hashing::SAFE_SER_SIZE_LIMIT;
 
 //TODO: Do we want to load this from configuration ?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;

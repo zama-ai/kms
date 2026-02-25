@@ -317,7 +317,8 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::{algebra::structure_traits::Sample, experimental::algebra::levels::LevelKsw};
+    use crate::experimental::algebra::levels::LevelKsw;
+    use algebra::structure_traits::Sample;
 
     #[test]
     fn test_crt_dec_rec() {

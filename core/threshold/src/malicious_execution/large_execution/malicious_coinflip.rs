@@ -1,7 +1,6 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::ErrorCorrect,
     execution::{
         large_execution::{coinflip::Coinflip, vss::Vss},
         runtime::sessions::large_session::LargeSessionHandles,
@@ -9,6 +8,7 @@ use crate::{
     },
     ProtocolDescription,
 };
+use algebra::structure_traits::ErrorCorrect;
 
 ///Performs the VSS and does nothing after that (returns its secret)
 #[derive(Default, Clone)]

@@ -1,8 +1,9 @@
-use rand::{CryptoRng, Rng};
-use threshold_fhe::{
-    algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
-    execution::sharing::shamir::{InputOp, RevealOp, ShamirSharings},
+use algebra::{
+    galois_rings::degree_4::ResiduePolyF4Z64,
+    sharing::shamir::{InputOp, RevealOp, ShamirSharings},
+    structure_traits::Ring,
 };
+use rand::{CryptoRng, Rng};
 
 use super::error::BackupError;
 
@@ -147,12 +148,10 @@ pub(crate) fn reconstruct(
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
+    use algebra::{sharing::share::Share, structure_traits::One};
     use proptest::prelude::*;
     use rand::SeedableRng;
-    use threshold_fhe::{
-        algebra::structure_traits::One, execution::sharing::share::Share,
-        tests::randomness_check::execute_all_randomness_tests_tight,
-    };
+    use threshold_fhe::tests::randomness_check::execute_all_randomness_tests_tight;
 
     use super::*;
 

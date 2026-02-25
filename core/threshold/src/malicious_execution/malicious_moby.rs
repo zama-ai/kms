@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use tonic::transport::server::Router;
 
-use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome};
 use crate::execution::online::preprocessing::PreprocessorFactory;
-use crate::execution::runtime::party::Role;
 use crate::grpc::server::SecureGrpcChoreography;
+use algebra::role::Role;
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+};
 
 use crate::networking::grpc::GrpcNetworkingManager;
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-    },
     choreography::grpc::GrpcChoreography,
     execution::{
         large_execution::{

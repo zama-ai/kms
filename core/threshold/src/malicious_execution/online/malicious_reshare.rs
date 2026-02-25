@@ -2,22 +2,20 @@ use tonic::async_trait;
 use zeroize::Zeroize;
 
 use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Invert, Syndrome},
-    },
     execution::{
         online::{
             preprocessing::BasePreprocessing,
             reshare::{Expected, NotExpected, Reshare},
         },
-        runtime::{
-            party::TwoSetsRole,
-            sessions::base_session::{BaseSession, GenericBaseSession},
-        },
-        sharing::share::Share,
+        runtime::sessions::base_session::{BaseSession, GenericBaseSession},
     },
     ProtocolDescription,
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    role::TwoSetsRole,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect, Invert, Syndrome},
 };
 
 #[derive(Default, Clone)]

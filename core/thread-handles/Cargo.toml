@@ -1,0 +1,19 @@
+[package]
+name = "thread-handles"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Utilities for managing OS threads, Tokio tasks, and a global Rayon compute pool."
+
+[dependencies]
+anyhow.workspace = true
+error-utils.workspace = true
+futures.workspace = true
+rayon.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros", "time"] }

@@ -1,12 +1,10 @@
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Zero},
-    },
-    execution::{
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles, tfhe_internals::parameters::KSKParams,
-    },
+use crate::execution::{
+    online::preprocessing::DKGPreprocessing, runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::parameters::KSKParams,
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 
 use super::{
@@ -257,9 +255,6 @@ mod tests {
     };
 
     use crate::{
-        algebra::{
-            base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
-        },
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
@@ -281,6 +276,9 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 

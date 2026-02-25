@@ -3,15 +3,15 @@ use super::{
     single_sharing::init_vdm,
 };
 use crate::{
-    algebra::{
-        bivariate::MatrixMul,
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring},
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::runtime::{party::Role, sessions::large_session::LargeSessionHandles},
-    ProtocolDescription,
+    execution::runtime::sessions::large_session::LargeSessionHandles, ProtocolDescription,
+};
+use algebra::{
+    bivariate::MatrixMul,
+    role::Role,
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
@@ -223,25 +223,26 @@ pub(crate) mod tests {
     use num_integer::div_ceil;
     use rstest::rstest;
 
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
-    use crate::algebra::structure_traits::Derive;
-    use crate::algebra::structure_traits::ErrorCorrect;
-    use crate::algebra::structure_traits::Invert;
     use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::execution::large_execution::double_sharing::SecureDoubleSharing;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::structure_traits::{Ring, Sample},
         execution::{
             large_execution::double_sharing::{DoubleShare, DoubleSharing},
-            runtime::{party::Role, sessions::large_session::LargeSession},
-            sharing::{shamir::ShamirSharings, share::Share},
+            runtime::sessions::large_session::LargeSession,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
 
     async fn test_doublesharing<

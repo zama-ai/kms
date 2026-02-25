@@ -1,10 +1,10 @@
-use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Solve},
-    execution::{
-        online::{gen_bits::BitGenEven, preprocessing::BasePreprocessing},
-        runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-    },
+use crate::execution::{
+    online::{gen_bits::BitGenEven, preprocessing::BasePreprocessing},
+    runtime::sessions::base_session::BaseSessionHandles,
+};
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Solve},
 };
 
 pub struct DummyBitGenEven;

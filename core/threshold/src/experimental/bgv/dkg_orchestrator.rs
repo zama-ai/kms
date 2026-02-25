@@ -12,7 +12,6 @@ use tokio::{
 use tracing::{instrument, Instrument};
 
 use crate::{
-    error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         online::{
@@ -40,7 +39,6 @@ use crate::{
         runtime::sessions::{
             session_parameters::GenericParameterHandles, small_session::SmallSession,
         },
-        sharing::share::Share,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
     experimental::{
@@ -50,6 +48,8 @@ use crate::{
         gen_bits_odd::{BitGenOdd, RealBitGenOdd},
     },
 };
+use algebra::sharing::share::Share;
+use error_utils::anyhow_error_and_log;
 
 ///Amount of triples generated in one batch by the orchestrator
 pub(crate) const BGV_BATCH_SIZE_TRIPLES: usize = 1000;

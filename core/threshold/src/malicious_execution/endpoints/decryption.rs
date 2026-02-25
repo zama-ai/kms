@@ -1,19 +1,17 @@
 use std::sync::{Arc, Mutex};
 
-use crate::{
-    algebra::{
-        base_ring::Z128,
-        galois_rings::common::ResiduePoly,
-        structure_traits::{ErrorCorrect, Invert, Solve},
+use crate::execution::{
+    endpoints::decryption::{
+        OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
     },
-    execution::{
-        endpoints::decryption::{
-            OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
-        },
-        online::preprocessing::NoiseFloodPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::private_keysets::PrivateKeySet,
-    },
+    online::preprocessing::NoiseFloodPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::private_keysets::PrivateKeySet,
+};
+use algebra::{
+    base_ring::Z128,
+    galois_rings::common::ResiduePoly,
+    structure_traits::{ErrorCorrect, Invert, Solve},
 };
 
 pub struct DroppingOnlineNoiseFloodDecryption;

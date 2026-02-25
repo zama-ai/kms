@@ -6,6 +6,10 @@ members = [
     "core/grpc",
     "core/service",
     "core/threshold",
+    "core/threshold-algebra",
+    "core/threshold-hashing",
+    "core/thread-handles",
+    "core/error-utils",
     "core-client",
     "observability",
     "tools/kms-health-check",
@@ -65,13 +69,17 @@ description = "Key Management System for the Zama Protocol."
 # MAINTAIN ALPHABETICAL ORDER for all dependencies within each section
 
 # Internal Zama modules
+algebra = { package = "threshold-algebra", path = "./core/threshold-algebra", default-features = false }
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
+hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", default-features = false }
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
+error-utils = { path = "./core/error-utils", default-features = false }
+thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)
 aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+ downloads), actively maintained
@@ -223,9 +231,16 @@ opt-level = 3
 opt-level = 1
 # Ensure all possible speed ups on dev compilation on Macos is enabled
 split-debuginfo = "unpacked"
+# Cut down memory consumption and speed up compilation a bit.
+debug = "line-tables-only"
 
 [profile.test]
 opt-level = 3
+lto = "off"
+# Ensure all possible speed ups on dev compilation on Macos is enabled
+split-debuginfo = "unpacked"
+# Cut down memory consumption and speed up compilation a bit (downside: no variable inspection in a debugger).
+debug = "line-tables-only"
 
 [profile.bench]
 debug = true

@@ -16,17 +16,15 @@ use tfhe::{
     Seed,
 };
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-    },
+use crate::execution::{
+    online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{
     lwe_key::LweSecretKeyShare, parameters::EncryptionType,
@@ -324,8 +322,8 @@ mod tests {
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
+    use crate::{execution::tfhe_internals::parameters::TUniformBound, networking::NetworkMode};
     use crate::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
@@ -335,7 +333,6 @@ mod tests {
             runtime::sessions::{
                 large_session::LargeSession, session_parameters::GenericParameterHandles,
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
@@ -345,12 +342,11 @@ mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
-    use crate::{
-        execution::{
-            sharing::shamir::{InputOp, RevealOp},
-            tfhe_internals::parameters::TUniformBound,
-        },
-        networking::NetworkMode,
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        sharing::shamir::{InputOp, RevealOp},
+        sharing::{shamir::ShamirSharings, share::Share},
+        structure_traits::Ring,
     };
 
     use super::{encrypt_lwe_ciphertext, LweCiphertextShare, LweSecretKeyShare};

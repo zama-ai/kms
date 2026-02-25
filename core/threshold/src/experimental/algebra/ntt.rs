@@ -1,4 +1,4 @@
-use crate::algebra::structure_traits::One;
+use algebra::structure_traits::One;
 use std::ops::{Add, Mul, Sub};
 
 use crypto_bigint::{U128, U1536, U768};
@@ -195,10 +195,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::Sample;
+    use algebra::structure_traits::Sample;
 
-    use crate::algebra::structure_traits::Zero;
     use aes_prng::AesRng;
+    use algebra::structure_traits::Zero;
     use rand::SeedableRng;
 
     fn naive_mul<T>(a: &[T], b: &[T], n: usize) -> Vec<T>

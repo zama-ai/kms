@@ -1,12 +1,12 @@
 //! gRPC-based choreography.
 
-pub mod gen {
+pub mod ggen {
     #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_choreography");
 }
 
-use self::gen::choreography_server::{Choreography, ChoreographyServer};
-use self::gen::{
+use self::ggen::choreography_server::{Choreography, ChoreographyServer};
+use self::ggen::{
     CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
     PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse, ReshareRequest,
     ReshareResponse, StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest,
@@ -15,11 +15,6 @@ use self::gen::{
     ThresholdKeyGenResultResponse,
 };
 
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{
-    Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome,
-};
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
@@ -27,7 +22,6 @@ use crate::choreography::requests::{
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
@@ -56,7 +50,7 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
     PreprocessorFactory,
 };
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::sessions::large_session::LargeSession;
@@ -77,14 +71,19 @@ use crate::networking::{
 };
 use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
+use algebra::base_ring::{Z128, Z64};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::role::Role;
+use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
+use error_utils::anyhow_error_and_log;
 use futures_util::{
     future::{join_all, try_join_all},
     TryFutureExt,
 };
-use gen::{CrsGenRequest, CrsGenResponse};
+use ggen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -445,6 +444,7 @@ where
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn create_base_session(
         &self,
         request_sid: SessionId,
@@ -2745,8 +2745,8 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());

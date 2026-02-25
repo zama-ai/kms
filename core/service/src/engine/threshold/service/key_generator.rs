@@ -2,6 +2,14 @@
 use itertools::Itertools;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
+use algebra::{
+    base_ring::Z128,
+    galois_rings::{
+        common::ResiduePoly,
+        degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    },
+    structure_traits::Ring,
+};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
@@ -19,27 +27,15 @@ use observability::{
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
-use threshold_fhe::{
-    algebra::{
-        base_ring::Z128,
-        galois_rings::{
-            common::ResiduePoly,
-            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        },
-        structure_traits::Ring,
-    },
-    execution::{
-        endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
-        keyset_config as ddec_keyset_config,
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
-        tfhe_internals::{
-            parameters::DKGParams,
-            private_keysets::{
-                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
-            },
-            public_keysets::FhePubKeySet,
-        },
+use threshold_fhe::execution::{
+    endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
+    tfhe_internals::{
+        parameters::DKGParams,
+        private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
+        public_keysets::FhePubKeySet,
     },
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
@@ -777,10 +773,10 @@ impl<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >,
     ) -> anyhow::Result<DecompressionKey> {
+        use algebra::role::Role;
         use itertools::Itertools;
         use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
         use threshold_fhe::execution::{
-            runtime::party::Role,
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
                 to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,

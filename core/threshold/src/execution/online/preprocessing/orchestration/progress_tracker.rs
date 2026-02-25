@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::error::error_handler::anyhow_error_and_log;
+use error_utils::anyhow_error_and_log;
 
 struct InnerProgress {
     current: usize,
@@ -121,7 +121,7 @@ impl ProgressTracker {
 
     /// Increments the count of produced _things_ by `amount`.
     ///
-    /// If incrementing causes to be in a new interval as defined by `reporting_interval_in_percentage`  
+    /// If incrementing causes to be in a new interval as defined by `reporting_interval_in_percentage`
     /// in [`Self::new`], this automatically logs a [`Progress`].
     pub fn increment(&self, amount: usize) -> anyhow::Result<()> {
         let should_log = {

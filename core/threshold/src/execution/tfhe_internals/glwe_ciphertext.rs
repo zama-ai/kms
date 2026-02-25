@@ -3,7 +3,7 @@ use tfhe::{
     core_crypto::commons::traits::ParallelByteRandomGenerator, shortint::parameters::PolynomialSize,
 };
 
-use crate::algebra::{
+use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
@@ -209,20 +209,15 @@ mod tests {
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::{
-                party::Role,
-                sessions::{
-                    large_session::LargeSession, session_parameters::GenericParameterHandles,
-                },
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 parameters::{EncryptionType, TUniformBound},
                 randomness::{MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
@@ -233,12 +228,20 @@ mod tests {
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
     };
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        role::Role,
+        sharing::{
+            shamir::{InputOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::Ring,
+    };
 
     use super::{
         encrypt_glwe_ciphertext_assign, GlweCiphertextShare, GlweSecretKeyShare,
         MPCEncryptionRandomGenerator,
     };
-    use crate::execution::sharing::shamir::InputOp;
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs
     #[tokio::test]
