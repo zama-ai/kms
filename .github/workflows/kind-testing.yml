@@ -10,6 +10,8 @@ on:
         required: false
         type: string
     secrets:
+      GH_TOKEN_KMS_DELETE_PACKAGE:
+        required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       SLAB_ACTION_TOKEN:
