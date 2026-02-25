@@ -255,15 +255,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::RequestId;
-    use std::str::FromStr;
-
     use super::*;
+    use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
-        store_versioned_at_request_id, StorageExt, StorageReader, StorageType,
+        store_context_at_id, store_versioned_at_request_id, StorageExt, StorageReader, StorageType,
     };
+    use kms_grpc::RequestId;
+    use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
     pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(
@@ -549,10 +549,12 @@ mod tests {
     }
 
     // write prss to storage using the legacy method
-    async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
+    async fn write_legacy_empty_prss_to_storage(
+        private_storage: &mut ram::RamStorage,
+        threshold: u8,
+        num_parties: usize,
+    ) {
         let epoch_id = *DEFAULT_EPOCH_ID;
-        let num_parties = 4;
-        let threshold = 1u8;
 
         let prss_setup_obj_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
         let prss_setup_obj_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
@@ -585,6 +587,36 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    async fn store_test_context(
+        priv_storage: &mut ram::RamStorage,
+        threshold: u8,
+        num_parties: usize,
+    ) {
+        let mut mpc_nodes = Vec::new();
+        for i in 0..num_parties {
+            mpc_nodes.push(NodeInfo {
+                mpc_identity: format!("testnode{}", i),
+                party_id: (i + 1) as u32,
+                verification_key: None,
+                external_url: "https://doesnotexist.zama.ai".to_string(),
+                ca_cert: None,
+                public_storage_url: "".to_string(),
+                public_storage_prefix: None,
+                extra_verification_keys: vec![],
+            });
+        }
+        let context_info = ContextInfo {
+            mpc_nodes,
+            context_id: *DEFAULT_MPC_CONTEXT,
+            software_version: SoftwareVersion::current().unwrap(),
+            threshold: threshold as u32,
+            pcr_values: vec![],
+        };
+        store_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT, &context_info)
+            .await
+            .expect("Could not store default context");
     }
 
     // ── Tests for migrate_fhe_keys_after_0_13_1 ──
@@ -793,9 +825,10 @@ mod tests {
         let num_parties = 4;
         let threshold = 1u8;
 
-        write_legacy_empty_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
+        store_test_context(&mut storage, threshold, num_parties).await;
 
-        migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
+        migrate_legacy_prss_before_0_13_1(&mut storage)
             .await
             .unwrap();
 
@@ -847,18 +880,18 @@ mod tests {
         let num_parties = 4;
         let threshold = 1u8;
 
-        write_legacy_empty_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
+        store_test_context(&mut storage, threshold, num_parties).await;
 
-        // First migration
-        migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
+        migrate_legacy_prss_before_0_13_1(&mut storage)
             .await
             .unwrap();
 
         // Write fresh legacy data again
-        write_legacy_empty_prss_to_storage(&mut storage).await;
+        write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
 
         // Second migration should skip (PrssSetupCombined already exists)
-        migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties)
+        migrate_legacy_prss_before_0_13_1(&mut storage)
             .await
             .unwrap();
 
@@ -888,22 +921,28 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn test_migrate_prss_no_legacy_data_errors() {
         let mut storage = RamStorage::new();
         let num_parties = 4;
         let threshold = 1u8;
+        store_test_context(&mut storage, threshold, num_parties).await;
 
-        let result = migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties).await;
-        assert!(result.is_err());
+        let result = migrate_legacy_prss_before_0_13_1(&mut storage).await;
+        assert!(result.is_ok());
+        assert!(logs_contain("Failed to read both legacy PRSS Z128 and Z64"));
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     #[expect(deprecated)]
     async fn test_migrate_prss_missing_z64_errors() {
         let mut storage = RamStorage::new();
         let num_parties = 4;
         let threshold = 1u8;
         let epoch_id = *DEFAULT_EPOCH_ID;
+
+        store_test_context(&mut storage, threshold, num_parties).await;
 
         // Only write Z128 legacy data
         let prss_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
@@ -920,17 +959,20 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties).await;
-        assert!(result.is_err());
+        let result = migrate_legacy_prss_before_0_13_1(&mut storage).await;
+        assert!(result.is_ok());
+        assert!(logs_contain("Failed to read legacy PRSS Z64 from file"));
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     #[expect(deprecated)]
     async fn test_migrate_prss_missing_z128_errors() {
         let mut storage = RamStorage::new();
         let num_parties = 4;
         let threshold = 1u8;
         let epoch_id = *DEFAULT_EPOCH_ID;
+        store_test_context(&mut storage, threshold, num_parties).await;
 
         // Only write Z64 legacy data
         let prss_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
@@ -947,8 +989,9 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss_before_0_13_1(&mut storage, threshold, num_parties).await;
-        assert!(result.is_err());
+        let result = migrate_legacy_prss_before_0_13_1(&mut storage).await;
+        assert!(result.is_ok());
+        assert!(logs_contain("Failed to read legacy PRSS Z128 from file"));
     }
 
     // S3 storage tests
