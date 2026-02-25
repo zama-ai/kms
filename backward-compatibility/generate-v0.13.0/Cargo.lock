@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility-generate-v0-13-0"
-version = "0.13.0"
+version = "0.13.3"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -1635,7 +1635,7 @@ checksum = "7d809780667f4410e7c41b07f52439b94d2bdf8528eeedc287fa38d3b7f95d82"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.0-rc.2#169aa799bcac7744868eb303e99d241c612df4e6"
+source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.3#9eddb2a511b823a37b7b2c6c3dbcba75a6ab1659"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3773,8 +3773,8 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.13.0-rc.2"
-source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.0-rc.2#169aa799bcac7744868eb303e99d241c612df4e6"
+version = "0.13.3"
+source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.3#9eddb2a511b823a37b7b2c6c3dbcba75a6ab1659"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3854,8 +3854,8 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.13.0-rc.2"
-source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.0-rc.2#169aa799bcac7744868eb303e99d241c612df4e6"
+version = "0.13.3"
+source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.3#9eddb2a511b823a37b7b2c6c3dbcba75a6ab1659"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4070,9 +4070,9 @@ dependencies = [
 
 [[package]]
 name = "ml-kem"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97befee0c869cb56f3118f49d0f9bb68c9e3f380dec23c1100aedc4ec3ba239a"
+checksum = "dcaee19a45f916d98f24a551cc9a2cdae705a040e66f3cbc4f3a282ea6a2e982"
 dependencies = [
  "hybrid-array",
  "kem",
@@ -4352,8 +4352,8 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.13.0-rc.2"
-source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.0-rc.2#169aa799bcac7744868eb303e99d241c612df4e6"
+version = "0.13.3"
+source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.3#9eddb2a511b823a37b7b2c6c3dbcba75a6ab1659"
 dependencies = [
  "anyhow",
  "axum",
@@ -6646,8 +6646,8 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.13.0-rc.2"
-source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.0-rc.2#169aa799bcac7744868eb303e99d241c612df4e6"
+version = "0.13.3"
+source = "git+https://github.com/zama-ai/kms.git?tag=v0.13.3#9eddb2a511b823a37b7b2c6c3dbcba75a6ab1659"
 dependencies = [
  "aes",
  "aes-prng",
