@@ -683,8 +683,9 @@ where
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
-    // Note however that the data in the vault is not checked for corruption.
-    backup_operator.update_backup_vault().await?;
+    // Note however that the data in the vault is not checked for corruption hence
+    // existing values are not re-backed up
+    backup_operator.update_backup_vault(false).await?;
 
     // Start updating system metrics
     update_threshold_kms_system_metrics(

@@ -11,7 +11,7 @@ use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMate
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
 use crate::util::key_setup::{
-    ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
+    ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
 };
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
@@ -309,6 +309,9 @@ impl ThresholdTestEnvBuilder {
         )
         .await;
 
+        // Ensure client signing/verification keys exist
+        ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
+
         // Create backup vaults for each party if requested
         let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {
             use crate::conf::{Keychain, SecretSharingKeychain};
@@ -341,6 +344,7 @@ impl ThresholdTestEnvBuilder {
                             None,
                             None,
                             Some(&pub_proxy),
+                            false,
                         )
                         .await?,
                     )

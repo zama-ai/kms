@@ -40,6 +40,7 @@ pub mod large_execution {
 
 #[cfg(feature = "non-wasm")]
 pub mod online {
+    pub mod bit_lift;
     pub mod bit_manipulation;
     pub mod gen_bits;
     pub mod preprocessing;

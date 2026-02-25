@@ -47,6 +47,7 @@ use crate::{
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare, parameters::DkgMode,
+            private_keysets::LweSecretKeyShareEnum,
         },
     },
     networking::value::NetworkValue,
@@ -491,12 +492,12 @@ where
             });
 
     Ok(PrivateKeySet {
-        lwe_compute_secret_key_share: LweSecretKeyShare {
+        lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
             data: lwe_key_shares64,
-        },
-        lwe_encryption_secret_key_share: LweSecretKeyShare {
+        }),
+        lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
             data: lwe_encryption_key_shares64,
-        },
+        }),
         glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_key_shares128,
             polynomial_size: params_basic_handle.polynomial_size(),
@@ -877,24 +878,25 @@ fn secret_share_key_shares<
     R: Rng + CryptoRng,
     const EXTENSION_DEGREE: usize,
     Scalar: UnsignedInteger,
+    Z,
 >(
     secret_key_container: Vec<Scalar>,
     num_parties: usize,
     threshold: usize,
     rng: &mut R,
-) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>>>
+) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
 where
-    ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>: RingWithExceptionalSequence,
-    Wrapping<Scalar>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    Z: Ring,
 {
     let s_length = secret_key_container.len();
-    let mut res: Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>> =
+    let mut res: Vec<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>> =
         vec![Vec::with_capacity(s_length); num_parties];
 
     // for each bit in the secret key generate all parties shares
-    for (i, bit) in secret_key_container.iter().enumerate() {
+    for (i, bit) in secret_key_container.into_iter().enumerate() {
         let embedded_secret =
-            ResiduePoly::<Wrapping<Scalar>, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
+            ResiduePoly::<Z, EXTENSION_DEGREE>::from_scalar(Z::from_u128(bit.cast_into()));
         let shares = ShamirSharings::share(rng, embedded_secret, num_parties, threshold)?;
         for (v, share) in res.iter_mut().zip_eq(shares.shares) {
             v.insert(i, share);
@@ -963,11 +965,11 @@ where
     )?;
 
     // do the same for 64 bit lwe key
-    let vv64_lwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+    let vv128_lwe_key: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
         secret_share_key_shares(lwe_secret_key.into_container(), num_parties, threshold, rng)?;
 
     // do the same for 64 bit lwe encryption key
-    let vv64_lwe_enc_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+    let vv128_lwe_enc_key: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
         secret_share_key_shares(
             lwe_encryption_secret_key.into_container(),
             num_parties,
@@ -999,12 +1001,12 @@ where
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
         .map(|p| PrivateKeySet {
-            lwe_compute_secret_key_share: LweSecretKeyShare {
-                data: vv64_lwe_key[p].clone(),
-            },
-            lwe_encryption_secret_key_share: LweSecretKeyShare {
-                data: vv64_lwe_enc_key[p].clone(),
-            },
+            lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                data: vv128_lwe_key[p].clone(),
+            }),
+            lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                data: vv128_lwe_enc_key[p].clone(),
+            }),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
                 data: vv128_glwe_key[p].clone(),
                 polynomial_size: glwe_poly_size,

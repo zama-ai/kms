@@ -131,6 +131,12 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     .await
 }
 
+// TODO: Calls to this should be replaced by calls to a generic RobustOpen protocol.
+// instead of forcing the use of SecureRobustOpen impl.
+// This would be more consistent with the rest of the codebase and
+// allow for easier testing of malicious strategies.
+// We might even want to remove those 2 functions and directly call the robust open protocol from the code that needs it, as there is not much added value in having those wrapper functions.
+
 /// Opens a single secret
 pub async fn open<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: Share<Z>,
@@ -211,7 +217,7 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     async fn task(session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                        let mut preprocessing = DummyPreprocessing::new(42, &session);
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
                         let trip = preprocessing.next_triple().unwrap();
@@ -248,7 +254,7 @@ mod tests {
                         Vec<$z>,
                         Vec<$z>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                        let mut preprocessing = DummyPreprocessing::new(42, &session);
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
@@ -291,7 +297,7 @@ mod tests {
                     let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
                         if session.my_role() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                            let mut preprocessing = DummyPreprocessing::new(42, &session);
                             let cur_a = preprocessing.next_random().unwrap();
                             let cur_b = preprocessing.next_random().unwrap();
                             let trip = preprocessing.next_triple().unwrap();
@@ -330,7 +336,7 @@ mod tests {
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                        let mut preprocessing = DummyPreprocessing::new(42, &session);
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role() {
                             role if role == bad_role  => Share::new(bad_role, $z::from_scalar(Wrapping(42))),

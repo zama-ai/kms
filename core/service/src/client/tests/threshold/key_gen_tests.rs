@@ -971,6 +971,7 @@ pub(crate) async fn preproc_and_keygen(
                 &mut kms_servers,
                 &mut kms_clients,
                 &mut internal_client,
+                None,
                 key_id,
                 None,
                 vec![TestingPlaintext::U8(u8::MAX)],
@@ -1036,6 +1037,7 @@ pub(crate) async fn preproc_and_keygen(
                 &mut kms_servers,
                 &mut kms_clients,
                 &mut internal_client,
+                None,
                 key_id,
                 None,
                 vec![TestingPlaintext::U8(u8::MAX)],
@@ -1210,10 +1212,20 @@ fn try_reconstruct_shares(
     };
 
     let param_handle = param.get_params_basics_handle();
+    // Cast to Z64 before reconstruction
     let lwe_shares = all_threshold_fhe_keys
         .iter()
-        .map(|(k, v)| (*k, v.private_keys.lwe_compute_secret_key_share.data.clone()))
-        .collect::<HashMap<_, _>>();
+        .map(|(k, v)| {
+            (
+                *k,
+                v.private_keys
+                    .lwe_compute_secret_key_share
+                    .clone()
+                    .convert_to_z64()
+                    .data,
+            )
+        })
+        .collect();
     let lwe_secret_key = reconstruct_bit_vec(lwe_shares, param_handle.lwe_dimension().0, threshold);
     let lwe_secret_key =
         tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(lwe_secret_key);
@@ -1223,10 +1235,14 @@ fn try_reconstruct_shares(
         .map(|(k, v)| {
             (
                 *k,
-                v.private_keys.lwe_encryption_secret_key_share.data.clone(),
+                v.private_keys
+                    .lwe_encryption_secret_key_share
+                    .clone()
+                    .convert_to_z64()
+                    .data,
             )
         })
-        .collect::<HashMap<_, _>>();
+        .collect();
     _ = reconstruct_bit_vec(
         lwe_enc_shares,
         param_handle.lwe_hat_dimension().0,

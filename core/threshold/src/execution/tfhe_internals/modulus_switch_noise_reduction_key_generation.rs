@@ -27,7 +27,7 @@ use crate::{
 /// Generate the modulus switching noise reduction key from the small LWE key.
 /// This key is essentially encryptions of zeros, and it's used as a part of
 /// the bootstrap algorithm if it exists, right before modulus switching.
-#[instrument(name="Gen MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+#[instrument(name="Gen MSNRK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -62,7 +62,7 @@ where
     })
 }
 
-#[instrument(name="Gen Compressed MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+#[instrument(name="Gen Compressed MSNRK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,

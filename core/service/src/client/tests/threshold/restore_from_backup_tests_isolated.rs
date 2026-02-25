@@ -212,6 +212,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
         &mut restarted_servers,
         &mut restarted_clients,
         &mut internal_client,
+        None, // encryption_key_id
         &key_id_1,
         None, // context_id
         vec![TestingPlaintext::U32(42)],

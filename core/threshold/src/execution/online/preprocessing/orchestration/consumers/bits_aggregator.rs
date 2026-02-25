@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
@@ -44,11 +44,10 @@ impl<Z: Clone + Send + Sync, T: BitPreprocessing<Z>> BitsAggregator<Z, T> {
                 .await
                 .ok_or_else(|| anyhow_error_and_log("Error receiving Bits"))?;
             let num_bits = std::cmp::min(num_bits_needed, bits_batch.len());
-            (*self
-                .bits_writer
+            self.bits_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_bits(bits_batch[..num_bits].to_vec());
+                .await
+                .append_bits(bits_batch[..num_bits].to_vec());
             num_bits_needed -= num_bits;
             if num_bits_needed == 0 {
                 return Ok(());
