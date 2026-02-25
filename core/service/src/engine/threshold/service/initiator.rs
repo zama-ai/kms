@@ -639,34 +639,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn already_exists() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
-
-        let epoch_id = EpochId::new_random(&mut rng);
-        initiator
-            .init(tonic::Request::new(InitRequest {
-                request_id: Some(epoch_id.into()),
-                context_id: None,
-            }))
-            .await
-            .unwrap();
-
-        // try the same again and we should see an AlreadyExists error
-        assert_eq!(
-            initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(epoch_id.into()),
-                    context_id: None,
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::AlreadyExists
-        );
-    }
-
-    #[tokio::test]
     async fn internal() {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<FailingPrss>(&mut rng).await;

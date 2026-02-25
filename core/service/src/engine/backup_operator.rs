@@ -916,7 +916,7 @@ where
                             update_legacy_prss_13_4::<PrivS>(
                                 &private_storage,
                                 &mut backup_vault,
-                                true, // We MUST overwrite existing data in the backup vault
+                                overwrite,
                             )
                             .await?;
                         }
