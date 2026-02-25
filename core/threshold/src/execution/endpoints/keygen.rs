@@ -9,17 +9,14 @@ use crate::execution::{
     tfhe_internals::{
         compression_decompression_key::CompressionPrivateKeyShares,
         compression_decompression_key_generation::{
-            distributed_keygen_compressed_compression_material,
-            distributed_keygen_compression_material, generate_compressed_decompression_keys,
+            generate_compressed_compression_decompression_keys,
+            generate_compressed_decompression_keys, generate_compression_decompression_keys,
             generate_decompression_keys,
         },
         glwe_key::GlweSecretKeyShare,
         lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
         lwe_bootstrap_key_generation::{generate_bootstrap_key, generate_compressed_bootstrap_key},
-        lwe_key::{
-            generate_lwe_private_compressed_public_key_pair, generate_lwe_private_public_key_pair,
-            LweSecretKeyShare,
-        },
+        lwe_key::{generate_lwe_public_key_shared, LweSecretKeyShare},
         lwe_keyswitch_key_generation::{
             generate_compressed_key_switch_key, generate_key_switch_key,
         },
@@ -28,12 +25,13 @@ use crate::execution::{
             generate_mod_switch_noise_reduction_key,
         },
         parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
-        private_keysets::{GenericPrivateKeySet, PrivateKeySet},
+        private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
         public_keysets::{
             CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
             RawPubKeySet, ReRandomizationRawKeySwitchingKey,
         },
         randomness::MPCEncryptionRandomGenerator,
+        sns_compression_key::SnsCompressionPrivateKeyShares,
         sns_compression_key_generation::{
             generate_compressed_sns_compression_keys, generate_sns_compression_keys,
         },
@@ -132,6 +130,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     /// - `session`: the session that holds necessary information for networking
     /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
     /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    /// - `existing_compression_sk`: Optional reference to an existing compression private key share.
     ///
     /// Outputs:
     /// - A [`FhePubKeySet`] composed of a [`tfhe::CompactPublicKey`] and a [`tfhe::ServerKey`]
@@ -159,9 +158,22 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
 
-    // NOTE: This can not be used or tested yet as we are waiting for tfhe-rs
-    // next release to be able to decompress the keys generated here.
-    // see https://github.com/zama-ai/kms/pull/40
+    #[allow(private_bounds)]
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<FhePubKeySet>
+    where
+        Z: BaseRing,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
 
     /// Runs the distributed key generation protocol for compressed keys.
     ///
@@ -169,6 +181,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     /// - `session`: the session that holds necessary information for networking
     /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
     /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    /// - `existing_compression_sk`: Optional reference to an existing compression private key share.
     ///
     /// Outputs:
     /// - A [`CompressedFhePubKeySet`] composed of a [`tfhe::CompressedCompactPublicKey`] and a [`tfhe::CompressedServerKey`] as well as the seed of the XOF to decompress the keys.
@@ -197,6 +210,23 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
+
+    #[allow(private_bounds)]
+    async fn compressed_keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<CompressedXofKeySet>
+    where
+        Z: BaseRing,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
 }
 
 pub type SecureOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize> =
@@ -210,7 +240,7 @@ pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: us
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
-    #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    #[instrument(name="TFHE.Threshold-KeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn keygen<
         S: BaseSessionHandles,
@@ -269,7 +299,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ))
     }
 
-    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn compressed_keygen<
         S: BaseSessionHandles,
@@ -328,6 +358,251 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             ),
         ))
     }
+
+    #[instrument(name="TFHE.Threshold-CompressedKeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    #[allow(private_bounds)]
+    async fn compressed_keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<CompressedXofKeySet>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+    {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+        if Z::BIT_LENGTH == 64 {
+            if let DKGParams::WithSnS(_) = params {
+                return Err(anyhow_error_and_log(
+                    "Can not generate Switch and Squash key with in Z64".to_string(),
+                ));
+            }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
+        }
+
+        let pub_key_set = distributed_keygen_compressed_from_existing_private_keyset(
+            session,
+            preprocessing,
+            params,
+            existing_private_keyset,
+        )
+        .await?;
+        Ok(pub_key_set.to_compressed_pubkeyset(params, tag))
+    }
+
+    #[instrument(name="TFHE.Threshold-KeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    #[allow(private_bounds)]
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+        tag: tfhe::Tag,
+        existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<FhePubKeySet>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+    {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+        if Z::BIT_LENGTH == 64 {
+            if let DKGParams::WithSnS(_) = params {
+                return Err(anyhow_error_and_log(
+                    "Can not generate Switch and Squash key in Z64".to_string(),
+                ));
+            }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
+        }
+
+        let pub_key_set = distributed_keygen_from_existing_private_keyset(
+            session,
+            preprocessing,
+            params,
+            existing_private_keyset,
+        )
+        .await?;
+        Ok(pub_key_set.to_pubkeyset(params, tag))
+    }
+}
+
+/// Generates all private key shares needed for the DKG protocol.
+///
+/// This function extracts the shared private key generation code used by both
+/// `distributed_keygen_from_optional_compression_sk` and
+/// `distributed_keygen_compressed_from_optional_compression_sk`.
+///
+/// Returns the complete `GenericPrivateKeySet` and the `LweCompactPublicKeyShare`
+/// (which the caller must open to the appropriate type).
+async fn generate_private_key_set<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<GenericPrivateKeySet<Z, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let my_role = session.my_role();
+
+    // Generate the shared LWE hat secret key and corresponding public key share
+    tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
+    let lwe_hat_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
+        params_basics_handle.lwe_hat_dimension(),
+        preprocessing,
+        params_basics_handle.get_sk_deviations().map(|d| d.pmax),
+        session,
+    )
+    .await?;
+
+    // Generate the LWE (no hat) secret key if it should exist
+    let lwe_secret_key_share = if params_basics_handle.has_dedicated_compact_pk_params() {
+        LweSecretKeyShare::new_from_preprocessing(
+            params_basics_handle.lwe_dimension(),
+            preprocessing,
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?
+    } else {
+        lwe_hat_secret_key_share.clone()
+    };
+
+    tracing::info!("(Party {my_role}) Generating corresponding public key...Done");
+
+    // Generate the GLWE secret key
+    tracing::info!("(Party {my_role}) Generating GLWE secret key...Start");
+    let glwe_secret_key_share = GlweSecretKeyShare::new_from_preprocessing(
+        params_basics_handle.glwe_sk_num_bits(),
+        params_basics_handle.polynomial_size(),
+        preprocessing,
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
+    tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
+
+    // Generate the compression private key if needed
+    let glwe_secret_key_share_compression = if existing_compression_sk.is_none()
+        && params_basics_handle
+            .get_compression_decompression_params()
+            .is_some()
+    {
+        let comp_params = params_basics_handle
+            .get_compression_decompression_params()
+            .unwrap();
+        Some(
+            CompressionPrivateKeyShares::new_from_preprocessing(
+                comp_params.raw_compression_parameters,
+                preprocessing,
+                comp_params.pmax,
+                session,
+            )
+            .await?,
+        )
+    } else {
+        existing_compression_sk.cloned()
+    };
+
+    // Generate SnS GLWE key and SNS compression private key if needed
+    let (glwe_secret_key_share_sns, glwe_secret_key_share_sns_compression) = match params {
+        DKGParams::WithSnS(sns_params) => {
+            tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
+            let glwe_secret_key_share_sns = GlweSecretKeyShare::new_from_preprocessing(
+                sns_params.glwe_sk_num_bits_sns(),
+                sns_params.polynomial_size_sns(),
+                preprocessing,
+                sns_params.get_pmax(),
+                session,
+            )
+            .await?;
+            tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
+
+            let sns_compression =
+                if let Some(comp_params) = params_basics_handle.get_sns_compression_params() {
+                    Some(
+                        SnsCompressionPrivateKeyShares::new_from_preprocessing(
+                            comp_params.raw_compression_parameters,
+                            preprocessing,
+                            comp_params.pmax,
+                            session,
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+
+            (Some(glwe_secret_key_share_sns), sns_compression)
+        }
+        DKGParams::WithoutSnS(_) => (None, None),
+    };
+
+    // For the private key set, we only store the newly generated compression key
+    // (not the existing one that was passed in), so we need to check
+    let new_compression_sk = if existing_compression_sk.is_some() {
+        // If we used an existing key, we don't store it again
+        None
+    } else {
+        glwe_secret_key_share_compression.clone()
+    };
+
+    let priv_key_set = GenericPrivateKeySet {
+        lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
+        lwe_secret_key_share,
+        glwe_secret_key_share,
+        glwe_secret_key_share_sns,
+        glwe_secret_key_share_compression: new_compression_sk,
+        glwe_secret_key_share_sns_compression,
+    };
+
+    Ok(priv_key_set)
 }
 
 /// Runs the distributed key generation protocol but optionally
@@ -361,8 +636,8 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
-    let my_role = session.my_role();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z,
@@ -370,66 +645,119 @@ where
         EXTENSION_DEGREE,
     >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
-    //Generate the shared LWE hat secret key and corresponding public key
-    let (lwe_hat_secret_key_share, lwe_public_key) = generate_lwe_private_public_key_pair(
-        &params,
+    let private_key_set =
+        generate_private_key_set(session, preprocessing, params, existing_compression_sk).await?;
+
+    let pub_key_set = generate_all_uncompressed_public_keys(
+        session,
+        preprocessing,
         &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-    )
-    .await?;
-
-    //Generate the LWE (no hat) secret key if it should exist
-    let lwe_secret_key_share = if params_basics_handle.has_dedicated_compact_pk_params() {
-        LweSecretKeyShare::new_from_preprocessing(
-            params_basics_handle.lwe_dimension(),
-            preprocessing,
-            params_basics_handle.get_pmax(),
-            session,
-        )
-        .await?
-    } else {
-        lwe_hat_secret_key_share.clone()
-    };
-
-    tracing::info!("(Party {my_role}) Generating corresponding public key...Done");
-
-    //Generate the GLWE secret key
-    tracing::info!("(Party {my_role}) Generating GLWE secret key...Start");
-    let glwe_secret_key_share = GlweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.glwe_sk_num_bits(),
-        params_basics_handle.polynomial_size(),
-        preprocessing,
-        params_basics_handle.get_pmax(),
-        session,
-    )
-    .await?;
-
-    let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
-
-    tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
-
-    //Generate the compression keys, we'll have None if there are no
-    //compression materials to generate
-    let compression_material = distributed_keygen_compression_material(
-        session,
-        preprocessing,
         params,
-        &mut mpc_encryption_rng,
-        &glwe_sk_share_as_lwe,
-        &glwe_secret_key_share,
+        &private_key_set,
+        seed,
         existing_compression_sk,
     )
     .await?;
+
+    Ok((pub_key_set, private_key_set))
+}
+
+/// Generates all uncompressed public keys from an existing private key set.
+///
+/// This function extracts the shared uncompressed public key generation code used by both
+/// `distributed_keygen_from_optional_compression_sk` and
+/// `distributed_keygen_from_existing_private_keyset`.
+///
+/// Inputs:
+/// - `session`: the session that holds necessary information for networking
+/// - `preprocessing`: [`DKGPreprocessing`] handle
+/// - `mpc_encryption_rng`: the MPC encryption RNG
+/// - `params`: [`DKGParams`] parameters
+/// - `private_key_set`: the private key set to generate public keys from
+/// - `lwe_public_key`: the opened LWE public key
+/// - `seed`: the random seed
+/// - `existing_compression_sk`: optional existing compression secret key to use
+///
+/// Returns a [`RawPubKeySet`] containing all generated uncompressed public keys.
+#[allow(clippy::too_many_arguments)]
+async fn generate_all_uncompressed_public_keys<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >,
+    params: DKGParams,
+    private_key_set: &GenericPrivateKeySet<Z, EXTENSION_DEGREE>,
+    seed: u128,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let my_role = session.my_role();
+
+    // Generate LWE public key from existing private key
+    // Then open LWE public key (compressed/seeded variant)
+    // This needs to be the first step in this function because XOF ordering needs to be preserved
+    let lwe_public_key = {
+        // Generate LWE public key from existing private key
+        let lwe_pk_share = generate_lwe_public_key_shared(
+            &params,
+            mpc_encryption_rng,
+            &private_key_set.lwe_encryption_secret_key_share,
+            session,
+            preprocessing,
+        )
+        .await?;
+
+        // Open LWE public key (uncompressed variant)
+        lwe_pk_share.open_to_tfhers_type(session).await?
+    };
+
+    let glwe_sk_share_as_lwe = private_key_set
+        .glwe_secret_key_share
+        .clone()
+        .into_lwe_secret_key();
+
+    // Generate compression public keys if compression params exist
+    let compression_keys =
+        if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
+            // Use existing_compression_sk if provided, otherwise use the newly generated one
+            let compression_sk = existing_compression_sk
+                .or(private_key_set.glwe_secret_key_share_compression.as_ref())
+                .unwrap();
+            Some(
+                generate_compression_decompression_keys(
+                    &glwe_sk_share_as_lwe,
+                    &private_key_set.glwe_secret_key_share,
+                    compression_sk,
+                    comp_params,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
 
     //Generate the KSK
     let ksk_params = params_basics_handle.get_ksk_params();
 
     let ksk = generate_key_switch_key(
         &glwe_sk_share_as_lwe,
-        &lwe_secret_key_share,
+        &private_key_set.lwe_secret_key_share,
         &ksk_params,
-        &mut mpc_encryption_rng,
+        mpc_encryption_rng,
         session,
         preprocessing,
     )
@@ -440,38 +768,46 @@ where
     session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
-        &glwe_secret_key_share,
-        &lwe_secret_key_share,
+        &private_key_set.glwe_secret_key_share,
+        &private_key_set.lwe_secret_key_share,
         params_basics_handle.get_bk_params(),
-        &mut mpc_encryption_rng,
+        mpc_encryption_rng,
         session,
         preprocessing,
     )
     .await?;
 
-    //If needed, compute the SnS BK
-    let (glwe_secret_key_share_sns, bk_sns, msnrk_sns) = match params {
-        DKGParams::WithSnS(sns_params) => {
-            tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
-            //compute the SnS GLWE key
-            let glwe_secret_key_share_sns = GlweSecretKeyShare::new_from_preprocessing(
-                sns_params.glwe_sk_num_bits_sns(),
-                sns_params.polynomial_size_sns(),
-                preprocessing,
-                sns_params.get_pmax(),
-                session,
+    // If needed, compute the mod switch noise reduction key
+    let msnrk = match params_basics_handle.get_msnrk_configuration() {
+        MSNRKConfiguration::Standard => ModulusSwitchConfiguration::Standard,
+        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                generate_mod_switch_noise_reduction_key(
+                    &private_key_set.lwe_secret_key_share,
+                    &msnrkparams,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                )
+                .await?,
             )
-            .await?;
+        }
+        MSNRKConfiguration::CenteredMeanNoiseReduction => {
+            ModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        }
+    };
 
+    //If needed, compute the SnS BK
+    let (bk_sns, msnrk_sns) = match params {
+        DKGParams::WithSnS(sns_params) => {
             //Computing and opening BK SNS can take a while, so we increase the timeout
             session.network().set_timeout_for_bk_sns().await;
 
-            tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_bootstrap_key(
-                &glwe_secret_key_share_sns,
-                &lwe_secret_key_share,
+                private_key_set.glwe_secret_key_share_sns.as_ref().unwrap(),
+                &private_key_set.lwe_secret_key_share,
                 sns_params.get_bk_sns_params(),
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -482,9 +818,9 @@ where
                 MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
                     ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
                         generate_mod_switch_noise_reduction_key(
-                            &lwe_secret_key_share,
+                            &private_key_set.lwe_secret_key_share,
                             &msnrkparams,
-                            &mut mpc_encryption_rng,
+                            mpc_encryption_rng,
                             session,
                             preprocessing,
                         )
@@ -497,13 +833,9 @@ where
             };
 
             tracing::info!("(Party {my_role}) Opening SnS BK...Done");
-            (
-                Some(glwe_secret_key_share_sns),
-                Some(bk_sns),
-                Some(msnrk_sns),
-            )
+            (Some(bk_sns), Some(msnrk_sns))
         }
-        DKGParams::WithoutSnS(_) => (None, None, None),
+        DKGParams::WithoutSnS(_) => (None, None),
     };
 
     //Compute the PKSK
@@ -514,10 +846,10 @@ where
         //Corresponds to type = F-GLWE
         (Some(tfhe::shortint::EncryptionKeyChoice::Big), Some(pksk_params)) => Some(
             generate_key_switch_key(
-                &lwe_hat_secret_key_share,
+                &private_key_set.lwe_encryption_secret_key_share,
                 &glwe_sk_share_as_lwe,
                 &pksk_params,
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -527,10 +859,10 @@ where
         //Corresponds to type = LWE
         (Some(tfhe::shortint::EncryptionKeyChoice::Small), Some(pksk_params)) => Some(
             generate_key_switch_key(
-                &lwe_hat_secret_key_share,
-                &lwe_secret_key_share,
+                &private_key_set.lwe_encryption_secret_key_share,
+                &private_key_set.lwe_secret_key_share,
                 &pksk_params,
-                &mut mpc_encryption_rng,
+                mpc_encryption_rng,
                 session,
                 preprocessing,
             )
@@ -542,60 +874,6 @@ where
             None
         }
     };
-
-    // If needed, compute the mod switch noise reduction key
-    let msnrk = match params_basics_handle.get_msnrk_configuration() {
-        MSNRKConfiguration::Standard => ModulusSwitchConfiguration::Standard,
-        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
-            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
-                generate_mod_switch_noise_reduction_key(
-                    &lwe_secret_key_share,
-                    &msnrkparams,
-                    &mut mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                )
-                .await?,
-            )
-        }
-        MSNRKConfiguration::CenteredMeanNoiseReduction => {
-            ModulusSwitchConfiguration::CenteredMeanNoiseReduction
-        }
-    };
-
-    // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
-    // this is because we might have generated the compression keys from an existing compression sk share
-    let (glwe_secret_key_share_compression, compression_keys) = compression_material;
-
-    // If needed, compute the sns compression keys
-    let sns_compression_materials =
-        match (params, params_basics_handle.get_sns_compression_params()) {
-            (DKGParams::WithSnS(_), Some(comp_params)) => {
-                let (private_sns_compression_key, sns_compression_key) =
-                    generate_sns_compression_keys(
-                        &glwe_secret_key_share_sns
-                            .clone()
-                            .map(|key| key.into_lwe_secret_key())
-                            .unwrap(),
-                        comp_params,
-                        &mut mpc_encryption_rng,
-                        session,
-                        preprocessing,
-                    )
-                    .await?;
-
-                Some((private_sns_compression_key, sns_compression_key))
-            }
-            _ => None,
-        };
-
-    let (glwe_secret_key_share_sns_compression, sns_compression_key) =
-        match sns_compression_materials {
-            Some((private_sns_compression_key, sns_compression_key)) => {
-                (Some(private_sns_compression_key), Some(sns_compression_key))
-            }
-            None => (None, None),
-        };
 
     let cpk_re_randomization_ksk = match (
         params_basics_handle.get_pksk_params(),
@@ -609,10 +887,10 @@ where
             } else {
                 Some(ReRandomizationRawKeySwitchingKey::DedicatedKSK(
                     generate_key_switch_key(
-                        &lwe_hat_secret_key_share,
+                        &private_key_set.lwe_encryption_secret_key_share,
                         &glwe_sk_share_as_lwe,
                         &cpk_re_randomization_ksk_params,
-                        &mut mpc_encryption_rng,
+                        mpc_encryption_rng,
                         session,
                         preprocessing,
                     )
@@ -626,7 +904,30 @@ where
         }
     };
 
-    let pub_key_set = RawPubKeySet {
+    // If needed, compute the sns compression keys
+    let sns_compression_key = match (params, params_basics_handle.get_sns_compression_params()) {
+        (DKGParams::WithSnS(_), Some(comp_params)) => Some(
+            generate_sns_compression_keys(
+                &private_key_set
+                    .glwe_secret_key_share_sns
+                    .clone()
+                    .map(|key| key.into_lwe_secret_key())
+                    .unwrap(),
+                private_key_set
+                    .glwe_secret_key_share_sns_compression
+                    .as_ref()
+                    .unwrap(),
+                comp_params,
+                mpc_encryption_rng,
+                session,
+                preprocessing,
+            )
+            .await?,
+        ),
+        _ => None,
+    };
+
+    Ok(RawPubKeySet {
         lwe_public_key,
         ksk,
         pksk,
@@ -638,21 +939,298 @@ where
         seed,
         cpk_re_randomization_ksk,
         sns_compression_key,
-    };
-
-    let priv_key_set = GenericPrivateKeySet {
-        lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
-        lwe_secret_key_share,
-        glwe_secret_key_share,
-        glwe_secret_key_share_sns,
-        glwe_secret_key_share_compression,
-        glwe_secret_key_share_sns_compression,
-    };
-
-    Ok((pub_key_set, priv_key_set))
+    })
 }
 
-/// Runs the distributed key generation protocol but optionally
+/// Generates all compressed public keys from an existing private key set.
+///
+/// This function extracts the shared compressed public key generation code used by both
+/// `distributed_keygen_compressed_from_optional_compression_sk` and
+/// `distributed_keygen_compressed_from_existing_private_keyset`.
+///
+/// Inputs:
+/// - `session`: the session that holds necessary information for networking
+/// - `preprocessing`: [`DKGPreprocessing`] handle
+/// - `mpc_encryption_rng`: the MPC encryption RNG
+/// - `params`: [`DKGParams`] parameters
+/// - `private_key_set`: the private key set to generate public keys from
+/// - `seed`: the random seed
+/// - `existing_compression_sk`: optional existing compression secret key to use
+///
+/// Returns a [`RawCompressedPubKeySet`] containing all generated compressed public keys.
+#[allow(clippy::too_many_arguments)]
+async fn generate_all_compressed_public_keys<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >,
+    params: DKGParams,
+    private_key_set: &GenericPrivateKeySet<Z, EXTENSION_DEGREE>,
+    seed: u128,
+    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawCompressedPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let my_role = session.my_role();
+
+    // Generate LWE public key from existing private key
+    // Then open LWE public key (compressed/seeded variant)
+    // This needs to be the first step in this function because XOF ordering needs to be preserved
+    let lwe_public_key = {
+        let lwe_pk_share = generate_lwe_public_key_shared(
+            &params,
+            mpc_encryption_rng,
+            &private_key_set.lwe_encryption_secret_key_share,
+            session,
+            preprocessing,
+        )
+        .await?;
+        lwe_pk_share
+            .open_to_tfhers_seeded_type(seed, session)
+            .await?
+    };
+
+    let glwe_sk_share_as_lwe = private_key_set
+        .glwe_secret_key_share
+        .clone()
+        .into_lwe_secret_key();
+
+    // Generate compression public keys if compression params exist
+    let compression_keys =
+        if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
+            // Use existing_compression_sk if provided, otherwise use the newly generated one
+            let compression_sk = existing_compression_sk
+                .or(private_key_set.glwe_secret_key_share_compression.as_ref())
+                .unwrap();
+            Some(
+                generate_compressed_compression_decompression_keys(
+                    &glwe_sk_share_as_lwe,
+                    &private_key_set.glwe_secret_key_share,
+                    compression_sk,
+                    comp_params,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                    seed,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+    //Generate the KSK
+    let ksk_params = params_basics_handle.get_ksk_params();
+
+    let ksk = generate_compressed_key_switch_key(
+        &glwe_sk_share_as_lwe,
+        &private_key_set.lwe_secret_key_share,
+        &ksk_params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+        seed,
+    )
+    .await?;
+    tracing::info!("(Party {my_role}) Generating KSK...Done");
+
+    //Computing and opening BK can take a while, so we increase the timeout
+    session.network().set_timeout_for_bk().await;
+    //Compute the bootstrapping keys
+    let bk = generate_compressed_bootstrap_key(
+        &private_key_set.glwe_secret_key_share,
+        &private_key_set.lwe_secret_key_share,
+        params_basics_handle.get_bk_params(),
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+        seed,
+    )
+    .await?;
+
+    // If needed, compute the mod switch noise reduction key
+    let msnrk = match params_basics_handle.get_msnrk_configuration() {
+        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
+        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                generate_compressed_mod_switch_noise_reduction_key(
+                    &private_key_set.lwe_secret_key_share,
+                    &msnrkparams,
+                    mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                    seed,
+                )
+                .await?,
+            )
+        }
+        MSNRKConfiguration::CenteredMeanNoiseReduction => {
+            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        }
+    };
+
+    //If needed, compute the SnS BK
+    let (bk_sns, msnrk_sns) = match params {
+        DKGParams::WithSnS(sns_params) => {
+            //Computing and opening BK SNS can take a while, so we increase the timeout
+            session.network().set_timeout_for_bk_sns().await;
+
+            let bk_sns = generate_compressed_bootstrap_key(
+                private_key_set.glwe_secret_key_share_sns.as_ref().unwrap(),
+                &private_key_set.lwe_secret_key_share,
+                sns_params.get_bk_sns_params(),
+                mpc_encryption_rng,
+                session,
+                preprocessing,
+                seed,
+            )
+            .await?;
+
+            let msnrk_sns = match sns_params.get_msnrk_configuration_sns() {
+                MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
+                MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+                    CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                        generate_compressed_mod_switch_noise_reduction_key(
+                            &private_key_set.lwe_secret_key_share,
+                            &msnrkparams,
+                            mpc_encryption_rng,
+                            session,
+                            preprocessing,
+                            seed,
+                        )
+                        .await?,
+                    )
+                }
+                MSNRKConfiguration::CenteredMeanNoiseReduction => {
+                    CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
+                }
+            };
+
+            tracing::info!("(Party {my_role}) Opening SnS BK...Done");
+            (Some(bk_sns), Some(msnrk_sns))
+        }
+        DKGParams::WithoutSnS(_) => (None, None),
+    };
+
+    //Compute the PKSK
+    let pksk = match (
+        params_basics_handle.get_pksk_destination(),
+        params_basics_handle.get_pksk_params(),
+    ) {
+        //Corresponds to type = F-GLWE
+        (Some(tfhe::shortint::EncryptionKeyChoice::Big), Some(pksk_params)) => Some(
+            generate_compressed_key_switch_key(
+                &private_key_set.lwe_encryption_secret_key_share,
+                &glwe_sk_share_as_lwe,
+                &pksk_params,
+                mpc_encryption_rng,
+                session,
+                preprocessing,
+                seed,
+            )
+            .await?,
+        ),
+
+        //Corresponds to type = LWE
+        (Some(tfhe::shortint::EncryptionKeyChoice::Small), Some(pksk_params)) => Some(
+            generate_compressed_key_switch_key(
+                &private_key_set.lwe_encryption_secret_key_share,
+                &private_key_set.lwe_secret_key_share,
+                &pksk_params,
+                mpc_encryption_rng,
+                session,
+                preprocessing,
+                seed,
+            )
+            .await?,
+        ),
+        (None, None) => None,
+        _ => {
+            tracing::error!("Incompatible parameters regarding pksk, can not generate it.");
+            None
+        }
+    };
+
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_compressed_key_switch_key(
+                        &private_key_set.lwe_encryption_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                        seed,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
+
+    // If needed, compute the sns compression keys
+    let sns_compression_key = match (params, params_basics_handle.get_sns_compression_params()) {
+        (DKGParams::WithSnS(_), Some(comp_params)) => Some(
+            generate_compressed_sns_compression_keys(
+                &private_key_set
+                    .glwe_secret_key_share_sns
+                    .clone()
+                    .map(|key| key.into_lwe_secret_key())
+                    .unwrap(),
+                private_key_set
+                    .glwe_secret_key_share_sns_compression
+                    .as_ref()
+                    .unwrap(),
+                comp_params,
+                mpc_encryption_rng,
+                session,
+                preprocessing,
+                seed,
+            )
+            .await?,
+        ),
+        _ => None,
+    };
+
+    Ok(RawCompressedPubKeySet {
+        lwe_public_key,
+        ksk,
+        pksk,
+        bk,
+        bk_sns,
+        compression_keys,
+        msnrk,
+        msnrk_sns,
+        sns_compression_key,
+        cpk_re_randomization_ksk,
+        seed,
+    })
+}
+
+/// Runs the distributed key generation protocol for compressed keys but optionally
 /// uses an existing compression secret key.
 ///
 /// Inputs:
@@ -663,7 +1241,7 @@ where
 ///   a new one is generated if this argument is None.
 ///
 /// Outputs:
-/// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
+/// - A [`RawCompressedPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
 /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
 ///
 /// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
@@ -686,7 +1264,6 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
-    let my_role = session.my_role();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -695,303 +1272,154 @@ where
         EXTENSION_DEGREE,
     >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
-    //Generate the shared LWE hat secret key and corresponding public key
-    let (lwe_hat_secret_key_share, lwe_public_key) =
-        generate_lwe_private_compressed_public_key_pair(
-            &params,
-            &mut mpc_encryption_rng,
-            session,
-            preprocessing,
-            seed,
-        )
-        .await?;
+    let private_key_set =
+        generate_private_key_set(session, preprocessing, params, existing_compression_sk).await?;
 
-    //Generate the LWE (no hat) secret key if it should exist
-    let lwe_secret_key_share = if params_basics_handle.has_dedicated_compact_pk_params() {
-        LweSecretKeyShare::new_from_preprocessing(
-            params_basics_handle.lwe_dimension(),
-            preprocessing,
-            params_basics_handle.get_pmax(),
-            session,
-        )
-        .await?
-    } else {
-        lwe_hat_secret_key_share.clone()
-    };
-
-    tracing::info!("(Party {my_role}) Generating corresponding public key...Done");
-
-    //Generate the GLWE secret key
-    tracing::info!("(Party {my_role}) Generating GLWE secret key...Start");
-    let glwe_secret_key_share = GlweSecretKeyShare::new_from_preprocessing(
-        params_basics_handle.glwe_sk_num_bits(),
-        params_basics_handle.polynomial_size(),
-        preprocessing,
-        params_basics_handle.get_pmax(),
-        session,
-    )
-    .await?;
-
-    let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
-
-    tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
-
-    //Generate the compression keys, we'll have None if there are no
-    //compression materials to generate
-    let compression_material = distributed_keygen_compressed_compression_material(
+    let pub_key_set = generate_all_compressed_public_keys(
         session,
         preprocessing,
+        &mut mpc_encryption_rng,
         params,
-        &mut mpc_encryption_rng,
-        &glwe_sk_share_as_lwe,
-        &glwe_secret_key_share,
+        &private_key_set,
+        seed,
         existing_compression_sk,
-        seed,
     )
     .await?;
 
-    //Generate the KSK
-    let ksk_params = params_basics_handle.get_ksk_params();
-
-    let ksk = generate_compressed_key_switch_key(
-        &glwe_sk_share_as_lwe,
-        &lwe_secret_key_share,
-        &ksk_params,
-        &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-        seed,
-    )
-    .await?;
-    tracing::info!("(Party {my_role}) Generating KSK...Done");
-
-    //Computing and opening BK can take a while, so we increase the timeout
-    //(in theory we should be in async setting here anyway)
-    session.network().set_timeout_for_bk().await;
-    //Compute the bootstrapping keys
-    let bk = generate_compressed_bootstrap_key(
-        &glwe_secret_key_share,
-        &lwe_secret_key_share,
-        params_basics_handle.get_bk_params(),
-        &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-        seed,
-    )
-    .await?;
-
-    // If needed, compute the mod switch noise reduction key
-    let msnrk = match params_basics_handle.get_msnrk_configuration() {
-        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
-        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
-            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
-                generate_compressed_mod_switch_noise_reduction_key(
-                    &lwe_secret_key_share,
-                    &msnrkparams,
-                    &mut mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                    seed,
-                )
-                .await?,
-            )
-        }
-        MSNRKConfiguration::CenteredMeanNoiseReduction => {
-            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
-        }
-    };
-
-    //If needed, compute the SnS BK
-    let (glwe_secret_key_share_sns, bk_sns, msnrk_sns) = match params {
-        DKGParams::WithSnS(sns_params) => {
-            tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
-            //compute the SnS GLWE key
-            let glwe_secret_key_share_sns = GlweSecretKeyShare::new_from_preprocessing(
-                sns_params.glwe_sk_num_bits_sns(),
-                sns_params.polynomial_size_sns(),
-                preprocessing,
-                sns_params.get_pmax(),
-                session,
-            )
-            .await?;
-
-            //Computing and opening BK SNS can take a while, so we increase the timeout
-            //(in theory we should be in async setting here anyway)
-            session.network().set_timeout_for_bk_sns().await;
-
-            tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
-            let bk_sns = generate_compressed_bootstrap_key(
-                &glwe_secret_key_share_sns,
-                &lwe_secret_key_share,
-                sns_params.get_bk_sns_params(),
-                &mut mpc_encryption_rng,
-                session,
-                preprocessing,
-                seed,
-            )
-            .await?;
-
-            let msnrk_sns = match sns_params.get_msnrk_configuration_sns() {
-                MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
-                MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
-                    CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
-                        generate_compressed_mod_switch_noise_reduction_key(
-                            &lwe_secret_key_share,
-                            &msnrkparams,
-                            &mut mpc_encryption_rng,
-                            session,
-                            preprocessing,
-                            seed,
-                        )
-                        .await?,
-                    )
-                }
-                MSNRKConfiguration::CenteredMeanNoiseReduction => {
-                    CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
-                }
-            };
-
-            tracing::info!("(Party {my_role}) Opening SnS BK...Done");
-            (
-                Some(glwe_secret_key_share_sns),
-                Some(bk_sns),
-                Some(msnrk_sns),
-            )
-        }
-        DKGParams::WithoutSnS(_) => (None, None, None),
-    };
-
-    //Compute the PKSK
-    let pksk = match (
-        params_basics_handle.get_pksk_destination(),
-        params_basics_handle.get_pksk_params(),
-    ) {
-        //Corresponds to type = F-GLWE
-        (Some(tfhe::shortint::EncryptionKeyChoice::Big), Some(pksk_params)) => Some(
-            generate_compressed_key_switch_key(
-                &lwe_hat_secret_key_share,
-                &glwe_sk_share_as_lwe,
-                &pksk_params,
-                &mut mpc_encryption_rng,
-                session,
-                preprocessing,
-                seed,
-            )
-            .await?,
-        ),
-
-        //Corresponds to type = LWE
-        (Some(tfhe::shortint::EncryptionKeyChoice::Small), Some(pksk_params)) => Some(
-            generate_compressed_key_switch_key(
-                &lwe_hat_secret_key_share,
-                &lwe_secret_key_share,
-                &pksk_params,
-                &mut mpc_encryption_rng,
-                session,
-                preprocessing,
-                seed,
-            )
-            .await?,
-        ),
-        (None, None) => None,
-        _ => {
-            tracing::error!("Incompatible parameters regarding pksk, can not generate it.");
-            None
-        }
-    };
-
-    // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
-    // this is because we might have generated the compression keys from an existing compression sk share
-    let (glwe_secret_key_share_compression, compression_keys) = compression_material;
-
-    let cpk_re_randomization_ksk = match (
-        params_basics_handle.get_pksk_params(),
-        params_basics_handle.get_rerand_ksk_params(),
-    ) {
-        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            // If these are equal, we already have the KSK from the LWE sk of the PK
-            // and the glwe sk that's necessary for rerand
-            if pksk_params == cpk_re_randomization_ksk_params {
-                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
-            } else {
-                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
-                    generate_compressed_key_switch_key(
-                        &lwe_hat_secret_key_share,
-                        &glwe_sk_share_as_lwe,
-                        &cpk_re_randomization_ksk_params,
-                        &mut mpc_encryption_rng,
-                        session,
-                        preprocessing,
-                        seed,
-                    )
-                    .await?,
-                ))
-            }
-        }
-        (_, None) => None,
-        _ => {
-            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
-        }
-    };
-
-    // If needed, compute the sns compression keys
-    let sns_compression_materials =
-        match (params, params_basics_handle.get_sns_compression_params()) {
-            (DKGParams::WithSnS(_), Some(comp_params)) => {
-                let (private_sns_compression_key, sns_compression_key) =
-                    generate_compressed_sns_compression_keys(
-                        &glwe_secret_key_share_sns
-                            .clone()
-                            .map(|key| key.into_lwe_secret_key())
-                            .unwrap(),
-                        comp_params,
-                        &mut mpc_encryption_rng,
-                        session,
-                        preprocessing,
-                        seed,
-                    )
-                    .await?;
-
-                Some((private_sns_compression_key, sns_compression_key))
-            }
-            _ => None,
-        };
-
-    let (glwe_secret_key_share_sns_compression, sns_compression_key) =
-        match sns_compression_materials {
-            Some((private_sns_compression_key, sns_compression_key)) => {
-                (Some(private_sns_compression_key), Some(sns_compression_key))
-            }
-            None => (None, None),
-        };
-
-    let pub_key_set = RawCompressedPubKeySet {
-        lwe_public_key,
-        ksk,
-        pksk,
-        bk,
-        bk_sns,
-        compression_keys,
-        msnrk,
-        msnrk_sns,
-        sns_compression_key,
-        cpk_re_randomization_ksk,
-        seed,
-    };
-
-    let priv_key_set = GenericPrivateKeySet {
-        lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
-        lwe_secret_key_share,
-        glwe_secret_key_share,
-        glwe_secret_key_share_sns,
-        glwe_secret_key_share_compression,
-        glwe_secret_key_share_sns_compression,
-    };
-
-    Ok((pub_key_set, priv_key_set))
+    Ok((pub_key_set, private_key_set))
 }
 
-#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+/// Generates compressed public keys from an existing private keyset (or fresh keys if None).
+///
+/// When `existing_private_keyset` is `Some`, it converts the `PrivateKeySet` back to a
+/// `GenericPrivateKeySet` and generates compressed public keys from it.
+/// When `None`, it generates fresh private keys and returns only the compressed public keys.
+async fn distributed_keygen_compressed_from_existing_private_keyset<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawCompressedPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+    PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    //Init the XOF with the seed computed above
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
+
+    match existing_private_keyset {
+        Some(keyset) => {
+            let private_key_set = keyset.to_generic(params)?;
+
+            let existing_compression_sk =
+                private_key_set.glwe_secret_key_share_compression.as_ref();
+
+            generate_all_compressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                seed,
+                existing_compression_sk,
+            )
+            .await
+        }
+        None => {
+            let private_key_set =
+                generate_private_key_set(session, preprocessing, params, None).await?;
+
+            generate_all_compressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                seed,
+                None,
+            )
+            .await
+        }
+    }
+}
+
+/// Generates uncompressed public keys from an existing private keyset (or fresh keys if None).
+///
+/// When `existing_private_keyset` is `Some`, it converts the `PrivateKeySet` back to a
+/// `GenericPrivateKeySet` and generates uncompressed public keys from it.
+/// When `None`, it generates fresh private keys and returns only the uncompressed public keys.
+async fn distributed_keygen_from_existing_private_keyset<
+    Z: BaseRing,
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    params: DKGParams,
+    existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+) -> anyhow::Result<RawPubKeySet>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+    PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    //Init the XOF with the seed computed above
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
+
+    match existing_private_keyset {
+        Some(keyset) => {
+            let private_key_set = keyset.to_generic(params)?;
+
+            let existing_compression_sk =
+                private_key_set.glwe_secret_key_share_compression.as_ref();
+
+            generate_all_uncompressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                seed,
+                existing_compression_sk,
+            )
+            .await
+        }
+        None => {
+            let private_key_set =
+                generate_private_key_set(session, preprocessing, params, None).await?;
+
+            generate_all_uncompressed_public_keys(
+                session,
+                preprocessing,
+                &mut mpc_encryption_rng,
+                params,
+                &private_key_set,
+                seed,
+                None,
+            )
+            .await
+        }
+    }
+}
+
+#[instrument(name="Gen Decompression Key Z128", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -1033,7 +1461,7 @@ where
 
 /// NOTE: When we generate a standalone CompressedDecompressionKey via this fn, it needs to be decompressed
 /// using the decompression function WE provide [`decompressed_compressed_standalone_decompression_key_from_xof`], not the one from the TFHE-rs library.
-#[instrument(name="Gen compressed Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+#[instrument(name="Gen compressed Decompression Key Z128", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_compressed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
