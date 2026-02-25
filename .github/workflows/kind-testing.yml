@@ -460,7 +460,7 @@ jobs:
     steps:
       - name: Clean up build
         env:
-          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN_KMS_DELETE_PACKAGE }}
           IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
         run: |
           delete_package_versions_by_tag() {
