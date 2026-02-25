@@ -2,8 +2,7 @@ use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
 use crate::metrics::METRICS;
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
-use axum::extract::{ConnectInfo, Request};
-use axum::middleware::Next;
+use axum::Json;
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -11,7 +10,6 @@ use axum::{
     routing::get,
     Router,
 };
-use axum::{middleware, Json};
 use opentelemetry::propagation::TextMapCompositePropagator;
 use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
 use opentelemetry_http::HeaderExtractor;
@@ -68,21 +66,6 @@ impl MetricsState {
             registry: Arc::new(registry),
             start_time: std::time::SystemTime::now(),
         }
-    }
-}
-
-/// Middleware to restrict access to certain routes to localhost only.
-async fn localhost_only(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    req: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let ip = addr.ip();
-
-    if ip.is_loopback() {
-        Ok(next.run(req).await)
-    } else {
-        Err(StatusCode::FORBIDDEN)
     }
 }
 
@@ -198,31 +181,24 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(
 
     rt.spawn(async move {
         // Setup public routes
-        let public_routes = Router::new()
+        let app = Router::new()
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/ready", get(readiness_handler))
             .route("/version", get(version_handler))
-            .route("/live", get(liveness_handler));
-
-        // Setup localhost-only routes for internal metrics and debugging
-        let local_routes = Router::new()
+            .route("/live", get(liveness_handler))
             .route("/config", get(config_handler))
-            .layer(middleware::from_fn(localhost_only));
+            .with_state(state);
 
-        let app = public_routes.merge(local_routes).with_state(state);
         let listener = tokio::net::TcpListener::bind(metrics_addr)
             .await
             .expect("Failed to bind metrics server");
 
         info!("Metrics server listening on {}", metrics_addr);
 
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .expect("Metrics server error");
+        axum::serve(listener, app.into_make_service())
+            .await
+            .expect("Metrics server error");
     });
 
     Ok(provider)
