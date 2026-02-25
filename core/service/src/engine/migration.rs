@@ -241,10 +241,10 @@ where
             priv_storage
                 .delete_data(&prss_64_legacy_id, &PrivDataType::PrssSetup.to_string())
                 .await?;
-                tracing::info!(
-                    "Successfully converted legacy PRSS Setup from storage for epoch ID {}.",
-                    epoch_id
-                );
+            tracing::info!(
+                "Successfully converted legacy PRSS Setup from storage for epoch ID {}.",
+                epoch_id
+            );
         }
         (Err(e), Ok(_)) => tracing::error!("Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"),
         (Ok(_), Err(e)) => tracing::error!("Failed to read legacy PRSS Z64 from file with error: {e}, but was able to read Z128, skipping migration since we don't have the full data"),
