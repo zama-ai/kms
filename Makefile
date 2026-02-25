@@ -26,8 +26,7 @@ stop-compose-threshold-telemetry:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-telemetry.yml down --volumes --remove-orphans
 
 # Test backwards cmpatibility with LFS files. This will pull the LFS files from git before running the tests.
-test-backward-compatibility:
-	pull-lfs-files
+test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
 # Do not run LFS pull and use locally generated files to test backward compatibility.
