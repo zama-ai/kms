@@ -34,6 +34,8 @@ use tonic::transport::server::TcpConnectInfo;
 use tonic::transport::CertificateDer;
 use x509_parser::parse_x509_certificate;
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CoreToCoreNetworkConfig {
