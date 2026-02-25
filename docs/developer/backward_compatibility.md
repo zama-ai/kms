@@ -1,4 +1,4 @@
-# KMS Core Backwards Compatibility
+# KMS Core Backward Compatibility
 
 This repo is heavily inspired by the work done in the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project and was adapted to kms-core.
 It contains various objects that have been versioned and serialized.
@@ -60,11 +60,11 @@ make generate-backward-compatibility-v0.13.0
 make generate-backward-compatibility-v0.13.10
 
 ```
-WARNING: Generating for specific versions remove previously generated data from the `.ron` files, effectively ignoring other versions in the tests!
+WARNING: Generating for specific versions removes previously generated data from the `.ron` files, effectively ignoring other versions in the tests!
 Thus, changes based on generating a specific version should NEVER be committed to the repo.
 
 **Direct cargo commands:**
-The make commands are aliases for changing the directory to the respective `generate-vX.Y>Z` directory and then running `cargo run --release`, i.e. for `v0.11.0` the command is:
+The make commands are aliases for changing the directory to the respective `generate-vX.Y.Z` directory and then running `cargo run --release`, i.e. for `v0.11.0` the command is:
 ```shell
 cd backward-compatibility/generate-v0.11.0 && cargo run --release
 ```
@@ -91,7 +91,7 @@ TFHE-rs' prng is seeded with a fixed seed, so the data should be identical at ea
 
 The backward compatibility system needs to:
 1. **Generate** test data using old KMS versions (e.g., v0.11.0, v0.11.1)
-2. **Load and verifyest** that this old data can be processed with the current KMS version
+2. **Load and verify** that this old data can be processed with the current KMS version
 
 These operations require conflicting dependency versions. Additionally, **even patch versions can have incompatible dependencies**:
 - v0.11.0 uses: alloy 1.1.2, tfhe 1.3.2, tfhe-versionable 0.6.0
@@ -132,7 +132,7 @@ To add a test for a type that is already tested, you need to:
 - return the metadata of your test
 - update the `gen_VVV_data` method (where "`VVV`" is the module where your new type is defined) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
 
-The test will then be automatically selected when running `make test_backward_compatibility`.
+The test will then be automatically selected when running `make test-backward-compatibility`.
 
 ### Example
 
@@ -205,7 +205,7 @@ threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "
 ] }
 ```
 
-The you need to generate the data to test, e.g. running `make generate-backward-compatibility-v0.13.0`.
+Then you need to generate the data to test, e.g. running `make generate-backward-compatibility-v0.13.0`.
 
 ### In the backward-compatibility module
 
@@ -374,7 +374,7 @@ When some breaking changes are added to a versionized type, you should update se
 - add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersioned)]` attribute to it
 - implement the `Upgrade` trait for the old definition (ex: `PrivateSigKeyV0`)
 
-It is import to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
+It is important to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
 
 It should look like the following:
 
@@ -409,11 +409,11 @@ impl Upgrade<PrivateSigKey> for PrivateSigKeyV0 {
 }
 ```
 
-For more in depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
+For more in-depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
 
 ## Updating the test without testing backward compatibility
 
-If you want to update the test data _without_ actually testing for backward compatibility, you can follow the following steps:
+If you want to update the test data _without_ actually testing for backward compatibility, you can follow these steps:
 
 1. In the PR (PR1) that contains breaking changes for backward compatibility, disable the related backward test
 1. Once PR1 is merged, create a new PR (PR2) where you update the appropriate generator's `Cargo.toml` (e.g., `backward-compatibility/generate-v0.11.1/Cargo.toml`) with the commit hash that correspond to PR1 being merged to `main`
