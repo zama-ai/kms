@@ -189,12 +189,14 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                     anyhow::anyhow!("Could not decrypt backed up secret shared private fhe key {e}")
                 }),
             #[expect(deprecated)]
-            PrivDataType::PrssSetup => {
-                anyhow::bail!("PRSS backup is not supported")
-            }
-            PrivDataType::PrssSetupCombined => {
-                anyhow::bail!("Combined PRSS backup is not supported")
-            }
+            PrivDataType::PrssSetup => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| anyhow::anyhow!("Could not decrypt backed up PRSS setup legacy {e}")),
+            PrivDataType::PrssSetupCombined => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| {
+                    anyhow::anyhow!("Could not decrypt backed up PRSS setup combined {e}")
+                }),
             PrivDataType::ContextInfo => {
                 unwrapped_dec_key
                     .decrypt(&backup_ct.ciphertext)

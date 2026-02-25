@@ -311,7 +311,7 @@ pub async fn read_text_at_request_id<S: StorageReader>(
     .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
 }
 
-/// Delete ALL data under a given `request_id`.
+/// Delete ALL data under a given `request_id`, but ignore anything that might be under epochs (e.g., FHE keys and PRSS setups).
 /// Observe that this method does not produce any error regardless of any whether data is deleted or not.
 pub async fn delete_all_at_request_id<S: Storage>(
     storage: &mut S,
@@ -353,7 +353,7 @@ pub async fn delete_at_request_id<S: Storage>(
                 ))
             })
     } else {
-        tracing::warn!(
+        tracing::info!(
             "Tried to delete data with ID {} and type {}, but did not exist",
             request_id,
             data_type
