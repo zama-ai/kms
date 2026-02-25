@@ -305,7 +305,12 @@ pub async fn threshold_key_gen_secure_isolated(
     keyset_added_info: Option<kms_grpc::kms::v1::KeySetAddedInfo>,
     context_id: Option<kms_grpc::kms::v1::RequestId>,
     epoch_id: Option<kms_grpc::kms::v1::RequestId>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
     use crate::dummy_domain;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};

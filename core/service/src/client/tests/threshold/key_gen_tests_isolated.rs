@@ -164,7 +164,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
     let keygen_id = derive_request_id("secure_threshold_keygen")?;
 
     // Run secure key generation with preprocessing
-    threshold_key_gen_secure_isolated(
+    let responses = threshold_key_gen_secure_isolated(
         &env.clients,
         &preproc_id,
         &keygen_id,
