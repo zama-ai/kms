@@ -168,10 +168,20 @@ where
 {
     let epoch_id = *DEFAULT_EPOCH_ID;
     let context_id = *DEFAULT_MPC_CONTEXT;
-    // Load context
+    // Load context; if it does not exist (e.g., fresh installation), skip PRSS migration
     let (threshold, num_parties) = {
-        let context = read_context_at_id(priv_storage, &context_id).await?;
-        (context.threshold as u8, context.mpc_nodes.len())
+        match read_context_at_id(priv_storage, &context_id).await {
+            Ok(context) => (context.threshold as u8, context.mpc_nodes.len()),
+            Err(err) => {
+                tracing::warn!(
+                    "Skipping legacy PRSS migration: failed to load MPC context '{}' ({err}). \
+This likely means threshold MPC has not been initialized yet on this installation, \
+so there is no legacy PRSS state to migrate.",
+                    context_id,
+                );
+                return Ok(());
+            }
+        }
     };
     // Check if this key already exists in the new epoch-aware format
     if priv_storage
