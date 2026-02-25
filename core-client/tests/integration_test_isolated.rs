@@ -1258,10 +1258,8 @@ async fn insecure_key_gen_compressed_isolated(
         file_conf: Some(vec![config_path.to_str().unwrap().to_string()]),
         command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
             shared_args: SharedKeyGenParameters {
-                keyset_type: Some(KeySetType::Standard),
                 compressed: true,
-                context_id: None,
-                epoch_id: None,
+                ..Default::default()
             },
         }),
         logs: true,
@@ -1885,6 +1883,8 @@ async fn real_preproc_and_keygen_isolated(
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id: None,
             epoch_id: None,
+            compressed: false,
+            from_existing_shares: false,
         }),
         logs: true,
         max_iter,
@@ -2093,6 +2093,8 @@ async fn real_preproc_and_keygen_with_context_isolated(
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
+            compressed: false,
+            from_existing_shares: false,
         }),
         logs: true,
         max_iter: 200,
@@ -2114,10 +2116,9 @@ async fn real_preproc_and_keygen_with_context_isolated(
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
             shared_args: SharedKeyGenParameters {
-                keyset_type: None,
-                compressed: false,
                 context_id,
                 epoch_id,
+                ..Default::default()
             },
         }),
         logs: true,
@@ -2156,6 +2157,8 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
+            compressed: false,
+            from_existing_shares: false,
         }),
         logs: true,
         max_iter: 200,
@@ -2178,10 +2181,9 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id,
             shared_args: SharedKeyGenParameters {
-                keyset_type: None,
-                compressed: false,
                 context_id,
                 epoch_id,
+                ..Default::default()
             },
         }),
         logs: true,
