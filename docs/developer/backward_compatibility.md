@@ -130,7 +130,7 @@ To add a test for a type that is already tested, you need to:
   - If some _auxiliary_ data is needed for the test, make sure to serialize it using `store_versioned_auxiliary!` macro
 - serialize it using the `store_versioned_test!` macro
 - return the metadata of your test
-- update the `gen_VVV_data` method (where "`VVV`" is the module where your new type is defined) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
+- update the `gen_*MOD*_data` method (where "`*`" is the module where your new type is defined, e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
 
 The test will then be automatically selected when running `make test-backward-compatibility`.
 
@@ -216,7 +216,7 @@ To add a test for a type that has not yet been tested, you should:
   - add it to the `TestMetadataMOD` enum, where `MOD` is the name of the module to test
 - add a new testcase in the appropriate generator crate using the procedure in the previous paragraph. If the type comes from a new module, you should also:
   - go to `backward-compatibility/src/lib.rs` and create a new `TestMetadataZzz` module
-  - go to the generator's `src/data_x_y.rs` and create a new `gen_VVV_data` method
+  - go to the generator's `src/data_x_y.rs` and create a new `gen_*_data` method (e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`)
   - go to the generator's `src/main.rs`:
     - modify `gen_all_data` to include and return the new tests
     - retrieve the new tests in `main()` and store them using `store_metadata` along a different and related file name

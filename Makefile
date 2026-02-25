@@ -20,12 +20,12 @@ stop-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
 
 start-compose-threshold-telemetry:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-telemetry.yml up -d --wait
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml up -d --wait
 
 stop-compose-threshold-telemetry:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-telemetry.yml down --volumes --remove-orphans
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml down --volumes --remove-orphans
 
-# Test backwards cmpatibility with LFS files. This will pull the LFS files from git before running the tests.
+# Test backwards compatibility with LFS files. This will pull the LFS files from git before running the tests.
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
