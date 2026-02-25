@@ -26,7 +26,7 @@ use crate::keygen::{
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use core::str;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
@@ -562,37 +562,19 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
-/// Keyset type for key generation, matching the KeySetType in the protofile.
-///
-/// It only supports the standard keyset type for now, which is to generate the full keyset
-/// rather than individual keys from a standard keyset.
-#[derive(ValueEnum, Debug, Clone, Default)]
-pub enum KeySetType {
-    #[default]
-    Standard,
-    // TODO(#2799)
-    // DecompressionOnly, // we'll support this in the future
-}
-
-impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
-    fn from(value: KeySetType) -> Self {
-        match value {
-            KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
-        }
-    }
-}
-
 #[derive(Args, Debug, Clone, Default)]
 pub struct SharedKeyGenParameters {
-    /// Keyset type for key generation (e.g., "standard")
-    #[clap(value_enum, long, short = 't')]
-    pub keyset_type: Option<KeySetType>,
     /// Generate compressed keys using XOF-seeded compression
     #[clap(long, short = 'c', default_value_t = false)]
     pub compressed: bool,
-    // TODO(#2799)
-    // #[command(flatten)]
-    // pub keyset_added_info: Option<KeySetAddedInfo>,
+    /// Existing keyset ID to reuse all secret shares from.
+    /// When set, generates new public keys from existing private key shares
+    /// instead of running full distributed keygen.
+    #[clap(long)]
+    pub existing_keyset_id: Option<RequestId>,
+    /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
+    #[clap(long)]
+    pub existing_epoch_id: Option<EpochId>,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
 }
@@ -746,6 +728,12 @@ pub struct KeyGenPreprocParameters {
     /// Defaults to the default epoch if not specified.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
+    /// Generate compressed keys using XOF-seeded compression
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
+    /// Do preprocessing that's needed to generate a key from existing shares.
+    #[clap(long, default_value_t = false)]
+    pub from_existing_shares: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -899,6 +887,51 @@ pub async fn fetch_ctxt_from_file(
 }
 
 /// encrypt a given value and return the ciphertext
+/// Try to fetch keys for the given key ID, auto-detecting whether they are regular or compressed.
+///
+/// If `compressed_keys` is explicitly `true`, fetches `[CompressedXofKeySet]` only.
+/// Otherwise, tries `[PublicKey, ServerKey]` first; on failure, falls back to `[CompressedXofKeySet]`.
+/// Returns the fetched party confs and a boolean indicating whether compressed keys were found.
+async fn fetch_keys_auto_detect(
+    key_id: &str,
+    compressed_keys: bool,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+) -> anyhow::Result<(Vec<CoreConf>, bool)> {
+    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
+
+    if compressed_keys {
+        let confs = fetch_public_elements(
+            key_id,
+            &compressed_key_types,
+            cc_conf,
+            destination_prefix,
+            false,
+        )
+        .await?;
+        return Ok((confs, true));
+    }
+
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
+    match fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await {
+        Ok(confs) => Ok((confs, false)),
+        Err(_) => {
+            tracing::info!(
+                "Regular keys [PublicKey, ServerKey] not found, trying CompressedXofKeySet..."
+            );
+            let confs = fetch_public_elements(
+                key_id,
+                &compressed_key_types,
+                cc_conf,
+                destination_prefix,
+                false,
+            )
+            .await?;
+            Ok((confs, true))
+        }
+    }
+}
+
 /// parameters:
 /// - `keys_folder`: the root of the storage of the core client
 /// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
@@ -1231,9 +1264,6 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(addr_vec);
 
-    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
-    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
-
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command
     let res = match command {
@@ -1257,18 +1287,11 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let fetch_types = if cipher_parameters.compressed_keys {
-                        &compressed_key_types
-                    } else {
-                        &key_types
-                    };
-                    tracing::info!("Fetching keys {fetch_types:?}. ({command:?})");
-                    let party_confs = fetch_public_elements(
+                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        fetch_types,
+                        cipher_parameters.compressed_keys,
                         &cc_conf,
                         destination_prefix,
-                        false,
                     )
                     .await?;
                     let storage_prefix = Some(
@@ -1280,12 +1303,9 @@ pub async fn execute_cmd(
                             .object_folder
                             .as_str(),
                     );
-                    encrypt(
-                        destination_prefix,
-                        storage_prefix,
-                        cipher_parameters.clone(),
-                    )
-                    .await?
+                    let mut cipher_parameters = cipher_parameters.clone();
+                    cipher_parameters.compressed_keys = detected_compressed;
+                    encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
 
@@ -1342,18 +1362,11 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let fetch_types = if cipher_parameters.compressed_keys {
-                        &compressed_key_types
-                    } else {
-                        &key_types
-                    };
-                    tracing::info!("Fetching keys {fetch_types:?}. ({command:?})");
-                    let party_confs = fetch_public_elements(
+                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        fetch_types,
+                        cipher_parameters.compressed_keys,
                         &cc_conf,
                         destination_prefix,
-                        false,
                     )
                     .await?;
                     let storage_prefix = Some(
@@ -1365,13 +1378,9 @@ pub async fn execute_cmd(
                             .object_folder
                             .as_str(),
                     );
-
-                    encrypt(
-                        destination_prefix,
-                        storage_prefix,
-                        cipher_parameters.clone(),
-                    )
-                    .await?
+                    let mut cipher_parameters = cipher_parameters.clone();
+                    cipher_parameters.compressed_keys = detected_compressed;
+                    encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
 
@@ -1505,10 +1514,13 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
+            compressed,
+            from_existing_shares,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
+            let keyset_config = keygen::build_keyset_config(*compressed, *from_existing_shares);
             let req_id = do_preproc(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1518,6 +1530,7 @@ pub async fn execute_cmd(
                 fhe_params,
                 context_id.as_ref(),
                 epoch_id.as_ref(),
+                keyset_config,
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
@@ -1554,13 +1567,11 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-            let party_confs = fetch_public_elements(
+            let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
-                &key_types,
+                cipher_parameters.compressed_keys,
                 &cc_conf,
                 destination_prefix,
-                false,
             )
             .await?;
             let storage_prefix = Some(
@@ -1572,12 +1583,9 @@ pub async fn execute_cmd(
                     .object_folder
                     .as_str(),
             );
-            encrypt(
-                destination_prefix,
-                storage_prefix,
-                cipher_parameters.clone(),
-            )
-            .await?;
+            let mut cipher_parameters = cipher_parameters.clone();
+            cipher_parameters.compressed_keys = detected_compressed;
+            encrypt(destination_prefix, storage_prefix, cipher_parameters).await?;
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
