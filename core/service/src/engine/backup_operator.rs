@@ -776,7 +776,7 @@ where
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                restore_legacy_prss::<PrivS>(priv_storage, backup_vault).await?;
+                restore_legacy_prss_13_4::<PrivS>(priv_storage, backup_vault).await?;
             }
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
@@ -1098,7 +1098,7 @@ pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'stat
 }
 
 #[allow(deprecated)]
-async fn restore_legacy_prss<PrivS: Storage + Sync + Send + 'static>(
+async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &mut PrivS,
     backup_vault: &Vault,
 ) -> anyhow::Result<()> {
