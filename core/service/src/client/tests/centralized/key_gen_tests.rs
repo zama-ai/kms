@@ -59,9 +59,9 @@ async fn test_decompression_key_gen_centralized() {
             standard_keyset_config: None,
         }),
         Some(KeySetAddedInfo {
-            compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
+            ..Default::default()
         }),
     )
     .await;
@@ -103,9 +103,9 @@ async fn default_decompression_key_gen_centralized() {
             standard_keyset_config: None,
         }),
         Some(KeySetAddedInfo {
-            compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
+            ..Default::default()
         }),
     )
     .await;

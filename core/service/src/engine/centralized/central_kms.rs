@@ -62,7 +62,7 @@ use tfhe::{
 };
 use tfhe::{FheTypes, ServerKey};
 use threshold_fhe::execution::keyset_config::CompressedKeyConfig;
-use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
+use threshold_fhe::execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -82,6 +82,7 @@ pub(crate) enum CentralizedKeyGenResult {
     Compressed(CompressedXofKeySet, KmsFheKeyHandles),
 }
 
+/// Used for key generation of standard keysets, which may or may not use an existing secret key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
@@ -128,7 +129,7 @@ where
             CompressedKeyConfig::None => generate_fhe_keys(
                 &sk_copy,
                 params,
-                keyset_config.compression_config,
+                keyset_config.secret_key_config,
                 existing_key_handle,
                 &key_id_copy,
                 &preproc_id_copy,
@@ -139,7 +140,7 @@ where
             CompressedKeyConfig::All => generate_compressed_fhe_keys(
                 &sk_copy,
                 params,
-                keyset_config.compression_config,
+                keyset_config.secret_key_config,
                 existing_key_handle,
                 &key_id_copy,
                 &preproc_id_copy,
@@ -235,7 +236,7 @@ pub(crate) async fn async_generate_crs(
 fn generate_compressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
-    keyset_config: KeySetCompressionConfig,
+    keyset_config: KeyGenSecretKeyConfig,
     _existing_key_handle: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
@@ -243,8 +244,13 @@ fn generate_compressed_fhe_keys(
     eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
     match keyset_config {
-        KeySetCompressionConfig::Generate => { /* ok */ }
-        KeySetCompressionConfig::UseExisting => {
+        KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
+        KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+            anyhow::bail!(
+                "Generating compressed fhe keys from existing shares is not supported yet"
+            )
+        }
+        KeyGenSecretKeyConfig::UseExisting => {
             anyhow::bail!(
                 "Generating compressed fhe keys from existing shares is not supported yet"
             )
@@ -303,8 +309,8 @@ fn generate_compressed_fhe_keys(
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
-    keyset_config: KeySetCompressionConfig,
-    existing_key_handle: Option<KmsFheKeyHandles>,
+    compression_config: KeyGenSecretKeyConfig,
+    existing_key_handle_for_compression_key: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
     seed: Option<Seed>,
@@ -312,10 +318,10 @@ pub fn generate_fhe_keys(
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let tag = key_id.into();
-        let client_key = match keyset_config {
-            KeySetCompressionConfig::Generate => generate_client_fhe_key(params, tag, seed),
-            KeySetCompressionConfig::UseExisting => {
-                match existing_key_handle {
+        let client_key = match compression_config {
+            KeyGenSecretKeyConfig::GenerateAll => generate_client_fhe_key(params, tag, seed),
+            KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                match existing_key_handle_for_compression_key {
                     Some(key_handle) => {
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
@@ -326,6 +332,9 @@ pub fn generate_fhe_keys(
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
+            }
+            KeyGenSecretKeyConfig::UseExisting => {
+                anyhow::bail!("This is not implemented yet")
             }
         };
 
@@ -1279,7 +1288,7 @@ pub(crate) mod tests {
         let (pub_fhe_keys, key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &RequestId::from_str(key_id).unwrap(),
             &preproc_id,
@@ -1294,7 +1303,7 @@ pub(crate) mod tests {
         let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &RequestId::from_str(other_key_id).unwrap(),
             &preproc_id,
@@ -1347,7 +1356,7 @@ pub(crate) mod tests {
         assert!(generate_fhe_keys(
             &sig_sk,
             DEFAULT_PARAM,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &key_id,
             &preproc_id,
@@ -1361,7 +1370,7 @@ pub(crate) mod tests {
     fn test_generate_compressed_fhe_keys() {
         use super::generate_compressed_fhe_keys;
         use kms_grpc::rpc_types::PubDataType;
-        use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
+        use threshold_fhe::execution::keyset_config::KeyGenSecretKeyConfig;
 
         let mut rng = AesRng::seed_from_u64(100);
         let domain = dummy_domain();
@@ -1373,7 +1382,7 @@ pub(crate) mod tests {
         let result = generate_compressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            KeySetCompressionConfig::Generate,
+            KeyGenSecretKeyConfig::GenerateAll,
             None,
             &key_id,
             &preproc_id,

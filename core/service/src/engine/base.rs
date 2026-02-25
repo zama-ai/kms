@@ -1216,7 +1216,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &key_id,
             &preproc_id,
@@ -1261,7 +1261,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &key_id,
             &preproc_id,
@@ -1333,7 +1333,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default().compression_config,
+            StandardKeySetConfig::default().secret_key_config,
             None,
             &key_id,
             &preproc_id,
