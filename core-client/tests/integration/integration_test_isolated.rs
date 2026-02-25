@@ -2671,6 +2671,24 @@ async fn test_centralized_insecure() -> Result<()> {
     Ok(())
 }
 
+/// Test centralized insecure compressed key generation via CLI
+///
+/// Mirrors `test_centralized_insecure_compressed_keygen` in `integration_test.rs`.
+/// Runs insecure key generation with `compressed=true` against a native in-process server.
+#[tokio::test]
+async fn test_centralized_insecure_compressed_keygen() -> Result<()> {
+    init_testing();
+
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test("centralized_insecure_compressed_keygen").await?;
+
+    let keys_folder = material_dir.path();
+    let key_id = insecure_key_gen_compressed_isolated(&config_path, keys_folder).await?;
+    assert!(!key_id.is_empty());
+
+    Ok(())
+}
+
 /// Test centralized CRS generation via CLI
 #[tokio::test]
 async fn test_centralized_crsgen_secure() -> Result<()> {

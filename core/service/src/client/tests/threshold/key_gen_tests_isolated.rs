@@ -578,26 +578,26 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     Ok(())
 }
 
-/// Test insecure threshold decompression key generation with decryption validation.
+/// Test insecure threshold decompression key generation with decompression validation.
 ///
 /// Generates two regular keysets using insecure mode, then generates a decompression key
 /// between them using secure mode (required for decompression keys). Validates the keys
-/// by performing a public decryption operation.
+/// by running `run_decompression_test`, matching the work done by the non-isolated
+/// `run_threshold_decompression_keygen`.
 ///
 /// **Workflow:**
-/// 1. Generate first keyset (insecure mode)
-/// 2. Generate second keyset (insecure mode)
+/// 1. Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey via verify_keygen_responses
+/// 2. Generate second keyset (insecure mode), reconstruct ClientKey via verify_keygen_responses
 /// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
-/// 4. Verify all keys generated successfully
-/// 5. Perform public decryption to validate keys are functional
+/// 4. Retrieve decompression key from public storage
+/// 5. Run run_decompression_test to validate key compatibility (mirrors non-isolated verification)
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
-    use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
     use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
-    use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
     use crate::vault::storage::StorageType;
     use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetConfig, KeySetType};
+    use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("decompression_keygen")
@@ -608,15 +608,46 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         .build()
         .await?;
 
-    let clients = &env.clients;
+    let material_path = env.material_dir.path().to_path_buf();
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
 
-    // Step 1: Generate first keyset (insecure mode)
+    // Step 1: Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey
     let key_id_1 = derive_request_id("decom_dkg_key_1")?;
-    threshold_insecure_key_gen_isolated(clients, &key_id_1, FheParameter::Test).await?;
+    let responses_1 =
+        threshold_insecure_key_gen_isolated(&env.clients, &key_id_1, FheParameter::Test).await?;
+    let (keys_1, _) = verify_keygen_responses(
+        responses_1,
+        Some(&material_path),
+        &internal_client,
+        &crate::engine::base::INSECURE_PREPROCESSING_ID,
+        &key_id_1,
+        &dummy_domain(),
+        env.clients.len(),
+        None,
+        false,
+    )
+    .await
+    .expect("keygen 1 verification failed");
+    let (client_key_1, _, server_key_1) = keys_1.get_standard();
 
-    // Step 2: Generate second keyset (insecure mode)
+    // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
-    threshold_insecure_key_gen_isolated(clients, &key_id_2, FheParameter::Test).await?;
+    let responses_2 =
+        threshold_insecure_key_gen_isolated(&env.clients, &key_id_2, FheParameter::Test).await?;
+    let (keys_2, _) = verify_keygen_responses(
+        responses_2,
+        Some(&material_path),
+        &internal_client,
+        &crate::engine::base::INSECURE_PREPROCESSING_ID,
+        &key_id_2,
+        &dummy_domain(),
+        env.clients.len(),
+        None,
+        false,
+    )
+    .await
+    .expect("keygen 2 verification failed");
+    let (client_key_2, _, _) = keys_2.get_standard();
 
     // Step 3: Generate decompression key (secure mode - required for decompression)
     let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;
@@ -695,7 +726,8 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         res??;
     }
 
-    // Wait for decompression key generation to complete
+    // Wait for decompression key generation to complete and collect the result
+    let mut keygen_result_3 = None;
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let mut result = cur_client
@@ -707,81 +739,35 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 .get_key_gen_result(tonic::Request::new(key_id_3.into()))
                 .await;
         }
-        result?;
+        // Only need one result to retrieve the decompression key from pub storage
+        if keygen_result_3.is_none() {
+            keygen_result_3 = Some(result?.into_inner());
+        }
     }
 
-    // Verify all keys were generated successfully
-    for client in env.all_clients() {
-        let mut cur_client = client.clone();
+    // Step 4: Retrieve the decompression key from public storage (party 1's storage)
+    let pub_prefix = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0];
+    let pub_storage = crate::vault::storage::file::FileStorage::new(
+        Some(&material_path),
+        StorageType::PUB,
+        pub_prefix.as_deref(),
+    )?;
+    let decompression_key = internal_client
+        .retrieve_decompression_key(&keygen_result_3.unwrap(), &pub_storage)
+        .await?
+        .expect("decompression key not found in storage");
 
-        // Verify first keyset
-        let result1 = cur_client
-            .get_insecure_key_gen_result(tonic::Request::new(key_id_1.into()))
-            .await?;
-        assert_eq!(result1.into_inner().request_id, Some(key_id_1.into()));
-
-        // Verify second keyset
-        let result2 = cur_client
-            .get_insecure_key_gen_result(tonic::Request::new(key_id_2.into()))
-            .await?;
-        assert_eq!(result2.into_inner().request_id, Some(key_id_2.into()));
-
-        // Verify decompression key
-        let result3 = cur_client
-            .get_key_gen_result(tonic::Request::new(key_id_3.into()))
-            .await?;
-        assert_eq!(result3.into_inner().request_id, Some(key_id_3.into()));
-    }
-
-    // Perform decryption sanity check to validate keys are functional
-    let material_dir = env.material_dir;
-    let mut servers = env.servers;
-    let mut clients = env.clients;
-
-    let material_path = material_dir.path();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
-
-    // Create internal client for decryption
-    let mut pub_storage_map = std::collections::HashMap::new();
-    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
-        pub_storage_map.insert(
-            (i + 1) as u32,
-            FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?,
-        );
-    }
-    let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
-    let mut internal_client = crate::client::client_wasm::Client::new_client(
-        client_storage,
-        pub_storage_map,
-        &crate::consts::TEST_PARAM,
-        None,
-    )
-    .await?;
-
-    // Validate key_id_1 with a public decryption
-    run_decryption_threshold(
-        4,
-        &mut servers,
-        &mut clients,
-        &mut internal_client,
-        None,
-        &key_id_1,
-        None,
-        vec![TestingPlaintext::U32(42)],
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: true,
-        },
-        None,
-        1,
-        Some(material_path),
-        false,
-    )
-    .await;
-
-    for (_, server) in servers {
+    for (_, server) in env.servers {
         server.assert_shutdown().await;
     }
+
+    // Step 5: Validate key compatibility — mirrors run_decompression_test in the non-isolated version
+    run_decompression_test(
+        &client_key_1,
+        &client_key_2,
+        Some(&server_key_1),
+        decompression_key.into_raw_parts(),
+    );
 
     Ok(())
 }
