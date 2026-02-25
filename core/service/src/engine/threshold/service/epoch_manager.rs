@@ -277,6 +277,12 @@ impl<
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
+        if session_maker.epoch_exists(&epoch_id).await {
+            anyhow::bail!(
+                "Epoch ID {} already exists, cannot initialize PRSS for this epoch.",
+                epoch_id
+            );
+        }
         let own_identity = session_maker
             .my_identity(context_id)
             .await?
