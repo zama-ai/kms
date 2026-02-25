@@ -1,8 +1,8 @@
-use crate::consts::DEFAULT_EPOCH_ID;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{
-    read_versioned_at_request_id, store_versioned_at_request_id, StorageExt,
+    read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id, StorageExt,
 };
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
@@ -11,18 +11,16 @@ use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 
 /// Migrate from 0.12.x to 0.13.1
 /// This involves migrating FHE key material from the legacy storage format to the new epoch-aware format, and migrating the legacy PRSS setup to the new combined format.
-pub async fn migrate_to_0_13_1<S>(
-    storage: &mut S,
+pub async fn migrate_to_0_13_1<PrivS>(
+    priv_storage: &mut PrivS,
     kms_type: KMSType,
-    threshold: u8,
-    num_parties: usize,
 ) -> anyhow::Result<()>
 where
-    S: StorageExt + Sync + Send,
+    PrivS: StorageExt + Sync + Send,
 {
-    migrate_fhe_keys_v0_12_to_v0_13(storage, kms_type).await?;
+    migrate_fhe_keys_v0_12_to_v0_13(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
-        migrate_legacy_prss_before_0_13_1(storage, threshold, num_parties).await?;
+        migrate_legacy_prss_before_0_13_1(priv_storage).await?;
     }
     Ok(())
 }
@@ -31,11 +29,14 @@ where
 /// This is disabled for now and should only be enabled in the next version
 ///
 /// This involves removing already migrated FHE key material in the legacy storage location.
-pub async fn migrate_to_0_14_0<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
+pub async fn migrate_to_0_14_0<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
 where
-    S: StorageExt + Sync + Send,
+    PrivS: StorageExt + Sync + Send,
 {
-    migrate_fhe_keys_after_0_13_1(storage, kms_type).await?;
+    migrate_fhe_keys_after_0_13_1(priv_storage, kms_type).await?;
     Ok(())
 }
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
@@ -50,18 +51,18 @@ where
 /// `DEFAULT_EPOCH_ID` as the default epoch ID.
 ///
 /// # Arguments
-/// * `storage` - Storage instance supporting both legacy and epoch-aware operations
+/// * `priv_storage` - Private storage instance supporting both legacy and epoch-aware operations
 /// * `kms_type` - The KMS type (Centralized or Threshold) which determines which data type to migrate
 ///
 /// # Returns
 /// * `Ok(migrated_count)` - Number of keys successfully migrated
 /// * `Err(...)` - If any migration operation fails
-async fn migrate_fhe_keys_v0_12_to_v0_13<S>(
-    storage: &mut S,
+async fn migrate_fhe_keys_v0_12_to_v0_13<PrivS>(
+    priv_storage: &mut PrivS,
     kms_type: KMSType,
 ) -> anyhow::Result<usize>
 where
-    S: StorageExt + Sync + Send,
+    PrivS: StorageExt + Sync + Send,
 {
     let data_type = match kms_type {
         KMSType::Centralized => PrivDataType::FhePrivateKey,
@@ -73,7 +74,7 @@ where
     let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
 
     // Get all key IDs stored in the legacy format (directly under data_type directory)
-    let legacy_key_ids = storage.all_data_ids(&data_type_str).await?;
+    let legacy_key_ids = priv_storage.all_data_ids(&data_type_str).await?;
 
     if legacy_key_ids.is_empty() {
         tracing::info!("No legacy {} keys found to migrate", data_type_str);
@@ -90,7 +91,7 @@ where
 
     for key_id in legacy_key_ids {
         // Check if this key already exists in the new epoch-aware format
-        if storage
+        if priv_storage
             .data_exists_at_epoch(&key_id, &default_epoch_id, &data_type_str)
             .await?
         {
@@ -104,10 +105,10 @@ where
 
         // Read the data from the legacy location as raw bytes
         // We read raw bytes to avoid type-specific deserialization issues
-        let data: Vec<u8> = storage.load_bytes(&key_id, &data_type_str).await?;
+        let data: Vec<u8> = priv_storage.load_bytes(&key_id, &data_type_str).await?;
 
         // Store the data at the new epoch-aware location
-        storage
+        priv_storage
             .store_bytes_at_epoch(&data, &key_id, &default_epoch_id, &data_type_str)
             .await?;
 
@@ -161,17 +162,19 @@ where
 /// by using the default value for the epoch ID.
 /// It then converts the old PRSSSetup data into the new PRSSSetupCombined format and stores it back in storage under the new epoch-aware path.
 #[expect(deprecated)]
-async fn migrate_legacy_prss_before_0_13_1<S>(
-    storage: &mut S,
-    threshold: u8,
-    num_parties: usize,
-) -> anyhow::Result<()>
+async fn migrate_legacy_prss_before_0_13_1<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
-    S: StorageExt + Sync + Send,
+    PrivS: StorageExt + Sync + Send,
 {
     let epoch_id = *DEFAULT_EPOCH_ID;
+    let context_id = *DEFAULT_MPC_CONTEXT;
+    // Load context
+    let (threshold, num_parties) = {
+        let context = read_context_at_id(priv_storage, &context_id).await?;
+        (context.threshold as u8, context.mpc_nodes.len())
+    };
     // Check if this key already exists in the new epoch-aware format
-    if storage
+    if priv_storage
         .data_exists(
             &epoch_id.into(),
             &PrivDataType::PrssSetupCombined.to_string(),
@@ -194,7 +197,7 @@ where
     ))?;
     let prss_from_storage = {
         let prss_128 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z128>>(
-            storage,
+            priv_storage,
             &prss_128_legacy_id,
             &PrivDataType::PrssSetup.to_string(),
         )
@@ -203,7 +206,7 @@ where
             tracing::warn!("failed to read legacy PRSS Z128 from file with error: {e}");
         });
         let prss_64 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z64>>(
-            storage,
+            priv_storage,
             &prss_64_legacy_id,
             &PrivDataType::PrssSetup.to_string(),
         )
@@ -224,7 +227,7 @@ where
                 threshold,
             };
             store_versioned_at_request_id(
-                storage,
+                priv_storage,
                 &(epoch_id).into(),
                 &new_prss,
                 &PrivDataType::PrssSetupCombined.to_string(),
@@ -232,10 +235,10 @@ where
             .await?;
 
             // Delete the old prss! Note that this is safe since they can always be regenerated very quickly without any change beyond the KMS
-            storage
+            priv_storage
                 .delete_data(&prss_128_legacy_id, &PrivDataType::PrssSetup.to_string())
                 .await?;
-            storage
+            priv_storage
                 .delete_data(&prss_64_legacy_id, &PrivDataType::PrssSetup.to_string())
                 .await?;
         }
