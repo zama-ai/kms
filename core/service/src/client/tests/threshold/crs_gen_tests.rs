@@ -14,7 +14,7 @@ cfg_if::cfg_if! {
     use serial_test::serial;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
     use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};

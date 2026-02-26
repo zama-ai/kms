@@ -9,21 +9,19 @@
 //! You can run it with `cargo run -F testing --example distributed_decryption`.
 use aes_prng::AesRng;
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
+use execution::{
+    endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
+    runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+    tfhe_internals::{
+        parameters::BC_PARAMS_SNS,
+        test_feature::{gen_key_set, keygen_all_party_shares_from_keyset, KeySet},
+        utils::expanded_encrypt,
+    },
+};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use tfhe::{set_server_key, FheUint8};
-use threshold_fhe::{
-    execution::{
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::{
-            parameters::BC_PARAMS_SNS,
-            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset, KeySet},
-            utils::expanded_encrypt,
-        },
-    },
-    networking::NetworkMode,
-};
+use threshold_types::network::NetworkMode;
 
 #[tokio::main]
 async fn main() {

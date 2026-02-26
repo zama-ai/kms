@@ -26,9 +26,9 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt};
+use execution::keyset_config::KeyGenSecretKeyConfig;
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
-use threshold_fhe::execution::keyset_config::KeyGenSecretKeyConfig;
 
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
@@ -36,6 +36,11 @@ use crate::vault::storage::{
 };
 use crate::vault::{storage::Storage, Vault};
 use aes_prng::AesRng;
+use execution::{
+    keyset_config::{CompressedKeyConfig, StandardKeySetConfig},
+    tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
+    zk::ceremony::public_parameters_by_trusted_setup,
+};
 use hashing::DomainSep;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
@@ -64,11 +69,6 @@ use tfhe::{
 };
 use tfhe::{FheTypes, ServerKey};
 use thread_handles::ThreadHandleGroup;
-use threshold_fhe::execution::{
-    keyset_config::{CompressedKeyConfig, StandardKeySetConfig},
-    tfhe_internals::{parameters::DKGParams, public_keysets::FhePubKeySet},
-    zk::ceremony::public_parameters_by_trusted_setup,
-};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
@@ -116,7 +116,7 @@ where
     };
 
     match keyset_config.computation_key_type {
-        threshold_fhe::execution::keyset_config::ComputeKeyType::Cpu => {
+        execution::keyset_config::ComputeKeyType::Cpu => {
             // Do nothing.
             // We just put a match statement here
             // so that the compiler will complain if a new variant
@@ -1152,6 +1152,8 @@ pub(crate) mod tests {
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use aes_prng::AesRng;
+    use execution::keyset_config::StandardKeySetConfig;
+    use execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use kms_grpc::RequestId;
@@ -1162,8 +1164,6 @@ pub(crate) mod tests {
     use std::str::FromStr;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
-    use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -1222,10 +1222,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
-        keys: &HashMap<
-            RequestId,
-            threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet,
-        >,
+        keys: &HashMap<RequestId, execution::tfhe_internals::public_keysets::FhePubKeySet>,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
@@ -1369,8 +1366,8 @@ pub(crate) mod tests {
     #[test]
     fn test_generate_compressed_fhe_keys() {
         use super::generate_compressed_fhe_keys;
+        use execution::keyset_config::KeyGenSecretKeyConfig;
         use kms_grpc::rpc_types::PubDataType;
-        use threshold_fhe::execution::keyset_config::KeyGenSecretKeyConfig;
 
         let mut rng = AesRng::seed_from_u64(100);
         let domain = dummy_domain();

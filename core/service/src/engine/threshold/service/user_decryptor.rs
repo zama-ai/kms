@@ -16,6 +16,14 @@ use algebra::{
 };
 use alloy_primitives::U256;
 use anyhow::anyhow;
+use execution::{
+    endpoints::decryption::{
+        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
+        LowLevelCiphertext, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+    },
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::private_keysets::PrivateKeySet,
+};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{
@@ -33,14 +41,6 @@ use observability::{
 };
 use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
-use threshold_fhe::execution::{
-    endpoints::decryption::{
-        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
-        LowLevelCiphertext, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
-    },
-    runtime::sessions::small_session::SmallSession,
-    tfhe_internals::private_keysets::PrivateKeySet,
-};
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
@@ -627,16 +627,16 @@ fn format_user_request(request: &UserDecryptionRequest) -> String {
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
+    use execution::{
+        runtime::sessions::session_parameters::GenericParameterHandles,
+        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
+    };
     use kms_grpc::{
         kms::v1::CiphertextFormat,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
     use tfhe::FheTypes;
-    use threshold_fhe::execution::{
-        runtime::sessions::session_parameters::GenericParameterHandles,
-        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
-    };
 
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -657,9 +657,7 @@ mod tests {
     impl NoiseFloodPartialDecryptor for DummyNoiseFloodPartialDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
-                ResiduePolyF4Z128,
-            >,
+            execution::runtime::sessions::small_session::SmallSession<ResiduePolyF4Z128>,
         >;
 
         async fn partial_decrypt(

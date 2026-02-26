@@ -67,6 +67,7 @@ ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
+execution.workspace = true
 futures-util.workspace = true
 hashing.workspace = true
 hex.workspace = true
@@ -78,6 +79,7 @@ k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 lazy_static.workspace = true
 ml-kem.workspace = true
+networking.workspace = true
 nom.workspace = true
 observability = { workspace = true, optional = true }
 ordermap.workspace = true
@@ -93,6 +95,7 @@ rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
+session-id.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
@@ -110,6 +113,7 @@ thread-handles = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
+threshold-types.workspace = true
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",

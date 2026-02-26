@@ -13,12 +13,12 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
+use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::collections::HashMap;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 
 #[rstest::rstest]
@@ -369,8 +369,8 @@ pub(crate) async fn user_decryption_centralized(
             // be instantiated easily without a seeder and we don't
             // want to introduce extra npm dependency.
 
+            use execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
             use kms_grpc::kms::v1::TypedPlaintext;
-            use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
             use crate::{
                 client::user_decryption_wasm::TestingUserDecryptionTranscript,

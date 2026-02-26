@@ -3,33 +3,31 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
+use execution::endpoints::reshare_sk::SecureReshareSecretKeys;
+use execution::{
+    endpoints::keygen::SecureOnlineDistributedKeyGen128,
+    online::preprocessing::{
+        create_memory_factory, create_redis_factory,
+        orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
+    },
+    small_execution::prss::RobustSecurePrssInit,
+    tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
+    zk::ceremony::SecureCeremony,
+};
 use kms_grpc::{
     identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
 };
+use networking::{
+    grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+    tls::AttestedVerifier,
+};
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
-use threshold_fhe::{
-    execution::{
-        endpoints::keygen::SecureOnlineDistributedKeyGen128,
-        online::preprocessing::{
-            create_memory_factory, create_redis_factory,
-            orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
-        },
-        small_execution::prss::RobustSecurePrssInit,
-        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
-        zk::ceremony::SecureCeremony,
-    },
-    networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
-        tls::AttestedVerifier,
-    },
-};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -768,7 +766,7 @@ fn update_threshold_kms_system_metrics(
 
 #[cfg(test)]
 mod tests {
-    use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+    use execution::tfhe_internals::public_keysets::FhePubKeySet;
 
     use super::*;
 
@@ -777,13 +775,11 @@ mod tests {
         /// The keyset is *not* meant to be used for any computation or protocol,
         /// it's only used during testing with a mocked decryption protocol that does not actually load the keys.
         pub fn init_dummy<R: rand::Rng + rand::CryptoRng>(
-            param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+            param: execution::tfhe_internals::parameters::DKGParams,
             tag: tfhe::Tag,
             rng: &mut R,
         ) -> (Self, FhePubKeySet) {
-            let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
-                param, tag, rng,
-            );
+            let keyset = execution::tfhe_internals::test_feature::gen_key_set(param, tag, rng);
 
             let server_key = keyset.public_keys.server_key.clone();
             let (

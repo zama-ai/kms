@@ -4,11 +4,15 @@ resolver = "2"
 members = [
     "bc2wrap",
     "core/grpc",
+    "core/session-id",
     "core/service",
+    "core/thread-handles",
     "core/threshold",
     "core/threshold-algebra",
+    "core/threshold-execution",
     "core/threshold-hashing",
-    "core/thread-handles",
+    "core/threshold-networking",
+    "core/threshold-types",
     "core/error-utils",
     "core-client",
     "observability",
@@ -72,13 +76,17 @@ description = "Key Management System for the Zama Protocol."
 algebra = { package = "threshold-algebra", path = "./core/threshold-algebra", default-features = false }
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
+error-utils = { path = "./core/error-utils", default-features = false }
+execution = { package = "threshold-execution", path = "./core/threshold-execution", default-features = false }
 hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", default-features = false }
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
+networking = { package = "threshold-networking", path = "./core/threshold-networking" }
 observability = { path = "./observability" }  # Internal observability module
+session-id = { path = "./core/session-id" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
-error-utils = { path = "./core/error-utils", default-features = false }
+threshold-types = { path = "./core/threshold-types" }
 thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)

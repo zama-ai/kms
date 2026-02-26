@@ -4319,6 +4319,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serial_test",
+ "session-id",
  "signature 2.2.0",
  "strum",
  "strum_macros",
@@ -4330,8 +4331,11 @@ dependencies = [
  "thiserror 2.0.12",
  "thread-handles",
  "threshold-algebra",
+ "threshold-execution",
  "threshold-fhe",
  "threshold-hashing",
+ "threshold-networking",
+ "threshold-types",
  "tokio",
  "tokio-rustls 0.26.2",
  "tokio-util",
@@ -4406,6 +4410,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "serde",
+ "session-id",
  "strum",
  "strum_macros",
  "tfhe",
@@ -7122,6 +7127,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "session-id"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "serde",
+ "tfhe",
+ "threshold-execution",
+ "threshold-hashing",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7731,6 +7747,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "threshold-execution"
+version = "0.13.0-rc.3"
+dependencies = [
+ "aes",
+ "aes-prng",
+ "anyhow",
+ "async-std",
+ "async-trait",
+ "bc2wrap",
+ "cfg-if",
+ "clap",
+ "const_format",
+ "crypto-bigint 0.6.1",
+ "ctor",
+ "derive_more",
+ "error-utils",
+ "futures",
+ "futures-util",
+ "itertools 0.14.0",
+ "mockall",
+ "ndarray",
+ "num-integer",
+ "num-traits",
+ "paste",
+ "rand 0.8.5",
+ "rayon",
+ "redis",
+ "rstest",
+ "serde",
+ "serial_test",
+ "session-id",
+ "statrs",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "tfhe",
+ "tfhe-csprng",
+ "tfhe-versionable",
+ "tfhe-zk-pok",
+ "thread-handles",
+ "threshold-algebra",
+ "threshold-execution",
+ "threshold-hashing",
+ "threshold-networking",
+ "threshold-types",
+ "tokio",
+ "tonic 0.13.1",
+ "tracing",
+ "tracing-test",
+ "zeroize",
+]
+
+[[package]]
 name = "threshold-fhe"
 version = "0.13.0-rc.3"
 dependencies = [
@@ -7782,6 +7851,7 @@ dependencies = [
  "rustls-webpki 0.103.4",
  "serde",
  "serial_test",
+ "session-id",
  "sha2",
  "sha3",
  "statrs",
@@ -7794,8 +7864,11 @@ dependencies = [
  "tfhe-zk-pok",
  "thread-handles",
  "threshold-algebra",
+ "threshold-execution",
  "threshold-fhe",
  "threshold-hashing",
+ "threshold-networking",
+ "threshold-types",
  "tokio",
  "tokio-rustls 0.26.2",
  "tonic 0.13.1",
@@ -7819,6 +7892,60 @@ dependencies = [
  "serde",
  "sha3",
  "tracing",
+]
+
+[[package]]
+name = "threshold-networking"
+version = "0.13.0-rc.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "attestation-doc-validation",
+ "backoff",
+ "bc2wrap",
+ "crypto-bigint 0.6.1",
+ "dashmap",
+ "error-utils",
+ "futures-util",
+ "hex",
+ "hyper-rustls 0.27.7",
+ "lazy_static",
+ "observability",
+ "oid-registry",
+ "prost",
+ "serde",
+ "session-id",
+ "sha2",
+ "tfhe",
+ "tfhe-versionable",
+ "thread-handles",
+ "threshold-algebra",
+ "threshold-execution",
+ "threshold-hashing",
+ "threshold-types",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tonic 0.13.1",
+ "tonic-build",
+ "tonic-tls",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-test",
+ "x509-parser 0.18.0",
+]
+
+[[package]]
+name = "threshold-types"
+version = "0.13.0-rc.3"
+dependencies = [
+ "aes-prng",
+ "anyhow",
+ "async-trait",
+ "rand 0.8.5",
+ "serde",
+ "threshold-algebra",
+ "threshold-hashing",
 ]
 
 [[package]]

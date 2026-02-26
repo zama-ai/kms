@@ -16,12 +16,12 @@ use crate::util::key_setup::{
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
+use execution::endpoints::decryption::DecryptionMode;
+use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::commons::utils::ZipChecked;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]

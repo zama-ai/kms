@@ -149,9 +149,9 @@ pub(crate) fn reconstruct(
 mod tests {
     use aes_prng::AesRng;
     use algebra::{sharing::share::Share, structure_traits::One};
+    use execution::tests::randomness_check::execute_all_randomness_tests_tight;
     use proptest::prelude::*;
     use rand::SeedableRng;
-    use threshold_fhe::tests::randomness_check::execute_all_randomness_tests_tight;
 
     use super::*;
 

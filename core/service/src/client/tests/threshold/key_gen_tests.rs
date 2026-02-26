@@ -29,8 +29,8 @@ cfg_if::cfg_if! {
     use tfhe::prelude::Tagged;
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use algebra::role::Role;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-    use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
+    use execution::tfhe_internals::parameters::DKGParams;
+    use execution::tfhe_internals::test_feature::to_hl_client_key;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
 }}
@@ -49,6 +49,8 @@ use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
+#[cfg(feature = "slow_tests")]
+use execution::tfhe_internals::test_feature::run_decompression_test;
 use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(feature = "slow_tests")]
 use kms_grpc::kms::v1::KeySetType;
@@ -58,8 +60,6 @@ use std::path::Path;
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
 use tfhe::core_crypto::commons::utils::ZipChecked;
-#[cfg(feature = "slow_tests")]
-use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
 use tonic::{Response, Status};
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -99,8 +99,8 @@ impl TestKeyGenResult {
     }
 
     fn sanity_check(&self) {
+        use execution::tfhe_internals::utils::expanded_encrypt;
         use tfhe::prelude::FheDecrypt;
-        use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
         let (client_key, public_key, server_key) = match &self {
             TestKeyGenResult::DecompressionOnly(_) => {
                 /* cannot sanity check */
@@ -1206,10 +1206,10 @@ fn try_reconstruct_shares(
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
     Option<NoiseSquashingCompressionPrivateKey>,
 ) {
-    use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
-    use threshold_fhe::execution::tfhe_internals::{
+    use execution::tfhe_internals::{
         private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
     };
+    use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
 
     let param_handle = param.get_params_basics_handle();
     // Cast to Z64 before reconstruction

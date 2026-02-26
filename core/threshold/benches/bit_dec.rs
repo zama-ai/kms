@@ -7,19 +7,17 @@ use algebra::sharing::shamir::ShamirSharings;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::Ring;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use execution::endpoints::decryption::{
+    secure_init_prep_bitdec_large_session, secure_init_prep_bitdec_small_session,
+};
+use execution::online::bit_manipulation::bit_dec_batch;
+use execution::online::preprocessing::dummy::DummyPreprocessing;
+use execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use execution::runtime::sessions::{large_session::LargeSession, small_session::SmallSession};
+use networking::NetworkMode;
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
-use threshold_fhe::execution::endpoints::decryption::{
-    secure_init_prep_bitdec_large_session, secure_init_prep_bitdec_small_session,
-};
-use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
-use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
-use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
-use threshold_fhe::execution::runtime::sessions::{
-    large_session::LargeSession, small_session::SmallSession,
-};
-use threshold_fhe::networking::NetworkMode;
 use threshold_fhe::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };

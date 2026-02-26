@@ -22,6 +22,12 @@ use crate::{
         Storage, StorageExt, StorageReader, StorageType,
     },
 };
+use execution::{
+    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys},
+    runtime::sessions::session_parameters::GenericParameterHandles,
+    small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
+    tfhe_internals::public_keysets::FhePubKeySet,
+};
 use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::{
@@ -32,17 +38,7 @@ use kms_grpc::{
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{xof_key_set::CompressedXofKeySet, ServerKey};
-use threshold_fhe::{
-    execution::{
-        endpoints::reshare_sk::{
-            ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
-        },
-        runtime::sessions::session_parameters::GenericParameterHandles,
-        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
-        tfhe_internals::public_keysets::FhePubKeySet,
-    },
-    networking::NetworkMode,
-};
+use threshold_types::network::NetworkMode;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};

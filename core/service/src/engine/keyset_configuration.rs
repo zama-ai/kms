@@ -1,10 +1,10 @@
 use anyhow::anyhow;
+use execution::keyset_config::{self as ddec_keyset_config};
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
-use threshold_fhe::execution::keyset_config::{self as ddec_keyset_config};
 
 use crate::engine::validation::{parse_grpc_request_id, RequestIdParsingErr};
 

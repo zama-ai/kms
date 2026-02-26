@@ -1,8 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use tfhe::{set_server_key, FheUint16, FheUint2, FheUint32, FheUint64, FheUint8};
-use threshold_fhe::execution::{
+use execution::{
     random::get_rng,
     tfhe_internals::{
         parameters::{DKGParams, BC_PARAMS_SNS},
@@ -10,6 +9,7 @@ use threshold_fhe::execution::{
         utils::expanded_encrypt,
     },
 };
+use tfhe::{set_server_key, FheUint16, FheUint2, FheUint32, FheUint64, FheUint8};
 
 fn bench_switch_and_squash(c: &mut Criterion) {
     let mut group = c.benchmark_group("switch_and_squash");

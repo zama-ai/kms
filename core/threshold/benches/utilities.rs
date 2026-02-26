@@ -1,3 +1,8 @@
+use execution::tfhe_internals::parameters::DKGParams;
+use execution::tfhe_internals::parameters::{
+    BC_PARAMS_SNS, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P32_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
+    NIST_PARAMS_P8_SNS_LWE,
+};
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
 use tfhe::{
     core_crypto::{prelude::NormalizedHammingWeightBound, seeders::new_seeder},
@@ -6,11 +11,6 @@ use tfhe::{
 };
 #[cfg(feature = "measure_memory")]
 use threshold_fhe::allocator::MEM_ALLOCATOR;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    BC_PARAMS_SNS, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P32_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
-    NIST_PARAMS_P8_SNS_LWE,
-};
 
 #[cfg(feature = "measure_memory")]
 fn print_memory_usage(bench_name: String, results: Vec<usize>) {

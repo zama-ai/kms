@@ -3,6 +3,17 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
+use execution::{
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::{
+        orchestration::{
+            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
+        },
+        PreprocessorFactory,
+    },
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::parameters::DKGParams,
+};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
@@ -15,17 +26,7 @@ use observability::{
         TAG_EPOCH_ID, TAG_PARTY_ID,
     },
 };
-use threshold_fhe::execution::{
-    keyset_config as ddec_keyset_config,
-    online::preprocessing::{
-        orchestration::{
-            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
-        },
-        PreprocessorFactory,
-    },
-    runtime::{party::Identity, sessions::small_session::SmallSession},
-    tfhe_internals::parameters::DKGParams,
-};
+use threshold_types::party::Identity;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
@@ -236,9 +237,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         #[cfg(feature = "insecure")]
         let handle_update = {
-            use threshold_fhe::execution::online::preprocessing::{
-                dummy::DummyPreprocessing, DKGPreprocessing,
-            };
+            use execution::online::preprocessing::{dummy::DummyPreprocessing, DKGPreprocessing};
 
             match (handle_update, partial_params) {
                 (Err(e), _) => Err(e),

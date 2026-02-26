@@ -18,6 +18,8 @@ use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
+use execution::keyset_config::KeySetConfig;
+use execution::tfhe_internals::parameters::DKGParams;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::{EpochId, RequestId};
@@ -27,8 +29,6 @@ use observability::metrics_names::{
     OP_KEYGEN_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
-use threshold_fhe::execution::keyset_config::KeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;

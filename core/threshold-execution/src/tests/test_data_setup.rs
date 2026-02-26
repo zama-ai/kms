@@ -1,0 +1,30 @@
+#[cfg(any(test, feature = "testing"))]
+pub mod tests {
+    use crate::{
+        file_handling::tests::{read_element, write_element},
+        tests::helper::tests::generate_keys,
+        tfhe_internals::{
+            parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS},
+            test_feature::KeySet,
+        },
+    };
+
+    pub const DEFAULT_SEED: u64 = 1;
+
+    // Very small parameters with very little noise, used in most tests to increase speed
+    pub const TEST_PARAMETERS: DKGParams = PARAMS_TEST_BK_SNS;
+
+    // TAKING BLOCKCHAIN PARAMS AS REFERENCE (Sept. 16 2024)
+    // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
+    pub const REAL_PARAMETERS: DKGParams = BC_PARAMS_SNS;
+
+    pub fn ensure_keys_exist(path: &str, params: DKGParams, tag: tfhe::Tag) {
+        match read_element::<KeySet, _>(&path) {
+            Ok(_key_bytes) => (),
+            Err(_e) => {
+                let keys = generate_keys(params, tag);
+                write_element(path, &keys).unwrap();
+            }
+        }
+    }
+}

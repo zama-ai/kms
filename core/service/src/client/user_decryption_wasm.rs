@@ -22,6 +22,9 @@ use algebra::{
 };
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use execution::endpoints::decryption::DecryptionMode;
+use execution::endpoints::reconstruct::{combine_decryptions, reconstruct_packed_message};
+use execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
@@ -31,11 +34,6 @@ use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::endpoints::reconstruct::{
-    combine_decryptions, reconstruct_packed_message,
-};
-use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 
@@ -702,7 +700,7 @@ pub struct TestingUserDecryptionTranscript {
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
-    pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+    pub(crate) params: execution::tfhe_internals::parameters::DKGParams,
     // example pt and ct
     pub(crate) fhe_types: Vec<i32>,
     pub(crate) pts: Vec<Vec<u8>>,

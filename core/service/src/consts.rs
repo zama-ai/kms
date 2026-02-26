@@ -1,10 +1,8 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
+use execution::tfhe_internals::parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{identifiers::ContextId, EpochId, RequestId};
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
-};
 
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;

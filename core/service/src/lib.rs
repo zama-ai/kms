@@ -86,4 +86,4 @@ pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 }
 
 // re-export DecryptionMode
-pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+pub use execution::endpoints::decryption::DecryptionMode;

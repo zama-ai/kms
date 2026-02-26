@@ -8,12 +8,12 @@ use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use execution::zk::ceremony::max_num_bits_from_crs;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::RequestId;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
     pub fn crs_gen_request(
@@ -230,10 +230,10 @@ pub(crate) mod tests {
     use crate::consts::TEST_PARAM;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::Storage;
+    use execution::tfhe_internals::parameters::DKGParams;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();

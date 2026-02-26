@@ -33,8 +33,8 @@ cfg_if::cfg_if! {
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
+use networking::grpc::GrpcServer;
 use serial_test::serial;
-use threshold_fhe::networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;

@@ -2,11 +2,12 @@ use aes_prng::AesRng;
 use criterion::BenchmarkId;
 use criterion::{criterion_group, criterion_main, Criterion};
 use crypto_bigint::modular::ConstMontyParams;
+use execution::runtime::test_runtime::generate_fixed_roles;
+use networking::NetworkMode;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::RngCore;
 use rand::SeedableRng;
-use threshold_fhe::execution::runtime::test_runtime::generate_fixed_roles;
 use threshold_fhe::experimental::algebra::levels::*;
 use threshold_fhe::experimental::algebra::ntt::N65536;
 use threshold_fhe::experimental::algebra::ntt::{Const, NTTConstants};
@@ -18,7 +19,6 @@ use threshold_fhe::experimental::bgv::ddec::keygen_shares;
 use threshold_fhe::experimental::bgv::endpoints::threshold_decrypt;
 use threshold_fhe::experimental::bgv::runtime::BGVTestRuntime;
 use threshold_fhe::experimental::constants::PLAINTEXT_MODULUS;
-use threshold_fhe::networking::NetworkMode;
 
 fn bench_modswitch(c: &mut Criterion) {
     let mut rng = AesRng::seed_from_u64(0);

@@ -4,10 +4,10 @@ use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{read_versioned_at_request_id, Storage, StorageExt};
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use execution::endpoints::reshare_sk::ReshareSecretKeys;
+use execution::small_execution::prss::{PRSSInit, PRSSSetup};
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
-use threshold_fhe::execution::endpoints::reshare_sk::ReshareSecretKeys;
-use threshold_fhe::execution::small_execution::prss::{PRSSInit, PRSSSetup};
 
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
 /// The migration should be applied to private storage created in v0.12.x,
@@ -188,9 +188,9 @@ mod tests {
     use std::str::FromStr;
 
     use aes_prng::AesRng;
+    use execution::malicious_execution::small_execution::malicious_prss::EmptyPrss;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
-    use threshold_fhe::malicious_execution::small_execution::malicious_prss::EmptyPrss;
 
     use super::*;
     use crate::engine::threshold::service::epoch_manager::tests::make_epoch_manager;

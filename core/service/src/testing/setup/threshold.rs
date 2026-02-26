@@ -131,8 +131,8 @@ impl ThresholdTestEnv {
     /// ```
     pub async fn create_internal_client(
         &self,
-        params: &threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
-        decryption_mode: Option<threshold_fhe::execution::endpoints::decryption::DecryptionMode>,
+        params: &execution::tfhe_internals::parameters::DKGParams,
+        decryption_mode: Option<execution::endpoints::decryption::DecryptionMode>,
     ) -> Result<crate::client::client_wasm::Client> {
         use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
         use crate::vault::storage::{file::FileStorage, StorageType};
@@ -176,7 +176,7 @@ pub struct ThresholdTestEnvBuilder {
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
-    decryption_mode: Option<threshold_fhe::execution::endpoints::decryption::DecryptionMode>,
+    decryption_mode: Option<execution::endpoints::decryption::DecryptionMode>,
 }
 
 impl Default for ThresholdTestEnvBuilder {
@@ -255,7 +255,7 @@ impl ThresholdTestEnvBuilder {
     /// Set decryption mode
     pub fn with_decryption_mode(
         mut self,
-        mode: threshold_fhe::execution::endpoints::decryption::DecryptionMode,
+        mode: execution::endpoints::decryption::DecryptionMode,
     ) -> Self {
         self.decryption_mode = Some(mode);
         self

@@ -5,17 +5,13 @@ use algebra::sharing::shamir::{InputOp, RevealOp};
 use algebra::structure_traits::Ring;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use threshold_fhe::execution::config::BatchParams;
-use threshold_fhe::execution::large_execution::double_sharing::{
-    DoubleSharing, SecureDoubleSharing,
-};
-use threshold_fhe::execution::large_execution::offline::SecureLargePreprocessing;
-use threshold_fhe::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
-use threshold_fhe::execution::runtime::sessions::{
-    large_session::LargeSession, small_session::SmallSession128,
-};
-use threshold_fhe::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-use threshold_fhe::networking::NetworkMode;
+use execution::config::BatchParams;
+use execution::large_execution::double_sharing::{DoubleSharing, SecureDoubleSharing};
+use execution::large_execution::offline::SecureLargePreprocessing;
+use execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
+use execution::runtime::sessions::{large_session::LargeSession, small_session::SmallSession128};
+use execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+use networking::NetworkMode;
 use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_large;
 use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_small;
 

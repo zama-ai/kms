@@ -23,7 +23,7 @@ use std::str::FromStr;
 use tfhe::prelude::Tagged;
 use tonic::transport::Channel;
 
-use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
+use execution::tfhe_internals::test_feature::run_decompression_test;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]

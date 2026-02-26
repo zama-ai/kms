@@ -7,8 +7,8 @@ use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerato
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use networking::health_check::HealthCheckStatus;
 use observability::{metrics::METRICS, metrics_names::*};
-use threshold_fhe::networking::health_check::HealthCheckStatus;
 use tonic::{Request, Response, Status};
 
 macro_rules! impl_endpoint {
