@@ -456,7 +456,6 @@ jobs:
     if: |
       always() &&
       github.event_name != 'schedule' &&
-      !inputs.image_tag &&
       needs.docker-build.result == 'success'
     needs:
       - docker-build
