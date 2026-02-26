@@ -70,7 +70,7 @@ The client binary accepts these commands (passed as `CCCommand` in tests via `ex
 | `PublicDecrypt` | Public-key decryption | ✅ | ❌ |
 | `UserDecrypt` | User-key decryption | ✅ | ❌ |
 | `Encrypt` | Encrypt plaintext locally; fetches public FHE key from server | ❌ | ❌ |
-| `NewEpoch` | Initialize or reshare a PRSS epoch | ❌ | ❌ |
+| `NewEpoch` | Initialize an epoch (new PRSS and resharing of keys) | ❌ | ❌ |
 | `NewMpcContext` | Register a new MPC context | ❌ | ❌ |
 | `DestroyMpcContext` | Remove an MPC context | ❌ | ❌ |
 | `DestroyMpcEpoch` | Remove an epoch | ❌ | ❌ |
