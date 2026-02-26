@@ -886,7 +886,6 @@ pub async fn fetch_ctxt_from_file(
     ))
 }
 
-/// encrypt a given value and return the ciphertext
 /// Try to fetch keys for the given key ID, auto-detecting whether they are regular or compressed.
 ///
 /// If `compressed_keys` is explicitly `true`, fetches `[CompressedXofKeySet]` only.
@@ -932,6 +931,8 @@ async fn fetch_keys_auto_detect(
     }
 }
 
+/// Encrypt a given value and return the ciphertext
+///
 /// parameters:
 /// - `keys_folder`: the root of the storage of the core client
 /// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)

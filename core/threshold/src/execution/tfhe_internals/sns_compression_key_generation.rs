@@ -20,9 +20,7 @@ use crate::{
 use itertools::Itertools;
 use tfhe::{
     core_crypto::prelude::ParallelByteRandomGenerator,
-    shortint::list_compression::{
-        CompressedNoiseSquashingCompressionKey, NoiseSquashingCompressionKey,
-    },
+    shortint::list_compression::CompressedNoiseSquashingCompressionKey,
 };
 use tracing::instrument;
 
@@ -62,44 +60,6 @@ where
     );
 
     Ok(packing_key_switching_key_shares)
-}
-
-#[instrument(name="Gen Sns Compression Key", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub(crate) async fn generate_sns_compression_keys<
-    Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    S: BaseSessionHandles,
-    Gen: ParallelByteRandomGenerator,
-    const EXTENSION_DEGREE: usize,
->(
-    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    private_key: &SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
-    params: DistributedSnsCompressionParameters,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-    session: &mut S,
-    preprocessing: &mut P,
-) -> anyhow::Result<NoiseSquashingCompressionKey>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let packing_key_switching_key_shares = generate_sns_compression_key_shares(
-        glwe_secret_key_share_sns_as_lwe,
-        private_key,
-        &params,
-        mpc_encryption_rng,
-        preprocessing,
-    )?;
-
-    let packing_key_switching_key = packing_key_switching_key_shares
-        .open_to_tfhers_type::<u128, _>(session)
-        .await
-        .inspect_err(|e| tracing::error!("failed to open tfhers type u128: {e}"))?;
-
-    let compression_key = NoiseSquashingCompressionKey::from_raw_parts(
-        packing_key_switching_key,
-        params.raw_compression_parameters.lwe_per_glwe,
-    );
-    Ok(compression_key)
 }
 
 #[instrument(name="Gen compressed Sns Compression Key", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
