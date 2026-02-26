@@ -20,7 +20,7 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::{epoch_manager::EpochOutput, ThresholdFheKeys},
+        threshold::service::ThresholdFheKeys,
     },
     util::meta_store::MetaStore,
     vault::{
@@ -253,28 +253,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
-    /// Write the key materials to storage and cache.
-    /// BUT do not update the [meta_store] to "Done" since this function is used in the resharing case where the meta store is updated at the end of the resharing procedure with all the key materials.
-    //pub async fn write_threshold_keys_with_epoch_meta_store(
-    //    &self,
-    //    key_id: &RequestId,
-    //    epoch_id: &EpochId,
-    //    threshold_fhe_keys: ThresholdFheKeys,
-    //    fhe_key_set: FhePubKeySet,
-    //    meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
-    //) -> KeyGenMetadata {
-    //    let info = threshold_fhe_keys.meta_data.clone();
-    //    self.inner_write_threshold_keys(
-    //        key_id,
-    //        epoch_id,
-    //        threshold_fhe_keys,
-    //        fhe_key_set,
-    //        meta_store,
-    //    )
-    //    .await;
-    //    info
-    //}
-
     /// Write the key materials (result of a keygen) to storage and cache
     /// for the threshold KMS.
     /// The [meta_store] is updated to "Done" if the procedure is successful.
@@ -330,32 +308,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // Note: it will fail if inner_write_threshold_keys failed
         let _ = meta_store.write().await.update(key_id, Ok(info));
     }
-
-    /// Write the key materials (result of a compressed keygen resharing) to storage and cache
-    /// for the threshold KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// This is similar to [write_threshold_keys_with_epoch_meta_store] but for compressed keys.
-    //#[allow(clippy::too_many_arguments)]
-    //pub async fn write_threshold_keys_with_epoch_meta_store_compressed(
-    //    &self,
-    //    key_id: &RequestId,
-    //    epoch_id: &EpochId,
-    //    threshold_fhe_keys: ThresholdFheKeys,
-    //    compressed_keyset: &CompressedXofKeySet,
-    //    meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
-    //) -> KeyGenMetadata {
-    //    let info = threshold_fhe_keys.meta_data.clone();
-    //    self.inner_write_threshold_keys_compressed(
-    //        key_id,
-    //        epoch_id,
-    //        threshold_fhe_keys,
-    //        compressed_keyset,
-    //        meta_store,
-    //    )
-    //    .await;
-    //    info
-    //}
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn inner_write_threshold_keys_compressed<T: Clone>(
