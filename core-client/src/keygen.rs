@@ -23,6 +23,34 @@ use tfhe::{CompactPublicKey, ServerKey};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+/// Build a `KeySetConfig` from compressed and keyset_type parameters.
+/// Returns `None` when both `compressed` is false and `keyset_type` is `None`.
+pub(crate) fn build_keyset_config(
+    compressed: bool,
+    use_existing: bool,
+) -> Option<kms_grpc::kms::v1::KeySetConfig> {
+    if compressed || use_existing {
+        Some(kms_grpc::kms::v1::KeySetConfig {
+            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0, // CPU
+                secret_key_config: if use_existing {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
+                } else {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll as i32
+                },
+                compressed_key_config: if compressed {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
+                } else {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
+                },
+            }),
+        })
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_keygen(
     internal_client: &mut Client,
@@ -49,26 +77,16 @@ pub(crate) async fn do_keygen(
 
     // NOTE: If we do not use dummy_domain here, then
     // this needs changing too in the KeyGenResult command.
-    let keyset_config = if shared_config.compressed || shared_config.keyset_type.is_some() {
-        Some(kms_grpc::kms::v1::KeySetConfig {
-            keyset_type: shared_config
-                .keyset_type
-                .clone()
-                .map(|x| kms_grpc::kms::v1::KeySetType::from(x) as i32)
-                .unwrap_or(kms_grpc::kms::v1::KeySetType::Standard as i32),
-            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-                compute_key_type: 0,  // CPU
-                secret_key_config: 0, // Generate all secret keys
-                compressed_key_config: if shared_config.compressed {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
-                } else {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
-                },
-            }),
-        })
-    } else {
-        None
-    };
+    let use_existing = shared_config.existing_keyset_id.is_some();
+    let keyset_config = build_keyset_config(shared_config.compressed, use_existing);
+    let keyset_added_info =
+        shared_config
+            .existing_keyset_id
+            .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
+                existing_keyset_id: Some(id.into()),
+                existing_epoch_id: shared_config.existing_epoch_id.map(Into::into),
+                ..Default::default()
+            });
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         &preproc_id,
@@ -76,7 +94,7 @@ pub(crate) async fn do_keygen(
         shared_config.epoch_id.as_ref(),
         Some(param),
         keyset_config,
-        None,
+        keyset_added_info,
         dummy_domain(),
     )?;
 
@@ -447,6 +465,7 @@ pub(crate) async fn do_preproc(
     fhe_params: FheParameter,
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -459,9 +478,9 @@ pub(crate) async fn do_preproc(
         Some(fhe_params),
         context_id,
         epoch_id,
-        None,
+        keyset_config,
         &domain,
-    )?; //TODO keyset config
+    )?;
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
