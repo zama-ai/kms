@@ -1,0 +1,18 @@
+[package]
+name = "session-id"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+# TODO(dp): write a proper description
+description = "Session IDs"
+
+[dependencies]
+anyhow.workspace = true
+hashing.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+
+[dev-dependencies]
+execution = { workspace = true, features = ["testing"] }
+tfhe.workspace = true
