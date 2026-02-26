@@ -455,8 +455,7 @@ jobs:
     name: kind-testing/clean-up-build
     if: |
       always() &&
-      github.event_name != 'schedule' &&
-      needs.docker-build.result == 'success'
+      github.event_name != 'schedule'
     needs:
       - docker-build
       - kind-testing
@@ -467,7 +466,7 @@ jobs:
       - name: Clean up build
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
         run: |
           delete_package_versions_by_tag() {
             local package_name="$1"
@@ -498,9 +497,11 @@ jobs:
                 gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
               done
           }
-          delete_package_versions_by_tag "kms/core-service-enclave" "${IMAGE_TAG}"
-          delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
-          delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"
+          if [ -n "${IMAGE_TAG}" ]; then
+            delete_package_versions_by_tag "kms/core-service-enclave" "${IMAGE_TAG}"
+            delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
+            delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"
+          fi
 
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
