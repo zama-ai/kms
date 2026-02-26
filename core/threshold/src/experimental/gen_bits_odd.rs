@@ -107,7 +107,7 @@ impl BitGenOdd for RealBitGenOdd {
 
         let dist_shift = Z::from_u128(
             num_integer::binomial(session.num_parties() as u128, session.threshold() as u128)
-                * (1 << STATSEC),
+                * (1 << (STATSEC + 1)),
         );
         let r_vec: Vec<Z> = {
             let prss_state = session.prss_as_mut();
@@ -129,7 +129,7 @@ impl BitGenOdd for RealBitGenOdd {
         let c_vec = open_list(&c_vec, session).await?;
         let t_vec = c_vec.iter().map(Z::mod_largest_prime).collect_vec();
 
-        let result = t_vec
+        let result: Vec<Share<Z>> = t_vec
             .into_iter()
             .zip_eq(r_vec) // May panic, but would imply a bug in this method
             .map(|(t, r)| Share::new(own_role, t - r))
@@ -193,7 +193,11 @@ mod tests {
             }
             let ss_b = ShamirSharings::create(vec_b);
             let b = ss_b.reconstruct(threshold as usize).unwrap();
-            assert!(b == LevelKsw::ZERO || b == LevelKsw::ONE);
+
+            assert!(
+                b == LevelKsw::ZERO || b == LevelKsw::ONE,
+                "Failed at index {index} with value {b:#?}"
+            );
             if b == LevelKsw::ONE {
                 one_count += 1;
             }

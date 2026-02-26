@@ -143,7 +143,7 @@ required-features = ["testing", "extension_degree_8"]
 [[bench]]
 name = "decoding"
 harness = false
-required-features = ["experimental"]
+required-features = ["experimental", "extenson_degree_8"]
 
 [[bench]]
 name = "algebra"
@@ -180,39 +180,67 @@ name = "ceremony"
 harness = false
 required-features = ["testing", "extension_degree_8"]
 
+
+# TFHE-rs benchmarks
 [[bench]]
-name = "non-threshold_erc20_speed"
-path = "benches/non-threshold/speed/erc20.rs"
+name = "non-threshold_tfhe-rs_erc20_speed"
+path = "benches/non-threshold/tfhe-rs/speed/erc20.rs"
 harness = false
 
 
 [[bench]]
-name = "non-threshold_basic-ops_speed"
-path = "benches/non-threshold/speed/basic_ops.rs"
+name = "non-threshold_tfhe-rs_basic-ops_speed"
+path = "benches/non-threshold/tfhe-rs/speed/basic_ops.rs"
 harness = false
 
 [[bench]]
-name = "non-threshold_keygen_speed"
-path = "benches/non-threshold/speed/keygen.rs"
+name = "non-threshold_tfhe-rs_keygen_speed"
+path = "benches/non-threshold/tfhe-rs/speed/keygen.rs"
 harness = false
 
 [[bench]]
-name = "non-threshold_erc20_memory"
-path = "benches/non-threshold/memory/erc20.rs"
+name = "non-threshold_tfhe-rs_erc20_memory"
+path = "benches/non-threshold/tfhe-rs/memory/erc20.rs"
 required-features = ["measure_memory"]
 harness = false
 
 
 [[bench]]
-name = "non-threshold_basic-ops_memory"
-path = "benches/non-threshold/memory/basic_ops.rs"
+name = "non-threshold_tfhe-rs_basic-ops_memory"
+path = "benches/non-threshold/tfhe-rs/memory/basic_ops.rs"
 required-features = ["measure_memory"]
 harness = false
 
 [[bench]]
-name = "non-threshold_keygen_memory"
-path = "benches/non-threshold/memory/keygen.rs"
+name = "non-threshold_tfhe-rs_keygen_memory"
+path = "benches/non-threshold/tfhe-rs/memory/keygen.rs"
 required-features = ["measure_memory"]
+harness = false
+
+
+# BGV Benchmarks
+[[bench]]
+name = "non-threshold_bgv_basic-ops_speed"
+path = "benches/non-threshold/bgv/speed/basic_ops.rs"
+required-features = ["experimental"]
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_speed"
+path = "benches/non-threshold/bgv/speed/keygen.rs"
+required-features = ["experimental"]
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_basic-ops_memory"
+path = "benches/non-threshold/bgv/memory/basic_ops.rs"
+required-features = ["measure_memory","experimental"]
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_memory"
+path = "benches/non-threshold/bgv/memory/keygen.rs"
+required-features = ["measure_memory","experimental"]
 harness = false
 
 [features]
@@ -220,10 +248,10 @@ default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
 slow_tests = ["testing", "all_extension_degrees"]
-experimental = ["dep:crypto-bigint", "choreographer", "testing"]
+experimental = ["dep:crypto-bigint"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies"]
-measure_memory = ["dep:peak_alloc", "choreographer"]
+measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 # put all the dependencies that does not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures
