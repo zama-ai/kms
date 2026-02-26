@@ -453,8 +453,12 @@ jobs:
 
   clean-up-build:
     name: kind-testing/clean-up-build
-    if: always() && github.event_name != 'schedule'
+    if: |
+      always() && !cancelled() &&
+      github.event_name != 'schedule' &&
+      (inputs.image_tag == '' && needs.docker-build.result == 'success')
     needs:
+      - docker-build
       - kind-testing
     runs-on: ubuntu-latest
     permissions:
@@ -463,7 +467,7 @@ jobs:
       - name: Clean up build
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
+          IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
         run: |
           delete_package_versions_by_tag() {
             local package_name="$1"
