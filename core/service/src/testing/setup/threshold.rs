@@ -172,7 +172,7 @@ pub struct ThresholdTestEnvBuilder {
     threshold: Option<u8>,
     material_spec: Option<TestMaterialSpec>,
     material_manager: Option<TestMaterialManager>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
@@ -187,7 +187,7 @@ impl Default for ThresholdTestEnvBuilder {
             threshold: None,
             material_spec: None,
             material_manager: None,
-            run_prss: false,
+            ensure_default_prss: false,
             with_backup_vault: false,
             with_custodian_keychain: false,
             rate_limiter_conf: None,
@@ -229,7 +229,7 @@ impl ThresholdTestEnvBuilder {
 
     /// Enable PRSS initialization (required for secure key generation)
     pub fn with_prss(mut self) -> Self {
-        self.run_prss = true;
+        self.ensure_default_prss = true;
         self
     }
 
@@ -369,7 +369,7 @@ impl ThresholdTestEnvBuilder {
 
         // Setup threshold KMS
         let config = ThresholdTestConfig {
-            run_prss: self.run_prss,
+            ensure_default_prss: self.ensure_default_prss,
             rate_limiter_conf: self.rate_limiter_conf,
             decryption_mode: self.decryption_mode,
             test_material_path: Some(material_dir.path()),

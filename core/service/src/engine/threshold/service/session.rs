@@ -6,7 +6,10 @@ use std::{
 
 use aes_prng::AesRng;
 // === External Crates ===
-use crate::engine::{context::ContextInfo, utils::MetricedError};
+use crate::{
+    engine::{context::ContextInfo, utils::MetricedError},
+    vault::storage::{crypto_material::CryptoMaterialStorage, Storage, StorageExt},
+};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     RequestId,
@@ -85,7 +88,31 @@ pub(crate) struct SessionMaker {
 }
 
 impl SessionMaker {
-    pub(crate) fn new(
+    pub(crate) async fn new_initialized<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    >(
+        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
+        verifier: Option<Arc<AttestedVerifier>>,
+        rng: AesRng,
+    ) -> anyhow::Result<Self> {
+        let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
+        let all_prss = crypto_storage.read_all_prss_info().await?;
+        if all_prss.is_empty() {
+            tracing::warn!("No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server");
+        }
+        for (epoch_id, prss) in all_prss {
+            session_maker.add_epoch(epoch_id.into(), prss).await;
+            tracing::info!(
+                "Loaded PRSS Setup from storage for request ID {}.",
+                epoch_id
+            );
+        }
+        Ok(session_maker)
+    }
+
+    pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,

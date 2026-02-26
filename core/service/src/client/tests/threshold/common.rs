@@ -28,7 +28,7 @@ use tonic::transport::Channel;
 async fn threshold_handles_w_vaults(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -84,7 +84,7 @@ async fn threshold_handles_w_vaults(
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
+        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
@@ -113,7 +113,7 @@ async fn threshold_handles_w_vaults(
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -141,7 +141,7 @@ pub(crate) async fn threshold_handles(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         true,
         rate_limiter_conf,
         decryption_mode,
@@ -157,7 +157,7 @@ pub(crate) async fn threshold_handles(
 pub(crate) async fn threshold_handles_custodian_backup(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -187,7 +187,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         generate_test_material,
         rate_limiter_conf,
         decryption_mode,

@@ -97,7 +97,7 @@ pub(crate) async fn new_epoch_with_reshare(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    // Setting run_prss to true to
+    // Setting ensure_default_prss to true to
     // to create the default context and epoch with its PRSS init
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         *dkg_param,

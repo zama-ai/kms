@@ -724,7 +724,7 @@ config_path = "{}"
 async fn setup_isolated_threshold_cli_test_impl(
     test_name: &str,
     party_count: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
@@ -736,7 +736,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
-        run_prss,
+        ensure_default_prss,
         with_backup_vault,
         with_custodian_keychain,
         fhe_params,
@@ -749,7 +749,7 @@ async fn setup_isolated_threshold_cli_test_impl(
 async fn setup_isolated_threshold_cli_test_impl_with_spec(
     test_name: &str,
     party_count: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
@@ -768,7 +768,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
         builder = builder.with_material_spec(spec);
     }
 
-    if run_prss {
+    if ensure_default_prss {
         builder = builder.with_prss();
     }
 
@@ -971,7 +971,7 @@ async fn setup_party_resharing_servers(
         pub_storages,
         priv_storages,
         vaults,
-        false, // run_prss - we'll do this per-context
+        false, // ensure_default_prss - we'll do this per-context
         None,  // rate_limiter_conf
         None,  // decryption_mode
     )

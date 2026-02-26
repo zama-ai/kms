@@ -254,7 +254,7 @@ impl<
 
     /// Wrapper around the internal method [`Self::internal_init_prss`]
     /// so it's easier to call from the outside if necessary.
-    /// (e.g. when initializing the KMS core with `run_prss` set to true.)
+    /// (e.g. when initializing the KMS core with `ensure_default_prss` set to true.)
     pub async fn init_prss(
         &self,
         context_id: &ContextId,

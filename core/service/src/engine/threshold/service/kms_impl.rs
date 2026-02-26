@@ -347,7 +347,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     peer_tcp_proxy: bool,
-    run_prss: bool,
+    ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -554,11 +554,35 @@ where
         .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
         .await;
 
-    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
+    let session_maker = SessionMaker::new_initialized(
+        &crypto_storage.inner,
+        networking_manager,
+        verifier,
+        base_kms.new_rng().await,
+    )
+    .await?;
     let immutable_session_maker = session_maker.make_immutable();
 
     let tracker = Arc::new(TaskTracker::new());
     let rate_limiter = RateLimiter::new(rate_limiter_conf);
+
+    // NOTE: context must be loaded before attempting to automatically start the PRSS
+    // since the PRSS requires a context to be present.
+    let context_manager = ThresholdContextManager::new(
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
+        custodian_meta_store,
+        session_maker.clone(),
+    );
+    context_manager
+        .load_mpc_context_from_storage()
+        .await
+        .inspect_err(|e| {
+            tracing::error!(
+                "Failed to load MPC context from storage during KMS startup: {}",
+                e
+            )
+        })?;
 
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
@@ -570,41 +594,22 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
-        tracing::warn!(
-            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
-            private_storage_info,
-            e
-        );
-    }
-
-    // NOTE: context must be loaded before attempting to automatically start the PRSS
-    // since the PRSS requires a context to be present.
-    let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
-        crypto_storage.inner.clone(),
-        custodian_meta_store,
-        session_maker,
-    );
-    context_manager
-        .load_mpc_context_from_storage()
-        .await
-        .inspect_err(|e| {
-            tracing::error!(
-                "Failed to load MPC context from storage during KMS startup: {}",
-                e
-            )
-        })?;
-    if run_prss {
+    if ensure_default_prss {
         let epoch_id_prss = *DEFAULT_EPOCH_ID;
         let default_context_id = *DEFAULT_MPC_CONTEXT;
-        tracing::info!(
+        if session_maker.epoch_exists(&epoch_id_prss).await {
+            tracing::warn!(
+                "Default epoch {} already exists. Skipping regeneration",
+                epoch_id_prss
+            );
+        } else {
+            tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-            private_storage_info,
-        );
-        epoch_manager
-            .init_prss(&default_context_id, &epoch_id_prss)
-            .await?;
+            private_storage_info);
+            epoch_manager
+                .init_prss(&default_context_id, &epoch_id_prss)
+                .await?;
+        }
     }
 
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
