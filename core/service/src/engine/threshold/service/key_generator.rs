@@ -1002,49 +1002,6 @@ impl<
         );
     }
 
-    async fn key_gen_from_existing_compression_sk<P>(
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        base_session: &mut BaseSession,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        params: DKGParams,
-        compression_key_id: RequestId,
-        preprocessing: &mut P,
-    ) -> anyhow::Result<(
-        FhePubKeySet,
-        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    )>
-    where
-        P: DKGPreprocessing<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>
-            + Send
-            + ?Sized,
-    {
-        let existing_compression_sk = {
-            let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&compression_key_id, epoch_id)
-                .await?;
-            let compression_sk_share = threshold_keys
-                .private_keys
-                .glwe_secret_key_share_compression
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("missing compression secret key share"))?;
-            match compression_sk_share {
-                CompressionPrivateKeySharesEnum::Z64(_share) => {
-                    anyhow::bail!("z64 share is not supported")
-                }
-                CompressionPrivateKeySharesEnum::Z128(share) => share,
-            }
-        };
-        KG::keygen(
-            base_session,
-            preprocessing,
-            params,
-            req_id.into(),
-            Some(existing_compression_sk).as_ref(),
-        )
-        .await
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn compressed_key_gen_from_existing_private_keyset<P>(
         req_id: &RequestId,
@@ -1206,102 +1163,91 @@ impl<
             }
             PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                (prep_id, match (
-                    keyset_config.secret_key_config,
-                    keyset_config.computation_key_type,
-                    keyset_config.compressed_key_config,
-                ) {
-                    (
-                                            ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                        ddec_keyset_config::ComputeKeyType::Cpu,
-                        ddec_keyset_config::CompressedKeyConfig::None,
-                    ) => {
-                        KG::keygen(&mut dkg_sessions.session_z128, preproc_handle.as_mut(), params, req_id.into(), None)
+                (
+                    prep_id,
+                    match (
+                        keyset_config.secret_key_config,
+                        keyset_config.computation_key_type,
+                        keyset_config.compressed_key_config,
+                    ) {
+                        (
+                            ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                            ddec_keyset_config::ComputeKeyType::Cpu,
+                            ddec_keyset_config::CompressedKeyConfig::None,
+                        ) => KG::keygen(
+                            &mut dkg_sessions.session_z128,
+                            preproc_handle.as_mut(),
+                            params,
+                            req_id.into(),
+                        )
+                        .await
+                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                        (
+                            ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
+                            ddec_keyset_config::ComputeKeyType::Cpu,
+                            ddec_keyset_config::CompressedKeyConfig::All,
+                        ) => KG::compressed_keygen(
+                            &mut dkg_sessions.session_z128,
+                            preproc_handle.as_mut(),
+                            params,
+                            req_id.into(),
+                        )
+                        .await
+                        .map(|(compressed_keyset, sk)| {
+                            ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                        }),
+                        (
+                            ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                            ddec_keyset_config::ComputeKeyType::Cpu,
+                            ddec_keyset_config::CompressedKeyConfig::None,
+                        ) => {
+                            let existing_keyset_id = internal_keyset_config
+                                .get_existing_keyset_id()
+                                .expect("validated");
+                            let existing_epoch_id = internal_keyset_config
+                                .get_existing_epoch_id()
+                                .expect("validated")
+                                .unwrap_or(*epoch_id);
+                            Self::key_gen_from_existing_private_keyset(
+                                req_id,
+                                &mut dkg_sessions,
+                                crypto_storage.clone(),
+                                params,
+                                existing_keyset_id,
+                                existing_epoch_id,
+                                preproc_handle.as_mut(),
+                            )
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                    }
-                    (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
-                        ddec_keyset_config::ComputeKeyType::Cpu,
-                        ddec_keyset_config::CompressedKeyConfig::None,
-                    ) => {
-                        let compression_key_id = internal_keyset_config.get_existing_compression_key_id()
-                            .expect("validated")
-                            .expect("validated: compression key ID must be set");
-                        let compression_epoch_id = internal_keyset_config.get_existing_compression_epoch_id()
-                            .expect("validated")
-                            .unwrap_or(*epoch_id);
-                        Self::key_gen_from_existing_compression_sk(
-                            req_id,
-                            &compression_epoch_id,
-                            &mut dkg_sessions.session_z128.base_session,
-                            crypto_storage.clone(),
-                            params,
-                            compression_key_id,
-                            preproc_handle.as_mut(),
-                        )
-                        .await
-                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                    }
-                    (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll,
-                        ddec_keyset_config::ComputeKeyType::Cpu,
-                        ddec_keyset_config::CompressedKeyConfig::All,
-                    ) => {
-                        KG::compressed_keygen(&mut dkg_sessions.session_z128, preproc_handle.as_mut(), params, req_id.into(), None)
+                        }
+                        (
+                            ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
+                            ddec_keyset_config::ComputeKeyType::Cpu,
+                            ddec_keyset_config::CompressedKeyConfig::All,
+                        ) => {
+                            let existing_keyset_id = internal_keyset_config
+                                .get_existing_keyset_id()
+                                .expect("validated");
+                            let existing_epoch_id = internal_keyset_config
+                                .get_existing_epoch_id()
+                                .expect("validated")
+                                .unwrap_or(*epoch_id);
+                            Self::compressed_key_gen_from_existing_private_keyset(
+                                req_id,
+                                &mut dkg_sessions,
+                                crypto_storage.clone(),
+                                params,
+                                existing_keyset_id,
+                                existing_epoch_id,
+                                preproc_handle.as_mut(),
+                            )
                             .await
-                            .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
-                    }
-                    (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey,
-                        _,
-                        ddec_keyset_config::CompressedKeyConfig::All,
-                    ) => {
-                        Err(anyhow::anyhow!("Compressed keygen with UseExisting compression keys is not supported"))
-                    }
-                    (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting, ddec_keyset_config::ComputeKeyType::Cpu, ddec_keyset_config::CompressedKeyConfig::None
-                    ) => {
-                        let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()
-                            .expect("validated");
-                        let existing_epoch_id = internal_keyset_config.get_existing_epoch_id()
-                            .expect("validated")
-                            .unwrap_or(*epoch_id);
-                        Self::key_gen_from_existing_private_keyset(
-                            req_id,
-                            &mut dkg_sessions,
-                            crypto_storage.clone(),
-                            params,
-                            existing_keyset_id,
-                            existing_epoch_id,
-                            preproc_handle.as_mut(),
-                        )
-                        .await
-                        .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
-                    }
-                    (
-                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting,
-                        ddec_keyset_config::ComputeKeyType::Cpu,
-                        ddec_keyset_config::CompressedKeyConfig::All,
-                    ) => {
-                        let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()
-                            .expect("validated");
-                        let existing_epoch_id = internal_keyset_config.get_existing_epoch_id()
-                            .expect("validated")
-                            .unwrap_or(*epoch_id);
-                        Self::compressed_key_gen_from_existing_private_keyset(
-                            req_id,
-                            &mut dkg_sessions,
-                            crypto_storage.clone(),
-                            params,
-                            existing_keyset_id,
-                            existing_epoch_id,
-                            preproc_handle.as_mut(),
-                        )
-                        .await
-                        .map(|(compressed_keyset, sk)| ThresholdKeyGenResult::Compressed(compressed_keyset, sk))
-                    }
-                })
+                            .map(|(compressed_keyset, sk)| {
+                                ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                            })
+                        }
+                    },
+                )
             }
         };
 

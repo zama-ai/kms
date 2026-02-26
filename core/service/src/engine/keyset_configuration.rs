@@ -62,9 +62,6 @@ impl From<WrappedCompressionConfig> for ddec_keyset_config::KeyGenSecretKeyConfi
             kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll => {
                 ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll
             }
-            kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
-                ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
-            }
             kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting => {
                 ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
             }
@@ -158,24 +155,6 @@ impl InternalKeySetConfig {
         })
     }
 
-    /// Retrieves the compression keyset ID from the added info.
-    /// Will always return Some request ID if [`KeySetCofig::Standard`] is used with the [`KeyGenSecretKeyConfig::UseExistingCompressionSecretKey`] setting.
-    pub fn get_existing_compression_key_id(&self) -> anyhow::Result<Option<RequestId>> {
-        if let Some(inner) = self
-            .keyset_added_info
-            .as_ref()
-            .and_then(|info| info.existing_compression_keyset_id.clone())
-        {
-            let key_id = parse_grpc_request_id(
-                &inner,
-                RequestIdParsingErr::Other("invalid compression keyset ID".to_string()),
-            )?;
-            Ok(Some(key_id))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Retrieves the existing keyset ID and epoch ID from the added info.
     /// Will always return Ok if [`KeySetConfig::Standard`] is used with the [`KeyGenSecretKeyConfig::UseExisting`] setting
     /// and validation passed in [`InternalKeySetConfig::new`].
@@ -194,23 +173,6 @@ impl InternalKeySetConfig {
         )
         .map_err(|e| anyhow::anyhow!("Failed to parse existing keyset ID: {}", e))?;
         Ok(keyset_id)
-    }
-
-    pub fn get_existing_compression_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
-        let added_info = self.keyset_added_info.as_ref().ok_or_else(|| {
-            anyhow!("keyset_added_info is required for UseExistingCompressionSecretKey")
-        })?;
-        let epoch_id: Option<EpochId> = added_info
-            .compression_epoch_id
-            .as_ref()
-            .map(|inner| {
-                parse_grpc_request_id(
-                    inner,
-                    RequestIdParsingErr::Other("invalid compression epoch ID".to_string()),
-                )
-            })
-            .transpose()?;
-        Ok(epoch_id)
     }
 
     pub fn get_existing_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
@@ -235,16 +197,6 @@ impl InternalKeySetConfig {
         match &self.keyset_config {
             ddec_keyset_config::KeySetConfig::Standard(inner) => match inner.secret_key_config {
                 ddec_keyset_config::KeyGenSecretKeyConfig::GenerateAll => {}
-                ddec_keyset_config::KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
-                    // Must have a parseable compression key ID
-                    let id = self.get_existing_compression_key_id()?;
-                    anyhow::ensure!(
-                        id.is_some(),
-                        "existing_compression_keyset_id must be set for UseExistingCompressionSecretKey"
-                    );
-                    // Optional compression epoch ID must be parseable if set
-                    self.get_existing_compression_epoch_id()?;
-                }
                 ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting => {
                     // Must have a parseable existing keyset ID
                     self.get_existing_keyset_id()?;
@@ -441,7 +393,6 @@ pub(crate) mod tests {
     }
 
     const VALID_ID: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-    const VALID_ID_2: &str = "1112030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
     const INVALID_ID: &str = "not-a-valid-hex-id";
 
     fn request_id(id: &str) -> kms_grpc::kms::v1::RequestId {
@@ -465,94 +416,6 @@ pub(crate) mod tests {
             Some(KeySetAddedInfo {
                 existing_keyset_id: Some(request_id(VALID_ID)),
                 existing_epoch_id: Some(request_id(INVALID_ID)),
-                ..Default::default()
-            }),
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_new_use_existing_compression_sk_valid() {
-        // Valid compression keyset ID, no epoch
-        let result = InternalKeySetConfig::new(
-            Some(KeySetConfig {
-                keyset_type: KeySetType::Standard as i32,
-                standard_keyset_config: Some(StandardKeySetConfig {
-                    compute_key_type: 0,
-                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
-                        as i32,
-                    compressed_key_config: 0,
-                }),
-            }),
-            Some(KeySetAddedInfo {
-                existing_compression_keyset_id: Some(request_id(VALID_ID)),
-                compression_epoch_id: None,
-                ..Default::default()
-            }),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_new_use_existing_compression_sk_with_epoch() {
-        // Valid compression keyset ID and epoch
-        let result = InternalKeySetConfig::new(
-            Some(KeySetConfig {
-                keyset_type: KeySetType::Standard as i32,
-                standard_keyset_config: Some(StandardKeySetConfig {
-                    compute_key_type: 0,
-                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
-                        as i32,
-                    compressed_key_config: 0,
-                }),
-            }),
-            Some(KeySetAddedInfo {
-                existing_compression_keyset_id: Some(request_id(VALID_ID)),
-                compression_epoch_id: Some(request_id(VALID_ID_2)),
-                ..Default::default()
-            }),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_new_use_existing_compression_sk_unparseable_epoch() {
-        // Valid compression keyset ID but unparseable epoch should be rejected
-        let result = InternalKeySetConfig::new(
-            Some(KeySetConfig {
-                keyset_type: KeySetType::Standard as i32,
-                standard_keyset_config: Some(StandardKeySetConfig {
-                    compute_key_type: 0,
-                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
-                        as i32,
-                    compressed_key_config: 0,
-                }),
-            }),
-            Some(KeySetAddedInfo {
-                existing_compression_keyset_id: Some(request_id(VALID_ID)),
-                compression_epoch_id: Some(request_id(INVALID_ID)),
-                ..Default::default()
-            }),
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_new_use_existing_compression_sk_unparseable_key_id() {
-        // Unparseable compression keyset ID should be rejected
-        let result = InternalKeySetConfig::new(
-            Some(KeySetConfig {
-                keyset_type: KeySetType::Standard as i32,
-                standard_keyset_config: Some(StandardKeySetConfig {
-                    compute_key_type: 0,
-                    secret_key_config: KeyGenSecretKeyConfig::UseExistingCompressionSecretKey
-                        as i32,
-                    compressed_key_config: 0,
-                }),
-            }),
-            Some(KeySetAddedInfo {
-                existing_compression_keyset_id: Some(request_id(INVALID_ID)),
-                compression_epoch_id: None,
                 ..Default::default()
             }),
         );

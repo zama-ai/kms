@@ -45,13 +45,6 @@ enum ComputeKeyType {
 }
 
 message KeySetAddedInfo {
-  // Must be set if KeyGenSecretKeyConfig::UseExistingCompressionSecretKey is used
-  RequestId existing_compression_keyset_id = 1;
-
-  // Can be set if KeyGenSecretKeyConfig::UseExistingCompressionSecretKey is used,
-  // if it's not set then the epoch ID from the KeyGenRequest is used.
-  RequestId compression_epoch_id = 2;
-
   // Must be set if KeySetType::DecompressionOnly is used
   RequestId from_keyset_id_decompression_only = 3;
 
@@ -124,11 +117,6 @@ enum KeyGenSecretKeyConfig {
   // Use existing secret shares to generate the keyset, the key ID and epoch ID
   // that points to the shares must be given by KeySetAddedInfo.
   UseExisting = 1;
-
-  // Use the secret share from an existing compression secret key,
-  // but generate the other shares. The share of the existing compresssion secret key
-  // must be given by KeySetAddedInfo.
-  UseExistingCompressionSecretKey = 2;
 }
 
 // Configuration for whether to generate compressed or uncompressed keys.

@@ -29,7 +29,7 @@ use tfhe::{
     },
     shortint::{
         list_compression::{
-            CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
+            CompressedCompressionKey, CompressedDecompressionKey, DecompressionKey,
         },
         server_key::{
             CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration,
@@ -57,6 +57,7 @@ pub(crate) async fn generate_decompression_keys<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // TODO this needs
     let blind_rotate_key: LweBootstrapKey<Vec<u64>> = generate_bootstrap_key(
         private_glwe_compute_key,
         &private_compression_key.clone().into_lwe_secret_key(),
@@ -168,57 +169,6 @@ where
         EncryptionType::Bits64,
         mpc_encryption_rng,
     ))
-}
-
-#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub(crate) async fn generate_compression_decompression_keys<
-    Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    S: BaseSessionHandles,
-    Gen: ParallelByteRandomGenerator,
-    const EXTENSION_DEGREE: usize,
->(
-    private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
-    params: DistributedCompressionParameters,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-    session: &mut S,
-    preprocessing: &mut P,
-) -> anyhow::Result<(CompressionKey, DecompressionKey)>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let packing_key_switching_key_shares =
-        generate_packing_key_switching_key_shares_for_compression(
-            private_glwe_compute_key_as_lwe,
-            private_compression_key,
-            &params,
-            mpc_encryption_rng,
-            preprocessing,
-        )?;
-
-    let packing_key_switching_key = packing_key_switching_key_shares
-        .open_to_tfhers_type::<u64, _>(session)
-        .await?;
-
-    let compression_key = CompressionKey {
-        packing_key_switching_key,
-        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
-        storage_log_modulus: params.raw_compression_parameters.storage_log_modulus,
-    };
-
-    let decompression_key = generate_decompression_keys(
-        private_glwe_compute_key,
-        private_compression_key,
-        params,
-        mpc_encryption_rng,
-        session,
-        preprocessing,
-    )
-    .await?;
-
-    Ok((compression_key, decompression_key))
 }
 
 #[allow(clippy::too_many_arguments)]

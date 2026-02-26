@@ -19,7 +19,7 @@ use itertools::Itertools;
 use tfhe::{
     core_crypto::{
         commons::math::decomposition::DecompositionLevel,
-        prelude::{LweKeyswitchKey, ParallelByteRandomGenerator, SeededLweKeyswitchKey},
+        prelude::{ParallelByteRandomGenerator, SeededLweKeyswitchKey},
     },
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
 };
@@ -159,39 +159,6 @@ where
         params.decomposition_level_count,
         mpc_encryption_rng,
     )
-}
-
-/// Generate the Key Switch Key from a Glwe key given in Lwe format,
-/// and an actual Lwe key
-#[instrument(name="Gen KSK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub(crate) async fn generate_key_switch_key<
-    Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    S: BaseSessionHandles,
-    Gen: ParallelByteRandomGenerator,
-    const EXTENSION_DEGREE: usize,
->(
-    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: &KSKParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-    session: &mut S,
-    preprocessing: &mut P,
-) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let ksk_share = generate_ksk_share(
-        input_lwe_sk,
-        output_lwe_sk,
-        params,
-        mpc_encryption_rng,
-        session,
-        preprocessing,
-    )?;
-
-    //Open the KSK and cast it to TFHE-RS type
-    ksk_share.open_to_tfhers_type(session).await
 }
 
 /// Generate the Key Switch Key from a Glwe key given in Lwe format,

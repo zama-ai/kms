@@ -180,6 +180,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn to_tfhe_hl_api_compact_public_key(
     compact_lwe_pk: LweCompactPublicKey<Vec<u64>>,
     params: CompactPublicKeyEncryptionParameters,

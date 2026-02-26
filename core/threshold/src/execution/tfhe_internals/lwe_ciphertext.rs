@@ -112,6 +112,7 @@ pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn open_to_tfhers_type<
     Z: BaseRing,
     const EXTENSION_DEGREE: usize,
