@@ -133,7 +133,9 @@ impl K8sTestContext {
             download_all: false,
         };
 
-        execute_cmd(&config, self.workspace()).await.expect("The async runtime works.")
+        execute_cmd(&config, self.workspace())
+            .await
+            .expect("The async runtime works.")
     }
 
     /// Generate a key using InsecureKeyGen.
@@ -290,9 +292,10 @@ impl Drop for K8sTestContext {
 // TESTS
 // ============================================================================
 
-/// Smoke test: Generate a key (insecure DKG, no PRSS) and a CRS.
+/// Smoke test: Generate a key (insecure DKG, no preprocessing) and a CRS.
 ///
-/// Uses `InsecureKeyGen` — a testing shortcut that skips preprocessing.
+/// Uses `InsecureKeyGen` — a testing shortcut that skips the keygen preprocessing
+/// (offline DKG phase) by using a dummy preproc ID. PRSS is still active.
 /// Production keygen uses `PreprocKeyGen` + `KeyGen`. This test validates that
 /// the fundamental MPC cluster wiring (gRPC, mTLS, party coordination) works.
 #[tokio::test]
@@ -310,7 +313,7 @@ async fn k8s_test_keygen_and_crs() {
 
 /// Test that concurrent insecure key generations produce unique keys.
 ///
-/// Uses `InsecureKeyGen` (no PRSS) to verify that the MPC protocol assigns
+/// Uses `InsecureKeyGen` (no keygen preprocessing) to verify that the MPC protocol assigns
 /// a fresh, unique key ID on each call. Not representative of production keygen.
 #[tokio::test]
 async fn k8s_test_keygen_uniqueness() {
@@ -332,7 +335,7 @@ async fn k8s_test_keygen_uniqueness() {
 
 /// Cluster smoke test: insecure keygen → encrypt → threshold public decrypt → verify.
 ///
-/// Uses `InsecureKeyGen` (no PRSS preprocessing) — a testing shortcut not used in
+/// Uses `InsecureKeyGen` (no keygen preprocessing) — a testing shortcut not used in
 /// production, where `PreprocKeyGen` + `KeyGen` is required. The `Encrypt` step
 /// fetches both the `PublicKey` and `ServerKey` from the cluster; in real client
 /// operation only the `PublicKey` is needed for encryption.
@@ -371,7 +374,7 @@ async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
 
 /// Cluster smoke test: one insecure key handles multiple FHE types correctly.
 ///
-/// Uses `InsecureKeyGen` (no PRSS) — see `k8s_test_insecure_keygen_encrypt_and_public_decrypt`
+/// Uses `InsecureKeyGen` (no keygen preprocessing) — see `k8s_test_insecure_keygen_encrypt_and_public_decrypt`
 /// for caveats. Validates that a single threshold key correctly serves ciphertexts
 /// of different FHE types in sequence:
 /// 1. Generate one threshold FHE key

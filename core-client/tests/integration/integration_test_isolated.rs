@@ -3158,10 +3158,10 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
-/// Requires pre-generated PRSS material in the test-material/default directory
-/// (produced by `generate-test-material --features slow_tests -- default`).
-/// With pre-generated PRSS, `run_prss=true` loads from storage instead of running
-/// live MPC PRSS init (which would take hours with Default params).
+/// Requires pre-generated material in the test-material/default directory
+/// (produced by `generate-test-material --features slow_tests -- default`):
+/// - **PRSS**: loaded at server startup (`run_prss=true`); fast to generate but must exist before the test runs.
+/// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///
 /// Uses partial preprocessing to keep this test comfortably below CI timeout
 /// while still validating Default-parameter preproc+keygen end-to-end.

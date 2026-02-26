@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test_isolated --features testing` |
-| **Native (threshold PRSS tests)** | `cargo nextest run --test integration_test_isolated --features threshold_tests` |
+| **Native (threshold preprocessing tests)** | `cargo nextest run --test integration_test_isolated --features threshold_tests` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold_isolated --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized_isolated --features kind_tests` |
 
@@ -20,10 +20,10 @@
   - Enables test helper code used by integration tests.
 - `threshold_tests`
   - Implies `testing`.
-  - Enables threshold PRSS tests in `tests/integration/integration_test_isolated.rs`.
+  - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test_isolated.rs`.
   - Compiles setup helpers that run threshold servers with `run_prss=true`
     (`setup_isolated_threshold_cli_test_with_prss*`).
-  - Enables PRSS-heavy flows/tests (preproc+keygen, MPC context init/switch,
+  - Enables preprocessing-heavy flows/tests (preproc+keygen, MPC context init/switch,
     reshare, full-gen default preproc).
   - Only gates code/tests; it does **not** generate test material by itself.
   - **Does not** enable Kind/Kubernetes tests.
@@ -34,12 +34,10 @@
 
 ### `threshold_tests` and pre-generated material
 
-- `threshold_tests` turns on `run_prss=true` setup paths; servers load PRSS from test material at startup.
-- For **Test** params, missing PRSS can be initialized live.
-- For **Default** params (`setup_isolated_threshold_cli_test_with_prss_default` / `full_gen_tests_default_*`), PRSS must be pre-generated in `test-material/default`. Missing PRSS for Default material is a **hard error** — setup fails immediately with a message pointing to `make generate-test-material-default`.
-- Some `threshold_tests` generate PRSS live during the test (via `new_prss_isolated`) instead of loading it at startup — these do **not** require pre-generated PRSS. This pattern is used by MPC context init/switch and reshare tests.
-- Tests using Default params without PRSS (`run_prss=false`) do **not** use PRSS at all — no pre-generated material needed.
-- Generate Default PRSS locally with `make generate-test-material-default` (or `make generate-test-material-all`).
+- `threshold_tests` enables tests that require pre-generated material: **PRSS** (loaded at server startup via `run_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `full_gen_tests_default_*`).
+- For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
+- Some tests generate PRSS live during the test (via `new_prss_isolated`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
+- Generate all required Default material with `make generate-test-material-default` (or `make generate-test-material-all`).
 
 ### Test gating patterns
 
