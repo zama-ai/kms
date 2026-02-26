@@ -570,6 +570,13 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
+    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
+        tracing::warn!(
+            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+            private_storage_info,
+            e
+        );
+    }
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
@@ -588,7 +595,6 @@ where
                 e
             )
         })?;
-
     if run_prss {
         let epoch_id_prss = *DEFAULT_EPOCH_ID;
         let default_context_id = *DEFAULT_MPC_CONTEXT;
@@ -599,13 +605,6 @@ where
         epoch_manager
             .init_prss(&default_context_id, &epoch_id_prss)
             .await?;
-    }
-    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
-        tracing::warn!(
-            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
-            private_storage_info,
-            e
-        );
     }
 
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
