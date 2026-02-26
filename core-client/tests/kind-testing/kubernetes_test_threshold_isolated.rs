@@ -131,7 +131,7 @@ impl K8sTestContext {
             download_all: false,
         };
 
-        execute_cmd(&config, self.workspace()).await.unwrap()
+        execute_cmd(&config, self.workspace()).await.expect("The async runtime works.")
     }
 
     /// Generate a key using InsecureKeyGen.
