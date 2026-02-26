@@ -203,7 +203,7 @@ impl K8sTestContext {
         }
     }
 
-    /// Decrypt a ciphertext file via threshold MPC, verifying the result matches the
+    /// Decrypt a ciphertext file via threshold MPC, verifying that the result matches the
     /// original plaintext.
     ///
     /// Reads the ciphertext file produced by [`Self::encrypt`], sends it to all threshold
