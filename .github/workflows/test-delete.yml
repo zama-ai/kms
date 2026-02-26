@@ -1,0 +1,44 @@
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-delete:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write # Required to delete GitHub packages/container registry
+    steps:
+      - name: Clean up build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: "08b8c7f"
+        run: |
+          delete_package_versions_by_tag() {
+            local package_name="$1"
+            local tag="$2"
+            local pkg_url
+
+            pkg_url="$(gh api --paginate -H "Accept: application/vnd.github+json" \
+              "/orgs/zama-ai/packages?package_type=container&per_page=100" \
+              | jq -r --arg name "$package_name" '.[] | select(.repository.full_name=="zama-ai/kms" and .name==$name) | .url' \
+              | head -n1)"
+            echo "pkg_url: ${pkg_url}"
+
+            if [ -z "$pkg_url" ]; then
+              echo "Package not found for ${package_name}, skipping"
+              return 0
+            fi
+
+            gh api --paginate -H "Accept: application/vnd.github+json" "${pkg_url}/versions?per_page=100" \
+            | jq -r --arg tag "$tag" '.[] | select(any(.metadata.container.tags[]?; startswith($tag))) | .id' \
+            | while read -r id; do
+                [ -z "$id" ] && continue
+                echo "Deleting ${package_name} version ${id}"
+                gh api --method DELETE -H "Accept: application/vnd.github+json" "${pkg_url}/versions/${id}"
+              done
+          }
+
+          delete_package_versions_by_tag "kms/core-service-enclave" "${IMAGE_TAG}"
+          delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
+          delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"

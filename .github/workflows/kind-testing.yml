@@ -462,7 +462,7 @@ jobs:
     steps:
       - name: Clean up build
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN_KMS_DELETE_PACKAGE }}
+          GH_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
         run: |
           delete_package_versions_by_tag() {
@@ -474,6 +474,7 @@ jobs:
               "/orgs/zama-ai/packages?package_type=container&per_page=100" \
               | jq -r --arg name "$package_name" '.[] | select(.repository.full_name=="zama-ai/kms" and .name==$name) | .url' \
               | head -n1)"
+            echo "pkg_url: ${pkg_url}"
 
             if [ -z "$pkg_url" ]; then
               echo "Package not found for ${package_name}, skipping"
