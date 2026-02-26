@@ -130,7 +130,7 @@ To add a test for a type that is already tested, you need to:
   - If some _auxiliary_ data is needed for the test, make sure to serialize it using `store_versioned_auxiliary!` macro
 - serialize it using the `store_versioned_test!` macro
 - return the metadata of your test
-- update the `gen_*MOD*_data` method (where "`*`" is the module where your new type is defined, e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
+- update the `gen_*_data` method (where "`*`" is the module where your new type is defined, e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
 
 The test will then be automatically selected when running `make test-backward-compatibility`.
 
