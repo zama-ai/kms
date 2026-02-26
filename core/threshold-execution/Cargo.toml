@@ -1,0 +1,116 @@
+[package]
+name = "threshold-execution"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+# TODO(dp): write a proper description
+description = "Execution"
+
+[dependencies]
+aes.workspace = true
+aes-prng.workspace = true
+algebra.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+bc2wrap.workspace = true
+cfg-if.workspace = true
+clap = { workspace = true, features = ["derive", "env"] } # TODO(dp): this crate does not  build any binaries, why is it using clap?
+const_format.workspace = true
+crypto-bigint = { workspace = true, optional = true }
+ctor = { workspace = true, optional = true }
+derive_more.workspace = true
+error-utils.workspace = true
+futures-util = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+hashing.workspace = true
+itertools.workspace = true
+mockall.workspace = true # TODO(dp): isn't this a testing utility?
+ndarray.workspace = true
+networking.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+rand.workspace = true
+rayon.workspace = true
+redis = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "rc"] }
+session-id.workspace = true
+statrs.workspace = true
+strum = { workspace = true, features = ["derive"] }
+strum_macros.workspace = true # TODO(dp): why do we need both strum crates? Aren't the macros available in `strum` itself?
+zeroize.workspace = true
+
+# TODO(dp): see how much of this stuff is actually used in execution. And if they do not offer stand-alone crates at all.
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+] }
+tfhe-csprng.workspace = true
+tfhe-zk-pok = { workspace = true, optional = true }
+tfhe-versionable.workspace = true
+thread-handles = { workspace = true, optional = true }
+threshold-types.workspace = true
+tokio = { workspace = true, features = [
+    "sync",
+    "rt",
+    "macros",
+    "time",
+], optional = true }
+tonic = { workspace = true, features = ["tls-ring"], optional = true }
+tracing.workspace = true
+
+[dev-dependencies]
+async-std.workspace = true # TODO(dp): rstest pulls in this –– why oh why?
+rstest.workspace = true
+serial_test.workspace = true
+tfhe-zk-pok = { workspace = true, features = ["experimental"] }
+tracing-test.workspace = true
+paste.workspace = true
+tempfile.workspace = true
+execution.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+ctor.workspace = true
+
+
+[features]
+default = ["non-wasm", "extension_degree_4"]
+extension_degree_3 = ["algebra/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8"]
+# "dep:attestation-doc-validation",
+# "dep:hyper-rustls-ring",
+# "dep:tokio-rustls",
+# "dep:tonic-health",
+# "dep:tonic-tls",
+# "dep:backoff",
+# "dep:tower",
+# "dep:tower-http",
+# "dep:observability",
+# "dep:opentelemetry",
+# "dep:redis",
+# "dep:rcgen",
+# "dep:x509-parser",
+
+non-wasm = [
+	"algebra/non-wasm",
+	"error-utils/non-wasm",
+	"networking/non-wasm",
+
+    "dep:thread-handles",
+    "dep:tokio",
+    "dep:tonic",
+    "dep:tfhe-zk-pok",
+    "dep:redis",
+]
+
+testing = ["non-wasm", "algebra/non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures"]
+slow_tests = ["testing", "algebra/slow_tests"]
+malicious_strategies = ["testing"]
+experimental = ["dep:crypto-bigint", "testing"]

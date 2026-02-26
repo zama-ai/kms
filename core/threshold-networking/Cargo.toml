@@ -1,0 +1,91 @@
+[package]
+name = "threshold-networking"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "TODO(dp): proper descr"
+
+[dependencies]
+algebra.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+attestation-doc-validation = { workspace = true, optional = true }
+backoff = { workspace = true, features = ["tokio"], optional = true }
+bc2wrap.workspace = true
+crypto-bigint = { workspace = true, optional = true }
+dashmap.workspace = true  # TODO(dp): hmm, really needed?
+hashing.workspace = true
+hex = { workspace = true, features = ["serde"] }
+hyper-rustls-ring = { workspace = true, optional = true }
+error-utils.workspace = true
+futures-util.workspace = true
+lazy_static.workspace = true
+observability = { workspace = true, optional = true }
+oid-registry.workspace = true
+prost.workspace = true
+serde.workspace = true
+session-id.workspace = true
+sha2.workspace = true
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+], optional = true }
+tfhe-versionable.workspace = true
+thread-handles = { workspace = true, optional = true }
+threshold-types.workspace = true
+tokio = { workspace = true, features = [
+    "sync",
+    "rt",
+    "macros",
+    "time",
+], optional = true }
+tokio-rustls = { workspace = true, optional = true }
+tonic = { workspace = true, features = ["tls-ring"], optional = true }
+tonic-tls = { workspace = true, optional = true }
+tower = { workspace = true, features = ["retry", "timeout"], optional = true }
+tower-http = { workspace = true, features = ["trace"], optional = true }
+tracing.workspace = true
+x509-parser = { workspace = true, optional = true }
+
+[dev-dependencies]
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+] }
+tracing-test.workspace = true
+execution.workspace = true
+
+
+[build-dependencies]
+tonic-build.workspace = true
+
+[features]
+default = ["non-wasm"]
+
+non-wasm = [
+	"algebra/non-wasm",
+	"error-utils/non-wasm",
+	"execution/non-wasm",
+
+	"dep:attestation-doc-validation",
+	"dep:backoff",
+	"dep:hyper-rustls-ring",
+    "dep:observability",
+    "dep:thread-handles",
+    "dep:tokio",
+    "dep:x509-parser",
+    "dep:tokio-rustls",
+    "dep:tonic",
+    "dep:tonic-tls",
+    "dep:tower",
+]
+experimental = ["dep:crypto-bigint", "choreographer", "testing"]
+testing = ["non-wasm", "dep:tfhe"]
+malicious_strategies = ["testing"]
+choreographer = ["malicious_strategies"]
