@@ -1998,6 +1998,8 @@ async fn real_preproc_and_keygen_compressed_isolated(
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id: None,
             epoch_id: None,
+            compressed: true,
+            from_existing_shares: false,
         }),
         logs: true,
         max_iter,
@@ -2023,8 +2025,9 @@ async fn real_preproc_and_keygen_compressed_isolated(
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
             shared_args: SharedKeyGenParameters {
-                keyset_type: Some(KeySetType::Standard),
                 compressed: true,
+                existing_keyset_id: None,
+                existing_epoch_id: None,
                 context_id: None,
                 epoch_id: None,
             },

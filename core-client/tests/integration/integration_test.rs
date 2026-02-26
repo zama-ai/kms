@@ -1871,8 +1871,20 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    let key_id_1 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters::default(),
+        200,
+    )
+    .await;
+    let key_id_2 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters::default(),
+        200,
+    )
+    .await;
     assert_ne!(key_id_1, key_id_2);
 }
 
