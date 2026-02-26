@@ -1,7 +1,13 @@
-use std::{
-    marker::PhantomData,
-    ops::{Add, Mul, Sub},
-};
+use std::marker::PhantomData;
+#[cfg(any(
+    feature = "extension_degree_3",
+    feature = "extension_degree_4",
+    feature = "extension_degree_5",
+    feature = "extension_degree_6",
+    feature = "extension_degree_7",
+    feature = "extension_degree_8",
+))]
+use std::ops::{Add, Mul, Sub};
 
 use serde::{
     de::{SeqAccess, Visitor},
