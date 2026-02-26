@@ -59,8 +59,6 @@ pub(crate) fn compressed_from_existing_keygen_config(
             }),
         }),
         Some(KeySetAddedInfo {
-            existing_compression_keyset_id: None,
-            compression_epoch_id: None,
             from_keyset_id_decompression_only: None,
             to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
@@ -81,8 +79,6 @@ pub(crate) fn decompression_keygen_config(
             standard_keyset_config: None,
         }),
         Some(KeySetAddedInfo {
-            existing_compression_keyset_id: None,
-            compression_epoch_id: None,
             from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
             existing_keyset_id: None,

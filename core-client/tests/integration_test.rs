@@ -252,10 +252,8 @@ async fn insecure_key_gen<T: DockerComposeManager>(
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let shared_args = if compressed {
         SharedKeyGenParameters {
-            keyset_type: Some(KeySetType::Standard),
             compressed: true,
-            context_id: None,
-            epoch_id: None,
+            ..Default::default()
         }
     } else {
         SharedKeyGenParameters::default()
@@ -316,15 +314,16 @@ async fn crs_gen<T: DockerComposeManager>(
 async fn real_preproc(
     config_path: &str,
     test_path: &Path,
-    context_id: Option<ContextId>,
-    epoch_id: Option<EpochId>,
+    shared_args: &SharedKeyGenParameters,
     max_iter: usize,
 ) -> anyhow::Result<Option<RequestId>> {
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
-            context_id,
-            epoch_id,
+            context_id: shared_args.context_id,
+            epoch_id: shared_args.epoch_id,
+            compressed: shared_args.compressed,
+            from_existing_shares: shared_args.existing_keyset_id.is_some(),
         }),
         logs: true,
         max_iter,
@@ -345,30 +344,14 @@ async fn real_preproc(
 async fn real_preproc_and_keygen(
     config_path: &str,
     test_path: &Path,
-    context_id: Option<ContextId>,
-    epoch_id: Option<EpochId>,
-    compressed: bool,
+    shared_args: SharedKeyGenParameters,
     max_iter: usize,
 ) -> (String, String) {
-    let preproc_id = real_preproc(config_path, test_path, context_id, epoch_id, max_iter)
+    let preproc_id = real_preproc(config_path, test_path, &shared_args, max_iter)
         .await
         .unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
-    let shared_args = if compressed {
-        SharedKeyGenParameters {
-            keyset_type: Some(KeySetType::Standard),
-            compressed: true,
-            context_id,
-            epoch_id,
-        }
-    } else {
-        SharedKeyGenParameters {
-            keyset_type: None,
-            compressed: false,
-            context_id,
-            epoch_id,
-        }
-    };
+    let compressed = shared_args.compressed;
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::KeyGen(KeyGenParameters {
@@ -1355,8 +1338,20 @@ async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeTh
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    let key_id_1 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters::default(),
+        200,
+    )
+    .await;
+    let key_id_2 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters::default(),
+        200,
+    )
+    .await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1369,8 +1364,18 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTe
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200),
-        real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200),
+        real_preproc_and_keygen(
+            &config_path,
+            keys_folder,
+            SharedKeyGenParameters::default(),
+            200,
+        ),
+        real_preproc_and_keygen(
+            &config_path,
+            keys_folder,
+            SharedKeyGenParameters::default(),
+            200,
+        ),
     ])
     .await;
 }
@@ -1539,9 +1544,11 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
     let _ = real_preproc_and_keygen(
         config_path.to_str().unwrap(),
         test_path,
-        Some(context_id),
-        Some(epoch_id),
-        false,
+        SharedKeyGenParameters {
+            context_id: Some(context_id),
+            epoch_id: Some(epoch_id),
+            ..Default::default()
+        },
         200,
     )
     .await;
@@ -1603,9 +1610,11 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let _ = real_preproc_and_keygen(
             alternative_config_path.to_str().unwrap(),
             test_path,
-            Some(context_id),
-            Some(epoch_id),
-            false,
+            SharedKeyGenParameters {
+                context_id: Some(context_id),
+                epoch_id: Some(epoch_id),
+                ..Default::default()
+            },
             200,
         )
         .await;
@@ -1617,8 +1626,13 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let err = real_preproc(
             alternative_config_path.to_str().unwrap(),
             test_path,
-            Some(context_id),
-            Some(epoch_id),
+            &SharedKeyGenParameters {
+                context_id: Some(context_id),
+                epoch_id: Some(epoch_id),
+                compressed: false,
+                existing_keyset_id: None,
+                existing_epoch_id: None,
+            },
             200,
         )
         .await
@@ -1689,9 +1703,11 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let (key_id, preproc_id) = real_preproc_and_keygen(
         config_path_set_1.to_str().unwrap(),
         test_path,
-        Some(context_id_set_1),
-        Some(epoch_id_set_1),
-        false,
+        SharedKeyGenParameters {
+            context_id: Some(context_id_set_1),
+            epoch_id: Some(epoch_id_set_1),
+            ..Default::default()
+        },
         200,
     )
     .await;
@@ -1820,8 +1836,13 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let err = real_preproc(
         config_path_set_1.to_str().unwrap(),
         test_path,
-        Some(context_id_set_1),
-        Some(epoch_id_set_1),
+        &SharedKeyGenParameters {
+            context_id: Some(context_id_set_1),
+            epoch_id: Some(epoch_id_set_1),
+            compressed: false,
+            existing_keyset_id: None,
+            existing_epoch_id: None,
+        },
         200,
     )
     .await
@@ -1896,7 +1917,63 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true, 200).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, true, 200).await;
+    let key_id_1 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters {
+            compressed: true,
+            ..Default::default()
+        },
+        200,
+    )
+    .await;
+    let key_id_2 = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters {
+            compressed: true,
+            ..Default::default()
+        },
+        200,
+    )
+    .await;
+    assert_ne!(key_id_1, key_id_2);
+}
+
+#[test_context(DockerComposeThresholdTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_compressed_keygen_from_existing(ctx: &DockerComposeThresholdTest) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let config_path = config_path_from_context(ctx);
+
+    // Step 1: Normal compressed keygen to establish a keyset with secret shares
+    let (key_id_1, _) = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters {
+            compressed: true,
+            ..Default::default()
+        },
+        200,
+    )
+    .await;
+
+    // Step 2: Compressed keygen reusing existing secret shares from keygen 1
+    let existing_keyset_id = RequestId::from_str(&key_id_1).unwrap();
+    let (key_id_2, _) = real_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        SharedKeyGenParameters {
+            compressed: true,
+            existing_keyset_id: Some(existing_keyset_id),
+            ..Default::default()
+        },
+        200,
+    )
+    .await;
+
     assert_ne!(key_id_1, key_id_2);
 }

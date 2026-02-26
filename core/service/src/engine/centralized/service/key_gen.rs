@@ -294,28 +294,12 @@ pub(crate) async fn key_gen_background<
     }
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
-            let compression_id = match internal_keyset_config.get_existing_compression_key_id() {
-                Ok(compression_id) => compression_id,
-                Err(e) => {
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        req_id,
-                        format!("Failed to use standard key generation parameters: {e}"),
-                        op_tag,
-                    );
-                    return;
-                }
-            };
-
             let keygen_result = match async_generate_fhe_keys(
                 &sk,
-                crypto_storage.clone(),
                 params,
                 standard_key_set_config.to_owned(),
-                compression_id,
                 req_id,
                 preproc_id,
-                epoch_id,
                 None,
                 eip712_domain,
             )

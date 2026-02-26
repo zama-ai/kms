@@ -640,8 +640,6 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 standard_keyset_config: None,
             }),
             keyset_added_info: Some(KeySetAddedInfo {
-                existing_compression_keyset_id: None,
-                compression_epoch_id: None,
                 from_keyset_id_decompression_only: Some(key_id_1.into()),
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,
