@@ -292,7 +292,7 @@ impl Drop for K8sTestContext {
 
 /// Smoke test: Generate a key (insecure DKG, no PRSS) and a CRS.
 ///
-/// Uses `InsecureKeyGen` — a testing shortcut that skips PRSS preprocessing.
+/// Uses `InsecureKeyGen` — a testing shortcut that skips preprocessing.
 /// Production keygen uses `PreprocKeyGen` + `KeyGen`. This test validates that
 /// the fundamental MPC cluster wiring (gRPC, mTLS, party coordination) works.
 #[tokio::test]
