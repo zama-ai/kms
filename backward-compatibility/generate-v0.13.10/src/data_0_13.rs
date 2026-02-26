@@ -1,12 +1,12 @@
-//! Data generation for kms-core v0.13.1
+//! Data generation for kms-core v0.13.10
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.13.1
+//! for kms-core v0.13.10
 
 use aes_prng::AesRng;
-use kms_0_13_1::backup::custodian::{
+use kms_0_13_10::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
-use kms_0_13_1::backup::{
+use kms_0_13_10::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
@@ -14,8 +14,8 @@ use kms_0_13_1::backup::{
     },
     BackupCiphertext,
 };
-use kms_0_13_1::consts::SAFE_SER_SIZE_LIMIT;
-use kms_0_13_1::cryptography::{
+use kms_0_13_10::consts::SAFE_SER_SIZE_LIMIT;
+use kms_0_13_10::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
@@ -23,16 +23,16 @@ use kms_0_13_1::cryptography::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
-use kms_0_13_1::engine::base::{
+use kms_0_13_10::engine::base::{
     safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
-use kms_0_13_1::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_13_1::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use kms_0_13_1::engine::threshold::service::session::PRSSSetupCombined;
-use kms_0_13_1::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
-use kms_0_13_1::util::key_setup::FhePublicKey;
-use kms_0_13_1::vault::keychain::AppKeyBlob;
-use kms_grpc_0_13_1::{
+use kms_0_13_10::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_13_10::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use kms_0_13_10::engine::threshold::service::session::PRSSSetupCombined;
+use kms_0_13_10::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
+use kms_0_13_10::util::key_setup::FhePublicKey;
+use kms_0_13_10::vault::keychain::AppKeyBlob;
+use kms_grpc_0_13_10::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
@@ -64,17 +64,17 @@ use tfhe_1_5_1::{
     ServerKey, Tag,
 };
 use tfhe_versionable_0_7::Upgrade;
-use threshold_fhe_0_13_1::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_13_1::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_13_1::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe_0_13_1::{
+use threshold_fhe_0_13_10::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_13_10::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_13_10::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_fhe_0_13_10::{
     execution::{
         runtime::party::Role,
         sharing::share::Share,
         small_execution::prss::{PrssSet, PrssSetV0},
         tfhe_internals::{
             parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
-            test_feature::initialize_key_material,
+            test_feature::insecure_initialize_key_material,
         },
     },
     networking::tls::ReleasePCRValues,
@@ -100,7 +100,7 @@ use backward_compatibility::{
     KMS_MODULE_NAME,
 };
 
-use kms_0_13_1::cryptography::signcryption::SigncryptionPayload;
+use kms_0_13_10::cryptography::signcryption::SigncryptionPayload;
 
 use crate::generate::{
     store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
@@ -521,11 +521,11 @@ fn dummy_domain() -> alloy_sol_types_1_4_1::Eip712Domain {
     )
 }
 
-pub struct V0_13;
+pub struct V0_13_10;
 
-struct KmsV0_13;
+struct KmsV0_13_10;
 
-impl KmsV0_13 {
+impl KmsV0_13_10 {
     fn gen_private_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(PRIVATE_SIG_KEY_TEST.state);
         let (_, private_sig_key) = gen_sig_keys(&mut rng);
@@ -1150,8 +1150,8 @@ impl KmsV0_13 {
 
         // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
         // so generation is not deterministic
-        let key_id = kms_grpc_0_13_1::RequestId::zeros();
-        let preproc_id = kms_grpc_0_13_1::RequestId::zeros();
+        let key_id = kms_grpc_0_13_10::RequestId::zeros();
+        let preproc_id = kms_grpc_0_13_10::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
@@ -1185,7 +1185,7 @@ impl KmsV0_13 {
 
         let rt = Runtime::new().unwrap();
         let (fhe_pub_key_set, private_key_set) = rt.block_on(async {
-            initialize_key_material(&mut base_session, dkg_params, Tag::default())
+            insecure_initialize_key_material(&mut base_session, dkg_params, Tag::default())
                 .await
                 .unwrap()
         });
@@ -1237,7 +1237,7 @@ impl KmsV0_13 {
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: std::sync::Arc::new(private_key_set),
             public_material,
-            meta_data: kms_0_13_1::engine::base::KeyGenMetadata::LegacyV0(info),
+            meta_data: kms_0_13_10::engine::base::KeyGenMetadata::LegacyV0(info),
         };
 
         store_versioned_test!(
@@ -1346,9 +1346,9 @@ impl KmsV0_13 {
     }
 }
 
-struct DistributedDecryptionV0_13;
+struct DistributedDecryptionV0_13_10;
 
-impl DistributedDecryptionV0_13 {
+impl DistributedDecryptionV0_13_10 {
     fn gen_prss_setup_rpoly_64(dir: &PathBuf) -> TestMetadataDD {
         let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
@@ -1506,9 +1506,9 @@ impl DistributedDecryptionV0_13 {
     }
 }
 
-struct KmsGrpcV0_13;
+struct KmsGrpcV0_13_10;
 
-impl KmsGrpcV0_13 {
+impl KmsGrpcV0_13_10 {
     fn gen_signed_pub_data_handle_internal(dir: &PathBuf) -> TestMetadataKmsGrpc {
         let signed_pub_data_handle_internal = SignedPubDataHandleInternal::new(
             SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.key_handle.to_string(),
@@ -1542,8 +1542,8 @@ impl KmsGrpcV0_13 {
     }
 }
 
-impl KMSCoreVersion for V0_13 {
-    const VERSION_NUMBER: &'static str = "0.13.1";
+impl KMSCoreVersion for V0_13_10 {
+    const VERSION_NUMBER: &'static str = "0.13.10";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {
@@ -1559,31 +1559,31 @@ impl KMSCoreVersion for V0_13 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            KmsV0_13::gen_private_sig_key(&dir),
-            KmsV0_13::gen_public_sig_key(&dir),
-            KmsV0_13::gen_app_key_blob(&dir),
-            KmsV0_13::gen_key_gen_metadata(&dir),
-            KmsV0_13::gen_crs_metadata(&dir),
-            KmsV0_13::gen_typed_plaintext(&dir),
-            KmsV0_13::gen_signcryption_payload(&dir),
-            KmsV0_13::gen_signcryption_key(&dir),
-            KmsV0_13::gen_designcryption_key(&dir),
-            KmsV0_13::gen_unified_signcryption(&dir),
-            KmsV0_13::gen_backup_ciphertext(&dir),
-            KmsV0_13::gen_unified_cipher(&dir),
-            KmsV0_13::gen_hybrid_kem_ct(&dir),
-            KmsV0_13::gen_prss_setup_combined(&dir),
-            KmsV0_13::gen_context_info(&dir),
-            KmsV0_13::gen_node_info(&dir),
-            KmsV0_13::gen_software_version(&dir),
-            KmsV0_13::gen_recovery_material(&dir),
-            KmsV0_13::gen_internal_recovery_request(&dir),
-            KmsV0_13::gen_internal_cus_context_handles(&dir),
-            KmsV0_13::gen_internal_cus_setup_msg(&dir),
-            KmsV0_13::gen_kms_fhe_key_handles(&dir),
-            KmsV0_13::gen_threshold_fhe_keys(&dir),
-            KmsV0_13::gen_internal_cus_rec_out(&dir),
-            KmsV0_13::gen_operator_backup_output(&dir),
+            KmsV0_13_10::gen_private_sig_key(&dir),
+            KmsV0_13_10::gen_public_sig_key(&dir),
+            KmsV0_13_10::gen_app_key_blob(&dir),
+            KmsV0_13_10::gen_key_gen_metadata(&dir),
+            KmsV0_13_10::gen_crs_metadata(&dir),
+            KmsV0_13_10::gen_typed_plaintext(&dir),
+            KmsV0_13_10::gen_signcryption_payload(&dir),
+            KmsV0_13_10::gen_signcryption_key(&dir),
+            KmsV0_13_10::gen_designcryption_key(&dir),
+            KmsV0_13_10::gen_unified_signcryption(&dir),
+            KmsV0_13_10::gen_backup_ciphertext(&dir),
+            KmsV0_13_10::gen_unified_cipher(&dir),
+            KmsV0_13_10::gen_hybrid_kem_ct(&dir),
+            KmsV0_13_10::gen_prss_setup_combined(&dir),
+            KmsV0_13_10::gen_context_info(&dir),
+            KmsV0_13_10::gen_node_info(&dir),
+            KmsV0_13_10::gen_software_version(&dir),
+            KmsV0_13_10::gen_recovery_material(&dir),
+            KmsV0_13_10::gen_internal_recovery_request(&dir),
+            KmsV0_13_10::gen_internal_cus_context_handles(&dir),
+            KmsV0_13_10::gen_internal_cus_setup_msg(&dir),
+            KmsV0_13_10::gen_kms_fhe_key_handles(&dir),
+            KmsV0_13_10::gen_threshold_fhe_keys(&dir),
+            KmsV0_13_10::gen_internal_cus_rec_out(&dir),
+            KmsV0_13_10::gen_operator_backup_output(&dir),
         ]
     }
 
@@ -1592,14 +1592,14 @@ impl KMSCoreVersion for V0_13 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            DistributedDecryptionV0_13::gen_prss_setup_rpoly_64(&dir),
-            DistributedDecryptionV0_13::gen_prss_setup_rpoly_128(&dir),
-            DistributedDecryptionV0_13::gen_prss_set_64(&dir),
-            DistributedDecryptionV0_13::gen_prss_set_128(&dir),
-            DistributedDecryptionV0_13::gen_share_64(&dir),
-            DistributedDecryptionV0_13::gen_share_128(&dir),
-            DistributedDecryptionV0_13::gen_prf_key(&dir),
-            DistributedDecryptionV0_13::gen_release_pcr_values(&dir),
+            DistributedDecryptionV0_13_10::gen_prss_setup_rpoly_64(&dir),
+            DistributedDecryptionV0_13_10::gen_prss_setup_rpoly_128(&dir),
+            DistributedDecryptionV0_13_10::gen_prss_set_64(&dir),
+            DistributedDecryptionV0_13_10::gen_prss_set_128(&dir),
+            DistributedDecryptionV0_13_10::gen_share_64(&dir),
+            DistributedDecryptionV0_13_10::gen_share_128(&dir),
+            DistributedDecryptionV0_13_10::gen_prf_key(&dir),
+            DistributedDecryptionV0_13_10::gen_release_pcr_values(&dir),
         ]
     }
 
@@ -1608,9 +1608,9 @@ impl KMSCoreVersion for V0_13 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            KmsGrpcV0_13::gen_signed_pub_data_handle_internal(&dir),
-            KmsGrpcV0_13::gen_pub_data_type(&dir),
-            KmsGrpcV0_13::gen_priv_data_type(&dir),
+            KmsGrpcV0_13_10::gen_signed_pub_data_handle_internal(&dir),
+            KmsGrpcV0_13_10::gen_pub_data_type(&dir),
+            KmsGrpcV0_13_10::gen_priv_data_type(&dir),
         ]
     }
 }

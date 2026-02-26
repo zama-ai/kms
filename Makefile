@@ -19,19 +19,17 @@ start-compose-centralized:
 stop-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
 
-## TODO not sure what we do about these:
-# start-compose-threshold-observability:
-# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml up -d --wait
+start-compose-threshold-telemetry:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml up -d --wait
 
-# start-compose-threshold-observability-ghcr:
-# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml -f docker-compose-core-threshold-ghcr.yml up -d --wait
+stop-compose-threshold-telemetry:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml down --volumes --remove-orphans
 
-# stop-compose-threshold-observability:
-# 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-observability.yml down --volumes --remove-orphans
-
+# Test backwards compatibility with LFS files. This will pull the LFS files from git before running the tests.
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
+# Do not run LFS pull and use locally generated files to test backward compatibility.
 test-backward-compatibility-local:
 	cargo test --test backward_compatibility_* -- --include-ignored --no-capture
 
@@ -42,21 +40,21 @@ clean-backward-compatibility-data:
 	rm -rf backward-compatibility/data/0_11_0
 	rm -rf backward-compatibility/data/0_11_1
 	rm -rf backward-compatibility/data/0_13_0
-	rm -rf backward-compatibility/data/0_13_1
+	rm -rf backward-compatibility/data/0_13_10
 
 generate-backward-compatibility-v0.11.0:
-	cd backward-compatibility/generate-v0.11.0 && cargo run --release --locked
+	cd backward-compatibility/generate-v0.11.0 && cargo run --release
 
 generate-backward-compatibility-v0.11.1:
-	cd backward-compatibility/generate-v0.11.1 && cargo run --release --locked
+	cd backward-compatibility/generate-v0.11.1 && cargo run --release
 
 generate-backward-compatibility-v0.13.0:
 	cd backward-compatibility/generate-v0.13.0 && cargo run --release
 
-generate-backward-compatibility-v0.13.1 :
-	cd backward-compatibility/generate-v0.13.1 && cargo run --release
+generate-backward-compatibility-v0.13.10:
+	cd backward-compatibility/generate-v0.13.10 && cargo run --release
 
-generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0 generate-backward-compatibility-v0.13.1
+generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0 generate-backward-compatibility-v0.13.10
 	@echo "Generated backward compatibility data for all versions"
 
 # Test material generation targets
