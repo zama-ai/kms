@@ -6,8 +6,9 @@ use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
 
-// The amount of bytes in an ID (key handle, request ID etc.)
+/// The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;
+/// Storage path prefix used for key material.
 pub const KEY_PATH_PREFIX: &str = "keys";
 /// PRSS setup request ID - a fixed ID used for PRSS initialization material
 pub const PRSS_INIT_REQ_ID: &str =
@@ -15,51 +16,62 @@ pub const PRSS_INIT_REQ_ID: &str =
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 
-pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
+/// The amount of bytes used for sampling random values to stop brute-forcing or statistical attacks.
+pub const RND_SIZE: usize = 128 / 8;
 
 // TODO do we want to load this from a configuration?
 pub const SEC_PAR: u64 = 128;
-// TODO do we want to load this from a configuration?
-// The maximum amount of public/user decryptions to be stored in RAM
+/// The maximum amount of public/user decryptions to be stored in RAM.
+/// TODO: do we want to load this from a configuration?
 pub const DEC_CAPACITY: usize = 10000;
-// The minimum amount of completed public/user decryptions to cache before old ones are evicted and new ones are allowed, if the store has reached its max capacity
+/// The minimum amount of completed public/user decryptions to cache before old ones are evicted
+/// and new ones are allowed, if the store has reached its max capacity.
 pub const MIN_DEC_CACHE: usize = 6000;
+/// Whether serialized key material is compressed.
 pub const COMPRESSED: bool = true;
 
+/// Minimum number of preprocessing sessions required before keygen can proceed.
 pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
+/// Default number of MPC parties (slow_tests: 13-party configuration).
 #[cfg(feature = "slow_tests")]
 pub const DEFAULT_AMOUNT_PARTIES: usize = 13;
+/// Default MPC threshold (slow_tests: 13-party configuration).
 #[cfg(feature = "slow_tests")]
 pub const DEFAULT_THRESHOLD: usize = 4;
 
+/// Default number of MPC parties (4-party configuration).
 #[cfg(not(feature = "slow_tests"))]
 pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
+/// Default MPC threshold (4-party configuration).
 #[cfg(not(feature = "slow_tests"))]
 pub const DEFAULT_THRESHOLD: usize = 1;
 
+/// Maximum byte size allowed during safe deserialization.
 pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
 
-//TODO: Do we want to load this from configuration ?
+// TODO: Do we want to load this from configuration?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;
 
-// Preprocessing (offline phase) is significantly slower than other operations,
-// especially with Default FHE params where even 1% of the offline phase can
-// take several minutes of MPC network communication. Use a longer server-side
-// wait window so each poll covers more computation time and reduces the number
-// of Unavailable round-trips the client must make.
+/// Preprocessing (offline phase) is significantly slower than other operations,
+/// especially with Default FHE params where even 1% of the offline phase can
+/// take several minutes of MPC network communication. Use a longer server-side
+/// wait window so each poll covers more computation time and reduces the number
+/// of Unavailable round-trips the client must make.
 pub const DURATION_WAITING_ON_PREPROC_RESULT_SECONDS: u64 = 300;
 
-// Key generation (online DKG) with Default FHE params is also very slow —
-// generating full-sized FHE keys via MPC can take 30-90+ minutes.
-// Use the same longer wait window as preprocessing so each client poll
-// covers more computation time.
+/// Key generation (online DKG) with Default FHE params is also very slow —
+/// generating full-sized FHE keys via MPC can take 30-90+ minutes.
+/// Use the same longer wait window as preprocessing so each client poll
+/// covers more computation time.
 pub const DURATION_WAITING_ON_KEYGEN_RESULT_SECONDS: u64 = 300;
 
-// Maximum number of attempts to try to wait for a result to be done on the server
+/// Maximum number of attempts to try to wait for a result to be done on the server.
 pub const MAX_TRIES: usize = 50;
 
+/// Default URL for local KMS service connections.
 pub const DEFAULT_URL: &str = "127.0.0.1";
+/// Default protocol for local KMS service connections.
 pub const DEFAULT_PROTOCOL: &str = "http";
 
 #[cfg(feature = "non-wasm")]

@@ -1,7 +1,7 @@
 use std::env;
 use std::fmt;
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ pub struct DockerComposeCmd {
     pub mode: KMSMode,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum KMSMode {
     ThresholdDefaultParameter,
     ThresholdTestParameter,
@@ -42,18 +42,42 @@ pub fn format_output(output: &Output) -> OutputWrapper<'_> {
     OutputWrapper(output)
 }
 
+fn port_is_bindable(port: u16) -> bool {
+    TcpListener::bind(("0.0.0.0", port)).is_ok()
+}
+
 /// Wait until all given TCP ports on localhost are no longer bound.
 /// This prevents "address already in use" errors when Docker Compose retries
 /// start before the OS has released ports from the previous run.
+///
+/// All ports are checked in every iteration so that a single slow-to-free port
+/// cannot consume the entire deadline before the others are even checked.
+/// Each iteration probes all ports in parallel via threads.
 fn wait_for_ports_free(ports: &[u16], timeout: Duration) {
     let deadline = Instant::now() + timeout;
-    for &port in ports {
-        while Instant::now() < deadline {
-            if TcpStream::connect(("127.0.0.1", port)).is_err() {
-                break; // port is free
-            }
-            std::thread::sleep(Duration::from_millis(500));
+    loop {
+        let all_free = std::thread::scope(|s| {
+            let handles: Vec<_> = ports
+                .iter()
+                .map(|&port| s.spawn(move || port_is_bindable(port)))
+                .collect();
+            handles.into_iter().all(|h| h.join().unwrap_or(false))
+        });
+        if all_free {
+            return;
         }
+        if Instant::now() >= deadline {
+            let still_bound: Vec<u16> = ports
+                .iter()
+                .copied()
+                .filter(|&p| !port_is_bindable(p))
+                .collect();
+            panic!(
+                "Timed out waiting for ports to be released after {:?}. Still bound: {:?}",
+                timeout, still_bound
+            );
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -68,8 +92,8 @@ impl DockerComposeCmd {
         DockerComposeCmd { root_path, mode }
     }
 
-    fn ports_for_mode(&self) -> &'static [u16] {
-        match self.mode {
+    const fn ports_for_mode(mode: KMSMode) -> &'static [u16] {
+        match mode {
             KMSMode::ThresholdTestParameterNoInitSixParty => &[
                 50100, 50200, 50300, 50400, 50500, 50600, 50001, 50002, 50003, 50004, 50005, 50006,
             ],
@@ -87,7 +111,7 @@ impl DockerComposeCmd {
         self.down(); // Make sure that no container is running
                      // Wait for the OS to release ports before starting new containers.
                      // Without this, Docker Compose retries fail with "address already in use".
-        wait_for_ports_free(self.ports_for_mode(), Duration::from_secs(30));
+        wait_for_ports_free(Self::ports_for_mode(self.mode), Duration::from_secs(30));
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
 
         // set the FHE params based on mode
@@ -254,7 +278,7 @@ pub struct DockerCompose {
 
 impl DockerCompose {
     pub fn new(mode: KMSMode) -> DockerCompose {
-        let cmd = DockerComposeCmd::new(mode.clone());
+        let cmd = DockerComposeCmd::new(mode);
         cmd.up();
         DockerCompose { cmd, mode }
     }

@@ -69,6 +69,7 @@ struct K8sTestContext {
     name: &'static str,
     temp_dir: tempfile::TempDir,
     start_time: std::time::Instant,
+    passed: bool,
 }
 
 impl K8sTestContext {
@@ -86,6 +87,7 @@ impl K8sTestContext {
             name,
             temp_dir,
             start_time: std::time::Instant::now(),
+            passed: false,
         }
     }
 
@@ -263,7 +265,8 @@ impl K8sTestContext {
     }
 
     /// Mark test as passed and print summary.
-    fn pass(self) {
+    fn pass(mut self) {
+        self.passed = true;
         let duration = self.start_time.elapsed();
         println!("\n========================================");
         println!(
@@ -272,6 +275,14 @@ impl K8sTestContext {
             duration.as_secs_f64()
         );
         println!("========================================\n");
+    }
+}
+
+impl Drop for K8sTestContext {
+    fn drop(&mut self) {
+        if !self.passed && !std::thread::panicking() {
+            panic!("[K8S-THRESHOLD] TEST '{}' dropped without calling pass() — did the test actually run to completion?", self.name);
+        }
     }
 }
 
@@ -297,7 +308,7 @@ async fn k8s_test_keygen_and_crs() {
     ctx.pass();
 }
 
-/// Test that sequential insecure key generations produce unique keys.
+/// Test that concurrent insecure key generations produce unique keys.
 ///
 /// Uses `InsecureKeyGen` (no PRSS) to verify that the MPC protocol assigns
 /// a fresh, unique key ID on each call. Not representative of production keygen.
@@ -305,9 +316,11 @@ async fn k8s_test_keygen_and_crs() {
 async fn k8s_test_keygen_uniqueness() {
     let ctx = K8sTestContext::new("k8s_test_keygen_uniqueness");
 
-    let key1 = ctx.insecure_keygen().await;
-    let key2 = ctx.insecure_keygen().await;
-    let key3 = ctx.insecure_keygen().await;
+    let (key1, key2, key3) = tokio::join!(
+        ctx.insecure_keygen(),
+        ctx.insecure_keygen(),
+        ctx.insecure_keygen(),
+    );
 
     assert_ne!(key1, key2, "Keys must be unique");
     assert_ne!(key1, key3, "Keys must be unique");
