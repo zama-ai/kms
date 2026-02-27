@@ -71,15 +71,14 @@ pub async fn regenerate_central_keys(
     remove_dir_if_exists(pub_storage.root_dir().join("VerfAddress")).await;
 
     // Regenerate signing keys (VerfKey, VerfAddress, SigningKey)
-    let generated = ensure_central_server_signing_keys_exist(
+    let new_req_id = ensure_central_server_signing_keys_exist(
         pub_storage,
         priv_storage,
-        &SIGNING_KEY_ID,
         true, // deterministic
     )
     .await;
 
-    if !generated {
+    if new_req_id.is_none() {
         return Err(anyhow::anyhow!(
             "Failed to generate central server signing keys"
         ));

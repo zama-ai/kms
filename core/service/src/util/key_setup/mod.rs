@@ -145,7 +145,7 @@ pub async fn ensure_client_keys_exist(
 /// This function follows a fail-fast approach:
 /// 1. Validates storage consistency
 /// 2. Checks for existing keys
-/// 3. Generates and stores new keys if needed
+/// 3. Generates and stores new keys if storage is empty
 ///
 /// # Returns
 /// - `Some(RequestId)` if new keys were generated with a request ID that is the digest of the public key (Ethereum Address)
@@ -157,7 +157,6 @@ pub async fn ensure_client_keys_exist(
 pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
-    req_id: &RequestId,
     deterministic: bool,
 ) -> Option<RequestId>
 where
@@ -184,12 +183,12 @@ where
         );
 
         // Even if signing keys exist, VerfAddress and VerfKey might not
-        if let Some(sk) = temp.get(req_id) {
-            let pk = sk.verf_key();
+        for (cur_req_id, cur_sk) in temp {
+            let pk = cur_sk.verf_key();
 
             // Regenerate VerfAddress if missing
             let verf_address_exists = match pub_storage
-                .data_exists(req_id, &PubDataType::VerfAddress.to_string())
+                .data_exists(&cur_req_id, &PubDataType::VerfAddress.to_string())
                 .await
             {
                 Ok(exists) => exists,
@@ -205,7 +204,7 @@ where
                 let ethereum_address = pk.address();
                 if let Err(store_err) = store_text_at_request_id(
                     pub_storage,
-                    req_id,
+                    &cur_req_id,
                     &ethereum_address.to_string(),
                     &PubDataType::VerfAddress.to_string(),
                 )
@@ -222,7 +221,7 @@ where
 
             // Regenerate VerfKey if missing
             let verf_key_exists = match pub_storage
-                .data_exists(req_id, &PubDataType::VerfKey.to_string())
+                .data_exists(&cur_req_id, &PubDataType::VerfKey.to_string())
                 .await
             {
                 Ok(exists) => exists,
@@ -237,7 +236,7 @@ where
             if !verf_key_exists {
                 if let Err(store_err) = store_versioned_at_request_id(
                     pub_storage,
-                    req_id,
+                    &cur_req_id,
                     &pk,
                     &PubDataType::VerfKey.to_string(),
                 )
@@ -255,14 +254,14 @@ where
 
     let mut rng = get_rng(deterministic, Some(0));
     let (pk, sk) = gen_sig_keys(&mut rng);
-
+    let ethereum_address = pk.address();
+    let req_id = ethereum_address.into();
     // Store public verification key
     if let Err(e) =
-        store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
+        store_versioned_at_request_id(pub_storage, &req_id, &pk, &PubDataType::VerfKey.to_string())
             .await
     {
-        tracing::error!("Failed to store public verification key: {}", e);
-        return false;
+        panic!("Failed to store public verification key: {}", e);
     }
     log_storage_success(
         req_id,
@@ -272,19 +271,16 @@ where
         false,
     );
 
-    let ethereum_address = pk.address();
-
     // Store ethereum address (derived from public key), needed for KMS signature verification
     if let Err(e) = store_text_at_request_id(
         pub_storage,
-        req_id,
+        &req_id,
         &ethereum_address.to_string(),
         &PubDataType::VerfAddress.to_string(),
     )
     .await
     {
-        tracing::error!("Failed to store ethereum address: {}", e);
-        return false;
+        panic!("Failed to store ethereum address: {}", e);
     }
     tracing::info!(
         "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
@@ -296,14 +292,13 @@ where
     // Store private signing key
     if let Err(e) = store_versioned_at_request_id(
         priv_storage,
-        req_id,
+        &req_id,
         &sk,
         &PrivDataType::SigningKey.to_string(),
     )
     .await
     {
-        tracing::error!("Failed to store private signing key: {}", e);
-        return false;
+        panic!("Failed to store private signing key: {}", e);
     }
     log_storage_success(
         req_id,
@@ -313,7 +308,7 @@ where
         false,
     );
 
-    true
+    Some(req_id)
 }
 
 /// Generates and stores a Common Reference String (CRS) if it doesn't exist.
@@ -660,7 +655,6 @@ pub enum ThresholdSigningKeyConfig {
 pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
-    request_id: &RequestId,
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
     tls_wildcard: bool,
@@ -731,17 +725,17 @@ where
                 "Threshold server signing keys",
             );
             // Even if signing keys exist, CA certificates and VerfAddress might not
-            if let Some(sk) = temp.get(request_id) {
+            for (cur_req_id, cur_sk) in &temp {
                 // Regenerate VerfAddress if missing
                 if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::VerfAddress.to_string())
+                    .data_exists(cur_req_id, &PubDataType::VerfAddress.to_string())
                     .await?
                 {
-                    let pk = sk.verf_key();
+                    let pk = cur_sk.verf_key();
                     let ethereum_address = pk.address();
                     if let Err(store_err) = store_text_at_request_id(
                         &mut pub_storages[i - 1],
-                        request_id,
+                        cur_req_id,
                         &ethereum_address.to_string(),
                         &PubDataType::VerfAddress.to_string(),
                     )
@@ -763,13 +757,13 @@ where
 
                 // Regenerate VerfKey if missing
                 if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::VerfKey.to_string())
+                    .data_exists(cur_req_id, &PubDataType::VerfKey.to_string())
                     .await?
                 {
-                    let pk = sk.verf_key();
+                    let pk = cur_sk.verf_key();
                     if let Err(store_err) = store_versioned_at_request_id(
                         &mut pub_storages[i - 1],
-                        request_id,
+                        &cur_req_id,
                         &pk,
                         &PubDataType::VerfKey.to_string(),
                     )
@@ -790,31 +784,28 @@ where
 
                 // Regenerate CA certificate if missing
                 if !pub_storages[i - 1]
-                    .data_exists(request_id, &PubDataType::CACert.to_string())
+                    .data_exists(cur_req_id, &PubDataType::CACert.to_string())
                     .await?
                 {
                     ensure_ca_cert_exists(
                         &mut pub_storages[i - 1],
-                        sk,
-                        request_id,
-                        subject_str,
+                        cur_sk,
+                        cur_req_id,
+                        subject_str.clone(),
                         tls_wildcard,
                     )
                     .await?;
                 }
-            } else {
-                tracing::error!("Failed to regenerate CA certificate from existing server signing key for party {i}")
-            };
-
-            continue;
+            }
         }
 
         let (pk, sk) = gen_sig_keys(&mut rng);
+        let request_id: RequestId = pk.address().into();
 
         // Store public verification key
         if let Err(store_err) = store_versioned_at_request_id(
             &mut pub_storages[i - 1],
-            request_id,
+            &request_id,
             &pk,
             &PubDataType::VerfKey.to_string(),
         )
@@ -828,7 +819,7 @@ where
             continue; // Skip this party but try others
         }
         log_storage_success(
-            request_id,
+            &request_id,
             pub_storages[i - 1].info(),
             "server signing key",
             true,
@@ -840,7 +831,7 @@ where
         // Store ethereum address (derived from public key), needed for KMS signature verification
         if let Err(store_err) = store_text_at_request_id(
             &mut pub_storages[i - 1],
-            request_id,
+            &request_id,
             &ethereum_address.to_string(),
             &PubDataType::VerfAddress.to_string(),
         )
@@ -863,7 +854,7 @@ where
         // Store private signing key
         if let Err(store_err) = store_versioned_at_request_id(
             &mut priv_storages[i - 1],
-            request_id,
+            &request_id,
             &sk,
             &PrivDataType::SigningKey.to_string(),
         )
@@ -877,7 +868,7 @@ where
             continue; // Skip this party but try others
         }
         log_storage_success(
-            request_id,
+            &request_id,
             priv_storages[i - 1].info(),
             "server signing key",
             false,
@@ -888,8 +879,8 @@ where
         ensure_ca_cert_exists(
             &mut pub_storages[i - 1],
             &sk,
-            request_id,
-            subject_str,
+            &request_id,
+            subject_str.clone(),
             tls_wildcard,
         )
         .await?;

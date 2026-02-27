@@ -550,8 +550,8 @@ pub(crate) mod setup {
     };
     use crate::{
         consts::{
-            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+            TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
             TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
@@ -702,7 +702,6 @@ pub(crate) mod setup {
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await;
@@ -756,7 +755,6 @@ pub(crate) mod setup {
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),

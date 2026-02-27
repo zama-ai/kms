@@ -12,7 +12,7 @@ use kms_lib::{
     },
     consts::{
         DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
+        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, TEST_PARAM,
     },
     cryptography::attestation::make_security_module,
     util::key_setup::{
@@ -462,13 +462,13 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 args.overwrite,
             )
             .await;
-            if !ensure_central_server_signing_keys_exist(
+            if ensure_central_server_signing_keys_exist(
                 args.pub_storage,
                 args.priv_storage,
-                &SIGNING_KEY_ID,
                 args.deterministic,
             )
             .await
+            .is_none()
             {
                 tracing::warn!("Signing keys already exist, skipping generation");
             }
@@ -561,7 +561,6 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
             if !ensure_threshold_server_signing_keys_exist(
                 args.pub_storages,
                 args.priv_storages,
-                &SIGNING_KEY_ID,
                 args.deterministic,
                 match args.signing_key_party_id {
                     Some(i) => ThresholdSigningKeyConfig::OneParty(i, args.tls_subject.clone()),

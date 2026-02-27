@@ -874,14 +874,12 @@ async fn setup_party_resharing_servers(
 
     // Ensure signing keys exist for all 6 servers
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
-    use kms_lib::consts::SIGNING_KEY_ID;
     use kms_lib::util::key_setup::{
         ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
     };
     let _ = ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
-        &SIGNING_KEY_ID,
         true, // deterministic
         ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists

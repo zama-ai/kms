@@ -94,6 +94,16 @@ impl Display for v1::RequestId {
     }
 }
 
+/// Convert an Ethereum address to a RequestId by placing the 20-byte address in the last 20 bytes of the RequestId
+/// This is used for identifying signing and verification keys.
+impl From<alloy_primitives::Address> for RequestId {
+    fn from(addr: alloy_primitives::Address) -> Self {
+        let mut bytes = [0u8; ID_LENGTH];
+        bytes[ID_LENGTH - 20..].copy_from_slice(addr.as_slice());
+        RequestId(bytes)
+    }
+}
+
 // Common implementation for identifier types
 macro_rules! impl_identifiers {
     ($request_id:ident, $key_id:ident, $context_id:ident, $epoch_id:ident) => {
@@ -762,5 +772,20 @@ mod tests {
         assert!(base < base_larger_2);
         assert!(base > base_smaller_1);
         assert!(base > base_smaller_2);
+    }
+
+    #[test]
+    fn test_address_conversion() {
+        let hex_str = "0x0123456789abcdef0123456789abcdef01234567";
+        let address = alloy_primitives::Address::from_str(hex_str).unwrap();
+        let request_id: RequestId = address.into();
+        assert_eq!(
+            request_id.as_str(),
+            "0000000000000000000000000123456789abcdef0123456789abcdef01234567"
+        );
+
+        let derived_address =
+            alloy_primitives::Address::from_slice(&request_id.as_bytes()[ID_LENGTH - 20..]);
+        assert_eq!(derived_address, address);
     }
 }

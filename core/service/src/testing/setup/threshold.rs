@@ -4,7 +4,7 @@
 //! test environments with automatic cleanup.
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMaterialSpec};
@@ -298,7 +298,6 @@ impl ThresholdTestEnvBuilder {
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storages,
             &mut priv_storages,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=self.party_count)
