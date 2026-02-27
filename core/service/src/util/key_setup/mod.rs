@@ -34,6 +34,7 @@ use crate::vault::storage::{
     store_versioned_at_request_id, Storage, StorageReader, StorageType,
 };
 use itertools::Itertools;
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use std::collections::HashMap;
@@ -907,12 +908,18 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
     tls_wildcard: bool,
 ) -> anyhow::Result<()> {
     // self-sign a CA certificate with the private signing key
-    let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-        subject.as_str(),
-        tls_wildcard,
-        #[allow(deprecated)]
-        sk.sk(),
+    #[allow(deprecated)]
+    let sk_der = sk.sk().to_pkcs8_der()?;
+    let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+        &tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+        &rcgen::PKCS_ECDSA_P256K1_SHA256,
     )?;
+    let (ca_cert_ki, ca_cert, _ca_params) =
+        threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+            subject.as_str(),
+            tls_wildcard,
+            &ca_keypair,
+        )?;
 
     // Store self-signed CA certificate
     if let Err(store_err) = store_text_at_request_id(
