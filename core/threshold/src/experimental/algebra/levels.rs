@@ -19,8 +19,7 @@ use crypto_bigint::NonZero;
 use crypto_bigint::Odd;
 use crypto_bigint::RandomMod;
 use crypto_bigint::Uint;
-use crypto_bigint::U1536;
-use crypto_bigint::{U128, U64, U768};
+use crypto_bigint::{U128, U1536, U192, U256, U320, U384, U448, U512, U576, U64, U640, U704, U768};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use rand::CryptoRng;
@@ -34,6 +33,7 @@ use std::sync::RwLock;
 use crate::experimental::algebra::crt::from_crt;
 use crate::experimental::algebra::crt::to_crt;
 use crate::experimental::algebra::crt::LevelKswCrtRepresentation;
+use crate::experimental::algebra::integers::{IntQ, ModReduction};
 use crate::experimental::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
@@ -50,6 +50,8 @@ pub trait CryptoModulus {
     fn monty_mul(&self, y: &Self) -> Self;
     /// Retrieve reference from inner bigint type.
     fn as_raw(&self) -> &Self::Modulus;
+
+    fn get_self_modulus() -> Self;
 }
 
 #[derive(Hash, Debug, Default, Clone, Copy, Eq, PartialEq)]
@@ -57,6 +59,15 @@ pub struct GenericModulus<const LIMBS: usize>(pub Uint<LIMBS>);
 
 pub type ModulusSize64 = GenericModulus<{ U64::LIMBS }>;
 pub type ModulusSize128 = GenericModulus<{ U128::LIMBS }>;
+pub type ModulusSize192 = GenericModulus<{ U192::LIMBS }>;
+pub type ModulusSize256 = GenericModulus<{ U256::LIMBS }>;
+pub type ModulusSize320 = GenericModulus<{ U320::LIMBS }>;
+pub type ModulusSize384 = GenericModulus<{ U384::LIMBS }>;
+pub type ModulusSize448 = GenericModulus<{ U448::LIMBS }>;
+pub type ModulusSize512 = GenericModulus<{ U512::LIMBS }>;
+pub type ModulusSize576 = GenericModulus<{ U576::LIMBS }>;
+pub type ModulusSize640 = GenericModulus<{ U640::LIMBS }>;
+pub type ModulusSize704 = GenericModulus<{ U704::LIMBS }>;
 pub type ModulusSize768 = GenericModulus<{ U768::LIMBS }>;
 pub type ModulusSize1536 = GenericModulus<{ U1536::LIMBS }>;
 
@@ -83,6 +94,12 @@ macro_rules! impl_ring_level {
                 }
                 fn as_raw(&self) -> &$uint_type {
                     &self.value.0
+                }
+
+                fn get_self_modulus() -> Self {
+                    Self {
+                        value: GenericModulus(*Self::MODULUS.as_ref()),
+                    }
                 }
             }
 
@@ -120,6 +137,16 @@ macro_rules! impl_ring_level {
                     Self {
                         value: GenericModulus(value),
                     }
+                }
+            }
+
+            /// In-place negation if we have a mutable reference.
+            impl Neg for &mut $name {
+                type Output = ();
+
+                fn neg(self) -> Self::Output {
+                    self.value.0 = self.value.0.neg_mod(&$name::MODULUS);
+
                 }
             }
 
@@ -247,6 +274,24 @@ macro_rules! impl_ring_level {
                     Ok(Self {
                         value: GenericModulus(<$uint_type>::deserialize(deserializer)?),
                     })
+                }
+            }
+        }
+
+        impl ModReduction<$name> for IntQ {
+            fn mod_reduction(&self) -> $name {
+                // assuming inputs are bounded by q since are computed from division
+                let x: $uint_type = (&(self.data)).into();
+                let cheap_mod = x.rem($name::MODULUS.as_nz_ref());
+
+                if self.is_negative {
+                    $name {
+                        value: GenericModulus(cheap_mod.neg_mod(&$name::MODULUS)),
+                    }
+                } else {
+                    $name {
+                        value: GenericModulus(cheap_mod),
+                    }
                 }
             }
         }
@@ -400,7 +445,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_r))
                 .collect_vec(),
         };
-        let mut res_level_r = LevelR::error_correct(&shamir_level_r, threshold, max_errs)?;
+        let mut res_level_r = FieldR::error_correct(&shamir_level_r, threshold, max_errs)?;
 
         let shamir_level_one = ShamirSharings {
             shares: crt_shares
@@ -408,7 +453,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_one))
                 .collect_vec(),
         };
-        let mut res_level_one = LevelOne::error_correct(&shamir_level_one, threshold, max_errs)?;
+        let mut res_level_one = FieldOne::error_correct(&shamir_level_one, threshold, max_errs)?;
 
         let shamir_level_two = ShamirSharings {
             shares: crt_shares
@@ -416,7 +461,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_two))
                 .collect_vec(),
         };
-        let mut res_level_two = LevelTwo::error_correct(&shamir_level_two, threshold, max_errs)?;
+        let mut res_level_two = FieldTwo::error_correct(&shamir_level_two, threshold, max_errs)?;
 
         let shamir_level_three = ShamirSharings {
             shares: crt_shares
@@ -425,7 +470,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_three =
-            LevelThree::error_correct(&shamir_level_three, threshold, max_errs)?;
+            FieldThree::error_correct(&shamir_level_three, threshold, max_errs)?;
 
         let shamir_level_four = ShamirSharings {
             shares: crt_shares
@@ -433,7 +478,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_four))
                 .collect_vec(),
         };
-        let mut res_level_four = LevelFour::error_correct(&shamir_level_four, threshold, max_errs)?;
+        let mut res_level_four = FieldFour::error_correct(&shamir_level_four, threshold, max_errs)?;
 
         let shamir_level_five = ShamirSharings {
             shares: crt_shares
@@ -441,7 +486,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_five))
                 .collect_vec(),
         };
-        let mut res_level_five = LevelFive::error_correct(&shamir_level_five, threshold, max_errs)?;
+        let mut res_level_five = FieldFive::error_correct(&shamir_level_five, threshold, max_errs)?;
 
         let shamir_level_six = ShamirSharings {
             shares: crt_shares
@@ -449,7 +494,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_six))
                 .collect_vec(),
         };
-        let mut res_level_six = LevelSix::error_correct(&shamir_level_six, threshold, max_errs)?;
+        let mut res_level_six = FieldSix::error_correct(&shamir_level_six, threshold, max_errs)?;
 
         let shamir_level_seven = ShamirSharings {
             shares: crt_shares
@@ -458,7 +503,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_seven =
-            LevelSeven::error_correct(&shamir_level_seven, threshold, max_errs)?;
+            FieldSeven::error_correct(&shamir_level_seven, threshold, max_errs)?;
 
         let shamir_level_eight = ShamirSharings {
             shares: crt_shares
@@ -467,7 +512,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eight =
-            LevelEight::error_correct(&shamir_level_eight, threshold, max_errs)?;
+            FieldEight::error_correct(&shamir_level_eight, threshold, max_errs)?;
 
         let shamir_level_nine = ShamirSharings {
             shares: crt_shares
@@ -475,7 +520,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_nine))
                 .collect_vec(),
         };
-        let mut res_level_nine = LevelNine::error_correct(&shamir_level_nine, threshold, max_errs)?;
+        let mut res_level_nine = FieldNine::error_correct(&shamir_level_nine, threshold, max_errs)?;
 
         let shamir_level_ten = ShamirSharings {
             shares: crt_shares
@@ -483,7 +528,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_ten))
                 .collect_vec(),
         };
-        let mut res_level_ten = LevelTen::error_correct(&shamir_level_ten, threshold, max_errs)?;
+        let mut res_level_ten = FieldTen::error_correct(&shamir_level_ten, threshold, max_errs)?;
 
         let shamir_level_eleven = ShamirSharings {
             shares: crt_shares
@@ -492,7 +537,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eleven =
-            LevelEleven::error_correct(&shamir_level_eleven, threshold, max_errs)?;
+            FieldEleven::error_correct(&shamir_level_eleven, threshold, max_errs)?;
 
         let shamir_level_twelve = ShamirSharings {
             shares: crt_shares
@@ -501,7 +546,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_twelve =
-            LevelTwelve::error_correct(&shamir_level_twelve, threshold, max_errs)?;
+            FieldTwelve::error_correct(&shamir_level_twelve, threshold, max_errs)?;
 
         let shamir_level_thirteen = ShamirSharings {
             shares: crt_shares
@@ -510,7 +555,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_thirteen =
-            LevelThirteen::error_correct(&shamir_level_thirteen, threshold, max_errs)?;
+            FieldThirteen::error_correct(&shamir_level_thirteen, threshold, max_errs)?;
 
         let shamir_level_fourteen = ShamirSharings {
             shares: crt_shares
@@ -519,7 +564,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fourteen =
-            LevelFourteen::error_correct(&shamir_level_fourteen, threshold, max_errs)?;
+            FieldFourteen::error_correct(&shamir_level_fourteen, threshold, max_errs)?;
 
         let shamir_level_fifteen = ShamirSharings {
             shares: crt_shares
@@ -528,123 +573,155 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fifteen =
-            LevelFifteen::error_correct(&shamir_level_fifteen, threshold, max_errs)?;
+            FieldFifteen::error_correct(&shamir_level_fifteen, threshold, max_errs)?;
 
         //All the level polynomial have max degree threshold, so we will crt reconstruct a polynomial of degree threshold
         let mut coefs: Vec<Self> = Vec::new();
         //Doing stuff in reverse order to get ownership with remove,
         //without having to pay for worst case complexity of moving all elements of the vector at every iteration
         for monomial_index in (0..=threshold).rev() {
-            let value_level_one = if res_level_one.coefs().len() - 1 == monomial_index {
+            let value_level_one = if !res_level_one.coefs().is_empty()
+                && res_level_one.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_one.pop().unwrap()
             } else {
-                LevelOne::ZERO
+                FieldOne::ZERO
             };
 
-            let value_level_two = if res_level_two.coefs().len() - 1 == monomial_index {
+            let value_level_two = if !res_level_two.coefs().is_empty()
+                && res_level_two.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_two.pop().unwrap()
             } else {
-                LevelTwo::ZERO
+                FieldTwo::ZERO
             };
 
-            let value_level_three = if res_level_three.coefs().len() - 1 == monomial_index {
+            let value_level_three = if !res_level_three.coefs().is_empty()
+                && res_level_three.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_three.pop().unwrap()
             } else {
-                LevelThree::ZERO
+                FieldThree::ZERO
             };
 
-            let value_level_four = if res_level_four.coefs().len() - 1 == monomial_index {
+            let value_level_four = if !res_level_four.coefs().is_empty()
+                && res_level_four.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_four.pop().unwrap()
             } else {
-                LevelFour::ZERO
+                FieldFour::ZERO
             };
 
-            let value_level_five = if res_level_five.coefs().len() - 1 == monomial_index {
+            let value_level_five = if !res_level_five.coefs().is_empty()
+                && res_level_five.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_five.pop().unwrap()
             } else {
-                LevelFive::ZERO
+                FieldFive::ZERO
             };
 
-            let value_level_six = if res_level_six.coefs().len() - 1 == monomial_index {
+            let value_level_six = if !res_level_six.coefs().is_empty()
+                && res_level_six.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_six.pop().unwrap()
             } else {
-                LevelSix::ZERO
+                FieldSix::ZERO
             };
 
-            let value_level_seven = if res_level_seven.coefs().len() - 1 == monomial_index {
+            let value_level_seven = if !res_level_seven.coefs().is_empty()
+                && res_level_seven.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_seven.pop().unwrap()
             } else {
-                LevelSeven::ZERO
+                FieldSeven::ZERO
             };
 
-            let value_level_eight = if res_level_eight.coefs().len() - 1 == monomial_index {
+            let value_level_eight = if !res_level_eight.coefs().is_empty()
+                && res_level_eight.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_eight.pop().unwrap()
             } else {
-                LevelEight::ZERO
+                FieldEight::ZERO
             };
 
-            let value_level_nine = if res_level_nine.coefs().len() - 1 == monomial_index {
+            let value_level_nine = if !res_level_nine.coefs().is_empty()
+                && res_level_nine.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_nine.pop().unwrap()
             } else {
-                LevelNine::ZERO
+                FieldNine::ZERO
             };
 
-            let value_level_ten = if res_level_ten.coefs().len() - 1 == monomial_index {
+            let value_level_ten = if !res_level_ten.coefs().is_empty()
+                && res_level_ten.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_ten.pop().unwrap()
             } else {
-                LevelTen::ZERO
+                FieldTen::ZERO
             };
 
-            let value_level_eleven = if res_level_eleven.coefs().len() - 1 == monomial_index {
+            let value_level_eleven = if !res_level_eleven.coefs().is_empty()
+                && res_level_eleven.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_eleven.pop().unwrap()
             } else {
-                LevelEleven::ZERO
+                FieldEleven::ZERO
             };
 
-            let value_level_twelve = if res_level_twelve.coefs().len() - 1 == monomial_index {
+            let value_level_twelve = if !res_level_twelve.coefs().is_empty()
+                && res_level_twelve.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_twelve.pop().unwrap()
             } else {
-                LevelTwelve::ZERO
+                FieldTwelve::ZERO
             };
 
-            let value_level_thirteen = if res_level_thirteen.coefs().len() - 1 == monomial_index {
+            let value_level_thirteen = if !res_level_thirteen.coefs().is_empty()
+                && res_level_thirteen.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_thirteen.pop().unwrap()
             } else {
-                LevelThirteen::ZERO
+                FieldThirteen::ZERO
             };
 
-            let value_level_fourteen = if res_level_fourteen.coefs().len() - 1 == monomial_index {
+            let value_level_fourteen = if !res_level_fourteen.coefs().is_empty()
+                && res_level_fourteen.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_fourteen.pop().unwrap()
             } else {
-                LevelFourteen::ZERO
+                FieldFourteen::ZERO
             };
 
-            let value_level_fifteen = if res_level_fifteen.coefs().len() - 1 == monomial_index {
+            let value_level_fifteen = if !res_level_fifteen.coefs().is_empty()
+                && res_level_fifteen.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_fifteen.pop().unwrap()
             } else {
-                LevelFifteen::ZERO
+                FieldFifteen::ZERO
             };
 
-            let value_level_r = if res_level_r.coefs().len() - 1 == monomial_index {
+            let value_level_r = if !res_level_r.coefs().is_empty()
+                && res_level_r.coefs().len() - 1 == monomial_index
+            {
                 // SAFETY: length is checked before popping
                 res_level_r.pop().unwrap()
             } else {
-                LevelR::ZERO
+                FieldR::ZERO
             };
 
             coefs.push(from_crt(LevelKswCrtRepresentation {
@@ -721,7 +798,7 @@ impl Invert for LevelKsw {
     }
 }
 
-impl LevelR {
+impl FieldR {
     fn pow(&self, exp: Self) -> Self {
         let mut res = Self::ONE;
         let mut x = *self;
@@ -741,7 +818,7 @@ impl LevelR {
 
 impl LargestPrimeFactor for LevelKsw {
     fn mod_largest_prime(v: &Self) -> Self {
-        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
+        let modulus_r: U1536 = FieldR::MODULUS.as_ref().into();
         Self {
             value: GenericModulus(v.value.0.rem(&NonZero::new(modulus_r).unwrap())),
         }
@@ -752,13 +829,13 @@ impl LargestPrimeFactor for LevelKsw {
         v_mod_largest_prime != Self::ZERO
     }
 
-    /// Projects a [`LevelKsw`] value onto the field defined by its largest prime factor [`LevelR::MODULUS`],
+    /// Projects a [`LevelKsw`] value onto the field defined by its largest prime factor [`FieldR::MODULUS`],
     /// and computes its square root.
     ///
     ///
     /// Uses the Tonelli-Shanks algorithm, which requires:
-    /// - factoring [`LevelR::MODULUS`] - 1 as 2^S * Q with Q odd
-    /// - finding a quadratic non-residue in the field defined by [`LevelR::MODULUS`]
+    /// - factoring [`FieldR::MODULUS`] - 1 as 2^S * Q with Q odd
+    /// - finding a quadratic non-residue in the field defined by [`FieldR::MODULUS`]
     ///
     /// We can thus precomputes some values that are defined as constants:
     /// - ODD_DIV: corresponds to the Q in the factorisation above
@@ -766,16 +843,16 @@ impl LargestPrimeFactor for LevelKsw {
     /// - POW_2: corresponds to the S in the factorisation above
     /// - QUADRATIC_NON_RESIDUE_TO_ODD_DIV: corresponds to the quadratic non-residue above to the power Q
     fn largest_prime_factor_sqrt(v: &Self) -> Self {
-        const ODD_DIV : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
+        const ODD_DIV : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
 
-        const ODD_DIV_PLUS_ONE_DIV_TWO : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
+        const ODD_DIV_PLUS_ONE_DIV_TWO : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
 
-        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: LevelR = LevelR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
+        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: FieldR = FieldR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
 
         const POW_2: u128 = 17_u128;
 
-        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
-        let value_level_r = LevelR {
+        let modulus_r: U1536 = FieldR::MODULUS.as_ref().into();
+        let value_level_r = FieldR {
             value: GenericModulus((&v.value.0.rem(&NonZero::new(modulus_r).unwrap())).into()),
         };
 
@@ -783,22 +860,22 @@ impl LargestPrimeFactor for LevelKsw {
         let mut c = QUADRATIC_NON_RESIDUE_TO_ODD_DIV;
         let mut t = value_level_r.pow(ODD_DIV);
         let mut r = value_level_r.pow(ODD_DIV_PLUS_ONE_DIV_TWO);
-        while t != LevelR::ONE {
+        while t != FieldR::ONE {
             let i = {
                 let mut i = 1;
-                while t.pow(LevelR::from_u128(1 << i)) != LevelR::ONE {
+                while t.pow(FieldR::from_u128(1 << i)) != FieldR::ONE {
                     i += 1;
                 }
                 assert!(i < m);
                 i
             };
 
-            let b = c.pow(LevelR::from_u128(1 << (m - i - 1)));
+            let b = c.pow(FieldR::from_u128(1 << (m - i - 1)));
             c = b * b;
             t *= c;
             r *= b;
             m = i;
-            assert!(t != LevelR::ZERO);
+            assert!(t != FieldR::ZERO);
         }
 
         Self {
@@ -863,16 +940,16 @@ impl PRSSConversions for LevelOne {
 // Having such a root makes it easy to compute NTT over Q to support fast multiplication.
 
 //Represents the Ring for the top level ciphertext (Q = Prod(Q_i))
-impl_modulus!(Q, U768, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001");
-type ConstMontyFormQ = crypto_bigint::modular::ConstMontyForm<Q, { U768::LIMBS }>;
-impl_from_u128_big!(LevelEll, U768);
-impl_ring_level!(LevelEll, U768, ModulusSize768, Q, ConstMontyFormQ, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000");
+
+pub type Q = QProd15;
+pub type LevelEll = LevelFifteen;
 
 impl_modulus!(QR, U1536, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40001");
 type ConstMontyFormQR = crypto_bigint::modular::ConstMontyForm<QR, { U1536::LIMBS }>;
 impl_from_u128_big!(LevelKsw, U1536);
 impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000");
 
+pub type FieldOne = LevelOne;
 impl_modulus!(Q1, U128, "00000000400040000000001400140001");
 type ConstMontyFormQ1 = crypto_bigint::modular::ConstMontyForm<Q1, { U128::LIMBS }>;
 impl_from_u128_big!(LevelOne, U128);
@@ -887,9 +964,9 @@ impl_field_level!(
 
 impl_modulus!(Q2, U64, "0001003500340001");
 type ConstMontyFormQ2 = crypto_bigint::modular::ConstMontyForm<Q2, { U64::LIMBS }>;
-impl_from_u128_small!(LevelTwo);
+impl_from_u128_small!(FieldTwo);
 impl_field_level!(
-    LevelTwo,
+    FieldTwo,
     U64,
     ModulusSize64,
     Q2,
@@ -897,11 +974,27 @@ impl_field_level!(
     "0001003500340000"
 );
 
+impl_modulus!(
+    QProd2,
+    U192,
+    "000000000000400d801a400d401444380835045900480001"
+);
+type ConstMontyFormQProd2 = crypto_bigint::modular::ConstMontyForm<QProd2, { U192::LIMBS }>;
+impl_from_u128_big!(LevelTwo, U192);
+impl_ring_level!(
+    LevelTwo,
+    U192,
+    ModulusSize192,
+    QProd2,
+    ConstMontyFormQProd2,
+    "000000000000400d801a400d401444380835045900480000"
+);
+
 impl_modulus!(Q3, U64, "0001005900580001");
 type ConstMontyFormQ3 = crypto_bigint::modular::ConstMontyForm<Q3, { U64::LIMBS }>;
-impl_from_u128_small!(LevelThree);
+impl_from_u128_small!(FieldThree);
 impl_field_level!(
-    LevelThree,
+    FieldThree,
     U64,
     ModulusSize64,
     Q3,
@@ -909,11 +1002,27 @@ impl_field_level!(
     "0001005900580000"
 );
 
+impl_modulus!(
+    QProd3,
+    U192,
+    "4023c4e1cdd1cdc30fec06b4921e99aa9fd61d7200a00001"
+);
+type ConstMontyFormQProd3 = crypto_bigint::modular::ConstMontyForm<QProd3, { U192::LIMBS }>;
+impl_from_u128_big!(LevelThree, U192);
+impl_ring_level!(
+    LevelThree,
+    U192,
+    ModulusSize192,
+    QProd3,
+    ConstMontyFormQProd3,
+    "4023c4e1cdd1cdc30fec06b4921e99aa9fd61d7200a00000"
+);
+
 impl_modulus!(Q4, U64, "0001008300820001");
 type ConstMontyFormQ4 = crypto_bigint::modular::ConstMontyForm<Q4, { U64::LIMBS }>;
-impl_from_u128_small!(LevelFour);
+impl_from_u128_small!(FieldFour);
 impl_field_level!(
-    LevelFour,
+    FieldFour,
     U64,
     ModulusSize64,
     Q4,
@@ -921,11 +1030,27 @@ impl_field_level!(
     "0001008300820000"
 );
 
+impl_modulus!(
+    QProd4,
+    U256,
+    "0000404497501f885aeda429775be423d6f17c6482c6d65be59b6f3501220001"
+);
+type ConstMontyFormQProd4 = crypto_bigint::modular::ConstMontyForm<QProd4, { U256::LIMBS }>;
+impl_from_u128_big!(LevelFour, U256);
+impl_ring_level!(
+    LevelFour,
+    U256,
+    ModulusSize256,
+    QProd4,
+    ConstMontyFormQProd4,
+    "0000404497501f885aeda429775be423d6f17c6482c6d65be59b6f3501220000"
+);
+
 impl_modulus!(Q5, U64, "0001009900980001");
 type ConstMontyFormQ5 = crypto_bigint::modular::ConstMontyForm<Q5, { U64::LIMBS }>;
-impl_from_u128_small!(LevelFive);
+impl_from_u128_small!(FieldFive);
 impl_field_level!(
-    LevelFive,
+    FieldFive,
     U64,
     ModulusSize64,
     Q5,
@@ -933,11 +1058,27 @@ impl_field_level!(
     "0001009900980000"
 );
 
+impl_modulus!(
+    QProd5,
+    U320,
+    "00000000406b0074b7254b434c76b0c60d9bb315df5b5e5eb1d124fb7271a2759a671bfe01ba0001"
+);
+type ConstMontyFormQProd5 = crypto_bigint::modular::ConstMontyForm<QProd5, { U320::LIMBS }>;
+impl_from_u128_big!(LevelFive, U320);
+impl_ring_level!(
+    LevelFive,
+    U320,
+    ModulusSize320,
+    QProd5,
+    ConstMontyFormQProd5,
+    "00000000406b0074b7254b434c76b0c60d9bb315df5b5e5eb1d124fb7271a2759a671bfe01ba0000"
+);
+
 impl_modulus!(Q6, U64, "000100b700b60001");
 type ConstMontyFormQ6 = crypto_bigint::modular::ConstMontyForm<Q6, { U64::LIMBS }>;
-impl_from_u128_small!(LevelSix);
+impl_from_u128_small!(FieldSix);
 impl_field_level!(
-    LevelSix,
+    FieldSix,
     U64,
     ModulusSize64,
     Q6,
@@ -945,11 +1086,16 @@ impl_field_level!(
     "000100b700b60000"
 );
 
+impl_modulus!(QProd6, U384, "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700001");
+type ConstMontyFormQProd6 = crypto_bigint::modular::ConstMontyForm<QProd6, { U384::LIMBS }>;
+impl_from_u128_big!(LevelSix, U384);
+impl_ring_level!(LevelSix, U384, ModulusSize384, QProd6, ConstMontyFormQProd6, "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700000");
+
 impl_modulus!(Q7, U64, "0001010d010c0001");
 type ConstMontyFormQ7 = crypto_bigint::modular::ConstMontyForm<Q7, { U64::LIMBS }>;
-impl_from_u128_small!(LevelSeven);
+impl_from_u128_small!(FieldSeven);
 impl_field_level!(
-    LevelSeven,
+    FieldSeven,
     U64,
     ModulusSize64,
     Q7,
@@ -957,11 +1103,16 @@ impl_field_level!(
     "0001010d010c0000"
 );
 
+impl_modulus!(QProd7, U384, "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0001");
+type ConstMontyFormQProd7 = crypto_bigint::modular::ConstMontyForm<QProd7, { U384::LIMBS }>;
+impl_from_u128_big!(LevelSeven, U384);
+impl_ring_level!(LevelSeven, U384, ModulusSize384, QProd7, ConstMontyFormQProd7, "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0000");
+
 impl_modulus!(Q8, U64, "0001013501340001");
 type ConstMontyFormQ8 = crypto_bigint::modular::ConstMontyForm<Q8, { U64::LIMBS }>;
-impl_from_u128_small!(LevelEight);
+impl_from_u128_small!(FieldEight);
 impl_field_level!(
-    LevelEight,
+    FieldEight,
     U64,
     ModulusSize64,
     Q8,
@@ -969,11 +1120,16 @@ impl_field_level!(
     "0001013501340000"
 );
 
+impl_modulus!(QProd8, U448, "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00001");
+type ConstMontyFormQProd8 = crypto_bigint::modular::ConstMontyForm<QProd8, { U448::LIMBS }>;
+impl_from_u128_big!(LevelEight, U448);
+impl_ring_level!(LevelEight, U448, ModulusSize448, QProd8, ConstMontyFormQProd8, "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00000");
+
 impl_modulus!(Q9, U64, "0001014301420001");
 type ConstMontyFormQ9 = crypto_bigint::modular::ConstMontyForm<Q9, { U64::LIMBS }>;
-impl_from_u128_small!(LevelNine);
+impl_from_u128_small!(FieldNine);
 impl_field_level!(
-    LevelNine,
+    FieldNine,
     U64,
     ModulusSize64,
     Q9,
@@ -981,11 +1137,16 @@ impl_field_level!(
     "0001014301420000"
 );
 
+impl_modulus!(QProd9, U512, "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20001");
+type ConstMontyFormQProd9 = crypto_bigint::modular::ConstMontyForm<QProd9, { U512::LIMBS }>;
+impl_from_u128_big!(LevelNine, U512);
+impl_ring_level!(LevelNine, U512, ModulusSize512, QProd9, ConstMontyFormQProd9, "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20000");
+
 impl_modulus!(Q10, U64, "0001015301520001");
 type ConstMontyFormQ10 = crypto_bigint::modular::ConstMontyForm<Q10, { U64::LIMBS }>;
-impl_from_u128_small!(LevelTen);
+impl_from_u128_small!(FieldTen);
 impl_field_level!(
-    LevelTen,
+    FieldTen,
     U64,
     ModulusSize64,
     Q10,
@@ -993,11 +1154,16 @@ impl_field_level!(
     "0001015301520000"
 );
 
+impl_modulus!(QProd10, U576, "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440001");
+type ConstMontyFormQProd10 = crypto_bigint::modular::ConstMontyForm<QProd10, { U576::LIMBS }>;
+impl_from_u128_big!(LevelTen, U576);
+impl_ring_level!(LevelTen, U576, ModulusSize576, QProd10, ConstMontyFormQProd10, "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440000");
+
 impl_modulus!(Q11, U64, "0001016701660001");
 type ConstMontyFormQ11 = crypto_bigint::modular::ConstMontyForm<Q11, { U64::LIMBS }>;
-impl_from_u128_small!(LevelEleven);
+impl_from_u128_small!(FieldEleven);
 impl_field_level!(
-    LevelEleven,
+    FieldEleven,
     U64,
     ModulusSize64,
     Q11,
@@ -1005,11 +1171,16 @@ impl_field_level!(
     "0001016701660000"
 );
 
+impl_modulus!(QProd11, U576, "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0001");
+type ConstMontyFormQProd11 = crypto_bigint::modular::ConstMontyForm<QProd11, { U576::LIMBS }>;
+impl_from_u128_big!(LevelEleven, U576);
+impl_ring_level!(LevelEleven, U576, ModulusSize576, QProd11, ConstMontyFormQProd11, "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0000");
+
 impl_modulus!(Q12, U64, "0001019101900001");
 type ConstMontyFormQ12 = crypto_bigint::modular::ConstMontyForm<Q12, { U64::LIMBS }>;
-impl_from_u128_small!(LevelTwelve);
+impl_from_u128_small!(FieldTwelve);
 impl_field_level!(
-    LevelTwelve,
+    FieldTwelve,
     U64,
     ModulusSize64,
     Q12,
@@ -1017,11 +1188,16 @@ impl_field_level!(
     "0001019101900000"
 );
 
+impl_modulus!(QProd12, U640, "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0001");
+type ConstMontyFormQProd12 = crypto_bigint::modular::ConstMontyForm<QProd12, { U640::LIMBS }>;
+impl_from_u128_big!(LevelTwelve, U640);
+impl_ring_level!(LevelTwelve, U640, ModulusSize640, QProd12, ConstMontyFormQProd12, "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0000");
+
 impl_modulus!(Q13, U64, "0001019501940001");
 type ConstMontyFormQ13 = crypto_bigint::modular::ConstMontyForm<Q13, { U64::LIMBS }>;
-impl_from_u128_small!(LevelThirteen);
+impl_from_u128_small!(FieldThirteen);
 impl_field_level!(
-    LevelThirteen,
+    FieldThirteen,
     U64,
     ModulusSize64,
     Q13,
@@ -1029,11 +1205,16 @@ impl_field_level!(
     "0001019501940000"
 );
 
+impl_modulus!(QProd13, U704, "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0001");
+type ConstMontyFormQProd13 = crypto_bigint::modular::ConstMontyForm<QProd13, { U704::LIMBS }>;
+impl_from_u128_big!(LevelThirteen, U704);
+impl_ring_level!(LevelThirteen, U704, ModulusSize704, QProd13, ConstMontyFormQProd13, "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0000");
+
 impl_modulus!(Q14, U64, "000101b301b20001");
 type ConstMontyFormQ14 = crypto_bigint::modular::ConstMontyForm<Q14, { U64::LIMBS }>;
-impl_from_u128_small!(LevelFourteen);
+impl_from_u128_small!(FieldFourteen);
 impl_field_level!(
-    LevelFourteen,
+    FieldFourteen,
     U64,
     ModulusSize64,
     Q14,
@@ -1041,11 +1222,16 @@ impl_field_level!(
     "000101b301b20000"
 );
 
+impl_modulus!(QProd14, U768, "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800001");
+type ConstMontyFormQProd14 = crypto_bigint::modular::ConstMontyForm<QProd14, { U768::LIMBS }>;
+impl_from_u128_big!(LevelFourteen, U768);
+impl_ring_level!(LevelFourteen, U768, ModulusSize768, QProd14, ConstMontyFormQProd14, "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800000");
+
 impl_modulus!(Q15, U64, "000101bb01ba0001");
 type ConstMontyFormQ15 = crypto_bigint::modular::ConstMontyForm<Q15, { U64::LIMBS }>;
-impl_from_u128_small!(LevelFifteen);
+impl_from_u128_small!(FieldFifteen);
 impl_field_level!(
-    LevelFifteen,
+    FieldFifteen,
     U64,
     ModulusSize64,
     Q15,
@@ -1053,10 +1239,15 @@ impl_field_level!(
     "000101bb01ba0000"
 );
 
+impl_modulus!(QProd15, U768, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001");
+type ConstMontyFormQProd15 = crypto_bigint::modular::ConstMontyForm<QProd15, { U768::LIMBS }>;
+impl_from_u128_big!(LevelFifteen, U768);
+impl_ring_level!(LevelFifteen, U768, ModulusSize768, QProd15, ConstMontyFormQProd15, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000");
+
 impl_modulus!(R, U768, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001");
 type ConstMontyFormR = crypto_bigint::modular::ConstMontyForm<R, { U768::LIMBS }>;
-impl_from_u128_big!(LevelR, U768);
-impl_field_level!(LevelR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
+impl_from_u128_big!(FieldR, U768);
+impl_field_level!(FieldR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {
@@ -1064,7 +1255,7 @@ pub trait ScalingFactor {
 }
 
 impl ScalingFactor for LevelKsw {
-    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"))};
+    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001"))};
 }
 
 #[cfg(test)]
@@ -1284,10 +1475,10 @@ mod tests {
     fn test_pow_level_r() {
         let mut rng = AesRng::seed_from_u64(0);
         let exp = 1238501;
-        let x = LevelR::sample(&mut rng);
-        let x_pow = x.pow(LevelR::from_u128(exp));
+        let x = FieldR::sample(&mut rng);
+        let x_pow = x.pow(FieldR::from_u128(exp));
 
-        let mut res = LevelR::ONE;
+        let mut res = FieldR::ONE;
         for _ in 0..exp {
             res *= x;
         }

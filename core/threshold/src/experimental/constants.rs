@@ -14,6 +14,7 @@ pub(crate) const LOG_PLAINTEXT: u32 = 17;
 /// B bound for the NewHope distribution.
 pub(crate) const NEW_HOPE_BOUND: usize = 1;
 
+#[cfg(feature = "choreographer")]
 /// Input party acting as dealer in the (dummy) keygen protocol.
 pub(crate) const INPUT_PARTY_ID: usize = 1;
 

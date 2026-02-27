@@ -15,7 +15,7 @@ use crate::{
             lwe_key::LweSecretKeyShare,
             lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
             lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key,
-            parameters::{DKGParams, DistributedCompressionParameters, EncryptionType},
+            parameters::{DistributedCompressionParameters, EncryptionType},
             randomness::MPCEncryptionRandomGenerator,
         },
     },
@@ -37,7 +37,6 @@ use tfhe::{
         },
     },
 };
-use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tracing::instrument;
 
 #[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
@@ -172,7 +171,7 @@ where
 }
 
 #[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-async fn generate_compression_decompression_keys<
+pub(crate) async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
@@ -224,7 +223,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[instrument(name="Gen compressed Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-async fn generate_compressed_compression_decompression_keys<
+pub(crate) async fn generate_compressed_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
@@ -274,154 +273,4 @@ where
     .await?;
 
     Ok((compression_key, decompression_key))
-}
-
-/// Note that in the return value, it is possible for [CompressionPrivateKeyShares] to be None
-/// while [CompressionKey], [DecompressionKey] exists because we do not copy the secret shares again.
-pub(crate) async fn distributed_keygen_compression_material<
-    Z: BaseRing,
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >,
-    glwe_sk_share_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    glwe_secret_key_share_compression: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-) -> anyhow::Result<(
-    Option<CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    Option<(CompressionKey, DecompressionKey)>,
-)>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-
-    let compression_material = if let Some(comp_params) =
-        params_basics_handle.get_compression_decompression_params()
-    {
-        match glwe_secret_key_share_compression {
-            Some(inner) => {
-                let compression_keys = generate_compression_decompression_keys(
-                    glwe_sk_share_as_lwe,
-                    glwe_secret_key_share,
-                    inner,
-                    comp_params,
-                    mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                )
-                .await?;
-                (None, Some(compression_keys))
-            }
-            None => {
-                let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
-                    comp_params.raw_compression_parameters,
-                    preprocessing,
-                    comp_params.pmax,
-                    session,
-                )
-                .await?;
-
-                let compression_keys = generate_compression_decompression_keys(
-                    glwe_sk_share_as_lwe,
-                    glwe_secret_key_share,
-                    &private_compression_key,
-                    comp_params,
-                    mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                )
-                .await?;
-                (Some(private_compression_key), Some(compression_keys))
-            }
-        }
-    } else {
-        (None, None)
-    };
-    Ok(compression_material)
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Note that in the return value, it is possible for [CompressionPrivateKeyShares] to be None
-/// while [CompressionKey], [DecompressionKey] exists because we do not copy the secret shares again.
-pub(crate) async fn distributed_keygen_compressed_compression_material<
-    Z: BaseRing,
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >,
-    glwe_sk_share_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    glwe_secret_key_share_compression: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    seed: u128,
-) -> anyhow::Result<(
-    Option<CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    Option<(CompressedCompressionKey, CompressedDecompressionKey)>,
-)>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-
-    let compression_material = if let Some(comp_params) =
-        params_basics_handle.get_compression_decompression_params()
-    {
-        match glwe_secret_key_share_compression {
-            Some(inner) => {
-                let compression_keys = generate_compressed_compression_decompression_keys(
-                    glwe_sk_share_as_lwe,
-                    glwe_secret_key_share,
-                    inner,
-                    comp_params,
-                    mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                    seed,
-                )
-                .await?;
-                (None, Some(compression_keys))
-            }
-            None => {
-                let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
-                    comp_params.raw_compression_parameters,
-                    preprocessing,
-                    comp_params.pmax,
-                    session,
-                )
-                .await?;
-
-                let compression_keys = generate_compressed_compression_decompression_keys(
-                    glwe_sk_share_as_lwe,
-                    glwe_secret_key_share,
-                    &private_compression_key,
-                    comp_params,
-                    mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                    seed,
-                )
-                .await?;
-                (Some(private_compression_key), Some(compression_keys))
-            }
-        }
-    } else {
-        (None, None)
-    };
-    Ok(compression_material)
 }

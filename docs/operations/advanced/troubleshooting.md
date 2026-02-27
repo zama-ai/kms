@@ -16,7 +16,9 @@ kubectl top pods -n <NAMESPACE>
 # Health check (may not be available in Chainguard enclave containers)
 # Use external health check or test endpoints directly
 kubectl port-forward -n <NAMESPACE> <POD_NAME> 9646:9646 &
-curl -f http://localhost:9646/health
+curl -f http://localhost:9646/health    # Health status
+curl -f http://localhost:9646/version   # Version of the KMS running
+curl -f http://localhost:9646/config    # The configuration used
 
 # Recent logs and events - replace <POD_NAME> with actual pod name
 kubectl logs -n <NAMESPACE> <POD_NAME> --tail=100 | grep -E "(ERROR|FATAL|PANIC|WARN)"

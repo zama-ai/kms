@@ -294,7 +294,7 @@ pub(crate) async fn key_gen_background<
     }
     match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
-            let compression_id = match internal_keyset_config.get_compression_id() {
+            let compression_id = match internal_keyset_config.get_existing_compression_key_id() {
                 Ok(compression_id) => compression_id,
                 Err(e) => {
                     let _ = update_err_req_in_meta_store(
@@ -360,7 +360,6 @@ pub(crate) async fn key_gen_background<
 
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
-
         KeySetConfig::DecompressionOnly => {
             let (from, to) = match internal_keyset_config.get_from_and_to() {
                 Ok((from, to)) => (from, to),

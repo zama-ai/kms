@@ -70,6 +70,7 @@ pub fn bench_memory<
     print_memory_usage(bench_name, results);
 }
 
+#[allow(unused)]
 pub const ALL_PARAMS: [(&str, DKGParams); 5] = [
     ("NIST_PARAMS_P32_SNS_LWE", NIST_PARAMS_P32_SNS_LWE),
     ("NIST_PARAMS_P32_SNS_FGLWE", NIST_PARAMS_P32_SNS_FGLWE),
@@ -78,6 +79,7 @@ pub const ALL_PARAMS: [(&str, DKGParams); 5] = [
     ("BC_PARAMS_SNS", BC_PARAMS_SNS),
 ];
 
+#[allow(unused)]
 pub fn set_plan() {
     for n in [512, 1024, 2048] {
         let my_plan = Plan::new(
@@ -94,6 +96,7 @@ pub fn set_plan() {
     }
 }
 
+#[allow(unused)]
 pub fn generate_tfhe_keys(params: &DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
 

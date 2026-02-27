@@ -3,7 +3,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
-    telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
+    telemetry::{init_telemetry, ConfigTracing, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp, path::PathBuf};
@@ -14,6 +14,8 @@ use validator::{Validate, ValidationErrors};
 pub mod threshold;
 
 /// Common configuration parameters that should be set in all scenarios
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CoreConfig {
@@ -62,6 +64,8 @@ impl Default for InternalConfig {
     }
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceEndpoint {
@@ -78,10 +82,6 @@ pub struct ServiceEndpoint {
     pub grpc_max_message_size: usize,
 }
 
-pub trait ConfigTracing {
-    fn telemetry(&self) -> Option<TelemetryConfig>;
-}
-
 impl ConfigTracing for CoreConfig {
     fn telemetry(&self) -> Option<TelemetryConfig> {
         self.telemetry.clone()
@@ -90,6 +90,8 @@ impl ConfigTracing for CoreConfig {
 
 /// Override AWS configuration when running in Nitro enclaves or in test
 /// environments
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct AWSConfig {
@@ -104,6 +106,8 @@ pub struct AWSConfig {
 }
 
 /// Where and how to store the key material
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct VaultConfig {
@@ -115,6 +119,8 @@ pub struct VaultConfig {
 }
 
 /// How to store the key material
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum Storage {
@@ -137,6 +143,8 @@ impl Validate for Storage {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct RamStorage {}
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct FileStorage {
@@ -144,6 +152,8 @@ pub struct FileStorage {
     pub prefix: Option<String>,
 }
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct S3Storage {
@@ -214,22 +224,8 @@ pub async fn init_conf_kms_core_telemetry<
 ) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
     let full_config: T = init_conf(config_file)?;
     full_config.validate()?;
-    let telemetry = full_config.telemetry().unwrap_or_else(|| {
-        TelemetryConfig::builder()
-            .tracing_service_name("kms_core".to_string())
-            .build()
-    });
-    let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
+    let (tracer_provider, meter_provider) = init_telemetry(&full_config).await?;
     Ok((full_config, tracer_provider, meter_provider))
-}
-
-/// Initialize the tracing configuration with default values
-pub async fn init_kms_core_telemetry() -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
-    let telemetry = TelemetryConfig::builder()
-        .tracing_service_name("kms_core".to_string())
-        .build();
-    let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
-    Ok((tracer_provider, meter_provider))
 }
 
 #[cfg(test)]

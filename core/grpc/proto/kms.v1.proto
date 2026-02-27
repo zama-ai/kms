@@ -29,11 +29,12 @@ message StandardKeySetConfig {
   // Computation key type.
   ComputeKeyType compute_key_type = 1;
 
-  // The compression configuration.
-  KeySetCompressionConfig keyset_compression_config = 2;
+  // The secret key configuration.
+  KeyGenSecretKeyConfig secret_key_config = 2;
 
   // Configuration for generating compressed vs uncompressed keys.
   // Compressed keys use XOF-seeded compression and are smaller.
+  // (We may rename this to KeyGenPublicKeyConfig.)
   CompressedKeyConfig compressed_key_config = 3;
 }
 
@@ -44,14 +45,25 @@ enum ComputeKeyType {
 }
 
 message KeySetAddedInfo {
-  // Must be set if KeySetCompressionConfig::UseExisting is used
-  RequestId compression_keyset_id = 1;
+  // Must be set if KeyGenSecretKeyConfig::UseExistingCompressionSecretKey is used
+  RequestId existing_compression_keyset_id = 1;
+
+  // Can be set if KeyGenSecretKeyConfig::UseExistingCompressionSecretKey is used,
+  // if it's not set then the epoch ID from the KeyGenRequest is used.
+  RequestId compression_epoch_id = 2;
 
   // Must be set if KeySetType::DecompressionOnly is used
-  RequestId from_keyset_id_decompression_only = 2;
+  RequestId from_keyset_id_decompression_only = 3;
 
   // Must be set if KeySetType::DecompressionOnly is used
-  RequestId to_keyset_id_decompression_only = 3;
+  RequestId to_keyset_id_decompression_only = 4;
+
+  // Must be set if KeyGenSecretKeyConfig::UseExisting is used
+  RequestId existing_keyset_id = 5;
+
+  // Can be set if KeyGenSecretKeyConfig::UseExisting is used,
+  // if it's not set then the epoch ID from the KeyGenRequest is used.
+  RequestId existing_epoch_id = 6;
 }
 
 // The keyset configuration message.
@@ -105,10 +117,18 @@ message PartialKeyGenPreprocRequest {
   PartialKeyGenPreprocParams partial_params = 2;
 }
 
-enum KeySetCompressionConfig {
-  // The default must be represented by 0.
-  Generate = 0;
+enum KeyGenSecretKeyConfig {
+  // The default must be represented by 0, which is to generate all the secret keys.
+  GenerateAll = 0;
+
+  // Use existing secret shares to generate the keyset, the key ID and epoch ID
+  // that points to the shares must be given by KeySetAddedInfo.
   UseExisting = 1;
+
+  // Use the secret share from an existing compression secret key,
+  // but generate the other shares. The share of the existing compresssion secret key
+  // must be given by KeySetAddedInfo.
+  UseExistingCompressionSecretKey = 2;
 }
 
 // Configuration for whether to generate compressed or uncompressed keys.
@@ -172,7 +192,8 @@ message KeyGenRequest {
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 7;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The epoch ID for the key generation, i.e., the shares produced
+  // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility-generate-v0-13-0"
-version = "0.13.0"
+version = "0.13.3"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -9,16 +9,16 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", tag = "v0.13.0-rc.2" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", tag = "v0.13.3" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
 # Each generator may need different versions to match its target KMS version.
 
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
-kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", tag = "v0.13.0-rc.2"}
-kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", tag = "v0.13.0-rc.2"}
-threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", tag = "v0.13.0-rc.2", features = [
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", tag = "v0.13.3"}
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", tag = "v0.13.3"}
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", tag = "v0.13.3", features = [
     "testing",
 ] }
 

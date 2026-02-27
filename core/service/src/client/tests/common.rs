@@ -35,11 +35,37 @@ pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySet
             keyset_type: KeySetType::Standard.into(),
             standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
                 compute_key_type: 0,
-                keyset_compression_config: 0,
+                secret_key_config: 0,
                 compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
             }),
         }),
         None,
+    )
+}
+
+/// Returns compressed keygen config that reuses existing secret key shares
+#[cfg(feature = "slow_tests")]
+pub(crate) fn compressed_from_existing_keygen_config(
+    existing_keyset_id: &RequestId,
+    existing_epoch_id: &kms_grpc::identifiers::EpochId,
+) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting.into(),
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
+        }),
+        Some(KeySetAddedInfo {
+            existing_compression_keyset_id: None,
+            compression_epoch_id: None,
+            from_keyset_id_decompression_only: None,
+            to_keyset_id_decompression_only: None,
+            existing_keyset_id: Some((*existing_keyset_id).into()),
+            existing_epoch_id: Some((*existing_epoch_id).into()),
+        }),
     )
 }
 
@@ -55,9 +81,12 @@ pub(crate) fn decompression_keygen_config(
             standard_keyset_config: None,
         }),
         Some(KeySetAddedInfo {
-            compression_keyset_id: None,
+            existing_compression_keyset_id: None,
+            compression_epoch_id: None,
             from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
+            existing_keyset_id: None,
+            existing_epoch_id: None,
         }),
     )
 }
