@@ -24,12 +24,15 @@
 //! they are not part of one of the two contexts.
 
 use alloy_dyn_abi::Eip712Domain;
-use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
+use futures_util::{
+    future::{join_all, BoxFuture},
+    FutureExt, TryFutureExt,
+};
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{
         DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest,
-        PreviousEpochInfo, RequestId,
+        PreviousEpochInfo, RequestId, ResponseResharedKey,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
@@ -86,10 +89,9 @@ use crate::{
         rate_limiter::RateLimiter,
     },
     vault::storage::{
-        crypto_material::ThresholdCryptoMaterialStorage,
-        delete_at_request_and_epoch_id, delete_at_request_id,
-        s3::{ReadOnlyS3Storage, RealReadOnlyS3StorageGetter},
-        store_versioned_at_request_id, Storage, StorageExt,
+        crypto_material::ThresholdCryptoMaterialStorage, delete_at_request_and_epoch_id,
+        delete_at_request_id, s3::RealReadOnlyS3StorageGetter, store_versioned_at_request_id,
+        Storage, StorageExt,
     },
 };
 
@@ -103,12 +105,7 @@ const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 3;
 const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 4;
 
 #[derive(Debug)]
-struct VerifiedPreviousEpochInfo {
-    /// The KMS context of the parties that will reshare
-    /// the shares of the private key
-    pub context_id: ContextId,
-    /// epochId we reshare the shares from.
-    pub epoch_id: EpochId,
+struct VerifiedKeyInfo {
     /// keyID of the key to be reshared.
     pub key_id: kms_grpc::RequestId,
     /// Preprocessing ID that was used to generate the key initially
@@ -123,6 +120,15 @@ struct VerifiedPreviousEpochInfo {
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
     pub eip712_domain: Eip712Domain,
+}
+#[derive(Debug)]
+struct VerifiedPreviousEpochInfo {
+    /// The KMS context of the parties that will reshare
+    /// the shares of the private key
+    pub context_id: ContextId,
+    /// epochId we reshare the shares from.
+    pub epoch_id: EpochId,
+    pub keys_info: Vec<VerifiedKeyInfo>,
 }
 
 /// Parses the [`PreviousEpochInfo`] proto message and verifies its contents.
@@ -145,70 +151,78 @@ fn verify_epoch_info(
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&previous_epoch.epoch_id, RequestIdParsingErr::Epoch)
             .map_err(make_metriced_err)?;
-
-    let key_id = parse_optional_grpc_request_id(
-        &previous_epoch.key_id,
-        RequestIdParsingErr::Other("Key ID in PreviousEpochInfo".to_string()),
-    )
-    .map_err(make_metriced_err)?;
-
-    // Using the old PreprocId of the key request for now.
-    let preproc_id = parse_optional_grpc_request_id(
-        &previous_epoch.preproc_id,
-        RequestIdParsingErr::Other("Preproc ID in PreviousEpochInfo".to_string()),
-    )
-    .map_err(make_metriced_err)?;
-
-    let eip712_domain =
-        optional_protobuf_to_alloy_domain(previous_epoch.domain.as_ref()).map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(*epoch_id_as_request_id),
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-
-    let key_parameters =
-        retrieve_parameters(Some(previous_epoch.key_parameters)).map_err(make_metriced_err)?;
-
-    // collect key digests
-    let key_digests: HashMap<PubDataType, Vec<u8>> = previous_epoch
-        .key_digests
+    let keys_info = previous_epoch
+        .keys_info
         .into_iter()
-        .map(|kd| {
-            let key_type = kd.key_type.parse::<PubDataType>()?; // we do not use safe serialize because these are not known by the gateway
-            Ok((key_type, kd.digest))
-        })
-        .collect::<anyhow::Result<HashMap<PubDataType, Vec<u8>>>>()
-        .map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(*epoch_id_as_request_id),
-                e,
-                tonic::Code::InvalidArgument,
+        .map(|key_info| {
+            let key_id = parse_optional_grpc_request_id(
+                &key_info.key_id,
+                RequestIdParsingErr::Other("Key ID in PreviousEpochInfo".to_string()),
             )
-        })?;
+            .map_err(make_metriced_err)?;
+
+            // Using the old PreprocId of the key request for now.
+            let preproc_id = parse_optional_grpc_request_id(
+                &key_info.preproc_id,
+                RequestIdParsingErr::Other("Preproc ID in PreviousEpochInfo".to_string()),
+            )
+            .map_err(make_metriced_err)?;
+
+            let eip712_domain = optional_protobuf_to_alloy_domain(key_info.domain.as_ref())
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(*epoch_id_as_request_id),
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                })?;
+
+            let key_parameters =
+                retrieve_parameters(Some(key_info.key_parameters)).map_err(make_metriced_err)?;
+
+            // collect key digests
+            let key_digests: HashMap<PubDataType, Vec<u8>> = key_info
+                .key_digests
+                .into_iter()
+                .map(|kd| {
+                    let key_type = kd.key_type.parse::<PubDataType>()?; // we do not use safe serialize because these are not known by the gateway
+                    Ok((key_type, kd.digest))
+                })
+                .collect::<anyhow::Result<HashMap<PubDataType, Vec<u8>>>>()
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(*epoch_id_as_request_id),
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                })?;
+            Ok(VerifiedKeyInfo {
+                key_id,
+                preproc_id,
+                key_parameters,
+                key_digests,
+                eip712_domain,
+            })
+        })
+        .try_collect()?;
 
     Ok(VerifiedPreviousEpochInfo {
         context_id,
         epoch_id,
-        key_id,
-        preproc_id,
-        key_parameters,
-        key_digests,
-        eip712_domain,
+        keys_info,
     })
 }
 
 #[derive(Clone)]
 pub enum EpochOutput {
     PRSSInitOnly,
-    Reshare(KeyGenMetadata),
+    Reshare(Vec<KeyGenMetadata>),
 }
 
-impl From<KeyGenMetadata> for EpochOutput {
-    fn from(meta: KeyGenMetadata) -> Self {
+impl From<Vec<KeyGenMetadata>> for EpochOutput {
+    fn from(meta: Vec<KeyGenMetadata>) -> Self {
         EpochOutput::Reshare(meta)
     }
 }
@@ -373,26 +387,33 @@ impl<
         &self,
         epoch_id_as_request_id: kms_grpc::RequestId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
-    ) -> Result<(PrivateKeySet<4>, KeyGenMetadata), MetricedError> {
-        let keys = self
-            .crypto_storage
-            .read_guarded_threshold_fhe_keys(
-                &verified_previous_epoch.key_id,
-                &verified_previous_epoch.epoch_id,
-            )
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_NEW_EPOCH,
-                    Some(epoch_id_as_request_id),
-                    e,
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-        let private_keyset = keys.private_keys.as_ref().clone();
-        let meta_data = keys.meta_data.clone();
+    ) -> Result<Vec<(PrivateKeySet<4>, KeyGenMetadata)>, MetricedError> {
+        let futures = verified_previous_epoch
+            .keys_info
+            .iter()
+            .map(|key_info| async {
+                let keys = self
+                    .crypto_storage
+                    .read_guarded_threshold_fhe_keys(
+                        &key_info.key_id,
+                        &verified_previous_epoch.epoch_id,
+                    )
+                    .await
+                    .map_err(|e| {
+                        MetricedError::new(
+                            OP_NEW_EPOCH,
+                            Some(epoch_id_as_request_id),
+                            e,
+                            tonic::Code::InvalidArgument,
+                        )
+                    })?;
+                let private_keyset = keys.private_keys.as_ref().clone();
+                let meta_data = keys.meta_data.clone();
+                Ok((private_keyset, meta_data))
+            });
 
-        Ok((private_keyset, meta_data))
+        // Concurrently fetch the keys but collect them in order
+        join_all(futures).await.into_iter().collect()
     }
 
     async fn reshare_as_set_1(
@@ -403,24 +424,30 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let (mut private_keys, key_metadata) = self
+        let keys = self
             .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         let task = async move {
-            Reshare::reshare_sk_two_sets_as_s1(
-                &mut two_sets_session,
-                &mut private_keys,
-                verified_previous_epoch.key_parameters,
-            )
-            .await?;
+            let mut keys_metadata = Vec::new();
+            for ((mut private_keys, key_metadata), key_info) in
+                keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
+            {
+                Reshare::reshare_sk_two_sets_as_s1(
+                    &mut two_sets_session,
+                    &mut private_keys,
+                    key_info.key_parameters,
+                )
+                .await?;
+                keys_metadata.push(key_metadata);
+            }
 
             // We update the meta store with the same metadata as in the epoch we reshare from
             meta_store.write().await.update(
                 &epoch_id_as_request_id,
-                Ok(EpochOutput::Reshare(key_metadata)),
+                Ok(EpochOutput::Reshare(keys_metadata)),
             )?;
 
             Ok(())
@@ -498,86 +525,102 @@ impl<
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
-        verified_material: VerifiedPublicMaterial,
-        new_private_keyset: PrivateKeySet<4>,
+        verified_materials: Vec<VerifiedPublicMaterial>,
+        new_private_keysets: Vec<PrivateKeySet<4>>,
     ) -> anyhow::Result<()> {
-        match verified_material {
-            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                let info = match compute_info_standard_keygen(
-                    sk,
-                    &DSEP_PUBDATA_KEY,
-                    &verified_previous_epoch.preproc_id,
-                    &verified_previous_epoch.key_id,
-                    &fhe_pubkeys,
-                    &verified_previous_epoch.eip712_domain,
-                ) {
-                    Ok(info) => info,
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
-                    }
-                };
+        let mut all_infos = Vec::new();
+        for (verified_material, (new_private_keyset, key_info)) in
+            verified_materials.into_iter().zip_eq(
+                new_private_keysets
+                    .into_iter()
+                    .zip_eq(verified_previous_epoch.keys_info.iter()),
+            )
+        {
+            match verified_material {
+                VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                    let info = match compute_info_standard_keygen(
+                        sk,
+                        &DSEP_PUBDATA_KEY,
+                        &key_info.preproc_id,
+                        &key_info.key_id,
+                        &fhe_pubkeys,
+                        &key_info.eip712_domain,
+                    ) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
+                        }
+                    };
 
-                let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-                    fhe_pubkeys.server_key.clone().into_raw_parts();
+                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                        fhe_pubkeys.server_key.clone().into_raw_parts();
 
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(new_private_keyset),
-                    public_material: PublicKeyMaterial::Uncompressed {
-                        integer_server_key: Arc::new(integer_server_key),
-                        sns_key: sns_key.map(Arc::new),
-                        decompression_key: decompression_key.map(Arc::new),
-                    },
-                    meta_data: info,
-                };
+                    let threshold_fhe_keys = ThresholdFheKeys {
+                        private_keys: Arc::new(new_private_keyset),
+                        public_material: PublicKeyMaterial::Uncompressed {
+                            integer_server_key: Arc::new(integer_server_key),
+                            sns_key: sns_key.map(Arc::new),
+                            decompression_key: decompression_key.map(Arc::new),
+                        },
+                        meta_data: info.clone(),
+                    };
 
-                crypto_storage
-                    .write_threshold_keys_with_epoch_meta_store(
-                        &verified_previous_epoch.key_id,
-                        &new_epoch_id,
-                        threshold_fhe_keys,
-                        fhe_pubkeys,
-                        meta_store,
-                    )
-                    .await;
-            }
-            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                let info = match compute_info_compressed_keygen(
-                    sk,
-                    &DSEP_PUBDATA_KEY,
-                    &verified_previous_epoch.preproc_id,
-                    &verified_previous_epoch.key_id,
-                    &compressed_keyset,
-                    &verified_previous_epoch.eip712_domain,
-                ) {
-                    Ok(info) => info,
-                    Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "Failed to compute compressed key info: {}",
-                            e
-                        ));
-                    }
-                };
-
-                let public_material = PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
-
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(new_private_keyset),
-                    public_material,
-                    meta_data: info,
-                };
-
-                crypto_storage
-                    .write_threshold_keys_with_epoch_meta_store_compressed(
-                        &verified_previous_epoch.key_id,
-                        &new_epoch_id,
-                        threshold_fhe_keys,
+                    crypto_storage
+                        .inner_write_threshold_keys(
+                            &key_info.key_id,
+                            &new_epoch_id,
+                            threshold_fhe_keys,
+                            fhe_pubkeys,
+                            Arc::clone(&meta_store),
+                        )
+                        .await;
+                    all_infos.push(info);
+                }
+                VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                    let info = match compute_info_compressed_keygen(
+                        sk,
+                        &DSEP_PUBDATA_KEY,
+                        &key_info.preproc_id,
+                        &key_info.key_id,
                         &compressed_keyset,
-                        meta_store,
-                    )
-                    .await;
+                        &key_info.eip712_domain,
+                    ) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to compute compressed key info: {}",
+                                e
+                            ));
+                        }
+                    };
+
+                    let public_material =
+                        PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
+
+                    let threshold_fhe_keys = ThresholdFheKeys {
+                        private_keys: Arc::new(new_private_keyset),
+                        public_material,
+                        meta_data: info.clone(),
+                    };
+
+                    crypto_storage
+                        .inner_write_threshold_keys_compressed(
+                            &key_info.key_id,
+                            &new_epoch_id,
+                            threshold_fhe_keys,
+                            &compressed_keyset,
+                            Arc::clone(&meta_store),
+                        )
+                        .await;
+                    all_infos.push(info);
+                }
             }
         }
-        Ok(())
+
+        meta_store
+            .write()
+            .await
+            .update(&new_epoch_id.into(), Ok(EpochOutput::Reshare(all_infos)))
     }
 
     async fn reshare_as_set_2(
@@ -589,15 +632,22 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
-            &self.crypto_storage,
-            &epoch_id_as_request_id,
-            &verified_previous_epoch.key_id,
-            &verified_previous_epoch.context_id,
-            &verified_previous_epoch.key_digests,
-            &RealReadOnlyS3StorageGetter {},
-        )
-        .await?;
+        let verified_materials = join_all(verified_previous_epoch.keys_info.iter().map(
+            |key_info| async {
+                get_verified_public_materials(
+                    &self.crypto_storage,
+                    &epoch_id_as_request_id,
+                    &key_info.key_id,
+                    &verified_previous_epoch.context_id,
+                    &key_info.key_digests,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+                .await
+            },
+        ))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<VerifiedPublicMaterial>, MetricedError>>()?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
@@ -624,22 +674,30 @@ impl<
                 .filter(|p| p.is_set1())
                 .count();
 
-            let num_needed_preproc = ResharePreprocRequired::new(
-                num_parties_set_1,
-                verified_previous_epoch.key_parameters,
-            );
+            let mut new_private_keysets = Vec::new();
+            let sessions_online = &mut (two_sets_session, session_online);
+            for key_info in verified_previous_epoch.keys_info.iter() {
+                let num_needed_preproc =
+                    ResharePreprocRequired::new(num_parties_set_1, key_info.key_parameters);
 
-            let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
-                Self::compute_s2_preproc(&mut session_z64, &mut session_z128, &num_needed_preproc)
+                let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
+                    Self::compute_s2_preproc(
+                        &mut session_z64,
+                        &mut session_z128,
+                        &num_needed_preproc,
+                    )
                     .await?;
 
-            let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
-                &mut (two_sets_session, session_online),
-                &mut correlated_randomness_z128,
-                &mut correlated_randomness_z64,
-                verified_previous_epoch.key_parameters,
-            )
-            .await?;
+                let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
+                    sessions_online,
+                    &mut correlated_randomness_z128,
+                    &mut correlated_randomness_z64,
+                    key_info.key_parameters,
+                )
+                .await?;
+
+                new_private_keysets.push(new_private_keyset);
+            }
 
             Self::store_reshared_keys(
                 &crypto_storage,
@@ -647,8 +705,8 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                verified_material,
-                new_private_keyset,
+                verified_materials,
+                new_private_keysets,
             )
             .await
         };
@@ -665,17 +723,24 @@ impl<
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let verified_material = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
-            &self.crypto_storage,
-            &epoch_id_as_request_id,
-            &verified_previous_epoch.key_id,
-            &verified_previous_epoch.context_id,
-            &verified_previous_epoch.key_digests,
-            &RealReadOnlyS3StorageGetter {},
-        )
-        .await?;
+        let verified_materials = join_all(verified_previous_epoch.keys_info.iter().map(
+            |key_info| async {
+                get_verified_public_materials(
+                    &self.crypto_storage,
+                    &epoch_id_as_request_id,
+                    &key_info.key_id,
+                    &verified_previous_epoch.context_id,
+                    &key_info.key_digests,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+                .await
+            },
+        ))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<VerifiedPublicMaterial>, MetricedError>>()?;
 
-        let (mut mutable_keys, _) = self
+        let keys = self
             .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
@@ -702,23 +767,35 @@ impl<
                 .iter()
                 .filter(|p| p.is_set1())
                 .count();
-            let num_needed_preproc = ResharePreprocRequired::new(
-                num_parties_set_1,
-                verified_previous_epoch.key_parameters,
-            );
 
-            let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
-                Self::compute_s2_preproc(&mut session_z64, &mut session_z128, &num_needed_preproc)
+            let mut new_private_keysets = Vec::new();
+            let sessions_online = &mut (two_sets_session, session_online);
+
+            for (key_info, (mut private_keyset, _)) in verified_previous_epoch
+                .keys_info
+                .iter()
+                .zip_eq(keys.into_iter())
+            {
+                let num_needed_preproc =
+                    ResharePreprocRequired::new(num_parties_set_1, key_info.key_parameters);
+                let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
+                    Self::compute_s2_preproc(
+                        &mut session_z64,
+                        &mut session_z128,
+                        &num_needed_preproc,
+                    )
                     .await?;
 
-            let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
-                &mut (two_sets_session, session_online),
-                &mut correlated_randomness_z128,
-                &mut correlated_randomness_z64,
-                &mut mutable_keys,
-                verified_previous_epoch.key_parameters,
-            )
-            .await?;
+                let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
+                    sessions_online,
+                    &mut correlated_randomness_z128,
+                    &mut correlated_randomness_z64,
+                    &mut private_keyset,
+                    key_info.key_parameters,
+                )
+                .await?;
+                new_private_keysets.push(new_private_keyset);
+            }
 
             Self::store_reshared_keys(
                 &crypto_storage,
@@ -726,8 +803,8 @@ impl<
                 &sk,
                 new_epoch_id,
                 &verified_previous_epoch,
-                verified_material,
-                new_private_keyset,
+                verified_materials,
+                new_private_keysets,
             )
             .await
         };
@@ -828,10 +905,10 @@ impl<
         previous_epoch: PreviousEpochInfo,
     ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
         tracing::info!(
-            "Received initiate resharing request from context {:?} to context {:?} for Key ID {:?} for epoch ID {:?}",
+            "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
             previous_epoch.context_id,
             new_context_id,
-            previous_epoch.key_id,
+            previous_epoch.keys_info.iter().map(|k| &k.key_id).collect::<Vec<_>>(),
             new_epoch_id
         );
 
@@ -1048,52 +1125,54 @@ impl<
                     request_id
                 );
                 Ok(Response::new(EpochResultResponse {
-                    key_id: None,
-                    preprocessing_id: None,
-                    key_digests: vec![],
-                    external_signature: vec![],
+                    reshare_responses: vec![],
                 }))
             }
-            EpochOutput::Reshare(res) => match res {
-                KeyGenMetadata::Current(res) => {
-                    tracing::info!(
-                        "Retrieved reshare result for request ID {:?}. Key id is {}",
-                        request_id,
-                        res.key_id
-                    );
+            EpochOutput::Reshare(results) => {
+                let mut reshare_responses = Vec::new();
+                for res in results {
+                    match res {
+                        KeyGenMetadata::Current(res) => {
+                            tracing::info!(
+                                "Retrieved reshare result for request ID {:?}. Key id is {}",
+                                request_id,
+                                res.key_id
+                            );
 
-                    // Note: This relies on the ordering of the PubDataType enum
-                    // which must be kept stable (in particular, ServerKey must be before PublicKey)
-                    let key_digests = res
-                        .key_digest_map
-                        .into_iter()
-                        .sorted_by_key(|x| x.0)
-                        .map(|(key, digest)| KeyDigest {
-                            key_type: key.to_string(),
-                            digest,
-                        })
-                        .collect::<Vec<_>>();
-
-                    Ok(Response::new(EpochResultResponse {
-                        key_id: Some(res.key_id.into()),
-                        preprocessing_id: Some(res.preprocessing_id.into()),
-                        key_digests,
-                        external_signature: res.external_signature,
-                    }))
-                }
-                KeyGenMetadata::LegacyV0(_res) => {
-                    tracing::error!("Resharing should not return legacy metadata");
-                    Err(MetricedError::new(
-                        OP_GET_EPOCH_RESULT,
-                        Some(request_id),
-                        anyhow::anyhow!(
+                            // Note: This relies on the ordering of the PubDataType enum
+                            // which must be kept stable (in particular, ServerKey must be before PublicKey)
+                            let key_digests = res
+                                .key_digest_map
+                                .into_iter()
+                                .sorted_by_key(|x| x.0)
+                                .map(|(key, digest)| KeyDigest {
+                                    key_type: key.to_string(),
+                                    digest,
+                                })
+                                .collect::<Vec<_>>();
+                            reshare_responses.push(ResponseResharedKey {
+                                key_id: Some(res.key_id.into()),
+                                preprocessing_id: Some(res.preprocessing_id.into()),
+                                key_digests,
+                                external_signature: res.external_signature,
+                            });
+                        }
+                        KeyGenMetadata::LegacyV0(_res) => {
+                            tracing::error!("Resharing should not return legacy metadata");
+                            return Err(MetricedError::new(
+                                OP_GET_EPOCH_RESULT,
+                                Some(request_id),
+                                anyhow::anyhow!(
                             "Resharing should not return legacy metadata for request ID {:?}",
                             request_id
                         ),
-                        tonic::Code::InvalidArgument,
-                    ))
+                                tonic::Code::InvalidArgument,
+                            ));
+                        }
+                    }
                 }
-            },
+                Ok(Response::new(EpochResultResponse { reshare_responses }))
+            }
         }
     }
 }
@@ -1119,7 +1198,7 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::{
-        kms::v1::{FheParameter, NewMpcEpochRequest},
+        kms::v1::{FheParameter, KeyInfo, NewMpcEpochRequest},
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
@@ -1473,11 +1552,13 @@ pub(crate) mod tests {
         let valid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(key_id.into()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
 
@@ -1490,11 +1571,13 @@ pub(crate) mod tests {
         let invalid_previous_epoch = PreviousEpochInfo {
             context_id: Some(bad_req_id.clone()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(key_id.into()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1502,11 +1585,13 @@ pub(crate) mod tests {
         let missing_field_previous_epoch = PreviousEpochInfo {
             context_id: None,
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(key_id.into()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1514,11 +1599,13 @@ pub(crate) mod tests {
         let invalid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(bad_req_id.clone()),
-            key_id: Some(key_id.into()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1526,11 +1613,13 @@ pub(crate) mod tests {
         let missing_field_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: None,
-            key_id: Some(key_id.into()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1538,11 +1627,13 @@ pub(crate) mod tests {
         let invalid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(bad_req_id.clone()),
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(bad_req_id.clone()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1550,11 +1641,13 @@ pub(crate) mod tests {
         let missing_field_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: None,
-            preproc_id: Some(preproc_id.into()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: None,
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1562,11 +1655,13 @@ pub(crate) mod tests {
         let invalid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(key_id.into()),
-            preproc_id: Some(bad_req_id.clone()),
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain.clone()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(bad_req_id.clone()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1574,11 +1669,13 @@ pub(crate) mod tests {
         let missing_field_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
-            key_id: Some(key_id.into()),
-            preproc_id: None,
-            key_parameters: FheParameter::Test as i32,
-            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-            domain: Some(domain),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: None,
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain),
+            }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
     }
