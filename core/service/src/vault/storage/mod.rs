@@ -766,6 +766,24 @@ pub mod tests {
         assert_eq!(epochs.len(), 2);
         assert!(epochs.contains(&epoch1));
         assert!(epochs.contains(&epoch2));
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id3, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id4, &epoch2, &data_type)
+            .await
+            .unwrap();
     }
 
     pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {
@@ -872,6 +890,9 @@ pub mod tests {
         // Read back and verify it is still the original bytes
         let loaded = storage.load_bytes(&data_id, &data_type).await.unwrap();
         assert_eq!(loaded, original_bytes, "Bytes should not be overwritten");
+
+        // Clean up
+        storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
     pub(crate) async fn test_store_data_does_not_overwrite_existing_data<S: Storage>(
@@ -897,6 +918,9 @@ pub mod tests {
         // Read back and verify it is still the original data
         let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
         assert_eq!(loaded.i, original_data.i, "Data should not be overwritten");
+
+        // Clean up
+        storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
