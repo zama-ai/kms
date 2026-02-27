@@ -334,7 +334,7 @@ impl GrpcNetworkingManager {
             tracing::warn!("force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments.");
         }
 
-        #[cfg(not(feature = "testing"))]
+        #[cfg(not(any(test, feature = "testing")))]
         if tls_conf.is_none() {
             return Err(error_utils::anyhow_error_and_log(
                 "TLS configuration must be provided in non-testing environments",
@@ -971,7 +971,7 @@ fn sender_verification(
         }
 
         // Without testing feature, TLS is mandatory
-        #[cfg(not(feature = "testing"))]
+        #[cfg(not(any(test, feature = "testing")))]
         {
             tracing::error!(
                 "Could not find a TLS certificate in the request to verify user's identity."

@@ -514,12 +514,19 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         let mut rx = rx.lock().await;
 
         tracing::debug!("Waiting to receive from {:?}", sender);
+        let deadline = Networking::<R>::get_timeout_current_round(self).await;
         let mut tick_interval = tokio::time::interval_at(
             (Instant::now() + self.conf.get_max_waiting_time_for_message_queue()).into(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
         let mut local_packet = loop {
             let packet = tokio::select! {
+                    _ = tokio::time::sleep_until(deadline.into()) => {
+                        return Err(anyhow_error_and_log(format!(
+                            "Timed out waiting to receive from {:?} for session {:?}",
+                            sender.get_role_kind(), self.session_id
+                        )));
+                    },
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
                         if self.completed_parties.contains(&sender.get_role_kind()) {
@@ -698,9 +705,9 @@ mod tests {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let id_1 = Identity::new("127.0.0.1".to_string(), 7001, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 6002, None);
+        let id_2 = Identity::new("127.0.0.1".to_string(), 7002, None);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
@@ -802,15 +809,17 @@ mod tests {
                 server_terminate_tx.send(()).unwrap();
                 server_handle.await.unwrap();
 
-                (role_2, msg)
+                // Return networking to avoid blocking drop inside the spawned task
+                (role_2, msg, networking)
             })
         };
 
         // Wait for first receiver to complete
-        let (role, msg) = tokio::time::timeout(Duration::from_secs(300), first_receiver_handle)
-            .await
-            .unwrap()
-            .unwrap();
+        let (role, msg, _networking_1) =
+            tokio::time::timeout(Duration::from_secs(300), first_receiver_handle)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(role, role_2);
         assert_eq!(msg, vec![1u8; 10]);
 
@@ -844,15 +853,17 @@ mod tests {
                 server_terminate_tx.send(()).unwrap();
                 server_handle.await.unwrap();
 
-                (role_2, msg)
+                // Return networking to avoid blocking drop inside the spawned task
+                (role_2, msg, networking)
             })
         };
 
         // Wait for second receiver to complete
-        let (role, msg) = tokio::time::timeout(Duration::from_secs(300), second_receiver_handle)
-            .await
-            .unwrap()
-            .unwrap();
+        let (role, msg, _networking_2) =
+            tokio::time::timeout(Duration::from_secs(150), second_receiver_handle)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(role, role_2);
         assert_eq!(msg, vec![1u8; 10]);
 
@@ -871,9 +882,9 @@ mod tests {
     #[tokio::test()]
     async fn test_network_session() {
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let id_1 = Identity::new("127.0.0.1".to_string(), 8001, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 6002, None);
+        let id_2 = Identity::new("127.0.0.1".to_string(), 8002, None);
 
         let role_assignment = {
             let mut role_assignment = RoleAssignment::default();
@@ -1005,6 +1016,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
     async fn test_two_set_network() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
@@ -1035,6 +1047,7 @@ mod tests {
         // Keep a Vec for collecting results
         let mut server_handles = JoinSet::new();
         let mut client_handles = JoinSet::new();
+        let mut shutdown_txs = Vec::new();
         for (role, id) in role_assignment.iter() {
             let role = *role;
             let my_port = id.port();
@@ -1047,12 +1060,19 @@ mod tests {
             let networking_server = networking.new_server(TlsExtensionGetter::default());
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
 
-            let core_router = tonic::transport::Server::builder()
+            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
+            shutdown_txs.push(shutdown_tx);
+
+            let core_future = tonic::transport::Server::builder()
                 .timeout(Duration::from_secs(300))
                 .layer(core_grpc_layer)
-                .add_service(networking_server);
-
-            let core_future = core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
+                .add_service(networking_server)
+                .serve_with_shutdown(
+                    format!("127.0.0.1:{my_port}").parse().unwrap(),
+                    async move {
+                        let _ = shutdown_rx.changed().await;
+                    },
+                );
 
             // Spawn server
             let my_role = role;
@@ -1105,5 +1125,10 @@ mod tests {
                 );
             }
         }
+
+        // Signal all servers to shut down
+        drop(shutdown_txs);
+        // Wait for servers to finish
+        while server_handles.join_next().await.is_some() {}
     }
 }
