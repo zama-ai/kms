@@ -761,7 +761,6 @@ mod tests {
             test_store_data_does_not_overwrite_existing_data,
         },
     };
-    use aes_prng::AesRng;
 
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -772,7 +771,7 @@ mod tests {
             s3_client,
             BUCKET_NAME.to_string(),
             storage_type,
-            Some(&prefix),
+            Some(prefix),
             None,
         )
         .unwrap()
