@@ -399,11 +399,17 @@ impl StorageReaderExt for S3Storage {
         // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,
         // not as objects in contents()
         for cur_res in result.common_prefixes() {
-            if let Some(prefix) = &cur_res.prefix {
-                let trimmed_prefix = prefix.trim().trim_end_matches('/');
-                // The epoch_id is the last segment of the prefix
-                if let Some(cur_id) = trimmed_prefix.split('/').next_back() {
-                    ids.insert(EpochId::from_str(cur_id)?);
+            if let Some(key) = &cur_res.prefix {
+                let trimmed_key = key.trim();
+                // We found a "directory", hence the element gives us an epoch id
+                // WARNING: There is a discapency in how Minio and S3 treat prefixes
+                // Minio only returns "directories" in `common_prefixes()`, but S3 also returned files.
+                // Thus we need to check that the key ends with "/" to make sure we are only including real epoch ids (i.e. "directories")
+                if trimmed_key.ends_with('/') {
+                    // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
+                    if let Some(cur_id) = trimmed_key.trim_end_matches('/').split('/').next_back() {
+                        ids.insert(EpochId::from_str(cur_id)?);
+                    }
                 }
             }
         }
@@ -711,9 +717,9 @@ cfg_if::cfg_if! {
 // To setup the testing environment locally with Minio, proceed as follows:
 // 1. Install and run Minio in Docker
 //    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
-// 2. Setup the bucket. With in the `dev-s3-mock-1` container in Docker execute the following commands:
+// 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
 //   a. First open Docker desktop and navitage to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
-//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and ssuming no change to [`AWS_S3_ENDPOINT`])
+//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
 //   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
 //   d. Run `mc anonymous set public testminio/ci-kms-key-test`
 // 3. Update the environment variables in the shell where you run the tests:
