@@ -1,6 +1,8 @@
-// DEPRECATED: Isolated equivalent in `kubernetes_test_centralized_isolated.rs`
-// The new tests use feature-gated `k8s_tests` and improved test infrastructure.
+// DEPRECATED: Isolated equivalent in `kubernetes_test_threshold_isolated.rs`
+// The new tests use feature-gated `kind_tests` and improved test infrastructure.
 // TODO (Issue #2901): Remove after K8s CI fully migrates to isolated tests.
+
+#![cfg(feature = "kind_tests")]
 
 use kms_core_client::*;
 use std::path::Path;
@@ -16,7 +18,7 @@ fn root_path() -> PathBuf {
 }
 
 fn config_path() -> String {
-    "core-client/config/client_local_kind_centralized.toml".to_string()
+    "core-client/config/client_local_kind_threshold.toml".to_string()
 }
 
 async fn insecure_key_gen(test_path: &Path) -> String {
@@ -73,7 +75,7 @@ async fn crs_gen(test_path: &Path) -> String {
 // on some CI filter.
 // Having k8 in the name is also on purpose for the same reason.
 #[tokio::test]
-async fn test_k8s_centralzd_insecure() {
+async fn test_k8s_threshld_insecure() {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -82,7 +84,7 @@ async fn test_k8s_centralzd_insecure() {
 }
 
 #[tokio::test]
-async fn full_gen_tests_k8s_default_centralzd_sequential_crs() {
+async fn nightly_full_gen_tests_k8s_default_threshld_sequential_crs() {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

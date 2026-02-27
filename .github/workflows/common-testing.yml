@@ -76,6 +76,10 @@ on:
         type: boolean
         required: false
         default: false  # If true, download test material from artifacts instead of generating
+      generate-default-material:
+        type: boolean
+        required: false
+        default: false  # If true, generate Default test material (includes pre-generated PRSS)
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -302,12 +306,13 @@ jobs:
           echo "Generating testing material..."
           cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
-      # Generate default material only if slow_tests and not using pre-generated
+      # Generate default material when explicitly requested or for slow_tests,
+      # and only when not using pre-generated artifacts.
       - name: Generate Test Material (Default)
-        if: ${{ ! inputs.use-pregenerated-material && contains(inputs.args-tests, 'slow_tests') }}
+        if: ${{ ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
         working-directory: .
         run: |
-          echo "Generating default test material for slow_tests..."
+          echo "Generating default test material..."
           cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
 
       # Build kms-custodian binary required by integration tests

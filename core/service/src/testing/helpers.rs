@@ -34,11 +34,17 @@ pub fn create_test_material_manager() -> TestMaterialManager {
         None
     });
 
-    if workspace_root.is_none() {
-        tracing::warn!(
-            "Could not find test-material directory. Tests requiring pre-generated material may fail. \
-             Run 'cargo run -p generate-test-material -- --output ./test-material testing' from workspace root."
-        );
+    match &workspace_root {
+        Some(root) => tracing::info!(
+            "Test material source path resolved: {}",
+            root.join("test-material").display()
+        ),
+        None => tracing::warn!(
+            "Could not find test-material directory (searched from: {}). \
+             Tests requiring pre-generated material may fail. \
+             Run 'cargo run -p generate-test-material -- --output ./test-material testing' from workspace root.",
+            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| "<unknown>".to_string())
+        ),
     }
 
     TestMaterialManager::new(workspace_root.map(|p| p.join("test-material")))
@@ -142,7 +148,7 @@ pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1:
             .unwrap_or_default(),
         chain_id: domain
             .chain_id
-            .map(|id| id.to_string().into_bytes())
+            .map(|id| id.to_be_bytes_vec())
             .unwrap_or_default(),
         verifying_contract: domain
             .verifying_contract
