@@ -1,29 +1,25 @@
 use crypto_bigint::{NonZero, U1536};
 
-use crate::experimental::algebra::levels::{
-    CryptoModulus, GenericModulus, LevelEight, LevelEleven, LevelFifteen, LevelFive, LevelFour,
-    LevelFourteen, LevelKsw, LevelNine, LevelOne, LevelR, LevelSeven, LevelSix, LevelTen,
-    LevelThirteen, LevelThree, LevelTwelve, LevelTwo,
-};
+use crate::experimental::algebra::levels::*;
 
 #[derive(Debug)]
 pub(crate) struct LevelKswCrtRepresentation {
-    pub(crate) value_level_one: LevelOne,
-    pub(crate) value_level_two: LevelTwo,
-    pub(crate) value_level_three: LevelThree,
-    pub(crate) value_level_four: LevelFour,
-    pub(crate) value_level_five: LevelFive,
-    pub(crate) value_level_six: LevelSix,
-    pub(crate) value_level_seven: LevelSeven,
-    pub(crate) value_level_eight: LevelEight,
-    pub(crate) value_level_nine: LevelNine,
-    pub(crate) value_level_ten: LevelTen,
-    pub(crate) value_level_eleven: LevelEleven,
-    pub(crate) value_level_twelve: LevelTwelve,
-    pub(crate) value_level_thirteen: LevelThirteen,
-    pub(crate) value_level_fourteen: LevelFourteen,
-    pub(crate) value_level_fifteen: LevelFifteen,
-    pub(crate) value_level_r: LevelR,
+    pub(crate) value_level_one: FieldOne,
+    pub(crate) value_level_two: FieldTwo,
+    pub(crate) value_level_three: FieldThree,
+    pub(crate) value_level_four: FieldFour,
+    pub(crate) value_level_five: FieldFive,
+    pub(crate) value_level_six: FieldSix,
+    pub(crate) value_level_seven: FieldSeven,
+    pub(crate) value_level_eight: FieldEight,
+    pub(crate) value_level_nine: FieldNine,
+    pub(crate) value_level_ten: FieldTen,
+    pub(crate) value_level_eleven: FieldEleven,
+    pub(crate) value_level_twelve: FieldTwelve,
+    pub(crate) value_level_thirteen: FieldThirteen,
+    pub(crate) value_level_fourteen: FieldFourteen,
+    pub(crate) value_level_fifteen: FieldFifteen,
+    pub(crate) value_level_r: FieldR,
 }
 
 const LEVEL_1_CRT_COEF: LevelKsw = LevelKsw { value: GenericModulus(U1536::from_be_hex("0f2df64d47a7c90df836961e8b672da6c40b723a2338b9967a4cfc06f076a0415f8b336d4a87ff2b5b321d8f0412fba80375bb08e50eaaaf5f4511b2a0e792c0a0f0a54a5dc4a56b5513b79dd5bd4e201e522c9003ff23eb45a39698a50073aa160a9ba09c8a44ad21a7b5eac6dbd2fec36cbca9c0f5206478c728144499a7fc74726a506a9f91ed8f2a74c824c74b91e94b1598fb7cc98082f95266ced3cdebc6b415ec4393582c1b162a1cca2474fc71665d188780a24b2b4ab60d4f24adb8")) };
@@ -59,18 +55,18 @@ const LEVEL_15_CRT_COEF: LevelKsw = LevelKsw { value: GenericModulus(U1536::from
 const LEVEL_R_CRT_COEF: LevelKsw = LevelKsw { value: GenericModulus(U1536::from_be_hex("0f3e81f1854972d34f1150a44ced12560a742447a007112e60820898f81b81f4fc6e66f8f683c56827f9e7686685d8e7f700369fc363f63b9a1d4d902591a980af6bdb7aaa59c9c0613b0fbf4ca73346e8929350ffc00ad5bc0152da9ac1597d6b4878c73f07111323f7e5c0fcd0b38498a1790153490629a6c8a6ec8e1e1ce8ab682f3cd53bbb35f74ab4373e6bb62a3c020ec4120b7e299a4a92594bb3681cfd72bbcf1e0b279f6710ba4a9887657fd10404514edf4ee7c9a4091cca53b2a3")) };
 
 pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
-    let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
-    let value_level_r = LevelR {
+    let modulus_r: U1536 = FieldR::MODULUS.as_ref().into();
+    let value_level_r = FieldR {
         value: GenericModulus((&input.value.0.rem(&NonZero::new(modulus_r).unwrap())).into()),
     };
 
-    let modulus_one: U1536 = LevelOne::MODULUS.as_ref().into();
-    let value_level_one = LevelOne {
+    let modulus_one: U1536 = FieldOne::MODULUS.as_ref().into();
+    let value_level_one = FieldOne {
         value: GenericModulus((&input.value.0.rem(&NonZero::new(modulus_one).unwrap())).into()),
     };
 
-    let modulus_two = LevelTwo::MODULUS.as_ref().to_limbs()[0];
-    let value_level_two = LevelTwo {
+    let modulus_two = FieldTwo::MODULUS.as_ref().to_limbs()[0];
+    let value_level_two = FieldTwo {
         value: GenericModulus(
             input
                 .value
@@ -80,8 +76,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_three = LevelThree::MODULUS.as_ref().to_limbs()[0];
-    let value_level_three = LevelThree {
+    let modulus_three = FieldThree::MODULUS.as_ref().to_limbs()[0];
+    let value_level_three = FieldThree {
         value: GenericModulus(
             input
                 .value
@@ -91,8 +87,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_four = LevelFour::MODULUS.as_ref().to_limbs()[0];
-    let value_level_four = LevelFour {
+    let modulus_four = FieldFour::MODULUS.as_ref().to_limbs()[0];
+    let value_level_four = FieldFour {
         value: GenericModulus(
             input
                 .value
@@ -102,8 +98,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_five = LevelFive::MODULUS.as_ref().to_limbs()[0];
-    let value_level_five = LevelFive {
+    let modulus_five = FieldFive::MODULUS.as_ref().to_limbs()[0];
+    let value_level_five = FieldFive {
         value: GenericModulus(
             input
                 .value
@@ -113,8 +109,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_six = LevelSix::MODULUS.as_ref().to_limbs()[0];
-    let value_level_six = LevelSix {
+    let modulus_six = FieldSix::MODULUS.as_ref().to_limbs()[0];
+    let value_level_six = FieldSix {
         value: GenericModulus(
             input
                 .value
@@ -124,8 +120,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_seven = LevelSeven::MODULUS.as_ref().to_limbs()[0];
-    let value_level_seven = LevelSeven {
+    let modulus_seven = FieldSeven::MODULUS.as_ref().to_limbs()[0];
+    let value_level_seven = FieldSeven {
         value: GenericModulus(
             input
                 .value
@@ -135,8 +131,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_eight = LevelEight::MODULUS.as_ref().to_limbs()[0];
-    let value_level_eight = LevelEight {
+    let modulus_eight = FieldEight::MODULUS.as_ref().to_limbs()[0];
+    let value_level_eight = FieldEight {
         value: GenericModulus(
             input
                 .value
@@ -146,8 +142,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_nine = LevelNine::MODULUS.as_ref().to_limbs()[0];
-    let value_level_nine = LevelNine {
+    let modulus_nine = FieldNine::MODULUS.as_ref().to_limbs()[0];
+    let value_level_nine = FieldNine {
         value: GenericModulus(
             input
                 .value
@@ -157,8 +153,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_ten = LevelTen::MODULUS.as_ref().to_limbs()[0];
-    let value_level_ten = LevelTen {
+    let modulus_ten = FieldTen::MODULUS.as_ref().to_limbs()[0];
+    let value_level_ten = FieldTen {
         value: GenericModulus(
             input
                 .value
@@ -168,8 +164,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_eleven = LevelEleven::MODULUS.as_ref().to_limbs()[0];
-    let value_level_eleven = LevelEleven {
+    let modulus_eleven = FieldEleven::MODULUS.as_ref().to_limbs()[0];
+    let value_level_eleven = FieldEleven {
         value: GenericModulus(
             input
                 .value
@@ -179,8 +175,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_twelve = LevelTwelve::MODULUS.as_ref().to_limbs()[0];
-    let value_level_twelve = LevelTwelve {
+    let modulus_twelve = FieldTwelve::MODULUS.as_ref().to_limbs()[0];
+    let value_level_twelve = FieldTwelve {
         value: GenericModulus(
             input
                 .value
@@ -190,8 +186,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_thirteen = LevelThirteen::MODULUS.as_ref().to_limbs()[0];
-    let value_level_thirteen = LevelThirteen {
+    let modulus_thirteen = FieldThirteen::MODULUS.as_ref().to_limbs()[0];
+    let value_level_thirteen = FieldThirteen {
         value: GenericModulus(
             input
                 .value
@@ -201,8 +197,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_fourteen = LevelFourteen::MODULUS.as_ref().to_limbs()[0];
-    let value_level_fourteen = LevelFourteen {
+    let modulus_fourteen = FieldFourteen::MODULUS.as_ref().to_limbs()[0];
+    let value_level_fourteen = FieldFourteen {
         value: GenericModulus(
             input
                 .value
@@ -212,8 +208,8 @@ pub(crate) fn to_crt(input: LevelKsw) -> LevelKswCrtRepresentation {
         ),
     };
 
-    let modulus_fifteen = LevelFifteen::MODULUS.as_ref().to_limbs()[0];
-    let value_level_fifteen = LevelFifteen {
+    let modulus_fifteen = FieldFifteen::MODULUS.as_ref().to_limbs()[0];
+    let value_level_fifteen = FieldFifteen {
         value: GenericModulus(
             input
                 .value

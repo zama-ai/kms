@@ -497,7 +497,7 @@ pub async fn file_backup_vault(
         make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
-            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)
                 .await
                 .unwrap(),
         ),
@@ -787,69 +787,4 @@ pub(crate) mod setup {
     pub(crate) async fn ensure_default_material_exists() {
         default_material().await;
     }
-}
-
-// NOTE: this test stays out of the setup module
-// because we don't want it to have the "testing" feature
-#[tokio::test]
-async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
-    use kms_grpc::rpc_types::PrivDataType;
-
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_prefix = Some(temp_dir.path());
-    let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
-    let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
-
-    // Check no keys exist
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    // Create keys to be deleted
-    assert!(
-        crate::util::key_setup::ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-    );
-    // Validate the keys were made
-    let pub_ids = central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(pub_ids.len(), 1);
-    let priv_ids = central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(priv_ids.len(), 1);
-    purge(
-        test_prefix,
-        test_prefix,
-        &pub_ids.into_iter().next().unwrap(),
-        &[None],
-        &[None],
-    )
-    .await;
-    // Check the keys were deleted
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
 }

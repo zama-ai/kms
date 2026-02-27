@@ -137,8 +137,17 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
     let keygen_id = derive_request_id("secure_threshold_keygen")?;
 
     // Run secure key generation with preprocessing
-    threshold_key_gen_secure_isolated(&env.clients, &preproc_id, &keygen_id, FheParameter::Test)
-        .await?;
+    threshold_key_gen_secure_isolated(
+        &env.clients,
+        &preproc_id,
+        &keygen_id,
+        FheParameter::Test,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     // Verify key was generated on all parties
     for client in env.all_clients() {
@@ -374,6 +383,165 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
     Ok(())
 }
 
+/// Test secure threshold compressed key generation from existing secret shares.
+///
+/// Generates a standard keyset first, then performs compressed key generation
+/// reusing the existing secret key shares from the first keygen. This validates
+/// the end-to-end flow of compressed keygen from existing secrets through the
+/// gRPC service layer.
+///
+/// **Workflow:**
+/// 1. Standard keygen (preprocessing + online) to produce the first keyset
+/// 2. Preprocessing for compressed keygen from existing shares
+/// 3. Compressed keygen from existing shares
+/// 4. Verify both keygens completed on all parties using ddec
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<()> {
+    use crate::client::tests::common::compressed_from_existing_keygen_config;
+    use crate::consts::DEFAULT_EPOCH_ID;
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("compressed_from_existing_keygen")
+        .with_party_count(4)
+        .with_threshold(1)
+        .with_prss()
+        .build()
+        .await?;
+
+    let clients = &env.clients;
+
+    // Step 1: Standard keygen (preprocessing + online)
+    let preproc_id_1 = derive_request_id("compressed_existing_preproc_1")?;
+    let keygen_id_1 = derive_request_id("compressed_existing_keygen_1")?;
+
+    threshold_key_gen_secure_isolated(
+        clients,
+        &preproc_id_1,
+        &keygen_id_1,
+        FheParameter::Test,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    // Verify standard keygen completed on all parties
+    for client in env.all_clients() {
+        let mut cur_client = client.clone();
+        let result = cur_client
+            .get_key_gen_result(tonic::Request::new(keygen_id_1.into()))
+            .await?;
+        assert_eq!(result.into_inner().request_id, Some(keygen_id_1.into()));
+    }
+
+    // Step 2: Compressed keygen from existing secret shares (preprocessing + online)
+    let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
+    let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
+
+    let (keyset_config, keyset_added_info) =
+        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID);
+
+    threshold_key_gen_secure_isolated(
+        clients,
+        &preproc_id_2,
+        &keygen_id_2,
+        FheParameter::Test,
+        keyset_config,
+        keyset_added_info,
+        None,
+        None,
+    )
+    .await?;
+
+    // Verify compressed keygen completed on all parties
+    for client in env.all_clients() {
+        let mut cur_client = client.clone();
+        let result = cur_client
+            .get_key_gen_result(tonic::Request::new(keygen_id_2.into()))
+            .await?;
+        assert_eq!(result.into_inner().request_id, Some(keygen_id_2.into()));
+    }
+
+    // Do distributed decryption to verify the generated key is ok
+    // TODO this could be refactored
+    use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+    use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
+    let material_dir = env.material_dir;
+    let mut servers = env.servers;
+    let mut clients = env.clients;
+
+    let material_path = material_dir.path();
+    let pub_storage_prefixes = &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+
+    // Create internal client for decryption
+    let mut pub_storage_map = std::collections::HashMap::new();
+    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
+        pub_storage_map.insert(
+            (i + 1) as u32,
+            FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?,
+        );
+    }
+    let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
+    let mut internal_client = crate::client::client_wasm::Client::new_client(
+        client_storage,
+        pub_storage_map,
+        &crate::consts::TEST_PARAM,
+        None,
+    )
+    .await?;
+
+    // Run ddec with the new keyset
+    run_decryption_threshold(
+        4,
+        &mut servers,
+        &mut clients,
+        &mut internal_client,
+        None,
+        &keygen_id_2,
+        None,
+        vec![TestingPlaintext::U32(66)],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+        None,
+        1,
+        Some(material_path),
+        true,
+    )
+    .await;
+
+    // Run ddec by encrypting using the old public key but
+    // still the new shares from the new keyset
+    run_decryption_threshold(
+        4,
+        &mut servers,
+        &mut clients,
+        &mut internal_client,
+        Some(&keygen_id_1),
+        &keygen_id_2,
+        None,
+        vec![TestingPlaintext::U32(55)],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+        None,
+        1,
+        Some(material_path),
+        false, // we do not used compressed_keys since that was the old public key
+    )
+    .await;
+
+    for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
 /// Test insecure threshold decompression key generation with decryption validation.
 ///
 /// Generates two regular keysets using insecure mode, then generates a decompression key
@@ -386,13 +554,8 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 /// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
 /// 4. Verify all keys generated successfully
 /// 5. Perform public decryption to validate keys are functional
-///
-/// **Requires:**
-/// - `slow_tests` and `insecure` feature flags (PRSS generation at runtime)
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing,insecure test_insecure_threshold_decompression_keygen_isolated`
 #[tokio::test]
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
     use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -477,9 +640,12 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 standard_keyset_config: None,
             }),
             keyset_added_info: Some(KeySetAddedInfo {
-                compression_keyset_id: None,
+                existing_compression_keyset_id: None,
+                compression_epoch_id: None,
                 from_keyset_id_decompression_only: Some(key_id_1.into()),
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
+                existing_keyset_id: None,
+                existing_epoch_id: None,
             }),
             context_id: None,
             epoch_id: None,
@@ -561,12 +727,13 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &mut servers,
         &mut clients,
         &mut internal_client,
+        None,
         &key_id_1,
         None,
         vec![TestingPlaintext::U32(42)],
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         None,
         1,

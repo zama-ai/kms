@@ -240,6 +240,7 @@ pub async fn decryption_threshold(
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
+        None,
         key_id,
         None,
         msgs,
@@ -257,6 +258,7 @@ pub async fn run_decryption_threshold(
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
     key_id: &RequestId,
     context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
@@ -271,6 +273,7 @@ pub async fn run_decryption_threshold(
         kms_servers,
         kms_clients,
         internal_client,
+        encryption_key_id,
         key_id,
         context_id,
         msgs,
@@ -284,12 +287,15 @@ pub async fn run_decryption_threshold(
     .await
 }
 
+/// - `encryption_key_id` is set to `key_id` if not given.
+///   this is the key used to encrypt the ciphertext.
 #[expect(clippy::too_many_arguments)]
 pub async fn run_decryption_threshold_optionally_fail(
     amount_parties: usize,
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
     key_id: &RequestId,
     context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
@@ -300,6 +306,7 @@ pub async fn run_decryption_threshold_optionally_fail(
     expect_request_failure: bool,
     compressed_keys: bool,
 ) {
+    let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
@@ -308,7 +315,7 @@ pub async fn run_decryption_threshold_optionally_fail(
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             data_root_path,
             msg,
-            key_id,
+            encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
             compressed_keys,

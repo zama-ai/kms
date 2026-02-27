@@ -19,6 +19,7 @@ pub mod bgv {
     pub mod utils;
 }
 pub mod constants;
+#[cfg(feature = "choreographer")]
 pub mod choreography {
     pub mod choreographer;
     pub mod grpc;
