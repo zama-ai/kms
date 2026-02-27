@@ -366,7 +366,7 @@ jobs:
           #============================================================
           #
           set +e
-          cargo nextest run --test 'kubernetes_test_'"${DEPLOYMENT_TYPE}"'*' --features k8s_tests,testing --profile "${NEXTEST_PROFILE}" --no-fail-fast
+          cargo nextest run --test 'kubernetes_test_'"${DEPLOYMENT_TYPE}"'*' --features kind_tests --profile "${NEXTEST_PROFILE}" --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
           set -e
 

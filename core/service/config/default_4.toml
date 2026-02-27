@@ -76,7 +76,7 @@ network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
 session_update_interval_secs = 60
 session_cleanup_interval_secs = 86400 # 1 day
-discard_inactive_sessions_interval = 900 # 15 min
+discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocessing time ~44 min for Default params)
 max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 2000
 

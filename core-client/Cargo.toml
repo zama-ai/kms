@@ -16,6 +16,36 @@ path = "src/lib.rs"
 name = "kms-core-client"
 path = "src/bin.rs"
 
+[[test]]
+name = "integration_test"
+path = "tests/integration/integration_test.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "integration_test_isolated"
+path = "tests/integration/integration_test_isolated.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "kubernetes_test_centralized"
+path = "tests/kind-testing/kubernetes_test_centralized.rs"
+required-features = ["kind_tests"]
+
+[[test]]
+name = "kubernetes_test_centralized_isolated"
+path = "tests/kind-testing/kubernetes_test_centralized_isolated.rs"
+required-features = ["kind_tests"]
+
+[[test]]
+name = "kubernetes_test_threshold"
+path = "tests/kind-testing/kubernetes_test_threshold.rs"
+required-features = ["kind_tests"]
+
+[[test]]
+name = "kubernetes_test_threshold_isolated"
+path = "tests/kind-testing/kubernetes_test_threshold_isolated.rs"
+required-features = ["kind_tests"]
+
 [dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
@@ -71,7 +101,21 @@ tonic-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
-# Enable PRSS-dependent tests that require sequential execution and stable networking
-# These tests are designed for K8s CI environments
-k8s_tests = []
+# Enables threshold PRSS tests in `integration_test_isolated`.
+# These are the threshold tests that require PRSS infrastructure:
+#   preproc+keygen, MPC context init/switch, reshare, full-gen preproc.
+# Un-ignores tests guarded with `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`.
+# Compiles setup helpers that run threshold servers with `run_prss=true`.
+#
+# This flag only gates code/tests; it does NOT generate key material by itself.
+# Material requirements:
+# - Test params: missing PRSS can be initialized live at server startup.
+# - Default params: pre-generated PRSS is required in `test-material/default`
+#   (run `make generate-test-material-default`); missing PRSS is a hard error.
+# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss_isolated)
+#   and therefore do not require pre-generated startup PRSS.
+# Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
+threshold_tests = ["testing"]
+# Enable tests that require a running Kind/Kubernetes cluster.
+kind_tests = ["testing"]
 testing = []
