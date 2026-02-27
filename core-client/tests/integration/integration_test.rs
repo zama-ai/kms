@@ -1833,28 +1833,34 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     println!("Old epoch successfully destroyed and verified");
 }
 
-///////// FULL GEN TESTS//////////
-//////////////////////////////////
+////////// FULL GEN TESTS//////////
+///////////////////////////////////
 
-// #[test_context(DockerComposeThresholdDefault)]
-// #[tokio::test]
-// #[serial(docker)]
-// async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
-//     ctx: &DockerComposeThresholdDefault,
-// ) {
-//     init_testing();
-//     let temp_dir = tempfile::tempdir().unwrap();
-//     let keys_folder = temp_dir.path();
-//     let config_path = config_path_from_context(ctx);
-//     let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-//     let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
-//     assert_ne!(key_id_1, key_id_2);
-// }
+// Extremely heavy test — requires dedicated infra with pre-generated Default-param
+// PRSS material and multi-hour runtime budget. Do NOT run in regular CI or local dev.
+// Only execute when a fully prepared full-generation environment is available.
+#[test_context(DockerComposeThresholdDefault)]
+#[tokio::test]
+#[serial(docker)]
+#[ignore]
+async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
+    ctx: &DockerComposeThresholdDefault,
+) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let config_path = config_path_from_context(ctx);
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None, false, 200).await;
+    assert_ne!(key_id_1, key_id_2);
+}
 
 #[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn full_gen_tests_default_threshold_sequential_crs(ctx: &DockerComposeThresholdDefault) {
+async fn nightly_full_gen_tests_default_threshold_sequential_crs(
+    ctx: &DockerComposeThresholdDefault,
+) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

@@ -55,6 +55,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
         .with_test_name("threshold_dkg_backup")
         .with_party_count(4)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -255,6 +256,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
         .with_test_name("threshold_autobackup")
         .with_party_count(4)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -320,6 +322,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
         .with_test_name("threshold_crs_backup")
         .with_party_count(4)
         .with_prss()
+        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
