@@ -234,7 +234,7 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.sig_key()?.as_ref(),
+            self.base_kms.get_sig_key()?.as_ref(),
             backup_dec_key,
             &inner_context,
         )
@@ -975,7 +975,7 @@ mod tests {
         vault::{
             keychain::secretsharing,
             storage::{
-                crypto_material::get_core_signing_key,
+                crypto_material::get_core_signing_keys,
                 ram::{self, RamStorage},
                 read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
                 StorageProxy,
@@ -1040,7 +1040,11 @@ mod tests {
             .unwrap();
 
             // check that the signing key exists
-            let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
+            let keys = get_core_signing_keys(&*guarded_priv_storage).await.unwrap();
+            assert!(
+                !keys.is_empty(),
+                "expected at least one signing key in storage"
+            );
         }
 
         (pk, sk, crypto_storage)

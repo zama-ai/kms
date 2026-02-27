@@ -621,8 +621,8 @@ async fn main_exec() -> anyhow::Result<()> {
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     // load key
-    let base_kms = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => BaseKmsStruct::new(kms_type, sk)?,
+    let base_kms = match get_core_signing_keys(&private_vault).await {
+        Ok(sig_keys) => BaseKmsStruct::new(kms_type, threshold_config.my_id, sig_keys)?,
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -633,7 +633,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_key(kms_type, verf_key)
+            BaseKmsStruct::new_no_signing_keys(kms_type, verf_key)
         }
     };
 
@@ -661,7 +661,7 @@ async fn main_exec() -> anyhow::Result<()> {
                             .as_ref()
                             .map(|x| x.root_key_measurements()),
                         &public_vault,
-                        base_kms.sig_key()?,
+                        base_kms.get_sig_key()?,
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
@@ -724,7 +724,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 SoftwareVersion::current()?
             );
             // create the default context if it does not exist
-            let sk = (*base_kms.sig_key()?).clone();
+            let sk = (*base_kms.get_sig_key()?).clone();
             let service_config = core_config.service.clone();
             create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
             let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(

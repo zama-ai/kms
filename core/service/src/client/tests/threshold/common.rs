@@ -3,7 +3,7 @@ use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
@@ -64,11 +64,10 @@ async fn threshold_handles_w_vaults(
         // Only ensure that the signing key is there s.t. the KMS can start
         // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
         ensure_dir_exist(test_data_path).await;
-        ensure_client_keys_exist(test_data_path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(test_data_path, true).await;
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),

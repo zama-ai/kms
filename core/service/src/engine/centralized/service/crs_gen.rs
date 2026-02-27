@@ -85,7 +85,7 @@ pub async fn crs_gen_impl<
     let crypto_storage = service.crypto_storage.clone();
     let sk = service
             .base_kms
-            .sig_key()
+            .get_sig_key()
             .map_err(|e| {
         MetricedError::new(
             op_tag,

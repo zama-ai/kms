@@ -337,7 +337,7 @@ impl<
             .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
+        let sigkey = self.base_kms.get_sig_key().map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(req_id),
