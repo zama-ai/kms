@@ -14,7 +14,7 @@ use crate::{
             levels::{LevelEll, LevelKsw},
             ntt::N65536,
         },
-        bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey, SecretKey},
+        bgv::basics::{PrivateBgvKeySet, PublicKey, SecretKey},
     },
 };
 use rand::CryptoRng;
@@ -25,7 +25,7 @@ pub type PrivateBfvKeySet = PrivateBgvKeySet;
 
 type PolyDeg = N65536;
 
-pub fn keygen<R>(rng: &mut R) -> (PublicBgvKeySet, SecretKey)
+pub fn keygen<R>(rng: &mut R) -> (PublicBfvKeySet, SecretKey)
 where
     R: Rng + CryptoRng,
 {

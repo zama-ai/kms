@@ -449,6 +449,58 @@ jobs:
           fi
           echo "Tests passed successfully"
 
+  clean-up-build:
+    name: kind-testing/clean-up-build
+    if: |
+      always() &&
+      github.event_name != 'schedule'
+    needs:
+      - docker-build
+      - kind-testing
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write # Required to delete GitHub packages/container registry
+    steps:
+      - name: Clean up build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
+        run: |
+          delete_package_versions_by_tag() {
+            local package_name="$1"
+            local tag="$2"
+
+            # URL-encode package name (slashes -> %2F)
+            local encoded_name
+            encoded_name="$(jq -rn --arg v "$package_name" '$v|@uri')"
+
+            local package_path="/orgs/zama-ai/packages/container/${encoded_name}"
+
+            # Check package exists/readable
+            if ! gh api -H "Accept: application/vnd.github+json" "$package_path" >/dev/null 2>&1; then
+              echo "Package not readable/found: ${package_name}"
+              return 0
+            fi
+
+            gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
+            | jq -r --arg tag "$tag" '
+                .[]
+                | [(.metadata.container.tags[]? // empty | select(startswith($tag)))] as $matched
+                | select(($matched | length) > 0)
+                | [.id, ($matched | join(","))] | @tsv
+              ' \
+            | while IFS=$'\t' read -r id matched_tags; do
+                [ -z "$id" ] && continue
+                echo "Deleting ${package_name} version_id=${id} tags=${matched_tags}"
+                gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
+              done
+          }
+          if [ -n "${IMAGE_TAG}" ]; then
+            delete_package_versions_by_tag "kms/core-service-enclave" "${IMAGE_TAG}"
+            delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
+            delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"
+          fi
+
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
   test-reporter:

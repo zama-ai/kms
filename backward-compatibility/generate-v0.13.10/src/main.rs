@@ -4,8 +4,8 @@ use backward_compatibility::{
     data_dir, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, Testcase,
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME, PRNG_SEED,
 };
-use backward_compatibility_generate_v0_13_1::{
-    data_0_13::V0_13,
+use backward_compatibility_generate_v0_13_10::{
+    data_0_13::V0_13_10,
     generate::{store_metadata, KMSCoreVersion},
 };
 
@@ -55,7 +55,7 @@ fn gen_all_data<Vers: KMSCoreVersion>() -> (KmsTestcases, KmsGrpcTestcases, DdTe
 }
 
 fn main() {
-    let (kms_testcases, kms_grpc_testcases, dd_testcases) = gen_all_data::<V0_13>();
+    let (kms_testcases, kms_grpc_testcases, dd_testcases) = gen_all_data::<V0_13_10>();
 
     // Use module name as the filename prefix
     store_metadata(&kms_testcases, data_dir().join("kms.ron"));
