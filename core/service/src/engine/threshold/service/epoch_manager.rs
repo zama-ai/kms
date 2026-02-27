@@ -601,7 +601,7 @@ impl<
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.get_sig_key().map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
@@ -680,7 +680,7 @@ impl<
             .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.get_sig_key().map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),

@@ -10,7 +10,7 @@ use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::{
-    crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
+    crypto_material::get_core_signing_keys, file::FileStorage, Storage, StorageType,
 };
 use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
@@ -374,8 +374,13 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let secret_keys = get_core_signing_keys(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(
+                KMSType::Threshold,
+                my_id_copy,
+                secret_keys.values().collect(),
+            )
+            .unwrap();
 
             let server = new_real_threshold_kms(
                 core_config,

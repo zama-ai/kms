@@ -102,7 +102,7 @@ pub async fn user_decrypt_impl<
         &request_id,
         OP_USER_DECRYPT_REQUEST,
     )?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.get_sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
@@ -321,7 +321,7 @@ pub async fn public_decrypt_impl<
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.get_sig_key().map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),

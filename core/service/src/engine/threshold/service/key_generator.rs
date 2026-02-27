@@ -322,7 +322,7 @@ impl<
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
         let meta_store_cancelled = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sk = self.base_kms.sig_key()?;
+        let sk = self.base_kms.get_sig_key()?;
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();

@@ -129,7 +129,7 @@ impl<
         })?;
 
         add_req_to_meta_store(&mut self.crs_meta_store.write().await, &req_id, op_tag)?;
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
+        let sigkey = self.base_kms.get_sig_key().map_err(|e| {
             MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
         })?;
         tracing::info!(

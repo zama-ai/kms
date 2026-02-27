@@ -1780,13 +1780,13 @@ pub(crate) mod tests {
             let mut keys = ephemeral_signcryption_key_generation(
                 &mut rng,
                 &client_verf_key.verf_key_id(),
-                kms.base_kms.sig_key().ok().as_deref(),
+                kms.base_kms.get_sig_key().ok().as_deref(),
             );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(
                     &mut rng,
                     &client_verf_key.verf_key_id(),
-                    kms.base_kms.sig_key().ok().as_deref(),
+                    kms.base_kms.get_sig_key().ok().as_deref(),
                 );
                 // Change the decryption key
                 keys.unsigncryption_key.decryption_key =
@@ -1810,7 +1810,7 @@ pub(crate) mod tests {
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            kms.base_kms.sig_key().unwrap().as_ref(),
+            kms.base_kms.get_sig_key().unwrap().as_ref(),
             &mut rng,
             &ct,
             fhe_type,

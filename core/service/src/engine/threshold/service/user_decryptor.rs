@@ -499,7 +499,7 @@ impl<
             OP_USER_DECRYPT_REQUEST,
         )?;
 
-        let sk = (*self.base_kms.sig_key().map_err(|e| {
+        let sk = (*self.base_kms.get_sig_key().map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(req_id),

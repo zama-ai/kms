@@ -114,7 +114,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         }
         let ongoing = Arc::clone(&self.ongoing);
 
-        let sk = self.base_kms.sig_key()?;
+        let sk = self.base_kms.get_sig_key()?;
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {

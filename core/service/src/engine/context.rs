@@ -9,7 +9,7 @@ use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCR
 use crate::{
     cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
     engine::validation::{parse_optional_grpc_request_id, RequestIdParsingErr},
-    vault::storage::{crypto_material::get_core_signing_key, StorageReader},
+    vault::storage::StorageReader,
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
@@ -211,6 +211,8 @@ pub struct ContextInfo {
     pub software_version: SoftwareVersion,
     pub threshold: u32,
     pub pcr_values: Vec<ReleasePCRValues>,
+    // #[serde(skip)] TODO
+    // my_node_cache: Option<NodeInfo>, // This is a cache field to avoid repeatedly computing my_node
 }
 
 impl ContextInfo {
@@ -218,19 +220,21 @@ impl ContextInfo {
         &self.context_id
     }
 
+    pub fn my_node(&self, my_id: u32) -> anyhow::Result<Option<NodeInfo>> {
+        // Not very efficient, but is is a rare operation with a small number of nodes and addresses
+        if let Some(node) = self.mpc_nodes.iter().find(|node| node.party_id == my_id) {
+            return Ok(Some(node.clone()));
+        }
+        Ok(None)
+    }
+
     /// Most of these checks are simply sanity checks because
     /// before the context passed to the KMS, it should have been validated on the gateway.
+    /// //todo could be my_id
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
-        // Check the signing key is consistent with the private key in storage.
-        let signing_key = get_core_signing_key(storage).await?;
-        let verification_key = signing_key.verf_key();
+        // TODO change to just take my_id
+        let my_node = self.my_node(1)?;
 
-        let my_node = self.mpc_nodes.iter().find(|node| {
-            node.verification_key
-                .as_ref()
-                .map(|inner| inner == &verification_key)
-                .unwrap_or(false)
-        });
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
             self.mpc_nodes.iter().map(|node| node.party_id).collect();
