@@ -92,8 +92,9 @@ pub enum TlsConf {
     // Both public key certificate and private key are provided externally. If
     // enclaves are not used, this is the ony option.
     Manual {
+        #[serde(skip_serializing, default)]
         cert: TlsCert,
-        #[serde(skip_serializing)]
+        #[serde(skip_serializing, default)]
         key: TlsKey,
     },
     // The party will generate a keypair inside of the enclave on boot and issue
@@ -106,6 +107,7 @@ pub enum TlsConf {
         // the matching private key. This certificate will be used to establish
         // the party identity instead of the core signing key then, so it must
         // be included in the peer list.
+        #[serde(skip_serializing, default)]
         eif_signing_cert: Option<TlsCert>,
         trusted_releases: Vec<ReleasePCRValues>,
         ignore_aws_ca_chain: Option<bool>,
@@ -119,8 +121,13 @@ pub enum TlsConf {
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsCert {
     Path(PathBuf),
-    #[serde(skip_serializing)]
     Pem(String),
+}
+
+impl Default for TlsCert {
+    fn default() -> Self {
+        TlsCert::Pem("REDACTED".to_string())
+    }
 }
 
 impl TlsCert {
@@ -181,8 +188,13 @@ impl TlsCert {
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsKey {
     Path(PathBuf),
-    #[serde(skip_serializing)]
     Pem(String),
+}
+
+impl Default for TlsKey {
+    fn default() -> Self {
+        TlsKey::Pem("REDACTED".to_string())
+    }
 }
 
 impl TlsKey {
