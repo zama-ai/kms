@@ -443,19 +443,18 @@ mod tests {
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
+    use execution::{
+        malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
+            DummyProducerFactory, FailingProducerFactory,
+        },
+        online::preprocessing::create_memory_factory,
+        small_execution::prss::PRSSSetup,
+    };
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::{
-            online::preprocessing::create_memory_factory, small_execution::prss::PRSSSetup,
-        },
-        malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
-            DummyProducerFactory, FailingProducerFactory,
-        },
-    };
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {

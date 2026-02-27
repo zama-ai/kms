@@ -280,9 +280,8 @@ struct LocalTaggedValue {
     send_counter: usize,
 }
 
-#[cfg(any(test, feature = "testing"))]
+#[cfg(test)]
 mod tests {
-
     use algebra::role::{Role, TwoSetsRole};
     use execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,

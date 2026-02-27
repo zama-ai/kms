@@ -153,6 +153,7 @@ threshold-fhe = { workspace = true, default-features = false, features = [
 ] }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tracing-test.workspace = true
+execution = { workspace = true, features = ["testing"] }
 
 [features]
 default = ["non-wasm"]
@@ -189,5 +190,8 @@ s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
     "threshold-fhe/testing",
+    "execution/testing",
+    "networking/testing",
+
     "dep:nsm-nitro-enclave-utils"
 ]

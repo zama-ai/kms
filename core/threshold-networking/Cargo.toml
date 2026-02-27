@@ -59,7 +59,8 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tracing-test.workspace = true
-execution.workspace = true
+execution = { workspace = true, features = ["testing"] }
+
 
 
 [build-dependencies]
@@ -86,6 +87,6 @@ non-wasm = [
     "dep:tower",
 ]
 experimental = ["dep:crypto-bigint", "choreographer", "testing"]
-testing = ["non-wasm", "dep:tfhe"]
+testing = ["non-wasm", "execution/testing", "dep:tfhe"]
 malicious_strategies = ["testing"]
 choreographer = ["malicious_strategies"]
