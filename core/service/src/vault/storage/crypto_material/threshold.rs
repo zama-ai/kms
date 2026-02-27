@@ -219,11 +219,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // Try to store the new data
         tracing::info!("Storing Keys objects for key ID {}", key_id);
 
-        //let meta_update_result =
-        //    guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(T::from(info)));
-        //if let Err(e) = &meta_update_result {
-        //    tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
-        //}
         if r1 && r2 && r3 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
@@ -279,7 +274,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
         // Not much we can do if this fails
         // Note: it will fail if inner_write_threshold_keys failed
-        let _ = meta_store.write().await.update(key_id, Ok(info));
+        let _ = meta_store
+            .write()
+            .await
+            .update(key_id, Ok(info))
+            .inspect_err(|e| {
+                tracing::error!("Error ({}) while updating meta store for {}", e, key_id)
+            });
     }
 
     /// Write the key materials (result of a compressed keygen) to storage and cache
@@ -306,7 +307,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         .await;
         // Not much we can do if this fails
         // Note: it will fail if inner_write_threshold_keys failed
-        let _ = meta_store.write().await.update(key_id, Ok(info));
+        let _ = meta_store
+            .write()
+            .await
+            .update(key_id, Ok(info))
+            .inspect_err(|e| {
+                tracing::error!("Error ({}) while updating meta store for {}", e, key_id)
+            });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -422,11 +429,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // Try to store the new data
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
 
-        //let meta_update_result =
-        //    guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(T::from(info)));
-        //if let Err(e) = &meta_update_result {
-        //    tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
-        //}
         if r1 && r2 && r3 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
