@@ -4385,6 +4385,7 @@ dependencies = [
  "tempfile",
  "test-context",
  "tfhe",
+ "threshold-execution",
  "threshold-fhe",
  "threshold-hashing",
  "tokio",
