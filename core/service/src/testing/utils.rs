@@ -586,7 +586,7 @@ pub mod setup {
     async fn testing_material(path: Option<&Path>) {
         ensure_dir_exist(path).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
@@ -644,7 +644,7 @@ pub mod setup {
         };
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
@@ -794,7 +794,6 @@ pub mod setup {
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
     use kms_grpc::rpc_types::PrivDataType;
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -818,7 +817,6 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await

@@ -310,7 +310,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     }
 }
 
-/// Generalizes `get_core_signing_key`, `get_client_verification_key` and
+/// Generalizes `get_client_signing_key`, `get_client_verification_key` and
 /// `get_core_ca_cert`. Can be used to implement a getter for any per-entity
 /// (core or client) data.
 ///
@@ -354,6 +354,30 @@ async fn get_unique<
 
     let value = data_map.into_values().next().unwrap(); // Safe unwrap since we checked length above
     Ok(value)
+}
+
+/// Returns all core signing keys from storage.
+///
+/// # Arguments
+/// * `storage` - The storage backend containing signing keys
+///
+/// # Returns
+/// A map of `RequestId` to `PrivateSigKey` for all signing keys in storage.
+///
+/// # Errors
+/// Returns an error if the storage operation fails.
+pub async fn get_core_signing_keys<S: StorageReader>(
+    storage: &S,
+) -> anyhow::Result<HashMap<RequestId, PrivateSigKey>> {
+    read_all_data_versioned(storage, &PrivDataType::SigningKey.to_string())
+        .await
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read {} from \"{}\": {e}",
+                PrivDataType::SigningKey,
+                storage.info()
+            ))
+        })
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {

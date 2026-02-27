@@ -588,7 +588,7 @@ pub(crate) mod setup {
     async fn testing_material(path: Option<&Path>) {
         ensure_dir_exist(path).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
@@ -646,7 +646,7 @@ pub(crate) mod setup {
         };
         ensure_dir_exist(None).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(None, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,

@@ -309,7 +309,7 @@ impl ThresholdTestEnvBuilder {
         .await;
 
         // Ensure client signing/verification keys exist
-        ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_dir.path()), true).await;
 
         // Create backup vaults for each party if requested
         let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {

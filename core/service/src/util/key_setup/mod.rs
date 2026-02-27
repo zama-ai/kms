@@ -9,7 +9,7 @@ cfg_if::cfg_if! {
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
+            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_keys,
         };
         use crate::vault::storage::{store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
@@ -50,12 +50,12 @@ pub type FhePrivateKey = tfhe::ClientKey;
 /// This function handles the complete key setup workflow for clients:
 /// 1. Initializes client storage
 /// 2. Checks for existing keys
-/// 3. Generates new keys if needed
+/// 3. Generates new keys if storage is empty
 /// 4. Stores private and public keys
 ///
 /// # Returns
-/// - `true` if new keys were generated
-/// - `false` if keys already existed or an error occurred
+/// - `Some(RequestId)` if new keys were generated with a request ID derived from the Ethereum address of the public key
+/// - `None` if keys already existed or an error occurred
 ///
 /// # Note
 /// Primarily used for testing and debugging via the [Client].
@@ -66,9 +66,8 @@ pub type FhePrivateKey = tfhe::ClientKey;
 /// - If handle computation fails
 pub async fn ensure_client_keys_exist(
     optional_path: Option<&Path>,
-    req_id: &RequestId,
     deterministic: bool,
-) -> bool {
+) -> Option<RequestId> {
     // Initialize client storage with error handling
     let mut client_storage = match FileStorage::new(optional_path, StorageType::CLIENT, None) {
         Ok(storage) => storage,
@@ -85,7 +84,7 @@ pub async fn ensure_client_keys_exist(
             Ok(keys) => keys,
             Err(e) => {
                 tracing::error!("Failed to read existing client signing keys: {}", e);
-                return false;
+                return None;
             }
         };
 
@@ -96,17 +95,19 @@ pub async fn ensure_client_keys_exist(
             "Client signing keys already exist at {}, skipping generation",
             storage_path
         );
-        return false;
+        return None;
     }
 
     // Generate new signing key pair
     let mut rng = get_rng(deterministic, None);
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
+    let ethereum_address = client_pk.address();
+    let req_id: RequestId = ethereum_address.into();
 
     // Store private client key with error handling
     if let Err(e) = store_versioned_at_request_id(
         &mut client_storage,
-        req_id,
+        &req_id,
         &client_sk,
         &ClientDataType::SigningKey.to_string(),
     )
@@ -114,7 +115,7 @@ pub async fn ensure_client_keys_exist(
     {
         panic!("Failed to store private client key: {e}");
     }
-    log_storage_success(req_id, client_storage.info(), "client key", false, false);
+    log_storage_success(&req_id, client_storage.info(), "client key", false, false);
 
     // Compute handle with error handling
     let pk_handle = match compute_handle(&client_pk) {
@@ -127,7 +128,7 @@ pub async fn ensure_client_keys_exist(
     // Store public client key with error handling
     if let Err(e) = store_versioned_at_request_id(
         &mut client_storage,
-        req_id,
+        &req_id,
         &client_pk,
         &ClientDataType::VerfKey.to_string(),
     )
@@ -137,7 +138,7 @@ pub async fn ensure_client_keys_exist(
     }
     log_storage_success(pk_handle, client_storage.info(), "client key", true, false);
 
-    true
+    Some(req_id)
 }
 
 /// Ensures central server signing and verification keys exist.
