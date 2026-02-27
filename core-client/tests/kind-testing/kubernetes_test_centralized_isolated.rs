@@ -15,7 +15,7 @@
 //!
 //! **Centralized Mode Tests:**
 //! - `k8s_test_centralized_insecure` - Keygen + CRS generation
-//! - `full_gen_tests_default_k8s_centralized_sequential_crs` - Sequential CRS generation
+//! - `nightly_full_gen_tests_default_k8s_centralized_sequential_crs` - Sequential CRS generation
 //!
 //! ## Architecture
 //!
@@ -191,8 +191,8 @@ async fn k8s_test_centralized_insecure() {
 /// Test that multiple CRS generations produce unique IDs.
 /// Validates CRS generation is independent across calls.
 #[tokio::test]
-async fn full_gen_tests_default_k8s_centralized_sequential_crs() {
-    let ctx = K8sTestContext::new("full_gen_tests_default_k8s_centralized_sequential_crs");
+async fn nightly_full_gen_tests_default_k8s_centralized_sequential_crs() {
+    let ctx = K8sTestContext::new("nightly_full_gen_tests_default_k8s_centralized_sequential_crs");
 
     let crs1 = ctx.crs_gen().await;
     let crs2 = ctx.crs_gen().await;

@@ -17,14 +17,14 @@ k8s-integration    = { max-threads = 1 }
 # CI profile: used for PR checks (fast feedback)
 # =============================================================================
 # Excludes slow tests from integration_test_isolated that only run nightly:
-#   - full_gen_tests_default*           (uses FheParameter::Default — production-sized, slow)
+#   - nightly_full_gen_tests_default*           (uses FheParameter::Default — production-sized, slow)
 #   - nightly_tests_threshold_sequential_crs
 #   - test_threshold_concurrent_crs
 # The filter only targets the integration_test_isolated binary — K8s tests are
 # unaffected even if they have "default" in their name (those run against an
 # insecure-param cluster and are fast).
 [profile.ci]
-default-filter = 'not (binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
+default-filter = 'not (binary(=integration_test_isolated) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
 [profile.ci.junit]
 path = "junit.xml"
@@ -36,7 +36,7 @@ store-failure-output = true
 #
 # Docker-based Default-param tests (integration_test binary):
 [[profile.ci.overrides]]
-filter = 'binary(=integration_test) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs|test_threshold_insecure/)'
+filter = 'binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs|test_threshold_insecure/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
 test-group = "docker-integration"
 
@@ -44,7 +44,7 @@ test-group = "docker-integration"
 # These don't use Docker but are placed in docker-integration to prevent
 # CPU contention with Docker Default-param tests running concurrently.
 [[profile.ci.overrides]]
-filter = 'binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+filter = 'binary(=integration_test_isolated) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
 test-group = "docker-integration"
 
@@ -79,13 +79,13 @@ store-failure-output = true
 #
 # Docker-based Default-param tests (integration_test binary):
 [[profile.ci-nightly.overrides]]
-filter = 'binary(=integration_test) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs|test_threshold_insecure/)'
+filter = 'binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs|test_threshold_insecure/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
 test-group = "docker-integration"
 
 # Native isolated Default-param tests (integration_test_isolated binary):
 [[profile.ci-nightly.overrides]]
-filter = 'binary(=integration_test_isolated) & test(/full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+filter = 'binary(=integration_test_isolated) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
 test-group = "docker-integration"
 

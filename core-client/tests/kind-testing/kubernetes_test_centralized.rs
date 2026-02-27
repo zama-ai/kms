@@ -84,7 +84,7 @@ async fn test_k8s_centralzd_insecure() {
 }
 
 #[tokio::test]
-async fn full_gen_tests_k8s_default_centralzd_sequential_crs() {
+async fn nightly_full_gen_tests_k8s_default_centralzd_sequential_crs() {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

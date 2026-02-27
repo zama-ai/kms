@@ -1843,7 +1843,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 #[tokio::test]
 #[serial(docker)]
 #[ignore]
-async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
+async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
     ctx: &DockerComposeThresholdDefault,
 ) {
     init_testing();
@@ -1858,7 +1858,9 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
 #[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn full_gen_tests_default_threshold_sequential_crs(ctx: &DockerComposeThresholdDefault) {
+async fn nightly_full_gen_tests_default_threshold_sequential_crs(
+    ctx: &DockerComposeThresholdDefault,
+) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

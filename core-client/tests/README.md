@@ -34,7 +34,7 @@
 
 ### `threshold_tests` and pre-generated material
 
-- `threshold_tests` enables tests that require pre-generated material: **PRSS** (loaded at server startup via `run_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `full_gen_tests_default_*`).
+- `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `run_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
 - Some tests generate PRSS live during the test (via `new_prss_isolated`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
 - Generate all required Default material with `make generate-test-material-default` (or `make generate-test-material-all`).
@@ -50,7 +50,6 @@ Two patterns are used — which one to pick depends on whether the test body cal
 
 CI uses `--skip` prefix matching to exclude certain test groups from regular runs:
 - `nightly_*` — skipped in regular CI, run only in nightly schedule
-- `full_gen_tests_*` — skipped in regular CI, run only in nightly schedule
 - `k8s_*` — skipped in native CI, run only in Kind cluster CI
 - `isolated_test_example` — demo test, always skipped in CI
 

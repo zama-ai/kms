@@ -216,7 +216,7 @@
 //! # Fast tests only (no PRSS)
 //! cargo nextest run --test integration_test_isolated --features testing
 //!
-//! # All threshold tests (requires pre-generated Default PRSS for full_gen_tests_*)
+//! # All threshold tests (requires pre-generated Default PRSS for nightly_full_gen_tests_*)
 //! cargo nextest run --test integration_test_isolated --features threshold_tests
 //!
 //! # Specific test
@@ -3176,7 +3176,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 #[tokio::test]
 #[serial]
 #[ignore]
-async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
+async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 
     // Tuned for CI runtime budget with buffer.
@@ -3202,7 +3202,7 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<
     )
     .await?;
     println!(
-        "full_gen_tests_default_threshold_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
+        "nightly_full_gen_tests_default_threshold_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         t0.elapsed().as_secs_f64(),
     );
@@ -3214,7 +3214,7 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
 #[tokio::test]
-async fn full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
+async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_testing();
 
     // Setup isolated threshold KMS servers (4 parties for default context) with Default FHE params

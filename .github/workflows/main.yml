@@ -363,8 +363,8 @@ jobs:
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
-      # Run ALL tests - no skips (includes nightly_* and full_gen_tests_*)
-      # nightly_* and full_gen_tests_* are skipped in regular CI via --skip prefix matching
+      # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
+      # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
       args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
       generate-default-material: true
       nextest-profile: 'ci-nightly'
