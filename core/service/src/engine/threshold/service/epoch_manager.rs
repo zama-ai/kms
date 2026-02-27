@@ -7,9 +7,7 @@
 //! If the KMS core is started fresh, then the PRSS setups needs to be initialized
 //! via a protocol; this is done via the [`RealThresholdEpochManager::init_prss`] method.
 //! If the KMS core restarts, then the PRSS setups are loaded from storage,
-//! this is done via calls to [`RealThresholdEpochManager::init_legacy_prss_from_storage`]
-//! and then [`RealThresholdEpochManager::init_all_prss_from_storage`];
-//! the latter will overwrite any any legacy setup sharing the same ID as non-legacy setups.
+//! this is done via a call to [`RealThresholdEpochManager::init_all_prss_from_storage`];
 //!
 //! __Resharing__
 //!
@@ -213,10 +211,6 @@ impl From<KeyGenMetadata> for EpochOutput {
     }
 }
 /// The Epoch Manager takes over the role of the Initiator and Resharer
-///
-/// At startup, one should call [`RealThresholdEpochManager::init_legacy_prss_from_storage`] and
-///  [`RealThresholdEpochManager::init_all_prss_from_storage`] (in this order) to load the necessary
-///  PRSS setups from the private storage into the session maker.
 pub struct RealThresholdEpochManager<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -245,10 +239,6 @@ impl<
     > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     /// This will load all PRSS setups from storage into session maker.
-    ///
-    /// It should be called after [init_legacy_prss_from_storage] so that
-    /// if there is a new PRSS under the same epoch ID as a legacy one,
-    /// then the legacy one is overwritten.
     pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
         let all_prss = self.crypto_storage.inner.read_all_prss_info().await?;
 
@@ -264,7 +254,7 @@ impl<
 
     /// Wrapper around the internal method [`Self::internal_init_prss`]
     /// so it's easier to call from the outside if necessary.
-    /// (e.g. when initializing the KMS core with `run_prss` set to true.)
+    /// (e.g. when initializing the KMS core with `ensure_default_prss` set to true.)
     pub async fn init_prss(
         &self,
         context_id: &ContextId,
@@ -279,8 +269,7 @@ impl<
         .await
     }
 
-    // NOTE: this function will overwrite the existing PRSS state (on disc and in session maker)
-    // Also, we let the caller store the PRSS in the meta store if needed
+    // We let the caller store the PRSS in the meta store if needed
     // as the caller might want to store additional information in case of a resharing
     async fn internal_init_prss(
         session_maker: SessionMaker,
@@ -288,6 +277,12 @@ impl<
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
+        if session_maker.epoch_exists(epoch_id).await {
+            anyhow::bail!(
+                "Epoch ID {} already exists, cannot initialize PRSS for this epoch.",
+                epoch_id
+            );
+        }
         let own_identity = session_maker
             .my_identity(context_id)
             .await?
@@ -329,26 +324,7 @@ impl<
         let private_storage = Arc::clone(&crypto_storage.inner.private_storage);
         let mut priv_storage = private_storage.lock().await;
 
-        // if PRSS already exists, overwrite it
-        if priv_storage
-            .data_exists(
-                &(*epoch_id).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await?
-        {
-            tracing::warn!(
-                "PRSS Setup epoch ID {} already exists, overwriting.",
-                epoch_id
-            );
-            delete_at_request_id(
-                &mut (*priv_storage),
-                &(*epoch_id).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await?;
-        }
-
+        // Ensure data can be stored before updating the model in ram
         store_versioned_at_request_id(
             &mut (*priv_storage),
             &(*epoch_id).into(),
