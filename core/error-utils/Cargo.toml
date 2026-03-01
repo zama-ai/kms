@@ -10,6 +10,3 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-test.workspace = true
-
-[features]
-non-wasm = []

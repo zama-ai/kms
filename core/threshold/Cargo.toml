@@ -232,8 +232,6 @@ malicious_strategies = ["testing"]
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
-	"error-utils/non-wasm",
-
     "dep:attestation-doc-validation",
     "dep:hyper-rustls-ring",
     "dep:thread-handles",
