@@ -44,4 +44,3 @@ all_extension_degrees = [
 	"extension_degree_7",
 	"extension_degree_8",
 ]
-slow_tests = ["all_extension_degrees"]
