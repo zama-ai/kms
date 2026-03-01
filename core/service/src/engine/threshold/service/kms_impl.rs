@@ -589,20 +589,24 @@ where
             )
         })?;
 
-    // Load existing PRSS from storage and optionally run a new setup with default IDs.
-    if let Err(e) = epoch_manager.init_legacy_prss_from_storage().await {
-        tracing::warn!(
-            "Could not read legacy PRSS Setup from private storage {:?}: {}.",
-            private_storage_info,
-            e
-        );
-    }
-    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
-        tracing::warn!(
-            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
-            private_storage_info,
-            e
-        );
+    // Load existing PRSS from storage, unless run_prss=true in which case we will
+    // regenerate it via live MPC init below (loading stale PRSS before live init
+    // introduces timing skew that causes networking failures).
+    if !run_prss {
+        if let Err(e) = epoch_manager.init_legacy_prss_from_storage().await {
+            tracing::warn!(
+                "Could not read legacy PRSS Setup from private storage {:?}: {}.",
+                private_storage_info,
+                e
+            );
+        }
+        if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
+            tracing::warn!(
+                "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+                private_storage_info,
+                e
+            );
+        }
     }
 
     if run_prss {

@@ -380,6 +380,21 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
     handle_res_metriced(handle, req_id, metric_scope).await
 }
 
+/// Like [`retrieve_from_meta_store`] but with a custom server-side wait duration.
+/// Use this for operations (e.g. preprocessing) that are inherently slower than
+/// the default 60-second window.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn retrieve_from_meta_store_with_timeout<T: Clone>(
+    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+    wait_secs: u64,
+) -> Result<T, MetricedError> {
+    let handle = meta_store.retrieve(req_id);
+    drop(meta_store); // Release the read lock early
+    handle_res_metriced_with_timeout(handle, req_id, metric_scope, wait_secs).await
+}
+
 #[cfg(feature = "non-wasm")]
 pub async fn handle_res<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
@@ -425,6 +440,22 @@ async fn handle_res_metriced<T: Clone>(
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> Result<T, MetricedError> {
+    handle_res_metriced_with_timeout(
+        handle,
+        req_id,
+        metric_scope,
+        DURATION_WAITING_ON_RESULT_SECONDS,
+    )
+    .await
+}
+
+#[cfg(feature = "non-wasm")]
+async fn handle_res_metriced_with_timeout<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+    wait_secs: u64,
+) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(
@@ -439,11 +470,8 @@ async fn handle_res_metriced<T: Clone>(
             ))
         }
         Some(cell) => {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
-                cell.get(),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(tokio::time::Duration::from_secs(wait_secs), cell.get()).await;
             // Peel off the potential errors
             if let Ok(result) = result {
                 match result {
@@ -463,7 +491,7 @@ async fn handle_res_metriced<T: Clone>(
                 }
             } else {
                 let msg = format!(
-                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {wait_secs} seconds"
                 );
                 tracing::info!(msg);
                 Err(MetricedError::new(

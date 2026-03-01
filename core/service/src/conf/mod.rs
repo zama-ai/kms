@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
         assert_eq!(
             core_to_core_net.discard_inactive_sessions_interval,
-            Some(900)
+            Some(10800)
         );
         assert_eq!(
             core_to_core_net.max_waiting_time_for_message_queue,

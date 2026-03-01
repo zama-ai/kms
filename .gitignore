@@ -6,6 +6,8 @@ CLAUDE.md
 /crs
 /test-material
 /tls
+/backup_vault
+**/proptest-regressions
 /test-material
 .vscode/launch.json
 .DS_Store
