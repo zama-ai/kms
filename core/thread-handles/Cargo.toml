@@ -12,8 +12,5 @@ anyhow.workspace = true
 error-utils.workspace = true
 futures.workspace = true
 rayon.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
+tokio.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros", "time"] }

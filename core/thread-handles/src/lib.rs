@@ -6,7 +6,6 @@ use rayon::ThreadPoolBuilder;
 use std::any::Any;
 use std::time::Duration;
 use tokio::{sync::OnceCell, task::JoinHandle};
-use tracing::error;
 
 use error_utils::anyhow_error_and_log;
 
@@ -47,8 +46,7 @@ impl ThreadHandleGroup {
                     // Get panic message if available
                     let panic_msg = e.into_panic();
                     let msg = panic_message(panic_msg);
-                    error!(msg);
-                    return Err(anyhow!("Thread panicked: {}", msg));
+                    return Err(anyhow_error_and_log(format!("Thread panicked: {}", msg)));
                 }
                 return Err(anyhow!("Task failed: {}", e));
             }
@@ -66,7 +64,7 @@ impl ThreadHandleGroup {
         'handle_loop: for handle in self.handles {
             while !handle.is_finished() {
                 if start.elapsed() > timeout {
-                    error!("Cleanup timed out, aborting the stalling task.");
+                    anyhow_error_and_log("Cleanup timed out, aborting the stalling task.");
                     handle.abort();
                     std::thread::sleep(Duration::from_secs(1));
                     continue 'handle_loop;
@@ -80,18 +78,23 @@ impl ThreadHandleGroup {
                 Some(Err(e)) => {
                     if e.is_panic() {
                         let msg = panic_message(e.into_panic());
-                        error!("Task panicked during cleanup: {}", msg);
-                        return Err(anyhow!("Task panicked during cleanup: {}", msg));
+                        return Err(anyhow_error_and_log(format!(
+                            "Task panicked during cleanup: {}",
+                            msg
+                        )));
                     }
                     if !e.is_cancelled() {
                         // Ignore cancellation errors from our abort
-                        error!("Task failed during cleanup: {}", e);
-                        return Err(anyhow!("Task failed during cleanup: {}", e));
+                        return Err(anyhow_error_and_log(format!(
+                            "Task failed during cleanup: {}",
+                            e
+                        )));
                     }
                 }
                 None => {
-                    error!("Task unexpectedly not finished after timeout check");
-                    return Err(anyhow!("Task cleanup failed"));
+                    return Err(anyhow_error_and_log(
+                        "Task unexpectedly not finished after timeout check",
+                    ));
                 }
             }
         }
@@ -126,8 +129,7 @@ where
         for handle in self.handles {
             if let Err(e) = handle.join() {
                 let msg = panic_message(e);
-                error!(msg);
-                return Err(anyhow!("Thread panicked: {}", msg));
+                return Err(anyhow_error_and_log(format!("Thread panicked: {}", msg)));
             }
         }
         Ok(())
@@ -141,8 +143,7 @@ where
                 Ok(result) => results.push(result),
                 Err(e) => {
                     let msg = panic_message(e);
-                    error!(msg);
-                    return Err(anyhow!("Thread panicked: {}", msg));
+                    return Err(anyhow_error_and_log(format!("Thread panicked: {}", msg)));
                 }
             }
         }
