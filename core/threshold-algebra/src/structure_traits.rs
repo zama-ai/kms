@@ -156,7 +156,6 @@ pub trait ErrorCorrect: RingWithExceptionalSequence {
     ) -> anyhow::Result<Poly<Self>>;
 }
 
-// TODO(dp): I think this trait could be changed to return role 1-based indexes instead?
 pub trait Derive: Sized {
     /// Domain separator for the function `derive_challenges_from_coinflip`.
     ///
