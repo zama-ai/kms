@@ -22,7 +22,7 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
 use tracing::{instrument, Instrument};
 
-use super::grpc::ggen::{
+use super::grpc::proto_gen::{
     choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
     PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
     StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,

@@ -2,9 +2,9 @@
 //! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
 //! as this is meant for testing and benchmarking, and definitely not for production use.
 
-use crate::choreography::grpc::ggen::choreography_server::{Choreography, ChoreographyServer};
+use crate::choreography::grpc::proto_gen::choreography_server::{Choreography, ChoreographyServer};
 
-use crate::choreography::grpc::ggen::{
+use crate::choreography::grpc::proto_gen::{
     CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
     PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
     PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
@@ -12,7 +12,7 @@ use crate::choreography::grpc::ggen::{
     ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
-use crate::choreography::grpc::ggen::{ReshareRequest, ReshareResponse};
+use crate::choreography::grpc::proto_gen::{ReshareRequest, ReshareResponse};
 use crate::choreography::grpc::{
     create_small_sessions, fill_network_memory_info_multiple_sessions,
     fill_network_memory_info_single_session, gen_random_sid,

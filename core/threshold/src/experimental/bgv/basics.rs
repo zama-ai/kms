@@ -336,13 +336,13 @@ pub fn multiply_ctxt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::FromU128;
     use crate::experimental::algebra::levels::{
         GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1,
     };
     use crate::experimental::algebra::ntt::N65536;
     use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
+    use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
 

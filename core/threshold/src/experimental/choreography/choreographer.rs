@@ -1,7 +1,7 @@
 //! Choreographer is the client of the grpc choreography service.
 //! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
 //! as this is meant for testing and benchmarking, and definitely not for production use.
-use crate::choreography::grpc::ggen::{
+use crate::choreography::grpc::proto_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
