@@ -1924,7 +1924,9 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
 /// are for testing, we're fine with this inconsistency.
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
-        dkg_mode: DkgMode::Z128,
+        // TODO(dp): What's going on here? endpoints/keygen.rs expects to be instantiated with the same Z as in the params.
+        // dkg_mode: DkgMode::Z128,
+        dkg_mode: DkgMode::Z64,
         sec: 128,
         ciphertext_parameters: ClassicPBSParameters {
             lwe_dimension: LweDimension(1),
