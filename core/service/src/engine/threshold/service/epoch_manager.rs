@@ -1191,6 +1191,16 @@ pub(crate) mod tests {
                 priv_storage_prefixes,
             )
             .await;
+            // Ensure we delete data under the new format
+            let default_id: kms_grpc::RequestId = (*DEFAULT_EPOCH_ID).into();
+            purge(
+                None,
+                None,
+                &default_id,
+                pub_storage_prefixes,
+                priv_storage_prefixes,
+            )
+            .await;
 
             priv_storage.push(cur_priv);
             vaults.push(None);
