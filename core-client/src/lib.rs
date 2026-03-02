@@ -710,19 +710,19 @@ pub struct PreviousEpochParameters {
 
     /// Key ids of all the keys to reshare
     #[clap(long)]
-    pub keys_id: Vec<KeyId>,
+    pub key_ids: Vec<KeyId>,
 
-    /// Preprocessing request ids for all the keys to reshare, these should correspond to the preprocessing done for the keys specified by `key_id`.
+    /// Preprocessing request ids for all the keys to reshare, these should correspond to the preprocessing done for the keys specified by `key_ids`.
     #[clap(long)]
-    pub preprocs_id: Vec<RequestId>,
+    pub preproc_ids: Vec<RequestId>,
 
-    /// The hex-encoded server key digest to use for resharing for each keys to reshare.
+    /// The hex-encoded server key digest to use for resharing for each key to reshare.
     #[clap(long)]
-    pub server_keys_digest: Vec<String>,
+    pub server_key_digests: Vec<String>,
 
     /// The hex-encoded public key digest to use for resharing.
     #[clap(long)]
-    pub public_keys_digest: Vec<String>,
+    pub public_key_digests: Vec<String>,
 }
 
 #[derive(Debug, Parser, Clone)]

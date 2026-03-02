@@ -21,33 +21,43 @@ use tonic::transport::Channel;
 
 impl PreviousEpochParameters {
     pub(crate) fn convert_to_grpc(&self, fhe_params: FheParameter) -> PreviousEpochInfo {
-        let expected_num_keys = self.keys_id.len();
-        assert_eq!(self.server_keys_digest.len(), expected_num_keys);
-        assert_eq!(self.public_keys_digest.len(), expected_num_keys);
-        assert_eq!(self.preprocs_id.len(), expected_num_keys);
+        let expected_num_keys = self.key_ids.len();
+        assert_eq!(self.server_key_digests.len(), expected_num_keys);
+        assert_eq!(self.public_key_digests.len(), expected_num_keys);
+        assert_eq!(self.preproc_ids.len(), expected_num_keys);
 
         let key_digests = self
-            .server_keys_digest
+            .server_key_digests
             .iter()
-            .zip(self.public_keys_digest.iter())
+            .zip(self.public_key_digests.iter())
             .map(|(server_digest, public_digest)| {
                 vec![
                     KeyDigest {
                         key_type: PubDataType::ServerKey.to_string(),
-                        digest: hex::decode(server_digest).unwrap(),
+                        digest: hex::decode(server_digest).unwrap_or_else(|e| {
+                            panic!(
+                                "Unable to decode the provided server key digest {:?}: {:?}",
+                                server_digest, e
+                            )
+                        }),
                     },
                     KeyDigest {
                         key_type: PubDataType::PublicKey.to_string(),
-                        digest: hex::decode(public_digest).unwrap(),
+                        digest: hex::decode(public_digest).unwrap_or_else(|e| {
+                            panic!(
+                                "Unable to decode the provided public key digest {:?}: {:?}",
+                                public_digest, e
+                            )
+                        }),
                     },
                 ]
             })
             .collect::<Vec<_>>();
 
         let keys_info = self
-            .keys_id
+            .key_ids
             .iter()
-            .zip(self.preprocs_id.iter())
+            .zip(self.preproc_ids.iter())
             .zip(key_digests)
             .map(|((key_id, preproc_id), key_digests)| KeyInfo {
                 key_id: Some((*key_id).into()),
@@ -162,12 +172,12 @@ pub(crate) async fn do_new_epoch(
 
     if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
         let expected_key_ids = previous_epoch
-            .keys_id
+            .key_ids
             .iter()
             .map(|k| (*k).into())
             .collect::<Vec<_>>();
         let expected_preproc_ids = previous_epoch
-            .preprocs_id
+            .preproc_ids
             .iter()
             .map(|p| (*p).into())
             .collect::<Vec<_>>();
@@ -181,14 +191,22 @@ pub(crate) async fn do_new_epoch(
             let resp_key_ids = resp
                 .reshare_responses
                 .iter()
-                .map(|k| k.key_id.clone().unwrap())
+                .map(|k| {
+                    k.key_id
+                        .clone()
+                        .expect("No key ID found in resharing response")
+                })
                 .collect::<Vec<_>>();
             assert_eq!(resp_key_ids, expected_key_ids);
 
             let resp_preproc_ids = resp
                 .reshare_responses
                 .iter()
-                .map(|k| k.preprocessing_id.clone().unwrap())
+                .map(|k| {
+                    k.preprocessing_id
+                        .clone()
+                        .expect("No preprocessing ID found in resharing response")
+                })
                 .collect::<Vec<_>>();
             assert_eq!(resp_preproc_ids, expected_preproc_ids,);
             response_vec.push((core_conf, resp));
@@ -209,8 +227,7 @@ pub(crate) async fn do_new_epoch(
                 destination_prefix,
                 true,
             )
-            .await
-            .unwrap();
+            .await?;
 
             assert_eq!(
                 party_confs.len(),
@@ -239,9 +256,8 @@ pub(crate) async fn do_new_epoch(
             .await;
 
             let preproc_id: RequestId = preproc_id.try_into().unwrap();
-            for response in response_vec.iter() {
+            for (_, response) in response_vec.iter() {
                 let signature = response
-                    .1
                     .reshare_responses
                     .iter()
                     .find(|r| {

@@ -2343,13 +2343,13 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
 async fn reshare_isolated(
     config_path: &Path,
     test_path: &Path,
-    keys_id: Vec<RequestId>,
-    preprocs_id: Vec<RequestId>,
+    key_ids: Vec<RequestId>,
+    preproc_ids: Vec<RequestId>,
     from_context_id: Option<ContextId>,
     from_epoch_id: Option<EpochId>,
     new_epoch_id: EpochId,
-    server_keys_digest: Vec<String>,
-    public_keys_digest: Vec<String>,
+    server_key_digests: Vec<String>,
+    public_key_digests: Vec<String>,
 ) -> Result<Vec<(Option<RequestId>, String)>> {
     let ctx_id = from_context_id.expect("context_id required for reshare");
     let ep_id = from_epoch_id.expect("epoch_id required for reshare");
@@ -2361,10 +2361,10 @@ async fn reshare_isolated(
             previous_epoch_params: Some(PreviousEpochParameters {
                 context_id: ctx_id,
                 epoch_id: ep_id,
-                keys_id: keys_id.into_iter().map(|id| id.into()).collect(),
-                preprocs_id,
-                server_keys_digest,
-                public_keys_digest,
+                key_ids: key_ids.into_iter().map(|id| id.into()).collect(),
+                preproc_ids,
+                server_key_digests,
+                public_key_digests,
             }),
         }),
         logs: true,
