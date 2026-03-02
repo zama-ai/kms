@@ -134,6 +134,8 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
 
     /// Validate the recovery material loaded from public storage.
     /// Must be called once the verification key becomes available.
+    /// If no recovery material was loaded (e.g. first startup before custodian setup),
+    /// validation is skipped since there is nothing to verify.
     pub fn validate_recovery_material(&self, verf_key: &PublicSigKey) -> anyhow::Result<()> {
         match self.loaded_recovery_material {
             Some(ref material) => {
@@ -143,10 +145,16 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
                         self.custodian_context_id
                     )))
                 } else {
+                    tracing::info!("Recovery material signature validated successfully");
                     Ok(())
                 }
             }
-            None => Err(anyhow_error_and_log("Recovery material not loaded yet")),
+            None => {
+                tracing::info!(
+                    "No recovery material loaded from public storage, skipping validation"
+                );
+                Ok(())
+            }
         }
     }
 }
@@ -341,18 +349,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_validate_recovery_material_no_material_not_ok() {
+    async fn test_validate_recovery_material_no_material_is_ok() {
         let rng = AesRng::seed_from_u64(69);
         let mut rng2 = AesRng::seed_from_u64(69);
         let (verf_key, _sig_key) = gen_sig_keys(&mut rng2);
         let keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
             .await
             .unwrap();
-        let result = keychain.validate_recovery_material(&verf_key);
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Recovery material not loaded"));
+        // No recovery material loaded yet (e.g. first startup before custodian setup)
+        // should be OK since there is nothing to validate.
+        keychain.validate_recovery_material(&verf_key).unwrap();
     }
 
     /// Helper: create a RecoveryValidationMaterial, store it in RamStorage, and return
