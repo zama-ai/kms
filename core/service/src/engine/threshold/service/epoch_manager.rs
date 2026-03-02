@@ -1086,7 +1086,7 @@ pub(crate) mod tests {
         },
         cryptography::signatures::gen_sig_keys,
         engine::base::{derive_request_id, BaseKmsStruct},
-        util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
+        util::rate_limiter::RateLimiterConfig,
         vault::storage::{
             file::FileStorage,
             ram::{self, RamStorage},
@@ -1160,47 +1160,40 @@ pub(crate) mod tests {
         {
             let cur_pub = FileStorage::new(None, StorageType::PUB, pub_prefix.as_deref()).unwrap();
             pub_storage.push(cur_pub);
-            let cur_priv =
+            let mut cur_priv =
                 FileStorage::new(None, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
 
-            // make sure the store does not contain any PRSS info (currently stored under ID 1)
-            let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
-                *DEFAULT_EPOCH_ID
-            ))
+            // Note that migration will move legacy prss (whose ID depends on amount of parties) to the new type, which does not
+            // this means that when mixing tests of different amount of parties using the same storage, we need to redo PRSS
+            // Since migation is only done for the 13/4 configuration this is the only legacy PRSS we need to clear
+            let req_z64 =
+                derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID)).unwrap();
+            let req_z128 =
+                derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))
+                    .unwrap();
+            #[allow(deprecated)]
+            delete_at_request_id(
+                &mut cur_priv,
+                &req_z64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
             .unwrap();
-            purge(
-                None,
-                None,
-                &req_id,
-                pub_storage_prefixes,
-                priv_storage_prefixes,
+            #[allow(deprecated)]
+            delete_at_request_id(
+                &mut cur_priv,
+                &req_z128,
+                &PrivDataType::PrssSetup.to_string(),
             )
-            .await;
-
-            let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
-                *DEFAULT_EPOCH_ID
-            ))
+            .await
             .unwrap();
-            purge(
-                None,
-                None,
-                &req_id,
-                pub_storage_prefixes,
-                priv_storage_prefixes,
+            delete_at_request_id(
+                &mut cur_priv,
+                &(*DEFAULT_EPOCH_ID).into(),
+                &PrivDataType::PrssSetupCombined.to_string(),
             )
-            .await;
-            // Ensure we delete data under the new format
-            let default_id: kms_grpc::RequestId = (*DEFAULT_EPOCH_ID).into();
-            purge(
-                None,
-                None,
-                &default_id,
-                pub_storage_prefixes,
-                priv_storage_prefixes,
-            )
-            .await;
+            .await
+            .unwrap();
 
             priv_storage.push(cur_priv);
             vaults.push(None);
