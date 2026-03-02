@@ -1,3 +1,4 @@
+use crate::engine::base::{KeyGenMetadata, DSEP_PUBDATA_KEY};
 use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
@@ -7,49 +8,161 @@ use observability::metrics::METRICS;
 use observability::metrics_names::{
     map_tonic_code_to_metric_err_tag, ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use threshold_fhe::hashing::hash_element;
 use tonic::Status;
 
-/// Sanity check that public key materials can be read from storage.
+pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
+pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
+pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
+    "Compressed xof keyset digest mismatch";
+
+/// Verify key digests using raw bytes from storage.
+/// This avoids re-serializing the keys, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+pub(crate) fn verify_key_digest_from_bytes(
+    server_key_bytes: &[u8],
+    public_key_bytes: &[u8],
+    expected_server_key_digest: &[u8],
+    expected_public_key_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_server_key_digest = hash_element(&DSEP_PUBDATA_KEY, server_key_bytes);
+    let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
+
+    if actual_server_key_digest != expected_server_key_digest {
+        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
+    }
+    if actual_public_key_digest != expected_public_key_digest {
+        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
+    }
+
+    Ok(())
+}
+
+/// Verify compressed key digest using raw bytes from storage.
+/// This avoids re-serializing the keys, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+pub(crate) fn verify_compressed_key_digest_from_bytes(
+    compressed_keyset_bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, compressed_keyset_bytes);
+    if actual_digest != expected_digest {
+        anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
+    }
+    Ok(())
+}
+
+/// Load raw bytes from storage and verify their digests against the expected values
+/// in `key_digest_map`. Returns an error if any digest does not match.
+async fn verify_digests<S: StorageReader + Sync>(
+    storage: &S,
+    id: &RequestId,
+    key_digest_map: &HashMap<PubDataType, Vec<u8>>,
+) -> anyhow::Result<()> {
+    if key_digest_map.contains_key(&PubDataType::PublicKey) {
+        let public_key_bytes = storage
+            .load_bytes(id, &PubDataType::PublicKey.to_string())
+            .await?;
+        let server_key_bytes = storage
+            .load_bytes(id, &PubDataType::ServerKey.to_string())
+            .await?;
+
+        let expected_server_key_digest = key_digest_map
+            .get(&PubDataType::ServerKey)
+            .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
+        let expected_public_key_digest = key_digest_map
+            .get(&PubDataType::PublicKey)
+            .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+
+        verify_key_digest_from_bytes(
+            &server_key_bytes,
+            &public_key_bytes,
+            expected_server_key_digest,
+            expected_public_key_digest,
+        )
+    } else if key_digest_map.contains_key(&PubDataType::CompressedXofKeySet) {
+        let compressed_keyset_bytes = storage
+            .load_bytes(id, &PubDataType::CompressedXofKeySet.to_string())
+            .await?;
+
+        let expected_digest = key_digest_map
+            .get(&PubDataType::CompressedXofKeySet)
+            .ok_or_else(|| anyhow::anyhow!("missing digest for compressed xof keyset, id={id}"))?;
+
+        verify_compressed_key_digest_from_bytes(&compressed_keyset_bytes, expected_digest)
+    } else {
+        anyhow::bail!(
+            "Inconsistent storage state for id={id}: pub data types {:?} \
+             contains neither PublicKey nor CompressedXofKeySet",
+            key_digest_map.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Deserialize public key materials from storage to verify they are readable.
+/// Used for legacy metadata that lacks digest information.
+async fn check_readability<S: StorageReader + Sync>(
+    storage: &S,
+    id: &RequestId,
+    pub_data_types: &HashSet<PubDataType>,
+) -> anyhow::Result<()> {
+    if pub_data_types.contains(&PubDataType::PublicKey) {
+        read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
+            storage,
+            id,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await?;
+        read_versioned_at_request_id::<_, tfhe::ServerKey>(
+            storage,
+            id,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await?;
+    } else if pub_data_types.contains(&PubDataType::CompressedXofKeySet) {
+        read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
+            storage,
+            id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await?;
+    } else {
+        anyhow::bail!(
+            "Inconsistent storage state for id={id}: pub data types {:?} \
+             contains neither PublicKey nor CompressedXofKeySet",
+            pub_data_types
+        );
+    }
+    Ok(())
+}
+
+/// Sanity check that public key materials can be read from storage and verify their integrity.
 ///
-/// For each entry, verifies that the public key materials indicated by the
-/// `pub_data_types` can be successfully retrieved from public storage.
+/// For each entry, verifies that the public key materials can be successfully retrieved
+/// from public storage. When `KeyGenMetadata::Current` metadata is available, also verifies
+/// the integrity of the loaded data by comparing digests. For `KeyGenMetadata::LegacyV0`
+/// entries (which lack digest information), only readability is checked.
 pub async fn sanity_check_public_materials<S>(
     public_storage: &S,
-    entries: &[(RequestId, HashSet<PubDataType>)],
+    entries: &[(RequestId, KeyGenMetadata)],
 ) -> anyhow::Result<()>
 where
     S: StorageReader + Sync,
 {
-    for (id, pub_data_types) in entries {
-        if pub_data_types.contains(&PubDataType::PublicKey) {
-            let _pk = read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
-                public_storage,
-                id,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
-            let _server_key = read_versioned_at_request_id::<_, tfhe::ServerKey>(
-                public_storage,
-                id,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await?;
-        } else if pub_data_types.contains(&PubDataType::CompressedXofKeySet) {
-            let _xof_keyset =
-                read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-                    public_storage,
-                    id,
-                    &PubDataType::CompressedXofKeySet.to_string(),
-                )
-                .await?;
-        } else {
-            tracing::warn!(
-                "Inconsistent storage state, public component for id={id} not found, \
-                 pub data types only contains {:?}! Please investigate.",
-                pub_data_types
-            );
+    for (id, metadata) in entries {
+        match metadata {
+            KeyGenMetadata::Current(inner) => {
+                verify_digests(public_storage, id, &inner.key_digest_map).await?;
+            }
+            KeyGenMetadata::LegacyV0(hash_map) => {
+                tracing::info!(
+                    "Legacy metadata for id={id}, performing readability check only (no digest verification)"
+                );
+                let pub_data_types: HashSet<PubDataType> = hash_map.keys().cloned().collect();
+                check_readability(public_storage, id, &pub_data_types).await?;
+            }
         }
     }
     Ok(())
@@ -275,10 +388,17 @@ impl From<MetricedError> for Status {
         tonic::Status::new(metriced_error.error_code, error_string)
     }
 }
-// Add tests
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::base::{safe_serialize_hash_element_versioned, KeyGenMetadataInner};
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::store_versioned_at_request_id;
+    use aes_prng::AesRng;
+    use kms_grpc::rpc_types::PubDataType;
+    use rand::SeedableRng;
+    use std::collections::HashMap;
+    use tfhe::shortint::ClassicPBSParameters;
 
     #[test]
     #[tracing_test::traced_test]
@@ -327,5 +447,230 @@ mod tests {
         assert!(!logs_contain("dropped without being returned"));
         // Check that the error is indeed logged
         assert!(logs_contain("Grpc failure on requestID"));
+    }
+
+    #[tokio::test]
+    async fn sanity_check_current_standard_keys_valid_digests() {
+        let mut rng = AesRng::seed_from_u64(69);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let digests = setup_standard_keys(&mut storage, &key_id).await;
+
+        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
+            key_id,
+            preprocessing_id: preproc_id,
+            key_digest_map: digests,
+            external_signature: vec![],
+        });
+
+        let entries = vec![(key_id, metadata)];
+        sanity_check_public_materials(&storage, &entries)
+            .await
+            .expect("valid digests should pass");
+    }
+
+    #[tokio::test]
+    async fn sanity_check_current_standard_keys_invalid_digest() {
+        let mut rng = AesRng::seed_from_u64(69);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let mut digests = setup_standard_keys(&mut storage, &key_id).await;
+        // Corrupt the server key digest
+        if let Some(digest) = digests.get_mut(&PubDataType::ServerKey) {
+            digest[0] ^= 0xFF;
+        }
+
+        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
+            key_id,
+            preprocessing_id: preproc_id,
+            key_digest_map: digests,
+            external_signature: vec![],
+        });
+
+        let entries = vec![(key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
+            "expected server key digest mismatch, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keys_valid_digests() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let digests = setup_compressed_keys(&mut storage, &key_id).await;
+
+        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
+            key_id,
+            preprocessing_id: preproc_id,
+            key_digest_map: digests,
+            external_signature: vec![],
+        });
+
+        let entries = vec![(key_id, metadata)];
+        sanity_check_public_materials(&storage, &entries)
+            .await
+            .expect("valid digests should pass");
+    }
+
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keys_invalid_digest() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let mut digests = setup_compressed_keys(&mut storage, &key_id).await;
+        // Corrupt the digest
+        if let Some(digest) = digests.get_mut(&PubDataType::CompressedXofKeySet) {
+            digest[0] ^= 0xFF;
+        }
+
+        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
+            key_id,
+            preprocessing_id: preproc_id,
+            key_digest_map: digests,
+            external_signature: vec![],
+        });
+
+        let entries = vec![(key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH),
+            "expected compressed keyset digest mismatch, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn sanity_check_legacy_metadata_readability_only() {
+        let mut rng = AesRng::seed_from_u64(46);
+        let key_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        // Set up standard keys (we won't use the digests — legacy has no digest info)
+        let _digests = setup_standard_keys(&mut storage, &key_id).await;
+
+        // Create legacy metadata with empty handles — we just need the keys present
+        use kms_grpc::rpc_types::SignedPubDataHandleInternal;
+        let legacy_map: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::from_iter([
+            (
+                PubDataType::PublicKey,
+                SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+            ),
+            (
+                PubDataType::ServerKey,
+                SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+            ),
+        ]);
+        let metadata = KeyGenMetadata::LegacyV0(legacy_map);
+
+        let entries = vec![(key_id, metadata)];
+        sanity_check_public_materials(&storage, &entries)
+            .await
+            .expect("legacy readability check should pass");
+
+        assert!(logs_contain("Legacy metadata"));
+        assert!(logs_contain("readability check only"));
+    }
+
+    async fn setup_standard_keys(
+        storage: &mut RamStorage,
+        key_id: &RequestId,
+    ) -> HashMap<PubDataType, Vec<u8>> {
+        let params = crate::consts::TEST_PARAM;
+        let pbs_params: ClassicPBSParameters = params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
+        let client_key = tfhe::ClientKey::generate(config);
+        let server_key = client_key.generate_server_key();
+        let public_key = tfhe::CompactPublicKey::new(&client_key);
+
+        let server_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &server_key,
+        )
+        .unwrap();
+        let public_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &public_key,
+        )
+        .unwrap();
+
+        store_versioned_at_request_id(
+            storage,
+            key_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        store_versioned_at_request_id(
+            storage,
+            key_id,
+            &server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        HashMap::from_iter([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ])
+    }
+
+    async fn setup_compressed_keys(
+        storage: &mut RamStorage,
+        key_id: &RequestId,
+    ) -> HashMap<PubDataType, Vec<u8>> {
+        use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
+        use tfhe::xof_key_set::CompressedXofKeySet;
+
+        let params = crate::consts::TEST_PARAM;
+        let config = params.to_tfhe_config();
+        let max_norm_hwt = params
+            .get_params_basics_handle()
+            .get_sk_deviations()
+            .map(|x| x.pmax)
+            .unwrap_or(1.0);
+        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+        let tag = key_id.into();
+
+        let (_client_key, compressed_keyset) =
+            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
+                .unwrap();
+
+        let digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &compressed_keyset,
+        )
+        .unwrap();
+
+        store_versioned_at_request_id(
+            storage,
+            key_id,
+            &compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+
+        HashMap::from_iter([(PubDataType::CompressedXofKeySet, digest)])
     }
 }
