@@ -209,8 +209,6 @@ pub(crate) async fn new_epoch_with_reshare(
     // (effectively doing same set resharing, except we don't use the specialized impl anymore)
     let new_context_id = *DEFAULT_MPC_CONTEXT;
 
-    //let (reshared_keyset, reshared_all_private_keys) =
-
     let new_epoch_outputs = run_new_epoch(
         amount_parties,
         &kms_clients,
