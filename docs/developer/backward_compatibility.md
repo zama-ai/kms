@@ -1,22 +1,26 @@
-# KMS Core Backwards Compatibility
+# KMS Core Backward Compatibility
 
 This repo is heavily inspired by the work done in the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project and was adapted to kms-core.
 It contains various objects that have been versioned and serialized.
-The goal is to detect in the CI when the version of a type should be updated because a breaking change has been added.
+The goal is to detect in the CI when the version of a type should be updated because a breaking change has been made.
+
+The approach is a two-step process:
+1. Generate versioned objects serialized in a certain (older) version of the project
+2. Run tests and ensure that newer versions of the project can load and process these older objects properly.
 
 The objects are serialized using bincode only because it supports large arrays and is vulnerable to different sets of breaking changes. Each object is stored with a set of metadata to verify that the values are loaded correctly.
 
 For any additional documentation, feel free to take a look at the [tfhe-backward-compat-data](https://github.com/zama-ai/tfhe-backward-compat-data) project.
 
-## Usage
+## Usage - Testing backward compatibility
 
-At the repo's root, run the following command
+At the repo's root, run the following command to run the backwards compatibility tests:
 
 ```shell
 make test-backward-compatibility
 ```
 
-This will load the objects versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
+This will load existing objects from git LFS versioned with the versions set in this module and check if they can be loaded correctly with the current state of kms-core.
 
 ## Versioning this module
 
@@ -29,6 +33,8 @@ However, this does not allow changes to be made to the test metadata scheme itse
 **Note:** Data generation has been moved to separate version-specific crates to avoid dependency conflicts:
 - `backward-compatibility/generate-v0.11.0` - For KMS v0.11.0
 - `backward-compatibility/generate-v0.11.1` - For KMS v0.11.1
+- `backward-compatibility/generate-v0.13.0` - For KMS v0.13.0
+- `backward-compatibility/generate-v0.13.10` - For KMS v0.13.10
 
 Each generator uses the exact dependencies from its target KMS version.
 
@@ -46,28 +52,36 @@ make generate-backward-compatibility-v0.11.0
 
 # Generate only v0.11.1 data
 make generate-backward-compatibility-v0.11.1
+
+# Generate only v0.13.0 data
+make generate-backward-compatibility-v0.13.0
+
+# Generate only v0.13.10 data
+make generate-backward-compatibility-v0.13.10
+
 ```
-WARNING: Generating for specific versions remove previously generated data from the `.ron` files. Thus, changes based on generating a specific version should NEVER be committed to the repo. 
+WARNING: Generating for specific versions removes previously generated data from the `.ron` files, effectively ignoring other versions in the tests!
+Thus, changes based on generating a specific version should NEVER be committed to the repo.
 
 **Direct cargo commands:**
+The make commands are aliases for changing the directory to the respective `generate-vX.Y.Z` directory and then running `cargo run --release`, i.e. for `v0.11.0` the command is:
 ```shell
 cd backward-compatibility/generate-v0.11.0 && cargo run --release
-cd backward-compatibility/generate-v0.11.1 && cargo run --release
 ```
 
 ### Testing Generated Data
 
-After generating new data, test it **without** pulling LFS (which would overwrite your changes):
+After generating new testing data, test it **without** pulling LFS (which would overwrite your changes):
 
 ```shell
-# Use this target - it skips LFS pull
+# Use this target - it skips the LFS pull and uses locally generated files
 make test-backward-compatibility-local
 
 # Or run directly
 cargo test --test 'backward_compatibility_*' -- --include-ignored
 ```
 
-⚠️ **Important**: Don't use `make test-backward-compatibility` immediately after generating data, as it pulls LFS files first and will overwrite your newly generated data!
+⚠️ **Important**: Do **not** use `make test-backward-compatibility` immediately after generating data, as it pulls LFS files first and will overwrite your newly generated data!
 
 ### Data Determinism
 
@@ -77,7 +91,7 @@ TFHE-rs' prng is seeded with a fixed seed, so the data should be identical at ea
 
 The backward compatibility system needs to:
 1. **Generate** test data using old KMS versions (e.g., v0.11.0, v0.11.1)
-2. **Load and test** that data with the current KMS version
+2. **Load and verify** that this old data can be processed with the current KMS version
 
 These operations require conflicting dependency versions. Additionally, **even patch versions can have incompatible dependencies**:
 - v0.11.0 uses: alloy 1.1.2, tfhe 1.3.2, tfhe-versionable 0.6.0
@@ -91,7 +105,8 @@ By maintaining separate generator crates per version, we can:
 
 ### Metadata Merging
 
-Generators **append** to existing metadata files rather than overwriting them. This allows multiple versions to coexist:
+Generators **append** to existing metadata files rather than overwriting them.
+This allows multiple versions to coexist:
 
 ```ron
 // backward-compatibility/data/kms.ron
@@ -110,14 +125,14 @@ To add a test for a type that is already tested, you need to:
 - go to the appropriate generator crate (e.g., `backward-compatibility/generate-v0.11.1/src/data_0_11.rs`) for the version you're testing
 - create a const global variable with the metadata for that test
 - create a `gen_...` method in the appropriate struct (ex: `KmsV0_11` for KMS objects)
-- instantiate the object you want to test in it.
-  - If some private functions are needed to do so, the simplest solution is to copy paste them in a `helper_x_y.rs` file (you might need to create this file). Else, make them public or available under the "testing" feature and update the target commit of kms-core in this module. Be aware that is this requires updating the version, you need to add it instead and keep the old one as well.
-  - If some auxiliary data is needed for the test, make sure to serialize it using `store_versioned_auxiliary` macro
-- serialize it using the `store_versioned_test` macro
+- instantiate the object you want to test in it
+  - If some private functions are needed to do so, the simplest solution is to copy paste them in a `helper_x_y.rs` file (you might need to create this file). Else, make them public or available under the "testing" feature and update the target commit of kms-core in this module. Be aware that if this requires updating the version, you need to add it instead and keep the old one as well.
+  - If some _auxiliary_ data is needed for the test, make sure to serialize it using `store_versioned_auxiliary!` macro
+- serialize it using the `store_versioned_test!` macro
 - return the metadata of your test
-- update the `gen_vvv_data` method (where "vvv" is the module where your new type is defined) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
+- update the `gen_*_data` method (where "`*`" is the module where your new type is defined, e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`) for the main struct (ex: `V0_11`) by calling your new method within the returned vector
 
-The test will then be automatically selected when running `make test_backward_compatibility`.
+The test will then be automatically selected when running `make test-backward-compatibility`.
 
 ### Example
 
@@ -171,33 +186,26 @@ impl KMSCoreVersion for V0_9 {
 
 ## Adding a test for a new type
 
-If the type you are testing is already present in the releases already being tested for backwards compatibility (i.e. there is an appropriate `data_0_XX_X.rs` file and associated `Cargo.toml` that checks out a specific version of the KMS) then proceed to the next section. If the type is new and does not exist in any release already, then start [here](#Adding-a-new-kms-core-release) instead, before proceeding to the next section. 
+If the type you are testing is already present in the releases already being tested for backwards compatibility (i.e. there is an appropriate `data_0_XX_X.rs` file and associated `Cargo.toml` that checks out a specific version of the KMS) then proceed to the next section.
+If the type is new and does not exist in any release already, then start [here](#Adding-a-new-kms-core-release) instead, before proceeding to the next section.
 Furthermore, be aware that in this situation you will likely end up in a catch-22 situation when you want to test a LFS release of the KMS that does not already exist. To circumvent this you can use a specific commit from the KMS repo instead of a release. For example by replacing this part in the toml file:
 ```
-kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.13.0"} 
-kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.13.0"} 
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.13.0"}
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.13.0"}
 threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "v0.13.0", features = [
     "testing",
 ] }
 ```
 with this
 ```
-kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e924c61"} 
-kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e924c61"} 
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e924c61"}
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e924c61"}
 threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "e924c61", features = [
     "testing",
 ] }
 ```
-Furthermore, you might need to temporarily remove the ` --locked` argument from the command compiling the new version in the `Makefile` in the root of the project. For example by changing:
-```
-generate-backward-compatibility-v0.13.0:
-	cd backward-compatibility/generate-v0.13.0 && cargo run --release --locked
-```
-to 
-```
-generate-backward-compatibility-v0.13.0:
-	cd backward-compatibility/generate-v0.13.0 && cargo run --release
-```
+
+Then you need to generate the data to test, e.g. running `make generate-backward-compatibility-v0.13.0`.
 
 ### In the backward-compatibility module
 
@@ -205,10 +213,10 @@ To add a test for a type that has not yet been tested, you should:
 
 - go to `backward-compatibility/src/lib.rs`:
   - create a new struct that implements the `TestType` trait. Only the `test_filename` field is required, the others are metadata used to instantiate and check the new type. However, they should not use any kms-core internal type
-  - add it to the `TestMetadataZzz` enum, where `Zzz` is the name of the module to test
+  - add it to the `TestMetadataMOD` enum, where `MOD` is the name of the module to test
 - add a new testcase in the appropriate generator crate using the procedure in the previous paragraph. If the type comes from a new module, you should also:
   - go to `backward-compatibility/src/lib.rs` and create a new `TestMetadataZzz` module
-  - go to the generator's `src/data_x_y.rs` and create a new `gen_vvv_data` method
+  - go to the generator's `src/data_x_y.rs` and create a new `gen_*_data` method (e.g. `gen_kms_data`, `gen_kms_grpc_data`, `gen_threshold_fhe_data`)
   - go to the generator's `src/main.rs`:
     - modify `gen_all_data` to include and return the new tests
     - retrieve the new tests in `main()` and store them using `store_metadata` along a different and related file name
@@ -248,7 +256,8 @@ pub enum TestMetadataKMS {
 
 ### In the tests
 
-In the tested module, you should update the test (ex: `kms-core/core/threshold/tests/backward_compatibility_kms.rs`) to handle your new test type. To do this, create a function that first loads and unversionizes the serialized object, and then checks its value against a new instantiated object generated thanks to the provided metadata:
+In the tested module, you should update the test (ex: `kms-core/core/threshold/tests/backward_compatibility_kms.rs`) to handle your new test type.
+To do this, create a function that first loads and unversionizes the serialized object, and then checks its value against a new instantiated object generated thanks to the provided metadata:
 
 ### Example
 
@@ -365,7 +374,7 @@ When some breaking changes are added to a versionized type, you should update se
 - add your new `XXX` type (ex: `PrivateSigKey`) definition and add both the `Versionize` derive trait and the `#[versionize(XXXVersioned)]` attribute to it
 - implement the `Upgrade` trait for the old definition (ex: `PrivateSigKeyV0`)
 
-It is import to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
+It is important to understand that the old definition **must not** be changed whenever there's a breaking change. Also, only the latest definition should be annotated with both versionize macros.
 
 It should look like the following:
 
@@ -400,11 +409,11 @@ impl Upgrade<PrivateSigKey> for PrivateSigKeyV0 {
 }
 ```
 
-For more in depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
+For more in-depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
 
 ## Updating the test without testing backward compatibility
 
-If you want to update the test data _without_ actually testing for backward compatibility, you can follow the following steps:
+If you want to update the test data _without_ actually testing for backward compatibility, you can follow these steps:
 
 1. In the PR (PR1) that contains breaking changes for backward compatibility, disable the related backward test
 1. Once PR1 is merged, create a new PR (PR2) where you update the appropriate generator's `Cargo.toml` (e.g., `backward-compatibility/generate-v0.11.1/Cargo.toml`) with the commit hash that correspond to PR1 being merged to `main`

@@ -140,6 +140,17 @@ impl TestMaterialSpec {
         spec
     }
 
+    /// Create specification for threshold test with Default parameters but without PRSS setup
+    ///
+    /// Uses production-like key sizes (MaterialType::Default) while excluding PRSS material.
+    /// This is intended for tests that run with Default parameters but do not initialize PRSS
+    /// at server startup (`run_prss=false`).
+    pub fn threshold_default_no_prss(party_count: usize) -> Self {
+        let mut spec = Self::threshold_default(party_count);
+        spec.required_keys.remove(&KeyType::PrssSetup);
+        spec
+    }
+
     /// Create specification for production-like testing
     ///
     /// **Deprecated:** Use `centralized_default()` or `threshold_default()` instead.
@@ -278,6 +289,30 @@ mod tests {
         assert!(spec.include_slow_material);
         assert!(spec.requires_key_type(KeyType::CrsKeys));
         assert!(spec.requires_key_type(KeyType::DecompressionKeys));
+    }
+
+    #[test]
+    fn test_threshold_default_spec_requires_prss() {
+        let spec = TestMaterialSpec::threshold_default(4);
+
+        assert_eq!(spec.material_type, MaterialType::Default);
+        assert!(spec.is_threshold());
+        assert_eq!(spec.party_count(), 4);
+        assert!(spec.requires_key_type(KeyType::PrssSetup));
+    }
+
+    #[test]
+    fn test_threshold_default_no_prss_spec() {
+        let spec = TestMaterialSpec::threshold_default_no_prss(4);
+
+        assert_eq!(spec.material_type, MaterialType::Default);
+        assert!(spec.is_threshold());
+        assert_eq!(spec.party_count(), 4);
+        assert!(spec.requires_key_type(KeyType::ClientKeys));
+        assert!(spec.requires_key_type(KeyType::SigningKeys));
+        assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
+        assert!(spec.requires_key_type(KeyType::FheKeys));
+        assert!(!spec.requires_key_type(KeyType::PrssSetup));
     }
 
     #[test]

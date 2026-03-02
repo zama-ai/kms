@@ -12,7 +12,6 @@ use crate::{
 use error_utils::anyhow_error_and_log;
 
 use crate::structure_traits::Field;
-#[cfg(feature = "non-wasm")]
 use crate::PRSSConversions;
 use crate::{
     base_ring::{Z128, Z64},
@@ -29,7 +28,6 @@ use sha3::{
     Shake256,
 };
 use std::marker::PhantomData;
-#[cfg(feature = "non-wasm")]
 use std::num::Wrapping;
 use std::{
     collections::{HashMap, HashSet},
@@ -780,7 +778,6 @@ where
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENSION_DEGREE> {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), EXTENSION_DEGREE);
@@ -795,7 +792,6 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z128, EXTENS
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSION_DEGREE> {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), EXTENSION_DEGREE);

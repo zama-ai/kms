@@ -99,8 +99,6 @@ extension_degree_8 = ["algebra/extension_degree_8"]
 # "dep:x509-parser",
 
 non-wasm = [
-	"algebra/non-wasm",
-	"error-utils/non-wasm",
 	"networking/non-wasm",
 
     "dep:thread-handles",
@@ -110,7 +108,7 @@ non-wasm = [
     "dep:redis",
 ]
 
-testing = ["non-wasm", "algebra/non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures"]
-slow_tests = ["testing", "algebra/slow_tests"]
+testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures"]
+slow_tests = ["testing", "algebra/all_extension_degrees"]
 malicious_strategies = ["testing"]
 experimental = ["dep:crypto-bigint", "testing"]

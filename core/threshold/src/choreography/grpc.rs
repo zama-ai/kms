@@ -1,12 +1,12 @@
 //! gRPC-based choreography.
 
-pub mod ggen {
+pub mod proto_gen {
     #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_choreography");
 }
 
-use self::ggen::choreography_server::{Choreography, ChoreographyServer};
-use self::ggen::{
+use self::proto_gen::choreography_server::{Choreography, ChoreographyServer};
+use self::proto_gen::{
     CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
     PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse, ReshareRequest,
     ReshareResponse, StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest,
@@ -83,8 +83,8 @@ use futures_util::{
     future::{join_all, try_join_all},
     TryFutureExt,
 };
-use ggen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
+use proto_gen::{CrsGenRequest, CrsGenResponse};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

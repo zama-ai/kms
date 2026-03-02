@@ -104,7 +104,6 @@ pub enum RoleVersioned {
     V0(Role),
 }
 
-// TODO(dp): this used `derive_more` before. Needed?
 impl std::fmt::Display for Role {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)

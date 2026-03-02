@@ -70,8 +70,6 @@ tonic-build.workspace = true
 default = ["non-wasm"]
 
 non-wasm = [
-	"algebra/non-wasm",
-	"error-utils/non-wasm",
 	"execution/non-wasm",
 
 	"dep:attestation-doc-validation",

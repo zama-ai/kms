@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
@@ -34,6 +34,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
+    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, BaseKmsStruct},
@@ -45,7 +46,7 @@ use crate::{
         validation::{parse_grpc_request_id, validate_preproc_request, RequestIdParsingErr},
     },
     util::{
-        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
+        meta_store::{add_req_to_meta_store, retrieve_from_meta_store_with_timeout, MetaStore},
         rate_limiter::RateLimiter,
     },
 };
@@ -180,6 +181,24 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
     ) -> Result<(), ()> {
         // dropped at the end of the function
         let _permit = permit;
+        let preprocessing_started_at = Instant::now();
+
+        #[cfg(feature = "insecure")]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (partial_preproc: {}, percentage_offline: {:?}, store_dummy_preprocessing: {:?})",
+            req_id,
+            own_identity,
+            partial_params.is_some(),
+            partial_params.map(|p| p.percentage_offline),
+            partial_params.map(|p| p.store_dummy_preprocessing),
+        );
+
+        #[cfg(not(feature = "insecure"))]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (full preprocessing)",
+            req_id,
+            own_identity,
+        );
 
         // Create the orchestrator
         // !! If insecure we allow generating partial preprocessing !!
@@ -221,6 +240,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     .await
                 {
                     Ok((sessions, preproc_handle)) => {
+                        tracing::info!(
+                            "Preproc orchestration phase finished for request {} on P[{:?}] (elapsed: {:.1}s). Finalizing result...",
+                            req_id,
+                            own_identity,
+                            preprocessing_started_at.elapsed().as_secs_f64(),
+                        );
                         Ok((sessions, Arc::new(Mutex::new(preproc_handle))))
                     }
                     Err(error) => {
@@ -243,6 +268,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 (Err(e), _) => Err(e),
                 (Ok((sessions, handle)), Some(partial_params)) => {
                     if partial_params.store_dummy_preprocessing {
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] storing DummyPreprocessing (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
                         let preproc = Box::new(DummyPreprocessing::new(
                             0,
                             sessions.first().ok_or_else(|| {
@@ -254,6 +285,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
                         Ok((sessions, Arc::new(Mutex::new(preproc))))
                     } else {
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] keeping real preprocessing handle (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
                         Ok((sessions, handle))
                     }
                 }
@@ -261,6 +298,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             }
         };
 
+        tracing::debug!(
+            "Preproc request {} on P[{:?}] computing external signature",
+            req_id,
+            own_identity,
+        );
         let external_signature = match compute_external_signature_preprocessing(&sk, req_id, domain)
         {
             Ok(sig) => sig,
@@ -286,15 +328,28 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         // Log completion status
         match (handle_update, meta_store_write) {
-            (Ok(_), Ok(_)) => tracing::info!("Preproc Finished Successfully P[{:?}]", own_identity),
+            (Ok(_), Ok(_)) => tracing::info!(
+                "Preproc Finished Successfully P[{:?}] for request {} (total elapsed: {:.1}s)",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            ),
             (Err(e), _) => {
-                tracing::error!("Preproc Failed P[{:?}] with error: {}", own_identity, e);
+                tracing::error!(
+                    "Preproc Failed P[{:?}] for request {} after {:.1}s with error: {}",
+                    own_identity,
+                    req_id,
+                    preprocessing_started_at.elapsed().as_secs_f64(),
+                    e
+                );
                 return Err(());
             }
             (_, Err(e)) => {
-                tracing::info!(
-                    "Preproc Failed due to meta store issue P[{:?}] with error: {}",
+                tracing::error!(
+                    "Preproc Failed due to meta store issue P[{:?}] for request {} after {:.1}s with error: {}",
                     own_identity,
+                    req_id,
+                    preprocessing_started_at.elapsed().as_secs_f64(),
                     e
                 );
                 return Err(());
@@ -403,12 +458,21 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
                     )
                 })?;
 
-        let preproc_data = retrieve_from_meta_store(
+        tracing::info!(
+            "Polling preproc result for request {} (waiting up to {}s)",
+            request_id,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        );
+
+        let preproc_data = retrieve_from_meta_store_with_timeout(
             self.preproc_buckets.read().await,
             &request_id,
             OP_KEYGEN_PREPROC_RESULT,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         )
         .await?;
+
+        tracing::info!("Preproc result ready for request {}", request_id);
 
         if preproc_data.preprocessing_id != request_id {
             return Err(MetricedError::new(

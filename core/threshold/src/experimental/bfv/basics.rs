@@ -9,9 +9,8 @@ use crate::experimental::algebra::{
 };
 use crate::experimental::bgv::basics::LevelledCiphertext;
 use crate::experimental::bgv::basics::PlaintextVec;
-use crate::experimental::bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey, SecretKey};
+use crate::experimental::bgv::basics::{PrivateBgvKeySet, PublicKey, SecretKey};
 use crate::experimental::constants::{DELTA, PLAINTEXT_MODULUS};
-
 use algebra::structure_traits::FromU128;
 use rand::CryptoRng;
 use rand::Rng;
@@ -21,7 +20,7 @@ pub type PrivateBfvKeySet = PrivateBgvKeySet;
 
 type PolyDeg = N65536;
 
-pub fn keygen<R>(rng: &mut R) -> (PublicBgvKeySet, SecretKey)
+pub fn keygen<R>(rng: &mut R) -> (PublicBfvKeySet, SecretKey)
 where
     R: Rng + CryptoRng,
 {

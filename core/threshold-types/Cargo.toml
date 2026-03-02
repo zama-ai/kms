@@ -20,21 +20,4 @@ serde = { workspace = true, features = ["derive", "rc"] }
 [dev-dependencies]
 
 [features]
-default = ["non-wasm"]
-
-non-wasm = [
-	"algebra/non-wasm",
-	# "error-utils/non-wasm",
-
-	# "dep:attestation-doc-validation",
-	# "dep:hyper-rustls-ring",
- #    "dep:observability",
- #    "dep:thread-handles",
- #    "dep:tokio",
- #    "dep:x509-parser",
- #    "dep:tokio-rustls",
- #    "dep:tonic-tls",
-]
-testing = ["non-wasm"]
-malicious_strategies = ["testing"]
-choreographer = ["malicious_strategies"]
+choreographer = []

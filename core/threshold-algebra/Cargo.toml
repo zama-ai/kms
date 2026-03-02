@@ -28,14 +28,13 @@ rstest.workspace = true
 num-traits.workspace = true
 
 [features]
-default = ["non-wasm", "extension_degree_4"]
+default = ["extension_degree_4"]
 extension_degree_3 =[]
 extension_degree_4 =[]
 extension_degree_5 =[]
 extension_degree_6 =[]
 extension_degree_7 =[]
 extension_degree_8 =[]
-non-wasm = []
 
 all_extension_degrees = [
 	"extension_degree_3",
@@ -45,4 +44,3 @@ all_extension_degrees = [
 	"extension_degree_7",
 	"extension_degree_8",
 ]
-slow_tests = ["non-wasm", "all_extension_degrees"]
