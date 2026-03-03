@@ -17,7 +17,7 @@ use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
-use threshold_fhe::experimental::algebra::levels::LevelOne;
+use threshold_experimental::algebra::levels::LevelOne;
 
 fn bench_decode_z2(c: &mut Criterion) {
     let degrees = vec![2_usize, 4, 8, 16, 32, 64];

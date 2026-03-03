@@ -14,13 +14,11 @@ use execution::online::bit_manipulation::bit_dec_batch;
 use execution::online::preprocessing::dummy::DummyPreprocessing;
 use execution::runtime::sessions::session_parameters::GenericParameterHandles;
 use execution::runtime::sessions::{large_session::LargeSession, small_session::SmallSession};
-use networking::NetworkMode;
+use execution::tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
-use threshold_fhe::tests::helper::tests_and_benches::{
-    execute_protocol_large, execute_protocol_small,
-};
+use threshold_types::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

@@ -4,13 +4,15 @@
 use crate::algebra::levels::{LevelEll, LevelKsw};
 use crate::algebra::ntt::N65536;
 use crate::bgv::basics::{LevelEllCiphertext, PublicKey};
-use crate::choreography::grpc::proto_gen::{
+
+use algebra::role::Role;
+use networking::choreography_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
-use crate::{choreography::choreographer::ChoreoRuntime, session_id::SessionId};
-use algebra::role::Role;
+use session_id::SessionId;
 use std::collections::HashMap;
+use threshold_fhe::choreography::choreographer::ChoreoRuntime;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
 use tracing::{instrument, Instrument};
@@ -26,9 +28,59 @@ pub struct GrpcOutputs {
     pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
-impl ChoreoRuntime {
+// NOTE: This is fine as long as we only use this trait in our own code.
+#[expect(async_fn_in_trait)]
+pub trait BgvChoreoExt {
+    async fn bgv_inititate_prss_init(
+        &self,
+        session_id: SessionId,
+        ring: SupportedRing,
+        threshold: u32,
+        seed: Option<u64>,
+    ) -> anyhow::Result<()>;
+
+    async fn bgv_initiate_preproc_keygen(
+        &self,
+        session_id: SessionId,
+        num_sessions: u32,
+        threshold: u32,
+        seed: Option<u64>,
+    ) -> anyhow::Result<SessionId>;
+
+    async fn bgv_initiate_threshold_keygen(
+        &self,
+        session_id: SessionId,
+        session_id_preproc: Option<SessionId>,
+        threshold: u32,
+        seed: Option<u64>,
+    ) -> anyhow::Result<SessionId>;
+
+    async fn bgv_initiate_threshold_keygen_result(
+        &self,
+        session_id: SessionId,
+        gen_params: Option<bool>,
+        seed: Option<u64>,
+    ) -> anyhow::Result<PublicKey<LevelEll, LevelKsw, N65536>>;
+
+    async fn bgv_initiate_threshold_decrypt(
+        &self,
+        session_id: SessionId,
+        key_sid: SessionId,
+        ctxts: Vec<LevelEllCiphertext>,
+        num_ctxt_per_session: usize,
+        threshold: u32,
+        seed: Option<u64>,
+    ) -> anyhow::Result<SessionId>;
+
+    async fn bgv_initiate_threshold_decrypt_result(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Vec<Vec<u32>>>;
+}
+
+impl BgvChoreoExt for ChoreoRuntime {
     #[instrument(name = "PRSS-INIT Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
-    pub async fn bgv_inititate_prss_init(
+    async fn bgv_inititate_prss_init(
         &self,
         session_id: SessionId,
         ring: SupportedRing,
@@ -62,7 +114,7 @@ impl ChoreoRuntime {
     }
 
     #[instrument(name = "DKG-Preproc Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
-    pub async fn bgv_initiate_preproc_keygen(
+    async fn bgv_initiate_preproc_keygen(
         &self,
         session_id: SessionId,
         num_sessions: u32,
@@ -106,7 +158,7 @@ impl ChoreoRuntime {
     }
 
     #[instrument(name = "DKG Request (BGV)", skip(self, session_id), fields(sid = ?session_id, preproc_sid = ?session_id_preproc))]
-    pub async fn bgv_initiate_threshold_keygen(
+    async fn bgv_initiate_threshold_keygen(
         &self,
         session_id: SessionId,
         session_id_preproc: Option<SessionId>,
@@ -152,7 +204,7 @@ impl ChoreoRuntime {
     ///NOTE: If dkg_params.is_some(), we will actually generate a new set of keys and stored it under session_id,
     ///otherwise we try and retrieve existing keys
     #[instrument(name = "DKG-Result Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
-    pub async fn bgv_initiate_threshold_keygen_result(
+    async fn bgv_initiate_threshold_keygen_result(
         &self,
         session_id: SessionId,
         gen_params: Option<bool>,
@@ -196,7 +248,7 @@ impl ChoreoRuntime {
     }
 
     #[instrument(name = "DDec Request (BGV)", skip(self, session_id, ctxts), fields(num_sessions = ?ctxts.len(), sid= ?session_id))]
-    pub async fn bgv_initiate_threshold_decrypt(
+    async fn bgv_initiate_threshold_decrypt(
         &self,
         session_id: SessionId,
         key_sid: SessionId,
@@ -244,7 +296,7 @@ impl ChoreoRuntime {
     }
 
     #[instrument(name = "DDec-Result Request (BGV)", skip(self, session_id), fields(sid= ?session_id))]
-    pub async fn bgv_initiate_threshold_decrypt_result(
+    async fn bgv_initiate_threshold_decrypt_result(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<Vec<Vec<u32>>> {

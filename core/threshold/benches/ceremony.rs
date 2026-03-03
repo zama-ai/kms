@@ -2,18 +2,16 @@ use std::collections::HashMap;
 
 use algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use itertools::Itertools;
-use threshold_fhe::{
-    execution::{
-        runtime::{
-            sessions::session_parameters::GenericParameterHandles,
-            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        },
-        zk::ceremony::{Ceremony, SecureCeremony},
+use execution::{
+    runtime::{
+        sessions::session_parameters::GenericParameterHandles,
+        test_runtime::{generate_fixed_roles, DistributedTestRuntime},
     },
-    networking::NetworkMode,
-    session_id::SessionId,
+    zk::ceremony::{Ceremony, SecureCeremony},
 };
+use itertools::Itertools;
+use session_id::SessionId;
+use threshold_types::network::NetworkMode;
 use tokio::task::JoinSet;
 
 // This benchmark performs two-party CRS ceremony.

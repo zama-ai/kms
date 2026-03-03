@@ -2,7 +2,10 @@
 //! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
 //! as this is meant for testing and benchmarking, and definitely not for production use.
 
-use crate::choreography::grpc::proto_gen::choreography_server::{Choreography, ChoreographyServer};
+use aes_prng::AesRng;
+use async_trait::async_trait;
+use dashmap::DashMap;
+use futures::TryFutureExt;
 
 use crate::algebra::levels::{LevelEll, LevelKsw, LevelOne};
 use crate::algebra::ntt::{Const, N65536};
@@ -13,30 +16,12 @@ use crate::bgv::dkg_orchestrator::BGVPreprocessingOrchestrator;
 use crate::bgv::dkg_preproc::InMemoryBGVDkgPreprocessing;
 use crate::bgv::utils::transfer_secret_key;
 use crate::bgv::utils::{gen_key_set, transfer_pub_key};
-use crate::choreography::grpc::proto_gen::{
-    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
-    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
-    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
-    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
-    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
-    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
-};
-use crate::choreography::grpc::proto_gen::{ReshareRequest, ReshareResponse};
-use crate::choreography::grpc::{
-    create_small_sessions, fill_network_memory_info_multiple_sessions,
-    fill_network_memory_info_single_session, gen_random_sid,
-};
-use crate::choreography::requests::Status;
 use crate::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
 use crate::constants::INPUT_PARTY_ID;
 use crate::constants::PLAINTEXT_MODULUS;
-use aes_prng::AesRng;
 use algebra::role::Role;
-use async_trait::async_trait;
-use dashmap::DashMap;
 use execution::online::preprocessing::dummy::DummyPreprocessing;
 use execution::online::preprocessing::PreprocessorFactory;
-use execution::runtime::party::{Identity, RoleAssignment};
 use execution::runtime::sessions::base_session::BaseSession;
 use execution::runtime::sessions::session_parameters::GenericParameterHandles;
 use execution::runtime::sessions::session_parameters::SessionParameters;
@@ -44,16 +29,36 @@ use execution::runtime::sessions::small_session::SmallSession;
 use execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
-use futures::TryFutureExt;
 use itertools::Itertools;
+use networking::choreography_gen::choreography_server::{Choreography, ChoreographyServer};
+use networking::choreography_gen::{
+    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
+    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
+    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
+    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
+    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
+    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
+};
+use networking::choreography_gen::{ReshareRequest, ReshareResponse};
 use networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use networking::{grpc::GrpcNetworkingManager, NetworkMode};
+use networking::grpc::GrpcNetworkingManager;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use session_id::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::Arc;
+use threshold_fhe::choreography::{
+    grpc::{
+        create_small_sessions, fill_network_memory_info_multiple_sessions,
+        fill_network_memory_info_single_session, gen_random_sid,
+    },
+    requests::Status,
+};
+use threshold_types::{
+    network::NetworkMode,
+    party::{Identity, RoleAssignment},
+};
 use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},

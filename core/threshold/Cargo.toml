@@ -129,11 +129,6 @@ name = "gen-experiment"
 path = "src/bin/benches/gen-experiment.rs"
 required-features = ["templating"]
 
-# [[bin]]
-# name = "stairwayctl"
-# path = "src/experimental/bin/stairwayctl.rs"
-# required-features = ["experimental", "choreographer", "testing"]
-
 [[bin]]
 name = "threshold-gen-tls-certs"
 path = "src/bin/threshold-gen-tls-certs.rs"
@@ -146,21 +141,6 @@ path = "src/bin/non-threshold/kat.rs"
 name = "ddec"
 harness = false
 required-features = ["testing", "extension_degree_8"]
-
-[[bench]]
-name = "decoding"
-harness = false
-required-features = ["experimental", "extension_degree_8"]
-
-[[bench]]
-name = "algebra"
-harness = false
-required-features = ["experimental"]
-
-[[bench]]
-name = "bgv"
-harness = false
-required-features = ["experimental", "testing"]
 
 [[bench]]
 name = "bench_switch_and_squash"
@@ -194,7 +174,6 @@ name = "non-threshold_tfhe-rs_erc20_speed"
 path = "benches/non-threshold/tfhe-rs/speed/erc20.rs"
 harness = false
 
-
 [[bench]]
 name = "non-threshold_tfhe-rs_basic-ops_speed"
 path = "benches/non-threshold/tfhe-rs/speed/basic_ops.rs"
@@ -211,7 +190,6 @@ path = "benches/non-threshold/tfhe-rs/memory/erc20.rs"
 required-features = ["measure_memory"]
 harness = false
 
-
 [[bench]]
 name = "non-threshold_tfhe-rs_basic-ops_memory"
 path = "benches/non-threshold/tfhe-rs/memory/basic_ops.rs"
@@ -225,30 +203,6 @@ required-features = ["measure_memory"]
 harness = false
 
 
-# BGV Benchmarks
-[[bench]]
-name = "non-threshold_bgv_basic-ops_speed"
-path = "benches/non-threshold/bgv/speed/basic_ops.rs"
-required-features = ["experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_keygen_speed"
-path = "benches/non-threshold/bgv/speed/keygen.rs"
-required-features = ["experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_basic-ops_memory"
-path = "benches/non-threshold/bgv/memory/basic_ops.rs"
-required-features = ["measure_memory","experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_keygen_memory"
-path = "benches/non-threshold/bgv/memory/keygen.rs"
-required-features = ["measure_memory","experimental"]
-harness = false
 
 [features]
 default = ["non-wasm", "extension_degree_4"]
@@ -258,7 +212,7 @@ slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees
 # TODO(dp): still needed?
 experimental = ["dep:crypto-bigint"]
 templating = ["minijinja"]
-choreographer = ["malicious_strategies"]
+choreographer = ["malicious_strategies", "threshold-types/choreographer", "networking/choreographer", "execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 

@@ -3,7 +3,7 @@
 //! well as minor differences, in particular to be able to measure memory
 //! complexity as required by NIST.
 
-#[path = "../../../utilities.rs"]
+#[path = "../../utilities.rs"]
 mod utilities;
 
 use criterion::measurement::WallTime;
@@ -11,11 +11,11 @@ use criterion::{BenchmarkGroup, Criterion};
 use rand::RngCore;
 use std::hint::black_box;
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_fhe::experimental::algebra::ntt::*;
-use threshold_fhe::experimental::bgv::basics::*;
-use threshold_fhe::experimental::bgv::utils::XofWrapper;
-use threshold_fhe::experimental::constants::*;
+use threshold_experimental::algebra::levels::{LevelEll, LevelKsw};
+use threshold_experimental::algebra::ntt::*;
+use threshold_experimental::bgv::basics::*;
+use threshold_experimental::bgv::utils::XofWrapper;
+use threshold_experimental::constants::*;
 
 pub fn bench_bgv(
     bench_group: &mut BenchmarkGroup<'_, WallTime>,

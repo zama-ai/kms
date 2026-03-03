@@ -111,4 +111,5 @@ non-wasm = [
 testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures"]
 slow_tests = ["testing", "algebra/all_extension_degrees"]
 malicious_strategies = ["testing"]
+# TODO(dp): Remove this feature.
 experimental = ["dep:crypto-bigint", "testing"]

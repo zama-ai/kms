@@ -3,18 +3,21 @@
 //! well as minor differences, in particular to be able to measure memory
 //! complexity as required by NIST.
 
-#[path = "../../../utilities.rs"]
+#[path = "../../utilities.rs"]
 mod utilities;
 
 use rand::RngCore;
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_fhe::experimental::algebra::ntt::*;
-use threshold_fhe::experimental::bgv::basics::*;
-use threshold_fhe::experimental::bgv::utils::XofWrapper;
-use threshold_fhe::experimental::constants::*;
+use threshold_experimental::{
+    algebra::{
+        levels::{LevelEll, LevelKsw},
+        ntt::*,
+    },
+    bgv::{basics::*, utils::XofWrapper},
+    constants::*,
+};
 
-use crate::utilities::bench_memory;
+use utilities::bench_memory;
 
 #[global_allocator]
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;

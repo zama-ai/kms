@@ -11,9 +11,9 @@ use execution::large_execution::offline::SecureLargePreprocessing;
 use execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use execution::runtime::sessions::{large_session::LargeSession, small_session::SmallSession128};
 use execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-use networking::NetworkMode;
-use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_large;
-use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_small;
+use execution::tests::helper::tests_and_benches::execute_protocol_large;
+use execution::tests::helper::tests_and_benches::execute_protocol_small;
+use threshold_types::network::NetworkMode;
 
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;

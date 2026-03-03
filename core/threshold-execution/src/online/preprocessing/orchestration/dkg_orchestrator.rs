@@ -322,7 +322,7 @@ where
     ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
     #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len(), percentage_offline))]
-    pub(crate) async fn orchestrate_dkg_processing<S, P>(
+    pub async fn orchestrate_dkg_processing<S, P>(
         self,
         mut sessions: Vec<S>,
     ) -> anyhow::Result<(Vec<S>, Box<dyn DKGPreprocessing<Z>>)>

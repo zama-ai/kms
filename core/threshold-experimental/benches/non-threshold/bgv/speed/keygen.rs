@@ -1,14 +1,14 @@
-#[path = "../../../utilities.rs"]
+#[path = "../../utilities.rs"]
 mod utilities;
 
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_fhe::experimental::algebra::ntt::*;
-use threshold_fhe::experimental::bgv::basics::*;
-use threshold_fhe::experimental::bgv::utils::XofWrapper;
-use threshold_fhe::experimental::constants::*;
+use threshold_experimental::algebra::levels::{LevelEll, LevelKsw};
+use threshold_experimental::algebra::ntt::*;
+use threshold_experimental::bgv::basics::*;
+use threshold_experimental::bgv::utils::XofWrapper;
+use threshold_experimental::constants::*;
 
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>) {
     let mut seeder = new_seeder();

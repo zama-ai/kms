@@ -3,25 +3,24 @@ use std::sync::Arc;
 use aes_prng::AesRng;
 use algebra::{galois_rings::degree_8::ResiduePolyF8Z128, role::Role};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use rand::SeedableRng;
-use threshold_fhe::{
-    execution::{
-        large_execution::vss::DummyVss,
-        runtime::{
-            sessions::{
-                base_session::BaseSession,
-                session_parameters::{GenericParameterHandles, SessionParameters},
-            },
-            test_runtime::generate_fixed_roles,
+use execution::{
+    large_execution::vss::DummyVss,
+    runtime::{
+        sessions::{
+            base_session::BaseSession,
+            session_parameters::{GenericParameterHandles, SessionParameters},
         },
-        small_execution::{
-            agree_random::DummyAgreeRandomFromShare,
-            prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
-        },
+        test_runtime::generate_fixed_roles,
     },
-    networking::{local::LocalNetworkingProducer, NetworkMode},
-    session_id::SessionId,
+    small_execution::{
+        agree_random::DummyAgreeRandomFromShare,
+        prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
+    },
 };
+use networking::local::LocalNetworkingProducer;
+use rand::SeedableRng;
+use session_id::SessionId;
+use threshold_types::network::NetworkMode;
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];

@@ -37,7 +37,7 @@ lazy_static! {
     pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// maximum number of seconds that a party waits for a network message during a protocol
-    pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(120);
+    pub static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(120);
 
     /// maximum number of seconds that a party waits for BK round in DKG
     ///
@@ -53,7 +53,7 @@ lazy_static! {
     pub(crate) static ref NETWORK_TIMEOUT_BK_SNS: Duration = Duration::from_secs(1200);
 
     // max message size for decoding - enconding message on gRPC protocol
-    pub(crate) static ref MAX_EN_DECODE_MESSAGE_SIZE: usize = 2 * 1024 * 1024 * 1024;
+    pub static ref MAX_EN_DECODE_MESSAGE_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
 
 }

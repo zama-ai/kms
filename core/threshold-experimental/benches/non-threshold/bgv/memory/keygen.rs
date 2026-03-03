@@ -1,12 +1,15 @@
-#[path = "../../../utilities.rs"]
+#[path = "../../utilities.rs"]
 mod utilities;
 
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_fhe::experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_fhe::experimental::algebra::ntt::*;
-use threshold_fhe::experimental::bgv::basics::*;
-use threshold_fhe::experimental::bgv::utils::XofWrapper;
-use threshold_fhe::experimental::constants::*;
+use threshold_experimental::{
+    algebra::{
+        levels::{LevelEll, LevelKsw},
+        ntt::*,
+    },
+    bgv::{basics::*, utils::XofWrapper},
+    constants::*,
+};
 use utilities::bench_memory;
 
 #[global_allocator]

@@ -229,4 +229,4 @@ mod tests {
 pub(crate) mod bit_lift;
 pub(crate) mod bitdec;
 pub(crate) mod dkg;
-pub(crate) mod noiseflood;
+pub mod noiseflood;
