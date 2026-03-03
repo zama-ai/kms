@@ -88,10 +88,10 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
     } else {
         // when both are non empty, then we have some inconsistency
         // there is no correct set to return and returning the union is also problematic
-        let msg = format!("inconsistent storage, ids_from_non_epoch_storage.len()={}, ids_from_epoch_storage.len()={}",
+        tracing::warn!("inconsistent storage, ids_from_non_epoch_storage.len()={}, ids_from_epoch_storage.len()={} for data_type={}. 
+        They may be because of a recent migration. Only epoched data is used", data_type,
                 ids_from_non_epoch_storage.len(),ids_from_epoch_storage.len());
-        tracing::error!(msg);
-        Err(anyhow::anyhow!(msg))
+        Ok(ids_from_epoch_storage)
     }
 }
 
