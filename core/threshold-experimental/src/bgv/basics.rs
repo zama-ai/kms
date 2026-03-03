@@ -1,18 +1,18 @@
-use crate::experimental::algebra::cyclotomic::NewHopeTernarySampler;
-use crate::experimental::algebra::cyclotomic::RingElement;
-use crate::experimental::algebra::cyclotomic::RqElement;
-use crate::experimental::algebra::cyclotomic::TernaryElement;
-use crate::experimental::algebra::integers::IntQ;
-use crate::experimental::algebra::integers::ModReduction;
-use crate::experimental::algebra::integers::PositiveConv;
-use crate::experimental::algebra::integers::ZeroCenteredRem;
-use crate::experimental::algebra::levels::{
+use crate::algebra::cyclotomic::NewHopeTernarySampler;
+use crate::algebra::cyclotomic::RingElement;
+use crate::algebra::cyclotomic::RqElement;
+use crate::algebra::cyclotomic::TernaryElement;
+use crate::algebra::integers::IntQ;
+use crate::algebra::integers::ModReduction;
+use crate::algebra::integers::PositiveConv;
+use crate::algebra::integers::ZeroCenteredRem;
+use crate::algebra::levels::{
     CryptoModulus, GenericModulus, LevelEll, LevelFourteen, LevelKsw, LevelOne, ScalingFactor,
 };
-use crate::experimental::algebra::ntt::ntt_iter2;
-use crate::experimental::algebra::ntt::NTTConstants;
-use crate::experimental::algebra::ntt::{Const, N65536};
-use crate::experimental::constants::PLAINTEXT_MODULUS;
+use crate::algebra::ntt::ntt_iter2;
+use crate::algebra::ntt::NTTConstants;
+use crate::algebra::ntt::{Const, N65536};
+use crate::constants::PLAINTEXT_MODULUS;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::{Ring, ZConsts};
 use crypto_bigint::{Limb, NonZero, U1536};
@@ -336,11 +336,9 @@ pub fn multiply_ctxt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experimental::algebra::levels::{
-        GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1,
-    };
-    use crate::experimental::algebra::ntt::N65536;
-    use crate::experimental::constants::PLAINTEXT_MODULUS;
+    use crate::algebra::levels::{GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1};
+    use crate::algebra::ntt::N65536;
+    use crate::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
     use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;

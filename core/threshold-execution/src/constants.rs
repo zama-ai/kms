@@ -10,7 +10,7 @@ cfg_if::cfg_if! {
         pub(crate) const PRSS_SIZE_MAX: usize = 8192;
 
         /// statistical security parameter in bits
-        pub(crate) const STATSEC: u32 = 40;
+        pub const STATSEC: u32 = 40;
 
         /// constants for key separation in PRSS/PRZS
         pub(crate) const PHI_XOR_CONSTANT: u8 = 2;

@@ -27,11 +27,11 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::RwLock;
 
-use crate::experimental::algebra::crt::from_crt;
-use crate::experimental::algebra::crt::to_crt;
-use crate::experimental::algebra::crt::LevelKswCrtRepresentation;
-use crate::experimental::algebra::integers::{IntQ, ModReduction};
-use crate::experimental::gen_bits_odd::LargestPrimeFactor;
+use crate::algebra::crt::from_crt;
+use crate::algebra::crt::to_crt;
+use crate::algebra::crt::LevelKswCrtRepresentation;
+use crate::algebra::integers::{IntQ, ModReduction};
+use crate::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
 pub trait CryptoModulus {
@@ -117,7 +117,7 @@ macro_rules! impl_ring_level {
                 ///BIT LENGTH FOR THIS RING IS DEFINED AS THE NUMBER OF BITS REQUIRED TO SAMPLE
                 ///AN ELEMENT FROM A DISTRIBUTION INDISTINGUISHABLE FROM THE UNIFORM DISTRIBUTION
                 const BIT_LENGTH: usize = $uint_type::from_be_hex($max_val).bits() as usize ;
-                const NUM_BITS_STAT_SEC_BASE_RING: usize = Self::BIT_LENGTH + (crate::execution::constants::STATSEC as usize);
+                const NUM_BITS_STAT_SEC_BASE_RING: usize = Self::BIT_LENGTH + (execution::constants::STATSEC as usize);
                 const CHAR_LOG2: usize = unimplemented!();
                 const EXTENSION_DEGREE: usize = 1;
 
@@ -1257,18 +1257,18 @@ impl ScalingFactor for LevelKsw {
 
 #[cfg(test)]
 mod tests {
-    use crate::execution::config::BatchParams;
-    use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-    use crate::execution::runtime::sessions::small_session::SmallSession;
-    use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-    use crate::networking::NetworkMode;
-    use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use aes_prng::AesRng;
     use algebra::poly::lagrange_interpolation;
     use algebra::role::Role;
     use algebra::sharing::shamir::{InputOp, RevealOp};
     use algebra::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
+    use execution::config::BatchParams;
+    use execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+    use execution::runtime::sessions::small_session::SmallSession;
+    use execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+    use execution::tests::helper::tests_and_benches::execute_protocol_small;
     use rand::SeedableRng;
+    use threshold_types::network::NetworkMode;
 
     use super::*;
 

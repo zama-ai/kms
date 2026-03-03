@@ -7801,6 +7801,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "threshold-experimental"
+version = "0.13.10-rc.0"
+dependencies = [
+ "aes-prng",
+ "anyhow",
+ "bc2wrap",
+ "clap",
+ "crypto-bigint 0.6.1",
+ "error-utils",
+ "itertools 0.14.0",
+ "lazy_static",
+ "num-integer",
+ "paste",
+ "rand 0.8.5",
+ "serde",
+ "session-id",
+ "tfhe",
+ "tfhe-csprng",
+ "thread-handles",
+ "threshold-algebra",
+ "threshold-execution",
+ "threshold-fhe",
+ "threshold-hashing",
+ "threshold-networking",
+ "threshold-types",
+ "tokio",
+ "tonic 0.13.1",
+ "tracing",
+]
+
+[[package]]
 name = "threshold-fhe"
 version = "0.13.10-rc.0"
 dependencies = [

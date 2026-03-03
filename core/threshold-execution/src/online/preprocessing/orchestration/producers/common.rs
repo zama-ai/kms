@@ -12,7 +12,7 @@ use crate::{
 /// and an outgoing channel
 /// which will be filled with the result
 /// of that session
-pub(crate) struct ProducerSession<S: BaseSessionHandles, T> {
+pub struct ProducerSession<S: BaseSessionHandles, T> {
     session: S,
     sender_channel: Sender<T>,
 }
@@ -26,8 +26,9 @@ impl<S: BaseSessionHandles, T> ProducerSession<S, T> {
     }
 }
 
-///Generic functions that spawn the threads for processing
-pub(crate) fn execute_preprocessing<C, S: BaseSessionHandles + 'static, TaskOutput>(
+/// Generic functions that spawn the threads for processing
+// TODO(dp): couldn't this move to `thread-handles`? Seems generally useful.
+pub fn execute_preprocessing<C, S: BaseSessionHandles + 'static, TaskOutput>(
     producer_sessions: Vec<ProducerSession<S, C>>,
     task_gen: impl Fn(S, Sender<C>, Option<ProgressTracker>) -> TaskOutput,
     progress_tracker: Option<ProgressTracker>,

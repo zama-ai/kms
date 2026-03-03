@@ -3,21 +3,24 @@ use std::sync::Arc;
 use tonic::async_trait;
 use tracing::instrument;
 
-use crate::execution::{
-    constants::STATSEC,
-    online::{
-        preprocessing::BasePreprocessing,
-        triple::{mult_list, open_list},
-    },
-    runtime::sessions::small_session::SmallSessionHandles,
-    small_execution::prss::PRSSPrimitives,
-};
 use algebra::{
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, ZConsts},
     PRSSConversions,
 };
 use error_utils::anyhow_error_and_log;
+use execution::{
+    constants::STATSEC,
+    online::{
+        preprocessing::{
+            // orchestration::producer_traits::{BitGenOdd, LargestPrimeFactor},
+            BasePreprocessing,
+        },
+        triple::{mult_list, open_list},
+    },
+    runtime::sessions::small_session::SmallSessionHandles,
+    small_execution::prss::PRSSPrimitives,
+};
 
 ///This trait defines methods required to generate bits in
 ///in the subfield defined by the largest prime factor of a ring.
@@ -142,20 +145,17 @@ impl BitGenOdd for RealBitGenOdd {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::{
-        execution::{
-            online::preprocessing::dummy::DummyPreprocessing,
-            runtime::sessions::small_session::SmallSession,
-        },
-        experimental::algebra::levels::LevelKsw,
-        networking::NetworkMode,
-        tests::helper::tests_and_benches::execute_protocol_small,
-    };
+    use crate::algebra::levels::LevelKsw;
     use algebra::{
         sharing::shamir::{RevealOp, ShamirSharings},
         structure_traits::{One, Ring, Zero},
     };
+    use execution::tests::helper::tests_and_benches::execute_protocol_small;
+    use execution::{
+        online::preprocessing::dummy::DummyPreprocessing,
+        runtime::sessions::small_session::SmallSession,
+    };
+    use threshold_types::network::NetworkMode;
 
     use super::*;
 

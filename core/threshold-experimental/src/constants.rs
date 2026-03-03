@@ -1,5 +1,5 @@
-use crate::experimental::algebra::levels::GenericModulus;
-use crate::experimental::algebra::levels::LevelEll;
+use crate::algebra::levels::GenericModulus;
+use crate::algebra::levels::LevelEll;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::U768;

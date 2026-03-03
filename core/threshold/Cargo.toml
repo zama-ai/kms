@@ -97,6 +97,7 @@ tonic-build.workspace = true
 async-std.workspace = true
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
 ctor.workspace = true
+execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
 proptest.workspace = true
 rstest.workspace = true
@@ -128,10 +129,10 @@ name = "gen-experiment"
 path = "src/bin/benches/gen-experiment.rs"
 required-features = ["templating"]
 
-[[bin]]
-name = "stairwayctl"
-path = "src/experimental/bin/stairwayctl.rs"
-required-features = ["experimental", "choreographer", "testing"]
+# [[bin]]
+# name = "stairwayctl"
+# path = "src/experimental/bin/stairwayctl.rs"
+# required-features = ["experimental", "choreographer", "testing"]
 
 [[bin]]
 name = "threshold-gen-tls-certs"
@@ -254,6 +255,7 @@ default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
 slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
+# TODO(dp): still needed?
 experimental = ["dep:crypto-bigint"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies"]
@@ -264,6 +266,8 @@ malicious_strategies = ["testing"]
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
+	"execution/non-wasm",
+
     "dep:attestation-doc-validation",
     "dep:hyper-rustls-ring",
     "dep:thread-handles",

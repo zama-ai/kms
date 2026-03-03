@@ -1,4 +1,4 @@
-use crate::experimental::algebra::levels::CryptoModulus;
+use crate::algebra::levels::CryptoModulus;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::Uint;
@@ -284,10 +284,10 @@ pub trait ModReduction<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experimental::algebra::cyclotomic::{RingElement, RqElement};
-    use crate::experimental::algebra::levels::LevelOne;
-    use crate::experimental::algebra::ntt::{Const, N65536};
-    use crate::experimental::constants::PLAINTEXT_MODULUS;
+    use crate::algebra::cyclotomic::{RingElement, RqElement};
+    use crate::algebra::levels::LevelOne;
+    use crate::algebra::ntt::{Const, N65536};
+    use crate::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
     use algebra::structure_traits::Sample;
     use rand::SeedableRng;

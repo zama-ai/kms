@@ -409,9 +409,9 @@ where
     redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
 }
 
-pub(crate) mod constants;
+pub mod constants;
 pub mod dummy;
-pub(crate) mod memory;
+pub mod memory;
 pub mod orchestration;
 pub mod redis;
 

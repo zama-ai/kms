@@ -1,6 +1,6 @@
 use crypto_bigint::{NonZero, U1536};
 
-use crate::experimental::algebra::levels::*;
+use crate::algebra::levels::*;
 
 #[derive(Debug)]
 pub(crate) struct LevelKswCrtRepresentation {
@@ -313,7 +313,7 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::experimental::algebra::levels::LevelKsw;
+    use crate::algebra::levels::LevelKsw;
     use algebra::structure_traits::Sample;
 
     #[test]

@@ -1,13 +1,13 @@
-use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
-use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
-use crate::experimental::algebra::levels::*;
-use crate::experimental::algebra::ntt::*;
-use crate::experimental::bgv::basics::*;
-use crate::experimental::bgv::ddec::keygen_shares;
-use crate::networking::value::NetworkValue;
+use crate::algebra::levels::*;
+use crate::algebra::ntt::*;
+use crate::bgv::basics::*;
+use crate::bgv::ddec::keygen_shares;
 use algebra::role::Role;
 use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
+use execution::network_value::NetworkValue;
+use execution::runtime::sessions::base_session::BaseSessionHandles;
+use execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 use itertools::Itertools;
 use rand::CryptoRng;
 use rand::RngCore;
@@ -25,7 +25,7 @@ pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
 
     let (pk, sk) = keygen::<aes_prng::AesRng, LevelEll, LevelKsw, N65536>(
         &mut rng,
-        crate::experimental::constants::PLAINTEXT_MODULUS.get().0,
+        crate::constants::PLAINTEXT_MODULUS.get().0,
     );
 
     (pk, sk)
@@ -37,16 +37,16 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PublicBgvKeySet> {
-    let deserialization_runtime = DeSerializationRunTime::Rayon;
     session.network().increase_round_counter().await;
     if role.one_based() == input_party_id {
         let pubkey_raw =
             pubkey.ok_or_else(|| anyhow_error_and_log("I have no public key to send!"))?;
         let num_parties = session.num_parties();
 
-        let pkval = NetworkValue::<LevelEll>::PubBgvKeySet(Box::new(pubkey_raw.clone()));
         tracing::debug!("Sending pk to all other parties");
-        let send_pk = Arc::new(pkval.to_network());
+        let send_pk = Arc::new(bc2wrap::serialize(&pubkey_raw).map_err(|e| {
+            anyhow_error_and_log(&format!("failed to serialize PublicBgvKeySet: {e}"))
+        })?);
 
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
@@ -70,22 +70,20 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
             "Waiting for receiving public key from input party with timeout {:?}",
             timeout
         );
-        let data = tokio::spawn(timeout_at(timeout, async move {
+        let data = tokio::spawn(timeout_at(timeout.into(), async move {
             networking
                 .receive(&Role::indexed_from_one(input_party_id))
                 .await
         }))
         .await??;
 
-        let pk = match NetworkValue::<LevelEll>::from_network(data, deserialization_runtime).await?
-        {
-            NetworkValue::PubBgvKeySet(pk) => pk,
-            _ => Err(anyhow_error_and_log(
-                "I have received sth different from a public key!",
-            ))?,
-        };
-        tracing::debug!("Received PK from input party");
-        Ok(*pk)
+        let bytes = data?;
+        let pk = thread_handles::spawn_compute_bound(move || {
+            bc2wrap::deserialize_safe::<PublicBgvKeySet>(&bytes)
+                .map_err(|_| anyhow_error_and_log("failed to deserialize PublicBgvKeySet"))
+        })
+        .await??;
+        Ok(pk)
     }
 }
 
@@ -132,7 +130,7 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
     } else {
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round().await;
-        let data = tokio::spawn(timeout_at(timeout, async move {
+        let data = tokio::spawn(timeout_at(timeout.into(), async move {
             networking
                 .receive(&Role::indexed_from_one(input_party_id))
                 .await

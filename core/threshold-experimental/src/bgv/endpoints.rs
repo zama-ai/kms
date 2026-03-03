@@ -1,42 +1,40 @@
 use tokio::task::JoinSet;
 
 use super::basics::PrivateBgvKeySet;
-use crate::execution::runtime::sessions::{
+use crate::algebra::levels::LevelEll;
+use crate::algebra::ntt::N65536;
+use crate::bgv::dkg::NttForm;
+use crate::bgv::runtime::BGVTestRuntime;
+use crate::{
+    algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
+};
+use aes_prng::AesRng;
+use algebra::role::Role;
+use algebra::sharing::share::Share;
+use execution::runtime::sessions::{
     base_session::BaseSession,
     session_parameters::{GenericParameterHandles, SessionParameters},
     small_session::SmallSession,
 };
-use crate::execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
-use crate::experimental::algebra::levels::LevelEll;
-use crate::experimental::algebra::ntt::N65536;
-use crate::experimental::bgv::dkg::NttForm;
-use crate::experimental::bgv::runtime::BGVTestRuntime;
-use crate::experimental::{
-    algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
-};
-use crate::session_id::DSEP_SESSION_ID;
-use crate::session_id::{SessionId, SESSION_ID_BYTES};
-use aes_prng::AesRng;
-use algebra::role::Role;
-use algebra::sharing::share::Share;
+use execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use hashing::serialize_hash_element;
 use itertools::Itertools;
 use rand::SeedableRng;
+use session_id::DSEP_SESSION_ID;
+use session_id::{SessionId, SESSION_ID_BYTES};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-impl SessionId {
-    pub fn from_bgv_ct(
-        ciphertext: &LevelledCiphertext<LevelEll, N65536>,
-    ) -> anyhow::Result<SessionId> {
-        let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext)?;
-        if hash.len() < SESSION_ID_BYTES {
-            return Err(anyhow::anyhow!("Hash is too short"));
-        }
-        let mut hash_arr = [0_u8; SESSION_ID_BYTES];
-        hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
-        Ok(SessionId::from(u128::from_le_bytes(hash_arr)))
+fn session_id_from_bgv_ct(
+    ciphertext: &LevelledCiphertext<LevelEll, N65536>,
+) -> anyhow::Result<SessionId> {
+    let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext)?;
+    if hash.len() < SESSION_ID_BYTES {
+        return Err(anyhow::anyhow!("Hash is too short"));
     }
+    let mut hash_arr = [0_u8; SESSION_ID_BYTES];
+    hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
+    Ok(SessionId::from(u128::from_le_bytes(hash_arr)))
 }
 
 pub(crate) async fn setup_small_session(mut base_session: BaseSession) -> SmallSession<LevelOne> {
@@ -56,7 +54,7 @@ pub fn threshold_decrypt(
     private_keys: &[NttForm<LevelOne>],
     ct: &LevelledCiphertext<LevelEll, N65536>,
 ) -> anyhow::Result<HashMap<Role, Vec<u32>>> {
-    let session_id = SessionId::from_bgv_ct(ct)?;
+    let session_id = session_id_from_bgv_ct(ct)?;
 
     let rt = tokio::runtime::Runtime::new()?;
     let _guard = rt.enter();

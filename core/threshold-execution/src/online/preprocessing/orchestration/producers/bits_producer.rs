@@ -31,10 +31,11 @@ where
     S: BaseSessionHandles + 'static,
     G: BitGenEven,
 {
-    pub(crate) batch_size: usize,
-    pub(crate) total_size: usize,
-    pub(crate) producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
-    pub(crate) progress_tracker: Option<ProgressTracker>,
+    // TODO(dp): these were all `pub(crate)`. Maybe add getters for them?
+    pub batch_size: usize,
+    pub total_size: usize,
+    pub producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
+    pub progress_tracker: Option<ProgressTracker>,
     _marker_strat: std::marker::PhantomData<(PreprocStrat, G)>,
 }
 

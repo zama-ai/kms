@@ -1,6 +1,3 @@
-// TODO(dp): this is a problem, there's no `experimental` code in here...
-#[cfg(feature = "experimental")]
-use crate::experimental::bgv::basics::PublicBgvKeySet;
 #[cfg(any(test, feature = "testing"))]
 use crate::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
@@ -18,6 +15,8 @@ use algebra::{
     structure_traits::{Ring, Zero},
 };
 use error_utils::anyhow_error_and_log;
+// #[cfg(feature = "experimental")]
+// use experimental::bgv::basics::PublicBgvKeySet; // TODO(dp): this is a problem, there's no `experimental` code in here...
 use hashing::{serialize_hash_element, DomainSep};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -112,8 +111,6 @@ pub enum AgreeRandomValue {
 pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(any(test, feature = "testing"))]
     PubKeySet(Box<FhePubKeySet>),
-    #[cfg(feature = "experimental")]
-    PubBgvKeySet(Box<PublicBgvKeySet>),
     #[cfg(any(test, feature = "testing"))]
     Crs(Box<CompactPkeCrs>),
     #[cfg(any(test, feature = "testing"))]
@@ -139,11 +136,6 @@ impl<Z: Eq + Zero + std::fmt::Debug> std::fmt::Debug for NetworkValue<Z> {
         match self {
             #[cfg(any(test, feature = "testing"))]
             NetworkValue::PubKeySet(_pk) => f
-                .debug_tuple(self.network_type_name())
-                .field(&"...")
-                .finish(),
-            #[cfg(feature = "experimental")]
-            NetworkValue::PubBgvKeySet(_pk) => f
                 .debug_tuple(self.network_type_name())
                 .field(&"...")
                 .finish(),
@@ -225,8 +217,6 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
         match self {
             #[cfg(any(test, feature = "testing"))]
             NetworkValue::PubKeySet(_) => "PubKeySet",
-            #[cfg(feature = "experimental")]
-            NetworkValue::PubBgvKeySet(_) => "PubBgvKeySet",
             #[cfg(any(test, feature = "testing"))]
             NetworkValue::Crs(_) => "Crs",
             #[cfg(any(test, feature = "testing"))]

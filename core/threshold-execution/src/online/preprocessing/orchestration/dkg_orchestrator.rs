@@ -275,7 +275,7 @@ type ShareChannels<R> = (
 ///- One set for Triples
 ///- One set for Randomness
 ///- One set for Bits
-pub(crate) fn create_channels<R: Clone>(
+pub fn create_channels<R: Clone>(
     num_triple_sessions: usize,
     num_random_sessions: usize,
     num_bits_sessions: usize,

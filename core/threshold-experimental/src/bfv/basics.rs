@@ -1,4 +1,4 @@
-use crate::experimental::algebra::{
+use crate::algebra::{
     cyclotomic::{NewHopeTernarySampler, RingElement},
     cyclotomic::{RqElement, TernaryElement},
     integers::{IntQ, PositiveConv, ZeroCenteredRem},
@@ -7,10 +7,10 @@ use crate::experimental::algebra::{
     ntt::Const,
     ntt::N65536,
 };
-use crate::experimental::bgv::basics::LevelledCiphertext;
-use crate::experimental::bgv::basics::PlaintextVec;
-use crate::experimental::bgv::basics::{PrivateBgvKeySet, PublicKey, SecretKey};
-use crate::experimental::constants::{DELTA, PLAINTEXT_MODULUS};
+use crate::bgv::basics::LevelledCiphertext;
+use crate::bgv::basics::PlaintextVec;
+use crate::bgv::basics::{PrivateBgvKeySet, PublicKey, SecretKey};
+use crate::constants::{DELTA, PLAINTEXT_MODULUS};
 use algebra::structure_traits::FromU128;
 use rand::CryptoRng;
 use rand::Rng;
@@ -122,16 +122,16 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::execution::runtime::test_runtime::generate_fixed_roles;
-    use crate::experimental::algebra::ntt::NTTConstants;
-    use crate::experimental::bgv::ddec::keygen_shares;
-    use crate::experimental::bgv::endpoints::threshold_decrypt;
-    use crate::experimental::bgv::runtime::BGVTestRuntime;
-    use crate::experimental::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
-    use crate::networking::NetworkMode;
+    use crate::algebra::ntt::NTTConstants;
+    use crate::bgv::ddec::keygen_shares;
+    use crate::bgv::endpoints::threshold_decrypt;
+    use crate::bgv::runtime::BGVTestRuntime;
+    use crate::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
     use aes_prng::AesRng;
     use algebra::role::Role;
+    use execution::runtime::test_runtime::generate_fixed_roles;
     use rand::{RngCore, SeedableRng};
+    use threshold_types::network::NetworkMode;
 
     #[test]
     fn test_bfv_keygen() {

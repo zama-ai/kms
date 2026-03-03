@@ -12,44 +12,38 @@ use tokio::{
 use tracing::{instrument, Instrument};
 
 use crate::{
-    execution::{
-        config::BatchParams,
-        online::{
-            preprocessing::{
-                constants::TRACKER_LOG_PERCENTAGE,
-                memory::InMemoryBitPreprocessing,
-                orchestration::{
-                    consumers::{
-                        randoms_aggregator::RandomsAggregator,
-                        triples_aggregator::TriplesAggregator,
-                    },
-                    dkg_orchestrator::create_channels,
-                    producer_traits::{BitProducerTrait, RandomProducerTrait, TripleProducerTrait},
-                    producers::{
-                        bits_producer::SecureSmallSessionBitProducer,
-                        common::execute_preprocessing,
-                        randoms_producer::SecureSmallSessionRandomProducer,
-                        triples_producer::SecureSmallSessionTripleProducer,
-                    },
-                    progress_tracker::ProgressTracker,
-                },
-            },
-            secret_distributions::{RealSecretDistributions, SecretDistributions},
-        },
-        runtime::sessions::{
-            session_parameters::GenericParameterHandles, small_session::SmallSession,
-        },
-        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
-    },
-    experimental::{
-        algebra::levels::LevelKsw,
-        bgv::dkg_preproc::BGVDkgPreprocessing,
-        constants::NEW_HOPE_BOUND,
-        gen_bits_odd::{BitGenOdd, RealBitGenOdd},
-    },
+    algebra::levels::LevelKsw,
+    bgv::dkg_preproc::BGVDkgPreprocessing,
+    constants::NEW_HOPE_BOUND,
+    gen_bits_odd::{BitGenOdd, RealBitGenOdd},
 };
 use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
+use execution::{
+    config::BatchParams,
+    online::{
+        preprocessing::{
+            constants::TRACKER_LOG_PERCENTAGE,
+            memory::InMemoryBitPreprocessing,
+            orchestration::{
+                consumers::{
+                    randoms_aggregator::RandomsAggregator, triples_aggregator::TriplesAggregator,
+                },
+                dkg_orchestrator::create_channels,
+                producer_traits::{BitProducerTrait, RandomProducerTrait, TripleProducerTrait},
+                producers::{
+                    bits_producer::SecureSmallSessionBitProducer, common::execute_preprocessing,
+                    randoms_producer::SecureSmallSessionRandomProducer,
+                    triples_producer::SecureSmallSessionTripleProducer,
+                },
+                progress_tracker::ProgressTracker,
+            },
+        },
+        secret_distributions::{RealSecretDistributions, SecretDistributions},
+    },
+    runtime::sessions::{session_parameters::GenericParameterHandles, small_session::SmallSession},
+    small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
+};
 
 ///Amount of triples generated in one batch by the orchestrator
 pub(crate) const BGV_BATCH_SIZE_TRIPLES: usize = 1000;
@@ -179,7 +173,7 @@ impl BGVPreprocessingOrchestrator {
             bit_sender_channels,
             Some(self.bit_progress_tracker),
         )?;
-        let mut bit_producer_handles = bit_producer.start_bit_gen_odd_production();
+        let mut bit_producer_handles = start_bit_gen_odd_production(bit_producer);
 
         //Join on producers
         let mut res_sessions = Vec::new();
@@ -321,40 +315,42 @@ impl BGVDkgBitProcessor {
     }
 }
 
-impl SecureSmallSessionBitProducer<LevelKsw> {
-    #[instrument(name="Bit Odd Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_bit_gen_odd_production(
-        self,
-    ) -> JoinSet<Result<SmallSession<LevelKsw>, anyhow::Error>> {
-        let num_producers = self.producers.len();
-        let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
+#[instrument(name="Bit Odd Factory",skip(bit_producer),fields(num_sessions= ?bit_producer.producers.len()))]
+pub(crate) fn start_bit_gen_odd_production(
+    bit_producer: SecureSmallSessionBitProducer<LevelKsw>,
+) -> JoinSet<Result<SmallSession<LevelKsw>, anyhow::Error>> {
+    let num_producers = bit_producer.producers.len();
+    let num_loops = div_ceil(
+        bit_producer.total_size,
+        bit_producer.batch_size * num_producers,
+    );
 
-        let batch_size = self.batch_size;
-        let task_gen = |mut session: SmallSession<LevelKsw>,
-                        sender_channel: Sender<Vec<Share<LevelKsw>>>,
-                        progress_tracker: Option<ProgressTracker>| async move {
-            let base_batch_size = BatchParams {
-                triples: batch_size,
-                randoms: batch_size,
-            };
-
-            for _ in 0..num_loops {
-                let mut correlated_randomness = SecureSmallPreprocessing::default()
-                    .execute(&mut session, base_batch_size)
-                    .await?;
-                let bits = RealBitGenOdd::gen_bits_odd(
-                    batch_size,
-                    &mut correlated_randomness,
-                    &mut session,
-                )
-                .await?;
-
-                //Drop the error on purpose as the receiver end might be closed already if we produced too much
-                let _ = sender_channel.send(bits).await;
-                progress_tracker.as_ref().map(|p| p.increment(batch_size));
-            }
-            Ok::<_, anyhow::Error>(session)
+    let batch_size = bit_producer.batch_size;
+    let task_gen = |mut session: SmallSession<LevelKsw>,
+                    sender_channel: Sender<Vec<Share<LevelKsw>>>,
+                    progress_tracker: Option<ProgressTracker>| async move {
+        let base_batch_size = BatchParams {
+            triples: batch_size,
+            randoms: batch_size,
         };
-        execute_preprocessing(self.producers, task_gen, self.progress_tracker)
-    }
+
+        for _ in 0..num_loops {
+            let mut correlated_randomness = SecureSmallPreprocessing::default()
+                .execute(&mut session, base_batch_size)
+                .await?;
+            let bits =
+                RealBitGenOdd::gen_bits_odd(batch_size, &mut correlated_randomness, &mut session)
+                    .await?;
+
+            //Drop the error on purpose as the receiver end might be closed already if we produced too much
+            let _ = sender_channel.send(bits).await;
+            progress_tracker.as_ref().map(|p| p.increment(batch_size));
+        }
+        Ok::<_, anyhow::Error>(session)
+    };
+    execute_preprocessing(
+        bit_producer.producers,
+        task_gen,
+        bit_producer.progress_tracker,
+    )
 }

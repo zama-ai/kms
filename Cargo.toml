@@ -10,6 +10,7 @@ members = [
     "core/threshold",
     "core/threshold-algebra",
     "core/threshold-execution",
+    "core/threshold-experimental",
     "core/threshold-hashing",
     "core/threshold-networking",
     "core/threshold-types",
@@ -79,6 +80,8 @@ backward-compatibility = { path = "./backward-compatibility" }  # Internal backw
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 error-utils = { path = "./core/error-utils", default-features = false }
 execution = { package = "threshold-execution", path = "./core/threshold-execution", default-features = false }
+# TODO(dp): Maybe exclude this from the workspace? Couldn't code use it from a path?
+experimental = { package = "threshold-experimental", path = "./core/threshold-experimental", default-features = false }
 hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", default-features = false }
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library
