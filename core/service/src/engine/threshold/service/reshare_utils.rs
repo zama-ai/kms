@@ -3,12 +3,12 @@
 use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
-        base::{
-            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
-            DSEP_PUBDATA_KEY,
-        },
+        base::{compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata},
         threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
-        utils::MetricedError,
+        utils::{
+            verify_compressed_key_digest_from_bytes, verify_key_digest_from_bytes, MetricedError,
+            ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
+        },
         validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
@@ -40,16 +40,12 @@ use threshold_fhe::{
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
     },
-    hashing::hash_element,
     networking::NetworkMode,
 };
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
-const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
-const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
-const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str = "Compressed xof keyset digest mismatch";
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
 /// Enum to represent verified public materials that can be either uncompressed or compressed.
@@ -75,42 +71,6 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
             }
         }
     }
-}
-
-/// Verify key digests using raw bytes from storage.
-/// This avoids re-serializing the keys, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-fn verify_key_digest_from_bytes(
-    server_key_bytes: &[u8],
-    public_key_bytes: &[u8],
-    expected_server_key_digest: &[u8],
-    expected_public_key_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_server_key_digest = hash_element(&DSEP_PUBDATA_KEY, server_key_bytes);
-    let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
-
-    if actual_server_key_digest != expected_server_key_digest {
-        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
-    }
-    if actual_public_key_digest != expected_public_key_digest {
-        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
-    }
-
-    Ok(())
-}
-
-/// Verify compressed key digest using raw bytes from storage.
-/// This avoids re-serializing the keys, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-fn verify_compressed_key_digest_from_bytes(
-    compressed_keyset_bytes: &[u8],
-    expected_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, compressed_keyset_bytes);
-    if actual_digest != expected_digest {
-        anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
-    }
-    Ok(())
 }
 
 fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
@@ -599,7 +559,7 @@ mod tests {
     use crate::engine::threshold::service::reshare_utils::fetch_public_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_public_materials;
     use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
-    use crate::engine::threshold::service::reshare_utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
+    use crate::engine::utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
@@ -981,7 +941,7 @@ mod tests {
 
     // ==================== Compressed Key Tests ====================
     use super::VerifiedPublicMaterial;
-    use super::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
+    use crate::engine::utils::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
 

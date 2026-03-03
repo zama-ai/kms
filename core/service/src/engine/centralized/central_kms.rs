@@ -878,7 +878,7 @@ impl<
         // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
-            .map(|((id, _), handle)| (*id, handle.public_key_info.pub_data_types()))
+            .map(|((id, _), handle)| (*id, handle.public_key_info.clone()))
             .collect();
         sanity_check_public_materials(&public_storage, &entries).await?;
         tracing::info!(
