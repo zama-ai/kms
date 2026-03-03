@@ -245,7 +245,6 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     where
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
 }
 
@@ -276,32 +275,6 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
     {
-        // Messages exchanged are big so we deserialize them on Rayon
-        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
-        if Z::BIT_LENGTH == 64 {
-            if let DKGParams::WithSnS(_) = params {
-                return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with in Z64".to_string(),
-                ));
-            }
-        }
-
-        if Z::BIT_LENGTH
-            != params
-                .get_params_basics_handle()
-                .get_dkg_mode()
-                .expected_bit_length()
-        {
-            return Err(anyhow_error_and_log(format!(
-                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
-                Z::BIT_LENGTH,
-                params
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                    .expected_bit_length()
-            )));
-        }
-
         let private_key_set = generate_private_key_set(session, preprocessing, params)
             .await?
             .finalize_keyset(
@@ -334,7 +307,6 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
     ) -> anyhow::Result<CompressedXofKeySet>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
     {
         let params_basics_handle = params.get_params_basics_handle();
