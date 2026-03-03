@@ -1,7 +1,7 @@
 // #[cfg(not(feature = "experimental"))]
 // use crate::choreography::grpc::GrpcChoreography;
-#[cfg(not(feature = "experimental"))]
-use crate::malicious_moby::add_strategy_to_router;
+// #[cfg(not(feature = "experimental"))]
+// use crate::malicious_moby::add_strategy_to_router;
 use crate::{choreography::grpc::GrpcChoreography, conf::party::PartyConf};
 use algebra::{
     base_ring::{Z128, Z64},
@@ -9,18 +9,31 @@ use algebra::{
     role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use execution::online::preprocessing::{create_memory_factory, create_redis_factory};
+use execution::online::preprocessing::{
+    create_memory_factory, create_redis_factory, PreprocessorFactory,
+};
 // #[cfg(feature = "experimental")]
 // use experimental::choreography::grpc::ExperimentalGrpcChoreography; // TODO(dp): circular dep.
 use networking::constants::NETWORK_TIMEOUT_LONG;
 use networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use tonic::transport::{Server, ServerTlsConfig};
+use tonic::transport::{server::Router, Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
+
+pub trait ChoreoRoutingHelper<const EXTENSION_DEGREE: usize> {
+    fn add_to_router<L>(
+        &self,
+        router: Router<L>,
+        my_role: Role,
+        networking: Arc<GrpcNetworkingManager>,
+        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
+    ) -> Router<L>;
+}
 
 pub async fn run<const EXTENSION_DEGREE: usize>(
     settings: &PartyConf,
+    routing_helper: impl ChoreoRoutingHelper<EXTENSION_DEGREE>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
@@ -85,16 +98,8 @@ where
         .layer(choreo_grpc_layer)
         .add_service(choreo_health_service);
 
-    #[cfg(not(feature = "experimental"))]
-    let choreo_router = add_strategy_to_router(choreo_router, my_role, networking.clone(), factory);
-
-    // TODO(dp): circular dep, this has to move.
-    // #[cfg(feature = "experimental")]
-    // let choreo_router = {
-    //     let choreography =
-    //         ExperimentalGrpcChoreography::new(my_role, networking.clone(), factory).into_server();
-    //     choreo_router.add_service(choreography)
-    // };
+    let choreo_router =
+        routing_helper.add_to_router(choreo_router, my_role, networking.clone(), factory);
 
     tracing::info!(
         "Successfully created choreo server with party id {:?} on port {:?}.",

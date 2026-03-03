@@ -6,6 +6,8 @@ use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use threshold_fhe::grpc::server::ChoreoRoutingHelper;
+use tonic::transport::server::Router;
 
 use crate::algebra::levels::{LevelEll, LevelKsw, LevelOne};
 use crate::algebra::ntt::{Const, N65536};
@@ -20,6 +22,11 @@ use crate::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams}
 use crate::constants::INPUT_PARTY_ID;
 use crate::constants::PLAINTEXT_MODULUS;
 use algebra::role::Role;
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+};
 use execution::online::preprocessing::dummy::DummyPreprocessing;
 use execution::online::preprocessing::PreprocessorFactory;
 use execution::runtime::sessions::base_session::BaseSession;
@@ -69,6 +76,27 @@ use tracing::{instrument, Instrument};
 use super::requests::{
     PrssInitParams, SupportedRing, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
 };
+
+pub struct ExperimentalChoreoRoutingHelper;
+
+impl<const EXTENSION_DEGREE: usize> ChoreoRoutingHelper<EXTENSION_DEGREE>
+    for ExperimentalChoreoRoutingHelper
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+{
+    fn add_to_router<L>(
+        &self,
+        router: Router<L>,
+        my_role: Role,
+        networking: Arc<GrpcNetworkingManager>,
+        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
+    ) -> Router<L> {
+        router.add_service(
+            ExperimentalGrpcChoreography::new(my_role, networking, factory).into_server(),
+        )
+    }
+}
 
 #[derive(Clone)]
 enum SupportedPRSSSetup {

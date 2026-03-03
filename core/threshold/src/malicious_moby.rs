@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tonic::transport::server::Router;
 
-use crate::grpc::server::SecureGrpcChoreography;
+use crate::grpc::server::{ChoreoRoutingHelper, SecureGrpcChoreography};
 use algebra::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
@@ -93,35 +93,37 @@ type GrpcChoreographyDropAll<const EXTENSION_DEGREE: usize> = GrpcChoreography<
     MaliciousOfflineDrop,
 >;
 
-pub fn add_strategy_to_router<const EXTENSION_DEGREE: usize, L>(
-    router: Router<L>,
-    my_role: Role,
-    networking_strategy: Arc<GrpcNetworkingManager>,
-    factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
-) -> Router<L>
+pub struct DefaultChoreoRoutingHelper;
+
+impl<const EXTENSION_DEGREE: usize> ChoreoRoutingHelper<EXTENSION_DEGREE>
+    for DefaultChoreoRoutingHelper
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
 {
-    // Read the strategy from the environment variable, defaulting to "secure"
-    let strategy = std::env::var("MOBY_STRATEGY").unwrap_or_else(|_| "secure".to_owned());
+    fn add_to_router<L>(
+        &self,
+        router: Router<L>,
+        my_role: Role,
+        networking: Arc<GrpcNetworkingManager>,
+        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
+    ) -> Router<L> {
+        // Read the strategy from the environment variable, defaulting to "secure"
+        let strategy = std::env::var("MOBY_STRATEGY").unwrap_or_else(|_| "secure".to_owned());
 
-    let router = match strategy.as_str() {
-        "secure" => router.add_service(
-            SecureGrpcChoreography::new(my_role, networking_strategy, factory).into_server(),
-        ),
-        "malicious_broadcast" => router.add_service(
-            GrpcChoreographyMaliciousBroadcastSenderEcho::new(
-                my_role,
-                networking_strategy,
-                factory,
-            )
-            .into_server(),
-        ),
-        "drop_all" => router.add_service(
-            GrpcChoreographyDropAll::new(my_role, networking_strategy, factory).into_server(),
-        ),
-        _ => panic!("Unknown moby strategy: {strategy}"),
-    };
-    router
+        let router = match strategy.as_str() {
+            "secure" => router.add_service(
+                SecureGrpcChoreography::new(my_role, networking, factory).into_server(),
+            ),
+            "malicious_broadcast" => router.add_service(
+                GrpcChoreographyMaliciousBroadcastSenderEcho::new(my_role, networking, factory)
+                    .into_server(),
+            ),
+            "drop_all" => router.add_service(
+                GrpcChoreographyDropAll::new(my_role, networking, factory).into_server(),
+            ),
+            _ => panic!("Unknown moby strategy: {strategy}"),
+        };
+        router
+    }
 }
