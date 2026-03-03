@@ -134,6 +134,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     ///
     /// We have a private trait bound here to ensure that the
     /// an internal type implements a private trait Finalizable.
+    #[instrument(name="TFHE.Threshold-KeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn keygen<
         S: BaseSessionHandles,
@@ -148,8 +149,21 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+    {
+        let (pub_key_set, priv_key_set) =
+            Self::compressed_keygen(session, preprocessing, params, tag).await?;
+        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
+        Ok((
+            FhePubKeySet {
+                public_key,
+                server_key,
+            },
+            priv_key_set,
+        ))
+    }
 
+    #[instrument(name="TFHE.Threshold-KeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn keygen_from_existing_private_keyset<
         S: BaseSessionHandles,
@@ -165,7 +179,22 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>;
+        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
+    {
+        let pub_key_set = Self::compressed_keygen_from_existing_private_keyset(
+            session,
+            preprocessing,
+            params,
+            tag,
+            existing_private_keyset,
+        )
+        .await?;
+        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
+        Ok(FhePubKeySet {
+            public_key,
+            server_key,
+        })
+    }
 
     /// Runs the distributed key generation protocol for compressed keys.
     ///
@@ -231,66 +260,6 @@ pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: us
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
-    #[instrument(name="TFHE.Threshold-KeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
-    async fn keygen<
-        S: BaseSessionHandles,
-        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    >(
-        session: &mut S,
-        preprocessing: &mut P,
-        params: DKGParams,
-        tag: tfhe::Tag,
-    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
-    where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
-    {
-        let (pub_key_set, priv_key_set) =
-            Self::compressed_keygen(session, preprocessing, params, tag).await?;
-        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
-        Ok((
-            FhePubKeySet {
-                public_key,
-                server_key,
-            },
-            priv_key_set,
-        ))
-    }
-
-    #[instrument(name="TFHE.Threshold-KeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-    #[allow(private_bounds)]
-    async fn keygen_from_existing_private_keyset<
-        S: BaseSessionHandles,
-        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    >(
-        session: &mut S,
-        preprocessing: &mut P,
-        params: DKGParams,
-        tag: tfhe::Tag,
-        existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> anyhow::Result<FhePubKeySet>
-    where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-        PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
-    {
-        let pub_key_set = Self::compressed_keygen_from_existing_private_keyset(
-            session,
-            preprocessing,
-            params,
-            tag,
-            existing_private_keyset,
-        )
-        .await?;
-        let (public_key, server_key) = pub_key_set.decompress()?.into_raw_parts();
-        Ok(FhePubKeySet {
-            public_key,
-            server_key,
-        })
-    }
-
     #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn compressed_keygen<
@@ -333,18 +302,22 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             )));
         }
 
-        let (pub_key_set, priv_key_set) =
-            distributed_keygen_compressed_from_existing_private_keyset(
-                session,
-                preprocessing,
-                params,
-                None,
-            )
-            .await?;
-        Ok((
-            pub_key_set.to_compressed_pubkeyset(params, tag),
-            priv_key_set.ok_or(anyhow::anyhow!("missing priv_key_set"))?,
-        ))
+        let private_key_set = generate_private_key_set(session, preprocessing, params)
+            .await?
+            .finalize_keyset(
+                params
+                    .get_params_basics_handle()
+                    .to_classic_pbs_parameters(),
+            );
+        let compressed_xof_keyset = Self::compressed_keygen_from_existing_private_keyset(
+            session,
+            preprocessing,
+            params,
+            tag,
+            &private_key_set,
+        )
+        .await?;
+        Ok((compressed_xof_keyset, private_key_set))
     }
 
     #[instrument(name="TFHE.Threshold-CompressedKeyGenFromExistingPrivateKeyset", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
@@ -364,6 +337,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
         PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
     {
+        let params_basics_handle = params.get_params_basics_handle();
+
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
@@ -374,30 +349,33 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             }
         }
 
-        if Z::BIT_LENGTH
-            != params
-                .get_params_basics_handle()
-                .get_dkg_mode()
-                .expected_bit_length()
-        {
+        if Z::BIT_LENGTH != params_basics_handle.get_dkg_mode().expected_bit_length() {
             return Err(anyhow_error_and_log(format!(
                 "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
                 Z::BIT_LENGTH,
-                params
-                    .get_params_basics_handle()
-                    .get_dkg_mode()
-                    .expected_bit_length()
+                params_basics_handle.get_dkg_mode().expected_bit_length()
             )));
         }
 
-        let (pub_key_set, _priv_keyset) =
-            distributed_keygen_compressed_from_existing_private_keyset(
-                session,
-                preprocessing,
-                params,
-                Some(existing_private_keyset),
-            )
-            .await?;
+        let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+        //Init the XOF with the seed computed above
+        let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+            Z,
+            SoftwareRandomGenerator,
+            EXTENSION_DEGREE,
+        >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
+
+        let private_key_set = existing_private_keyset.to_generic(params)?;
+
+        let pub_key_set = generate_all_compressed_public_keys(
+            session,
+            preprocessing,
+            &mut mpc_encryption_rng,
+            params,
+            &private_key_set,
+            seed,
+        )
+        .await?;
         Ok(pub_key_set.to_compressed_pubkeyset(params, tag))
     }
 }
@@ -535,7 +513,6 @@ where
 /// - `params`: [`DKGParams`] parameters
 /// - `private_key_set`: the private key set to generate public keys from
 /// - `seed`: the random seed
-/// - `existing_compression_sk`: optional existing compression secret key to use
 ///
 /// Returns a [`RawCompressedPubKeySet`] containing all generated compressed public keys.
 #[allow(clippy::too_many_arguments)]
@@ -555,7 +532,6 @@ async fn generate_all_compressed_public_keys<
     params: DKGParams,
     private_key_set: &GenericPrivateKeySet<Z, EXTENSION_DEGREE>,
     seed: u128,
-    existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
 ) -> anyhow::Result<RawCompressedPubKeySet>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -593,9 +569,12 @@ where
     let compression_keys =
         if let Some(comp_params) = params_basics_handle.get_compression_decompression_params() {
             // Use existing_compression_sk if provided, otherwise use the newly generated one
-            let compression_sk = existing_compression_sk
-                .or(private_key_set.glwe_secret_key_share_compression.as_ref())
-                .unwrap();
+            let compression_sk = private_key_set
+                .glwe_secret_key_share_compression
+                .as_ref()
+                .ok_or(anyhow::anyhow!(
+                    "compression parameters exist but not compression key"
+                ))?;
             Some(
                 generate_compressed_compression_decompression_keys(
                     &glwe_sk_share_as_lwe,
@@ -809,82 +788,6 @@ where
         cpk_re_randomization_ksk,
         seed,
     })
-}
-
-/// Generates compressed public keys from an existing private keyset (or fresh keys if None).
-///
-/// When `existing_private_keyset` is `Some`, it converts the `PrivateKeySet` back to a
-/// `GenericPrivateKeySet` and generates compressed public keys from it.
-/// When `None`, it generates fresh private keys and returns only the compressed public keys.
-async fn distributed_keygen_compressed_from_existing_private_keyset<
-    Z: BaseRing,
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-    existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
-) -> anyhow::Result<(
-    RawCompressedPubKeySet,
-    Option<PrivateKeySet<EXTENSION_DEGREE>>,
-)>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-    PrivateKeySet<EXTENSION_DEGREE>: Definalizable<Z, EXTENSION_DEGREE>,
-    GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    //Init the XOF with the seed computed above
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
-
-    match existing_private_keyset {
-        Some(keyset) => {
-            let private_key_set = keyset.to_generic(params)?;
-
-            let existing_compression_sk =
-                private_key_set.glwe_secret_key_share_compression.as_ref();
-
-            let pub_key_set = generate_all_compressed_public_keys(
-                session,
-                preprocessing,
-                &mut mpc_encryption_rng,
-                params,
-                &private_key_set,
-                seed,
-                existing_compression_sk,
-            )
-            .await?;
-            Ok((pub_key_set, None))
-        }
-        None => {
-            let private_key_set = generate_private_key_set(session, preprocessing, params).await?;
-
-            let pub_key_set = generate_all_compressed_public_keys(
-                session,
-                preprocessing,
-                &mut mpc_encryption_rng,
-                params,
-                &private_key_set,
-                seed,
-                None,
-            )
-            .await?;
-            let parameters = params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters();
-            Ok((
-                pub_key_set,
-                Some(private_key_set.finalize_keyset(parameters)),
-            ))
-        }
-    }
 }
 
 // TODO we should make a compressed version of this
