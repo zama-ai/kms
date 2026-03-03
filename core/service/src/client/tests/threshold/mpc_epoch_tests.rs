@@ -375,7 +375,7 @@ async fn run_new_epoch(
                             .reshare_responses
                             .into_iter()
                             .map(|response| KeyGenResult {
-                                request_id: response.key_id.clone(),
+                                request_id: response.request_id.clone(),
                                 preprocessing_id: response.preprocessing_id.clone(),
                                 key_digests: response.key_digests.clone(),
                                 external_signature: response.external_signature.clone(),

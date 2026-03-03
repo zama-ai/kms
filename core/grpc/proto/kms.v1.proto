@@ -795,43 +795,8 @@ message NewMpcEpochRequest {
   PreviousEpochInfo previous_epoch = 3;
 }
 
-message ResponseResharedKey {
- // Key ID of the reshared key
-  RequestId key_id = 1;
-
-  // Preprocessing ID used for keygen the resharing refers to
-  RequestId preprocessing_id = 2;
-
-  // Mapping of key type string to digest
-  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
-  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  repeated KeyDigest key_digests = 3;
-
-  // EIP-712 signature on the key generation result.
-  // The structure signed has the following fields:
-  // struct KeygenVerification {
-  //     /// @notice The ID of the preprocessing keygen request.
-  //     uint256 prepKeygenId;
-  //     /// @notice The ID of the generated key.
-  //     uint256 keyId;
-  //     /// @notice The generated digests of keys.
-  //     KeyDigest[] keyDigests;
-  // }
-  // enum KeyType {
-  //     SERVER,
-  //     PUBLIC
-  // }
-  // struct KeyDigest {
-  //     /// @notice The type of the generated key.
-  //     KeyType keyType;
-  //     /// @notice The digest of the generated key.
-  //     bytes digest;
-  // }
-  bytes external_signature = 4;
-}
-
 message EpochResultResponse {
-  repeated ResponseResharedKey reshare_responses = 1;
+  repeated KeyGenResult reshare_responses = 1;
 }
 
 message DestroyMpcEpochRequest {

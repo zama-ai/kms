@@ -192,7 +192,7 @@ pub(crate) async fn do_new_epoch(
                 .reshare_responses
                 .iter()
                 .map(|k| {
-                    k.key_id
+                    k.request_id
                         .clone()
                         .expect("No key ID found in resharing response")
                 })
@@ -261,7 +261,7 @@ pub(crate) async fn do_new_epoch(
                     .reshare_responses
                     .iter()
                     .find(|r| {
-                        r.key_id.as_ref().unwrap() == &key_id.into()
+                        r.request_id.as_ref().unwrap() == &key_id.into()
                             && r.preprocessing_id.as_ref().unwrap() == &preproc_id.into()
                     })
                     .expect("No resharing response found for the key and preprocessing ID")

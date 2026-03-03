@@ -31,8 +31,8 @@ use futures_util::{
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{
-        DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest,
-        PreviousEpochInfo, RequestId, ResponseResharedKey,
+        DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, KeyGenResult,
+        NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
@@ -536,6 +536,9 @@ impl<
                     .zip_eq(verified_previous_epoch.keys_info.iter()),
             )
         {
+            // NOTE: For now what is signed is exactly the same as in the initial keygen.
+            // There are ongoing discussions to add the epoch_id and context_id
+            // to the struct we sign, in which case we would use the new epoch_id and context_id here.
             match verified_material {
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_standard_keygen(
@@ -1150,8 +1153,8 @@ impl<
                                     digest,
                                 })
                                 .collect::<Vec<_>>();
-                            reshare_responses.push(ResponseResharedKey {
-                                key_id: Some(res.key_id.into()),
+                            reshare_responses.push(KeyGenResult {
+                                request_id: Some(res.key_id.into()),
                                 preprocessing_id: Some(res.preprocessing_id.into()),
                                 key_digests,
                                 external_signature: res.external_signature,
