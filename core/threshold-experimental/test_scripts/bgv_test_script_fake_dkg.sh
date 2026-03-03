@@ -11,7 +11,7 @@ set -x
 set -e
 
 #build stairwayctl
-cargo build --bin stairwayctl --features="choreographer,experimental,testing"
+cargo build --bin stairwayctl --features="choreographer"
 
 #Init the PRSS
 $STAIRWAYCTL_EXEC -c $1 prss-init --ring level-one --sid $CURR_SID
@@ -31,7 +31,7 @@ CURR_SID=$(( CURR_SID + 1 ))
 
 ###DDEC
 #Perform NUM_CTXTS decryptions
-for NUM_PARALLEL_SESSIONS in 1 2 4 #8 16 32 64 
+for NUM_PARALLEL_SESSIONS in 1 2 4 #8 16 32 64
 do
     $STAIRWAYCTL_EXEC -c $1 threshold-decrypt --path-pubkey $KEY_PATH/pk.bin --num-ctxt-per-session $NUM_CTXTS --num-parallel-sessions $NUM_PARALLEL_SESSIONS --sid $CURR_SID
     $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
@@ -41,4 +41,4 @@ do
 done
 
 printf "Press enter to shutdown experiment\n"
-read _ 
+read _

@@ -11,7 +11,7 @@ set -x
 set -e
 
 #build stairwayctl
-cargo build --bin stairwayctl --features="choreographer,experimental,testing"
+cargo build --bin stairwayctl --features="choreographer"
 
 #Init the PRSS
 $STAIRWAYCTL_EXEC -c $1 prss-init --ring level-one --sid $CURR_SID
