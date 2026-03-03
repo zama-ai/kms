@@ -91,16 +91,20 @@ pub async fn create_test_context_info_from_core_config(
         let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
         })?;
-        #[allow(deprecated)]
-        let sk_der = sk.sk().to_pkcs8_der()?;
+        let sk_der = {
+            // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+            #[expect(deprecated)]
+            let ecdsa_sk = sk.sk();
+            ecdsa_sk.to_pkcs8_der()?
+        };
         let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
-            &tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &sk_der.as_bytes().into(),
             &rcgen::PKCS_ECDSA_P256K1_SHA256,
         )?;
 
         let mpc_identity = identity.mpc_identity();
         let (_ca_cert_ki, ca_cert, _ca_cert_params) =
-            threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+            threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
                 mpc_identity.as_ref(),
                 true,
                 &ca_keypair,

@@ -16,10 +16,12 @@ use rcgen::{
 use std::{sync::Arc, time::Duration};
 use threshold_fhe::networking::tls::extract_subject_from_cert;
 use tokio::sync::RwLock;
+#[cfg(feature = "insecure")]
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio_rustls::rustls::{
     client::ResolvesClientCert,
     crypto::CryptoProvider,
-    pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, UnixTime},
+    pki_types::{PrivateKeyDer, UnixTime},
     server::{ClientHello, ResolvesServerCert},
     sign::{CertifiedKey, SingleCertAndKey},
     SignatureScheme,
@@ -186,10 +188,14 @@ pub trait SecurityModule {
                     ca_cert_key_usage.value.key_cert_sign(),
                     "Bad party CA certificate: cannot be used to sign other certificates"
                 );
-                #[allow(deprecated)]
-                let sk_der = ca_key.sk().to_pkcs8_der()?;
+                let sk_der = {
+                    // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+                    #[expect(deprecated)]
+                    let ecdsa_key = ca_key.sk();
+                    ecdsa_key.to_pkcs8_der()?
+                };
                 let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-                    &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+                    &sk_der.as_bytes().into(),
                     &PKCS_ECDSA_P256K1_SHA256,
                 )?;
                 let issuing_ca =

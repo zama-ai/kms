@@ -113,15 +113,18 @@ fn create_selfsigned_ca_cert(
     wildcard: bool,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    create_ca_cert_from_signing_key(ca_name, wildcard, &keypair)
+    create_ca_cert_from_ca_keypair(ca_name, wildcard, &keypair)
         .map(|(_cert_ki, cert, params)| (keypair, cert, params))
 }
 
-pub fn create_ca_cert_from_signing_key<S: rcgen::SigningKey>(
+/// Create a self-signed certificate using the supplied keypair. The first
+/// element in the returned tuple is the certificate subject key identifier
+/// which we currently only use for logging.
+pub fn create_ca_cert_from_ca_keypair<S: rcgen::SigningKey>(
     ca_name: &str,
     wildcard: bool,
     sk: &S,
-) -> anyhow::Result<(Vec<u8>, Certificate, CertificateParams)> {
+) -> anyhow::Result<(String, Certificate, CertificateParams)> {
     validate_ca_name(ca_name)?;
     let sans_vec = [
         if wildcard {
@@ -140,7 +143,10 @@ pub fn create_ca_cert_from_signing_key<S: rcgen::SigningKey>(
                                                           // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
     cp.distinguished_name = distinguished_name;
 
-    // set CA cert CA flag
+    // Currently, we expect CA certificates to sign ephemeral TLS certificates
+    // direcly. So, ensure this certificate can only be used to sign end-user
+    // certificates, without any intermediate certificates. NB: we might change
+    // that in the future.
     cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
 
     // set self-signed CA cert Key Usage Purposes
@@ -153,7 +159,7 @@ pub fn create_ca_cert_from_signing_key<S: rcgen::SigningKey>(
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
     let cert = cp.self_signed(sk)?;
-    Ok((cp.key_identifier(sk), cert, cp))
+    Ok((hex::encode(cp.key_identifier(sk)), cert, cp))
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
@@ -200,7 +206,9 @@ fn create_core_certs<S: rcgen::SigningKey>(
             ];
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-            let core_cert = cp.signed_by(&core_keypair, issuing_ca).unwrap();
+            let core_cert = cp
+                .signed_by(&core_keypair, issuing_ca)
+                .expect("Should never happen: core certificate generation failed, cannot recover");
             (i, (core_keypair, core_cert))
         })
         .collect();
