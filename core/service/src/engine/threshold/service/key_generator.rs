@@ -366,6 +366,21 @@ impl<
                     // Nothing to remove
                 }
             }
+            // Read existing key tag from public storage if needed
+            let existing_key_tag: Option<tfhe::Tag> =
+                if internal_keyset_config.get_use_existing_key_tag() {
+                    let existing_keyset_id = internal_keyset_config
+                        .get_existing_keyset_id()
+                        .expect("validated");
+                    Some(
+                        Self::read_existing_key_tag(&crypto_storage, &existing_keyset_id)
+                            .await
+                            .expect("failed to read existing key tag from public storage"),
+                    )
+                } else {
+                    None
+                };
+
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
@@ -382,6 +397,7 @@ impl<
                         eip712_domain_copy,
                         permit,
                         op_tag,
+                        existing_key_tag,
                     )
                     .await
                 }
@@ -1005,13 +1021,13 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn compressed_key_gen_from_existing_private_keyset<P>(
-        req_id: &RequestId,
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         existing_epoch_id: EpochId,
         preprocessing: &mut P,
+        tag: tfhe::Tag,
     ) -> anyhow::Result<(
         CompressedXofKeySet,
         PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1040,7 +1056,7 @@ impl<
             &mut dkg_sessions.session_z128,
             preprocessing,
             params,
-            req_id.into(),
+            tag,
             &existing_private_keys,
         )
         .await?;
@@ -1049,13 +1065,13 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_from_existing_private_keyset<P>(
-        req_id: &RequestId,
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         existing_epoch_id: EpochId,
         preprocessing: &mut P,
+        tag: tfhe::Tag,
     ) -> anyhow::Result<(
         FhePubKeySet,
         PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1084,7 +1100,7 @@ impl<
             &mut dkg_sessions.session_z128,
             preprocessing,
             params,
-            req_id.into(),
+            tag,
             &existing_private_keys,
         )
         .await?;
@@ -1106,6 +1122,7 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
+        existing_key_tag: Option<tfhe::Tag>,
     ) {
         let _permit = permit;
         let start = Instant::now();
@@ -1209,14 +1226,15 @@ impl<
                                 .get_existing_epoch_id()
                                 .expect("validated")
                                 .unwrap_or(*epoch_id);
+                            let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::key_gen_from_existing_private_keyset(
-                                req_id,
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
                                 existing_epoch_id,
                                 preproc_handle.as_mut(),
+                                tag,
                             )
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
@@ -1233,14 +1251,15 @@ impl<
                                 .get_existing_epoch_id()
                                 .expect("validated")
                                 .unwrap_or(*epoch_id);
+                            let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::compressed_key_gen_from_existing_private_keyset(
-                                req_id,
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
                                 existing_epoch_id,
                                 preproc_handle.as_mut(),
+                                tag,
                             )
                             .await
                             .map(|(compressed_keyset, sk)| {
@@ -1391,6 +1410,37 @@ impl<
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+    }
+
+    /// Reads the tag from an existing keyset in public storage.
+    /// Tries CompressedXofKeySet first, then falls back to ServerKey.
+    async fn read_existing_key_tag(
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        existing_keyset_id: &RequestId,
+    ) -> anyhow::Result<tfhe::Tag> {
+        use crate::vault::storage::crypto_material::CryptoMaterialReader;
+        use tfhe::prelude::Tagged;
+
+        let pub_storage = crypto_storage.inner.public_storage.lock().await;
+
+        if let Ok(compressed_keyset) =
+            <CompressedXofKeySet as CryptoMaterialReader>::read_from_storage(
+                &*pub_storage,
+                existing_keyset_id,
+            )
+            .await
+        {
+            return Ok(compressed_keyset
+                .clone()
+                .into_raw_parts()
+                .1
+                .into_raw_parts()
+                .1);
+        }
+
+        let server_key: tfhe::ServerKey =
+            CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id).await?;
+        Ok(server_key.tag().clone())
     }
 }
 

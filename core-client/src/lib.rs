@@ -575,6 +575,9 @@ pub struct SharedKeyGenParameters {
     /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
     #[clap(long)]
     pub existing_epoch_id: Option<EpochId>,
+    /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
+    #[clap(long, default_value_t = false)]
+    pub use_existing_key_tag: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
 }

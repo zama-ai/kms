@@ -477,7 +477,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
     let (keyset_config, keyset_added_info) =
-        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID);
+        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
 
     threshold_key_gen_secure_isolated(
         clients,
@@ -519,6 +519,30 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
             FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?,
         );
     }
+
+    // Verify tag propagation: keys from keygen_id_2 should carry keygen_id_1's tag
+    {
+        use crate::vault::storage::crypto_material::CryptoMaterialReader;
+        use tfhe::prelude::Tagged;
+        let expected_tag: tfhe::Tag = keygen_id_1.into();
+        for (&party_id, storage) in &pub_storage_map {
+            let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
+                CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
+
+            let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            assert_eq!(
+                pk.tag(),
+                &expected_tag,
+                "Party {party_id} should have tag propagated from existing keyset"
+            );
+            assert_eq!(
+                server_key.tag(),
+                &expected_tag,
+                "Party {party_id} should have tag propagated from existing keyset"
+            );
+        }
+    }
+
     let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
     let mut internal_client = crate::client::client_wasm::Client::new_client(
         client_storage,
@@ -712,6 +736,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,
                 existing_epoch_id: None,
+                use_existing_key_tag: false,
             }),
             context_id: None,
             epoch_id: None,
