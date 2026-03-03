@@ -539,6 +539,7 @@ impl<
             // NOTE: For now what is signed is exactly the same as in the initial keygen.
             // There are ongoing discussions to add the epoch_id and context_id
             // to the struct we sign, in which case we would use the new epoch_id and context_id here.
+            // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
             match verified_material {
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                     let info = match compute_info_standard_keygen(
