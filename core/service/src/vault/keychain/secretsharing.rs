@@ -24,6 +24,10 @@ use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versi
 /// In order to decrypt this key must first be reconstructed and used to make an [`Operator`] that can decrypt the data.
 /// For this reason the [`dec_key`] is optional, as it should _only_ be set as part of the recovery procedure
 /// when the private decryption key has been reconstructed with the help of the custodians.
+/// The [`loaded_recovery_material`] is loaded from public storage during initialization and is used by
+/// [`SecretShareKeychain::validate_recovery_material`] to verify the recovery material signature once
+/// the verification key becomes available. It is `None` on first startup before custodian setup,
+/// in which case validation is skipped.
 #[derive(Clone)]
 pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
