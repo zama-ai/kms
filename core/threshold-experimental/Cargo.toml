@@ -1,0 +1,43 @@
+[package]
+name = "threshold-experimental"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+# TODO(dp): add proper description
+description = "Experimental"
+
+[dependencies]
+aes-prng.workspace = true
+algebra.workspace = true
+anyhow.workspace = true
+bc2wrap.workspace = true
+clap.workspace = true
+crypto-bigint.workspace = true
+error-utils.workspace = true
+execution = { workspace = true, features = ["non-wasm"] }
+hashing.workspace = true
+itertools.workspace = true
+lazy_static.workspace = true
+networking.workspace = true
+num-integer.workspace = true
+paste.workspace = true
+rand.workspace = true
+serde.workspace = true
+session-id.workspace = true
+tfhe-csprng.workspace = true
+tfhe.workspace = true
+thread-handles.workspace = true
+threshold-fhe.workspace = true
+threshold-types.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+execution = { workspace = true, features = ["non-wasm", "testing"] }
+
+[features]
+
+choreographer = []
