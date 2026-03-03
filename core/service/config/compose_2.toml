@@ -113,3 +113,4 @@ crsgen = 100
 preproc = 25000
 keygen = 1000
 new_epoch = 1
+reshare = 25
