@@ -196,7 +196,7 @@ where
 {
     // Load context; if it does not exist (e.g., fresh installation), skip PRSS migration
     let (threshold, num_parties) = {
-        match read_context_at_id(priv_storage, &(*LEGACY_DEFAULT_MPC_CONTEXT)).await {
+        match read_context_at_id(priv_storage, &LEGACY_DEFAULT_MPC_CONTEXT).await {
             Ok(context) => (context.threshold as u8, context.mpc_nodes.len()),
             Err(err) => {
                 tracing::warn!(
@@ -340,7 +340,7 @@ where
     PrivS: StorageExt + Sync + Send,
 {
     // Load context; if it does not exist (e.g., fresh installation), skip migration
-    let context = match read_context_at_id(priv_storage, &(*LEGACY_DEFAULT_MPC_CONTEXT)).await {
+    let context = match read_context_at_id(priv_storage, &LEGACY_DEFAULT_MPC_CONTEXT).await {
         Ok(context) => context,
         Err(err) => {
             tracing::warn!(
