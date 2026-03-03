@@ -232,6 +232,33 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     Ok(())
 }
 
+fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
+    if cf.get_num_requests() == 0 {
+        return Err(anyhow::anyhow!("Number of requests cannot be zero."));
+    }
+
+    if cf.get_batch_size() == 0 {
+        return Err(anyhow::anyhow!("Batch size cannot be zero."));
+    }
+
+    if cf.get_parallel_requests() > cf.get_num_requests() {
+        return Err(
+                    anyhow::anyhow!("Number of parallel requests ({}) cannot be greater than the total number of requests ({}).",
+                    cf.get_parallel_requests(), cf.get_num_requests()
+                ));
+    }
+
+    if cf.get_batch_size() > cf.get_num_requests() {
+        return Err(anyhow::anyhow!(
+            "Batch size ({}) cannot be greater than the total number of requests ({}).",
+            cf.get_batch_size(),
+            cf.get_num_requests()
+        ));
+    }
+
+    Ok(())
+}
+
 impl<'de> Deserialize<'de> for CoreClientConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1269,6 +1296,7 @@ pub async fn execute_cmd(
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1341,6 +1369,7 @@ pub async fn execute_cmd(
             .await?
         }
         CCCommand::UserDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(
                 internal_client.expect("UserDecrypt requires a KMS client"),
             ));
