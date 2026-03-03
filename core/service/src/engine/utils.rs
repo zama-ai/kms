@@ -652,9 +652,14 @@ mod tests {
         let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
         let tag = key_id.into();
 
-        let (_client_key, compressed_keyset) =
-            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
-                .unwrap();
+        let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
+            config,
+            vec![42, 43, 44, 45],
+            params.get_params_basics_handle().get_sec() as u32,
+            max_norm_hwt,
+            tag,
+        )
+        .unwrap();
 
         let digest = safe_serialize_hash_element_versioned(
             &crate::engine::base::DSEP_PUBDATA_KEY,
