@@ -242,16 +242,9 @@ fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
     }
 
     if cf.get_parallel_requests() > cf.get_num_requests() {
-        return Err(
-                    anyhow::anyhow!("Number of parallel requests ({}) cannot be greater than the total number of requests ({}).",
-                    cf.get_parallel_requests(), cf.get_num_requests()
-                ));
-    }
-
-    if cf.get_batch_size() > cf.get_num_requests() {
         return Err(anyhow::anyhow!(
-            "Batch size ({}) cannot be greater than the total number of requests ({}).",
-            cf.get_batch_size(),
+            "Number of parallel requests ({}) cannot be > total number of requests ({}).",
+            cf.get_parallel_requests(),
             cf.get_num_requests()
         ));
     }
@@ -551,7 +544,7 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'i', default_value_t = 0)]
     pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
@@ -577,7 +570,7 @@ pub struct CipherFile {
     /// Delay (in ms) between consecutive requests for decrypt operations
     #[clap(long, default_value_t = 0)]
     pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
 }
