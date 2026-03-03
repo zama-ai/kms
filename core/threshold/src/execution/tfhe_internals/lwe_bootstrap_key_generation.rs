@@ -166,9 +166,6 @@ where
     Ok(bk_share)
 }
 
-/// Generates a Bootstrapping Key given a Glwe key in Glwe format
-/// , a Lwe key and the params for the BK generation
-#[instrument(name="Gen BK", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
