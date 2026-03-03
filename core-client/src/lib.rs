@@ -2012,11 +2012,11 @@ mod tests {
             .unwrap();
 
         tracing::info!("Core Client Config: {:?}", cc_conf_test);
-        // check that the fhe_params value from the config toml ("Default") is read correctly
-        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Default));
+        // check that the fhe_params value from the config toml ("Test") is read correctly
+        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Test));
 
-        // now set the env variable that overwrites fhe_params with "Test", which should take precedence if it's set
-        env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
+        // now set the env variable that overwrites fhe_params with "Default", which should take precedence if it's set
+        env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
 
         let cc_conf_default: CoreClientConfig = Settings::builder()
             .path(&path_to_config)
@@ -2025,7 +2025,7 @@ mod tests {
             .init_conf()
             .unwrap();
 
-        // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
-        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Test));
+        // check that the fhe_params value from the env var ("Default") is read correctly, even if the toml contains "Test"
+        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
     }
 }
