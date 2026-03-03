@@ -700,6 +700,21 @@ pub struct RecoveryParameters {
     pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreviousKeyInfo {
+    /// Key id of all the key to reshare
+    pub key_id: KeyId,
+
+    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing done for the key specified by `key_id`.
+    pub preproc_id: RequestId,
+
+    /// The hex-encoded server key digest to use for resharing for the key to reshare.
+    pub server_key_digest: String,
+
+    /// The hex-encoded public key digest to use for resharing.
+    pub public_key_digest: String,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct PreviousEpochParameters {
     #[clap(long)]
@@ -708,21 +723,9 @@ pub struct PreviousEpochParameters {
     #[clap(long)]
     pub epoch_id: EpochId,
 
-    /// Key ids of all the keys to reshare
+    /// Information about the keys to reshare in the new epoch.
     #[clap(long)]
-    pub key_ids: Vec<KeyId>,
-
-    /// Preprocessing request ids for all the keys to reshare, these should correspond to the preprocessing done for the keys specified by `key_ids`.
-    #[clap(long)]
-    pub preproc_ids: Vec<RequestId>,
-
-    /// The hex-encoded server key digest to use for resharing for each key to reshare.
-    #[clap(long)]
-    pub server_key_digests: Vec<String>,
-
-    /// The hex-encoded public key digest to use for resharing.
-    #[clap(long)]
-    pub public_key_digests: Vec<String>,
+    pub previous_keys: Vec<PreviousKeyInfo>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -873,6 +876,45 @@ impl EncryptionResult {
             context_id,
             epoch_id,
         }
+    }
+}
+impl FromStr for PreviousKeyInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut key_id = None;
+        let mut preproc_id = None;
+        let mut server = None;
+        let mut public = None;
+
+        for pair in s.split(',') {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid key=value pair: {}", pair))?;
+
+            match key {
+                "key_id" => {
+                    key_id = Some(value.parse().map_err(|e| format!("Invalid key_id: {e}"))?)
+                }
+                "preproc_id" => {
+                    preproc_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid preproc_id: {e}"))?,
+                    )
+                }
+                "server" => server = Some(value.to_string()),
+                "public" => public = Some(value.to_string()),
+                _ => return Err(format!("Unknown field: {}", key)),
+            }
+        }
+
+        Ok(PreviousKeyInfo {
+            key_id: key_id.ok_or("Missing key_id")?,
+            preproc_id: preproc_id.ok_or("Missing preproc_id")?,
+            server_key_digest: server.ok_or("Missing server")?,
+            public_key_digest: public.ok_or("Missing public")?,
+        })
     }
 }
 

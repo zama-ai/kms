@@ -1761,10 +1761,12 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,
-            key_ids: vec![key_id.into()],
-            preproc_ids: vec![RequestId::from_str(&preproc_id).unwrap()],
-            server_key_digests: vec![server_key_digest],
-            public_key_digests: vec![public_key_digest],
+            previous_keys: vec![PreviousKeyInfo {
+                key_id: key_id.into(),
+                preproc_id: RequestId::from_str(&preproc_id).unwrap(),
+                server_key_digest,
+                public_key_digest,
+            }],
         }),
     });
 

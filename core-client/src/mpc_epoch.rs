@@ -21,50 +21,40 @@ use tonic::transport::Channel;
 
 impl PreviousEpochParameters {
     pub(crate) fn convert_to_grpc(&self, fhe_params: FheParameter) -> PreviousEpochInfo {
-        let expected_num_keys = self.key_ids.len();
-        assert_eq!(self.server_key_digests.len(), expected_num_keys);
-        assert_eq!(self.public_key_digests.len(), expected_num_keys);
-        assert_eq!(self.preproc_ids.len(), expected_num_keys);
-
-        let key_digests = self
-            .server_key_digests
+        let keys_info = self
+            .previous_keys
             .iter()
-            .zip(self.public_key_digests.iter())
-            .map(|(server_digest, public_digest)| {
-                vec![
+            .map(|previous_key_info| {
+                let digest = vec![
                     KeyDigest {
                         key_type: PubDataType::ServerKey.to_string(),
-                        digest: hex::decode(server_digest).unwrap_or_else(|e| {
-                            panic!(
-                                "Unable to decode the provided server key digest {:?}: {:?}",
-                                server_digest, e
-                            )
-                        }),
+                        digest: hex::decode(previous_key_info.server_key_digest.clone())
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "Unable to decode the provided server key digest {:?}: {:?}",
+                                    previous_key_info.server_key_digest, e
+                                )
+                            }),
                     },
                     KeyDigest {
                         key_type: PubDataType::PublicKey.to_string(),
-                        digest: hex::decode(public_digest).unwrap_or_else(|e| {
-                            panic!(
-                                "Unable to decode the provided public key digest {:?}: {:?}",
-                                public_digest, e
-                            )
-                        }),
+                        digest: hex::decode(previous_key_info.public_key_digest.clone())
+                            .unwrap_or_else(|e| {
+                                panic!(
+                                    "Unable to decode the provided public key digest {:?}: {:?}",
+                                    previous_key_info.public_key_digest, e
+                                )
+                            }),
                     },
-                ]
-            })
-            .collect::<Vec<_>>();
+                ];
 
-        let keys_info = self
-            .key_ids
-            .iter()
-            .zip(self.preproc_ids.iter())
-            .zip(key_digests)
-            .map(|((key_id, preproc_id), key_digests)| KeyInfo {
-                key_id: Some((*key_id).into()),
-                preproc_id: Some((*preproc_id).into()),
-                key_parameters: fhe_params.into(),
-                key_digests,
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                KeyInfo {
+                    key_id: Some(previous_key_info.key_id.into()),
+                    preproc_id: Some(previous_key_info.preproc_id.into()),
+                    key_parameters: fhe_params.into(),
+                    key_digests: digest,
+                    domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                }
             })
             .collect::<Vec<_>>();
 
@@ -171,16 +161,14 @@ pub(crate) async fn do_new_epoch(
     }
 
     if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
-        let expected_key_ids = previous_epoch
-            .key_ids
+        let (expected_key_ids, expected_preproc_ids): (
+            Vec<kms_grpc::kms::v1::RequestId>,
+            Vec<kms_grpc::kms::v1::RequestId>,
+        ) = previous_epoch
+            .previous_keys
             .iter()
-            .map(|k| (*k).into())
-            .collect::<Vec<_>>();
-        let expected_preproc_ids = previous_epoch
-            .preproc_ids
-            .iter()
-            .map(|p| (*p).into())
-            .collect::<Vec<_>>();
+            .map(|k| (k.key_id.into(), k.preproc_id.into()))
+            .unzip();
 
         let mut response_vec = Vec::new();
         while let Some(response) = response_tasks.join_next().await {
