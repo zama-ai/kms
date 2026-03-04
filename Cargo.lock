@@ -7911,7 +7911,6 @@ dependencies = [
  "bc2wrap",
  "serde",
  "sha3",
- "tracing",
 ]
 
 [[package]]
