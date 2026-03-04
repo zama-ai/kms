@@ -443,7 +443,9 @@ where
 
         // Read the data from the legacy location as raw bytes
         // We read raw bytes to avoid type-specific deserialization issues
-        let data: Vec<u8> = priv_storage.load_bytes(&key_id, &data_type_str).await?;
+        let data: Vec<u8> = priv_storage
+            .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
+            .await?;
 
         // Store the data at the new epoch-aware location
         priv_storage
