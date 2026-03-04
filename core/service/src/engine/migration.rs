@@ -1900,9 +1900,11 @@ mod tests {
     async fn test_migrate_to_0_13_x_empty_storage() {
         let mut storage = RamStorage::new();
         // Should succeed with no data to migrate
+        #[allow(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Threshold)
             .await
             .unwrap();
+        #[allow(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
