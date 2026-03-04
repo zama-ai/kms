@@ -410,7 +410,7 @@ pub mod tests {
         helper::tests_and_benches::get_seed_for_two_sets_role, test_data_setup::tests::DEFAULT_SEED,
     };
     use crate::{
-        constants::{PARAMS_DIR, REAL_KEY_PATH, SMALL_TEST_KEY_PATH, TEMP_DKG_DIR},
+        constants::{REAL_KEY_PATH, SMALL_TEST_KEY_PATH, TEMP_DKG_DIR},
         runtime::{
             sessions::{
                 base_session::{BaseSession, GenericBaseSession},
@@ -990,11 +990,6 @@ pub mod tests {
         if let Err(e) = fs::create_dir_all(TEMP_DKG_DIR) {
             println!("Error creating temp/dkg directory {TEMP_DKG_DIR}: {e:?}");
         }
-        // Ensure parameters dir exists to store generated parameters json files
-        if let Err(e) = fs::create_dir_all(PARAMS_DIR) {
-            println!("Error creating parameters directory {PARAMS_DIR}: {e:?}");
-        }
-
         // make sure keys exist (generate them if they do not)
         ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS, tfhe::Tag::default());
         ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS, tfhe::Tag::default());

@@ -18,8 +18,7 @@ cfg_if::cfg_if! {
     }
 }
 
-/// param and keygen directories
-pub const PARAMS_DIR: &str = "parameters";
+/// keygen directories
 pub const TEMP_DIR: &str = "temp";
 pub const TEMP_DKG_DIR: &str = "temp/dkg";
 
