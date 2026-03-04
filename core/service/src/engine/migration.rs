@@ -25,6 +25,10 @@ pub static ref LEGACY_DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
 
 /// Migrate from 0.12.x to 0.13.x (including all 0.13.0 to 0.13.9 versions)
 /// This involves migrating FHE key material from the legacy storage format to the new epoch-aware format, and migrating the legacy PRSS setup to the new combined format.
+#[deprecated(
+    since = "0.13.10",
+    note = "The migration to 0.13.x is no longer needed and migrate_to_0_13_10 should be used instead"
+)]
 pub async fn migrate_to_0_13_x<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -51,6 +55,7 @@ where
     PrivS: StorageExt + Sync + Send,
 {
     // Ensure old migration is done
+    #[allow(deprecated)]
     migrate_to_0_13_x(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
         // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
@@ -63,6 +68,24 @@ where
     migrate_fhe_keys_after_0_13_x(priv_storage, kms_type).await?;
     Ok(())
 }
+
+/// Migrate to 0.14.0
+/// This should only be activated after 0.13.10 has been released
+#[allow(dead_code)]
+pub async fn migrate_to_0_14_0<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    // Ensure old migration is done
+    migrate_to_0_13_10(priv_storage, kms_type).await?;
+    // Remove old keys with legacy epoch id.
+    remove_old_keys_for_0_14_0(priv_storage, kms_type).await?;
+    Ok(())
+}
+
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
 /// The migration should be applied to private storage created in v0.12.x,
 /// after the migration the private storage format should follow v0.13.x.
@@ -339,7 +362,7 @@ where
     PrivS: StorageExt + Sync + Send,
 {
     // Load context; if it does not exist (e.g., fresh installation), skip migration
-    let context = match read_context_at_id(priv_storage, &LEGACY_DEFAULT_MPC_CONTEXT).await {
+    let mut context = match read_context_at_id(priv_storage, &LEGACY_DEFAULT_MPC_CONTEXT).await {
         Ok(context) => context,
         Err(err) => {
             tracing::warn!(
@@ -349,6 +372,8 @@ where
             return Ok(());
         }
     };
+    // Update context id
+    context.context_id = *DEFAULT_MPC_CONTEXT;
     store_versioned_at_request_id(
         priv_storage,
         &(*DEFAULT_MPC_CONTEXT).into(),
@@ -440,6 +465,44 @@ where
     );
 
     Ok(migrated_count)
+}
+
+/// Remove private keys stored under the legacy epoch ID
+async fn remove_old_keys_for_0_14_0<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    let data_type = match kms_type {
+        KMSType::Centralized => PrivDataType::FhePrivateKey,
+        KMSType::Threshold => PrivDataType::FheKeyInfo,
+    };
+    let data_type_str = data_type.to_string();
+    // Get the default epoch ID for migrated keys
+    let new_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+    let legacy_key_ids = priv_storage
+        .all_data_ids_at_epoch(&LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
+        .await?;
+
+    for key_id in legacy_key_ids {
+        // Check the converted key indeed exists before removing anything
+        if priv_storage
+            .data_exists_at_epoch(&key_id, &new_epoch_id, &data_type_str)
+            .await?
+        {
+            // Removes obsolete keys that have already been converted
+            priv_storage.delete_data(&key_id, &data_type_str).await?;
+        } else {
+            tracing::error!(
+                "No keys {} under legacy epoch ID {} does not appear to exist",
+                key_id,
+                *LEGACY_DEFAULT_EPOCH_ID
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1575,6 +1638,203 @@ mod tests {
         test_migrate_fhe_keys_0_13_x_to_0_13_10_idempotent(&mut storage).await;
     }
 
+    // ── Tests for remove_old_keys_for_0_14_0 ──
+
+    /// Test that base-path keys are deleted when epoch counterparts exist (threshold)
+    pub async fn test_remove_old_keys_for_0_14_0_threshold<S: StorageExt + Sync + Send>(
+        storage: &mut S,
+    ) {
+        let key_id_1 = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000000aa",
+        )
+        .unwrap();
+        let key_id_2 = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000000bb",
+        )
+        .unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        let data_1 = vec![1, 2, 3];
+        let data_2 = vec![4, 5, 6];
+
+        // Store at base path
+        storage
+            .store_bytes(&data_1, &key_id_1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes(&data_2, &key_id_2, &data_type)
+            .await
+            .unwrap();
+
+        // Store at legacy epoch (so keys appear in all_data_ids_at_epoch)
+        storage
+            .store_bytes_at_epoch(&data_1, &key_id_1, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&data_2, &key_id_2, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+
+        // Store at DEFAULT_EPOCH_ID (the check the function uses before deleting)
+        storage
+            .store_bytes_at_epoch(&data_1, &key_id_1, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&data_2, &key_id_2, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+
+        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+            .await
+            .unwrap();
+
+        // Base-path keys should be deleted
+        assert!(!storage.data_exists(&key_id_1, &data_type).await.unwrap());
+        assert!(!storage.data_exists(&key_id_2, &data_type).await.unwrap());
+
+        // Epoch data should still exist at both epochs
+        assert!(storage
+            .data_exists_at_epoch(&key_id_1, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
+        assert!(storage
+            .data_exists_at_epoch(&key_id_1, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
+    }
+
+    /// Test that base-path keys are deleted when epoch counterparts exist (centralized)
+    pub async fn test_remove_old_keys_for_0_14_0_centralized<S: StorageExt + Sync + Send>(
+        storage: &mut S,
+    ) {
+        let key_id = RequestId::from_str(
+            "0x0000000000000000000000000000000000000000000000000000000000000042",
+        )
+        .unwrap();
+        let data_type = PrivDataType::FhePrivateKey.to_string();
+        let data = vec![42, 43, 44];
+
+        storage
+            .store_bytes(&data, &key_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&data, &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&data, &key_id, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+
+        remove_old_keys_for_0_14_0(storage, KMSType::Centralized)
+            .await
+            .unwrap();
+
+        assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
+        assert!(storage
+            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
+    }
+
+    /// Test with no legacy epoch keys — nothing to remove
+    pub async fn test_remove_old_keys_for_0_14_0_no_legacy<S: StorageExt + Sync + Send>(
+        storage: &mut S,
+    ) {
+        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+            .await
+            .unwrap();
+    }
+
+    /// Test that base-path keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
+    pub async fn test_remove_old_keys_for_0_14_0_skips_without_new_epoch<
+        S: StorageExt + Sync + Send,
+    >(
+        storage: &mut S,
+    ) {
+        let key_id = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000000cc",
+        )
+        .unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let data = vec![9, 8, 7];
+
+        // Store at base path and legacy epoch, but NOT at DEFAULT_EPOCH_ID
+        storage
+            .store_bytes(&data, &key_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&data, &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap();
+
+        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+            .await
+            .unwrap();
+
+        // Base-path key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
+        assert!(storage.data_exists(&key_id, &data_type).await.unwrap());
+    }
+
+    // RAM storage tests — remove_old_keys_for_0_14_0
+    #[tokio::test]
+    async fn test_remove_old_keys_threshold_ram() {
+        let mut storage = RamStorage::new();
+        test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_centralized_ram() {
+        let mut storage = RamStorage::new();
+        test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_no_legacy_ram() {
+        let mut storage = RamStorage::new();
+        test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_skips_without_new_epoch_ram() {
+        let mut storage = RamStorage::new();
+        test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
+    }
+
+    // File storage tests — remove_old_keys_for_0_14_0
+    #[tokio::test]
+    async fn test_remove_old_keys_threshold_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_centralized_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_no_legacy_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_keys_skips_without_new_epoch_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
+    }
+
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
 
     #[tokio::test]
@@ -1598,13 +1858,14 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
+        #[allow(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Threshold)
             .await
             .unwrap();
 
-        // FHE key should be migrated to DEFAULT_EPOCH_ID
+        // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
         assert!(storage
-            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
             .await
             .unwrap());
     }
@@ -1623,13 +1884,14 @@ mod tests {
             .await
             .unwrap();
 
+        #[allow(deprecated)]
         migrate_to_0_13_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
 
-        // FHE key should be migrated to DEFAULT_EPOCH_ID
+        // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
         assert!(storage
-            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
             .await
             .unwrap());
     }
@@ -1792,6 +2054,84 @@ mod tests {
         async fn test_migrate_idempotent_s3() {
             let mut storage = create_s3_storage().await;
             test_migrate_legacy_fhe_keys_idempotent(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_after_0_13_x_threshold_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_after_0_13_x_centralized_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_after_0_13_x_centralized(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_after_0_13_x_no_legacy_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_after_0_13_x_no_legacy(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_after_0_13_x_idempotent_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_after_0_13_x_idempotent(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_0_13_x_to_0_13_10_threshold_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_0_13_x_to_0_13_10_centralized_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_0_13_x_to_0_13_10_no_legacy_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10_no_legacy(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_0_13_x_to_0_13_10_skips_existing_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10_skips_existing(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_0_13_x_to_0_13_10_idempotent_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_fhe_keys_0_13_x_to_0_13_10_idempotent(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_remove_old_keys_threshold_s3() {
+            let mut storage = create_s3_storage().await;
+            test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_remove_old_keys_centralized_s3() {
+            let mut storage = create_s3_storage().await;
+            test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_remove_old_keys_no_legacy_s3() {
+            let mut storage = create_s3_storage().await;
+            test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_remove_old_keys_skips_without_new_epoch_s3() {
+            let mut storage = create_s3_storage().await;
+            test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
         }
     }
 }

@@ -18,7 +18,7 @@ use kms_lib::{
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
-        migration::migrate_to_0_13_x, run_server, threshold::service::new_real_threshold_kms,
+        migration::migrate_to_0_13_10, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -511,7 +511,7 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_to_0_13_x(&mut private_storage, kms_type)
+    migrate_to_0_13_10(&mut private_storage, kms_type)
         .await
         .expect("Could not complete migration: {e}");
 
