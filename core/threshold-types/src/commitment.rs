@@ -1,4 +1,4 @@
-use algebra::role::Role;
+use crate::role::Role;
 use hashing::{hash_element, DomainSep};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};

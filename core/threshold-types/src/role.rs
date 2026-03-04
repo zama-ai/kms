@@ -1,4 +1,4 @@
-#! Pure-logic version of a Role and associated types.
+//! Pure-logic version of a Role and associated types.
 
 use serde::{Deserialize, Serialize};
 use std::{

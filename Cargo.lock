@@ -7753,6 +7753,7 @@ dependencies = [
  "strum",
  "tfhe-versionable",
  "threshold-hashing",
+ "threshold-types",
  "tracing",
  "zeroize",
 ]
@@ -7970,8 +7971,9 @@ dependencies = [
  "async-trait",
  "rand 0.8.5",
  "serde",
- "threshold-algebra",
+ "tfhe-versionable",
  "threshold-hashing",
+ "zeroize",
 ]
 
 [[package]]

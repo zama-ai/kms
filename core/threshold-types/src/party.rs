@@ -1,4 +1,4 @@
-use algebra::role::RoleTrait;
+use crate::role::RoleTrait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

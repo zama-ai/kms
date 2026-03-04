@@ -7,6 +7,7 @@ license.workspace   = true
 [dependencies]
 anyhow.workspace = true
 hashing.workspace = true
+threshold-types.workspace = true
 g2p.workspace = true
 error-utils.workspace   = true
 itertools.workspace   = true

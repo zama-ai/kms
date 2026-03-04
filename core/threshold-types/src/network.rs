@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use algebra::role::RoleTrait;
+use crate::role::RoleTrait;
 use async_trait::async_trait;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

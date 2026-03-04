@@ -1,7 +1,3 @@
-// TODO(dp): these types come from "core/threshold/execution/runtime/sharing". It sucks a bit to split things into tiny pieces like this
-// but the code in `runtime` uses tokio and async-trait which I really don't want here. That said, it's a code smell.
-// Maybe it should go into `threshold-types`? Or in a new `role` crate? Dunno.
-
 use std::collections::HashMap;
 
 use crate::role::Role;
