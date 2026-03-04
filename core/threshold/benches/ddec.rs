@@ -16,8 +16,8 @@ use execution::{
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
+use test_utils::read_element;
 use tfhe::{set_server_key, FheUint8};
-use threshold_fhe::file_handling::tests::read_element;
 use threshold_types::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]

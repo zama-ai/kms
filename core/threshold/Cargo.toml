@@ -42,6 +42,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 session-id.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+test-utils = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -188,7 +189,7 @@ harness = false
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["dep:tokio", "non-wasm"]
+testing = ["non-wasm", "dep:tokio", "dep:test-utils"]
 slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies", "networking/choreographer", "execution/malicious_strategies"]
