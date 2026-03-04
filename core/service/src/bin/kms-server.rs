@@ -621,8 +621,11 @@ async fn main_exec() -> anyhow::Result<()> {
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     // load key
-    let base_kms = match get_core_signing_keys(&private_vault).await {
-        Ok(sig_keys) => BaseKmsStruct::new(kms_type, threshold_config.my_id, sig_keys)?,
+    let (base_kms, sig_keys) = match get_core_signing_keys(&private_vault).await {
+        Ok(sig_keys) => (
+            BaseKmsStruct::new(kms_type, threshold_config.my_id, sig_keys.clone())?,
+            sig_keys,
+        ),
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -633,7 +636,10 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_keys(kms_type, verf_key)
+            (
+                BaseKmsStruct::new_no_signing_keys(kms_type, verf_key),
+                Vec::new(),
+            )
         }
     };
 
@@ -661,7 +667,7 @@ async fn main_exec() -> anyhow::Result<()> {
                             .as_ref()
                             .map(|x| x.root_key_measurements()),
                         &public_vault,
-                        base_kms.get_sig_key()?,
+                        sig_keys, // Todo eventually loading should be based on context info
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
