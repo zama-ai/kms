@@ -37,7 +37,6 @@ session-id.workspace = true
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 test-utils = { workspace = true, optional = true }
-# TODO(dp): see how much of this stuff is actually used in execution. And if they do not offer stand-alone crates at all.
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
