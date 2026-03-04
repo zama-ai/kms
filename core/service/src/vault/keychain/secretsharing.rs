@@ -3,7 +3,10 @@ use crate::{
     anyhow_error_and_log,
     backup::{operator::RecoveryValidationMaterial, BackupCiphertext},
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::encryption::{Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey},
+    cryptography::{
+        encryption::{Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey},
+        signatures::PublicSigKey,
+    },
     vault::storage::{read_versioned_at_request_id, StorageReader},
 };
 use itertools::Itertools;
@@ -21,12 +24,17 @@ use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versi
 /// In order to decrypt this key must first be reconstructed and used to make an [`Operator`] that can decrypt the data.
 /// For this reason the [`dec_key`] is optional, as it should _only_ be set as part of the recovery procedure
 /// when the private decryption key has been reconstructed with the help of the custodians.
+/// The [`loaded_recovery_material`] is loaded from public storage during initialization and is used by
+/// [`SecretShareKeychain::validate_recovery_material`] to verify the recovery material signature once
+/// the verification key becomes available. It is `None` on first startup before custodian setup,
+/// in which case validation is skipped.
 #[derive(Clone)]
 pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
     custodian_context_id: Option<RequestId>,
     backup_enc_key: Option<UnifiedPublicEncKey>,
     dec_key: Option<UnifiedPrivateEncKey>,
+    loaded_recovery_material: Option<RecoveryValidationMaterial>,
 }
 
 /// Create a new [`SecretShareKeychain`] used for backups in order to securely store and retrieve sensitive information.
@@ -36,14 +44,13 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
     where
         PubS: StorageReader,
     {
-        let (backup_enc_key, custodian_context_id) = match pub_storage {
+        let (backup_enc_key, custodian_context_id, loaded_recovery_material) = match pub_storage {
             Some(pub_storage) => {
                 // Try to see if there is already a backup key set
                 let all_backup_ids = pub_storage
                     .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
                     .await?;
                 // Get the latest context ID which should be the most recent one
-                // TODO validate signature using SECRET KEY (since public storage cannot be trusted!)
                 match all_backup_ids.iter().sorted().last() {
                     Some(id) => {
                         let rec_material: RecoveryValidationMaterial =
@@ -53,22 +60,22 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
                                 &PubDataType::RecoveryMaterial.to_string(),
                             )
                             .await?;
+                        let backup_enc_key = rec_material
+                            .payload
+                            .custodian_context
+                            .backup_enc_key
+                            .clone();
                         (
-                            Some(
-                                rec_material
-                                    .payload
-                                    .custodian_context
-                                    .backup_enc_key
-                                    .clone(),
-                            ),
+                            Some(backup_enc_key),
                             Some(id.to_owned()),
+                            Some(rec_material),
                         )
                     }
                     None => {
                         tracing::warn!(
                             "No custodian context found in public vault. Secret sharing keychain will be created without a backup key and must be set later."
                         );
-                        (None, None)
+                        (None, None, None)
                     }
                 }
             }
@@ -76,7 +83,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
                 tracing::warn!(
                     "Public vault not provided. Secret sharing keychain will be created without a backup key and must be set later."
                 );
-                (None, None)
+                (None, None, None)
             }
         };
         Ok(Self {
@@ -84,6 +91,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
             backup_enc_key,
             custodian_context_id,
             dec_key: None,
+            loaded_recovery_material,
         })
     }
 
@@ -125,6 +133,32 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
         match self.custodian_context_id {
             Some(backup_id) => Ok(backup_id),
             None => anyhow::bail!("No custodian context has been set yet"),
+        }
+    }
+
+    /// Validate the recovery material loaded from public storage.
+    /// Must be called once the verification key becomes available.
+    /// If no recovery material was loaded (e.g. first startup before custodian setup),
+    /// validation is skipped since there is nothing to verify.
+    pub fn validate_recovery_material(&self, verf_key: &PublicSigKey) -> anyhow::Result<()> {
+        match self.loaded_recovery_material {
+            Some(ref material) => {
+                if !material.validate(verf_key) {
+                    Err(anyhow_error_and_log(format!(
+                        "Recovery validation material for context {:?} has an invalid signature",
+                        self.custodian_context_id
+                    )))
+                } else {
+                    tracing::info!("Recovery material signature validated successfully");
+                    Ok(())
+                }
+            }
+            None => {
+                tracing::info!(
+                    "No recovery material loaded from public storage, skipping validation"
+                );
+                Ok(())
+            }
         }
     }
 }
@@ -218,15 +252,25 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
 mod tests {
     use super::*;
     use crate::{
+        backup::{
+            custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
+            operator::InnerOperatorBackupOutput,
+        },
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::{gen_sig_keys, PrivateSigKey},
+            signatures::{gen_sig_keys, PrivateSigKey, SigningSchemeType},
+            signcryption::UnifiedSigncryption,
         },
         engine::base::derive_request_id,
-        vault::storage::ram::RamStorage,
+        vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
     use aes_prng::AesRng;
+    use algebra::role::Role;
+    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tfhe::safe_serialization::safe_serialize;
 
     #[tokio::test]
     async fn test_new_keychain_without_pub_storage() {
@@ -273,6 +317,7 @@ mod tests {
             custodian_context_id: Some(derive_request_id("test").unwrap()),
             backup_enc_key: Some(enc_key.clone()),
             dec_key: Some(dec_key.clone()),
+            loaded_recovery_material: None,
         };
 
         let envelope = keychain
@@ -285,5 +330,112 @@ mod tests {
         };
         let decrypted_key: PrivateSigKey = keychain.decrypt(&mut envelope_load).await.unwrap();
         assert_eq!(decrypted_key, sig_key);
+    }
+
+    #[tokio::test]
+    async fn test_validate_recovery_material_valid_signature() {
+        let (storage, verf_key, _wrong_verf_key) = setup_recovery_material_in_storage().await;
+        let rng = AesRng::seed_from_u64(99);
+        let keychain = SecretShareKeychain::new(rng, Some(&storage)).await.unwrap();
+        keychain.validate_recovery_material(&verf_key).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_validate_recovery_material_invalid_signature() {
+        let (storage, _verf_key, wrong_verf_key) = setup_recovery_material_in_storage().await;
+        let rng = AesRng::seed_from_u64(99);
+        let keychain = SecretShareKeychain::new(rng, Some(&storage)).await.unwrap();
+        let result = keychain.validate_recovery_material(&wrong_verf_key);
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid signature"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_recovery_material_no_material_is_ok() {
+        let rng = AesRng::seed_from_u64(69);
+        let mut rng2 = AesRng::seed_from_u64(69);
+        let (verf_key, _sig_key) = gen_sig_keys(&mut rng2);
+        let keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
+            .await
+            .unwrap();
+        // No recovery material loaded yet (e.g. first startup before custodian setup)
+        // should be OK since there is nothing to validate.
+        keychain.validate_recovery_material(&verf_key).unwrap();
+    }
+
+    /// Helper: create a RecoveryValidationMaterial, store it in RamStorage, and return
+    /// the storage, verification key, and a different verification key for negative tests.
+    async fn setup_recovery_material_in_storage() -> (RamStorage, PublicSigKey, PublicSigKey) {
+        let mut rng = AesRng::seed_from_u64(0);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (wrong_verf_key, _wrong_sig_key) = gen_sig_keys(&mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let backup_id = derive_request_id("test-backup").unwrap();
+
+        // Build custodian setup messages
+        let payload = CustodianSetupMessagePayload {
+            header: HEADER.to_string(),
+            random_value: [4_u8; 32],
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            public_enc_key: enc_key.clone(),
+            verification_key: verf_key.clone(),
+        };
+        let mut payload_serial = Vec::new();
+        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        let setup_msgs: Vec<_> = (1..=3)
+            .map(|i| CustodianSetupMessage {
+                custodian_role: i,
+                name: format!("Custodian-{i}"),
+                payload: payload_serial.clone(),
+            })
+            .collect();
+        let custodian_context = CustodianContext {
+            custodian_nodes: setup_msgs,
+            context_id: Some(backup_id.into()),
+            threshold: 1,
+        };
+        let internal_custodian_context =
+            InternalCustodianContext::new(custodian_context, enc_key).unwrap();
+
+        // Build dummy operator backup outputs and commitments
+        let mut cts = BTreeMap::new();
+        let mut commitments = BTreeMap::new();
+        for i in 1..=3 {
+            let role = Role::indexed_from_one(i);
+            cts.insert(
+                role,
+                InnerOperatorBackupOutput {
+                    signcryption: UnifiedSigncryption {
+                        payload: vec![1, 2, 3],
+                        pke_type: PkeSchemeType::MlKem512,
+                        signing_type: SigningSchemeType::Ecdsa256k1,
+                    },
+                },
+            );
+            commitments.insert(role, vec![i as u8; 32]);
+        }
+
+        let rec_material =
+            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
+                .unwrap();
+
+        // Store it in RamStorage
+        let mut storage = RamStorage::default();
+        store_versioned_at_request_id(
+            &mut storage,
+            &backup_id,
+            &rec_material,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
+        .await
+        .unwrap();
+
+        (storage, verf_key, wrong_verf_key)
     }
 }

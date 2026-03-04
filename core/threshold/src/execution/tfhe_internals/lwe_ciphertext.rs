@@ -10,7 +10,7 @@ use tfhe::{
         },
         prelude::{
             CiphertextModulus, ContiguousEntityContainerMut, LweCiphertextList,
-            LweCiphertextListOwned, SeededLweCiphertextList,
+            SeededLweCiphertextList,
         },
     },
     Seed,
@@ -108,46 +108,6 @@ pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
     }
 
     Ok(())
-}
-
-pub(crate) async fn open_to_tfhers_type<
-    Z: BaseRing,
-    const EXTENSION_DEGREE: usize,
-    S: BaseSessionHandles,
->(
-    ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
-    session: &S,
-) -> anyhow::Result<LweCiphertextList<Vec<u64>>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let my_role = session.my_role();
-
-    // Split the body and the mask, so that we can open the body which are initially secret shared
-    let (masks, shared_bodies): (Vec<Vec<Z>>, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>) =
-        ciphertext_share_list
-            .into_iter()
-            .map(|x| (x.mask, Share::new(my_role, x.body)))
-            .unzip();
-
-    // Open the body
-    let opened_bodies: Vec<Z> = open_list(&shared_bodies, session)
-        .await?
-        .into_iter()
-        .map(|x| x.to_scalar())
-        .try_collect()?;
-
-    let lwe_dim = LweDimension(masks[0].len());
-    let ciphertext_count = masks.len();
-    let container = vec![0u64; lwe_dim.to_lwe_size().0 * ciphertext_count];
-    let mut output = LweCiphertextListOwned::from_container(
-        container,
-        lwe_dim.to_lwe_size(),
-        CiphertextModulus::new_native(),
-    );
-
-    opened_lwe_masks_bodies_to_tfhers_u64(masks, opened_bodies, &mut output.as_mut_view())?;
-    Ok(output)
 }
 
 pub(crate) async fn open_to_tfhers_seeded_type<

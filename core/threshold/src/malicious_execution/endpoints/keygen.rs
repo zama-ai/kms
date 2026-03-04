@@ -7,8 +7,8 @@ use crate::execution::{
     online::preprocessing::DKGPreprocessing,
     runtime::sessions::base_session::BaseSessionHandles,
     tfhe_internals::{
-        compression_decompression_key::CompressionPrivateKeyShares, parameters::DKGParams,
-        private_keysets::PrivateKeySet, public_keysets::FhePubKeySet, test_feature::gen_key_set,
+        parameters::DKGParams, private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
+        test_feature::gen_key_set,
     },
 };
 use algebra::{base_ring::Z128, galois_rings::common::ResiduePoly, structure_traits::ErrorCorrect};
@@ -29,7 +29,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         params: DKGParams,
         tag: tfhe::Tag,
-        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -53,7 +52,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -71,7 +69,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
     ) -> anyhow::Result<CompressedXofKeySet>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -89,7 +87,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
     ) -> anyhow::Result<FhePubKeySet>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -112,7 +110,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -130,7 +127,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -148,7 +144,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
     ) -> anyhow::Result<CompressedXofKeySet>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -166,7 +162,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _preprocessing: &mut P,
         _params: DKGParams,
         _tag: tfhe::Tag,
-        _existing_private_keyset: Option<&PrivateKeySet<EXTENSION_DEGREE>>,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
     ) -> anyhow::Result<FhePubKeySet>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
