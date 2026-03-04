@@ -5,8 +5,7 @@ edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
-# TODO(dp): add proper description
-description = "Experimental"
+description = "Experimental BGV/BFV FHE schemes with distributed key generation, threshold decryption, and supporting algebraic primitives (NTT, cyclotomic rings, CRT)."
 
 [[bin]]
 name = "stairwayctl"
