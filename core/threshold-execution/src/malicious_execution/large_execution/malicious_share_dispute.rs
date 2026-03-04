@@ -179,9 +179,8 @@ impl ShareDispute for MaliciousShareDisputeRecons {
 
         //Map each parties' role with their pairs of shares (one share of deg t and one of deg 2t per secret)
         let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
-        for (mut polypoints_t, mut polypoints_2t) in vec_polypoints_t
-            .into_iter()
-            .zip_eq(vec_polypoints_2t.into_iter())
+        for (mut polypoints_t, mut polypoints_2t) in
+            vec_polypoints_t.into_iter().zip_eq(vec_polypoints_2t)
         {
             for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
                 .iter_mut()

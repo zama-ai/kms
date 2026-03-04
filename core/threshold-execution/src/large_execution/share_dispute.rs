@@ -144,7 +144,7 @@ impl ShareDispute for RealShareDispute {
         for (polypoints_t, polypoints_2t) in vec_polypoints_t
             .into_iter()
             // May panic, but would imply a bug in `share_secrets`
-            .zip_eq(vec_polypoints_2t.into_iter())
+            .zip_eq(vec_polypoints_2t)
         {
             for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
                 .into_iter()

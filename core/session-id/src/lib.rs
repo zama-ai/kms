@@ -14,7 +14,7 @@ pub struct SessionId(u128);
 impl SessionId {
     pub fn new(ciphertext: &impl Serialize) -> anyhow::Result<SessionId> {
         // hash the serialized ct data into a 128-bit (SESSION_ID_BYTES) digest and convert to u128
-        let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext.into())?;
+        let hash = serialize_hash_element(&DSEP_SESSION_ID, ciphertext)?;
         let mut hash_arr = [0_u8; SESSION_ID_BYTES];
         hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
         Ok(SessionId(u128::from_le_bytes(hash_arr)))

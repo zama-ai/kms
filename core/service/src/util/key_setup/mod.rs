@@ -678,9 +678,9 @@ where
         panic!("{}", msg);
     }
     let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(parties) => (1..=parties.len())
-            .zip_eq(parties.into_iter())
-            .collect_vec(),
+        ThresholdSigningKeyConfig::AllParties(parties) => {
+            (1..=parties.len()).zip_eq(parties).collect_vec()
+        }
         ThresholdSigningKeyConfig::OneParty(i, subject) => {
             std::iter::once((i, subject)).collect_vec()
         }

@@ -188,7 +188,7 @@ pub async fn setup_threshold_no_client<
     ) in servers
         .into_iter()
         .zip_eq(mpc_shutdown_txs)
-        .zip_eq(service_listeners.into_iter())
+        .zip_eq(service_listeners)
     {
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
@@ -426,7 +426,7 @@ pub async fn setup_threshold_with_custom_peers<
     ) in servers
         .into_iter()
         .zip_eq(mpc_shutdown_txs)
-        .zip_eq(service_listeners.into_iter())
+        .zip_eq(service_listeners)
     {
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);

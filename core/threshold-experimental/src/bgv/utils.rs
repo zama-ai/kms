@@ -45,7 +45,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
 
         tracing::debug!("Sending pk to all other parties");
         let send_pk = Arc::new(bc2wrap::serialize(&pubkey_raw).map_err(|e| {
-            anyhow_error_and_log(&format!("failed to serialize PublicBgvKeySet: {e}"))
+            anyhow_error_and_log(format!("failed to serialize PublicBgvKeySet: {e}"))
         })?);
 
         let mut set = JoinSet::new();
