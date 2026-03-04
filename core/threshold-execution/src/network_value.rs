@@ -15,8 +15,6 @@ use algebra::{
     structure_traits::{Ring, Zero},
 };
 use error_utils::anyhow_error_and_log;
-// #[cfg(feature = "experimental")]
-// use experimental::bgv::basics::PublicBgvKeySet; // TODO(dp): this is a problem, there's no `experimental` code in here...
 use hashing::{serialize_hash_element, DomainSep};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
