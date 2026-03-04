@@ -350,7 +350,6 @@ pub mod testing {
     use rand::SeedableRng;
     use session_id::SessionId;
     use std::{collections::HashSet, sync::Arc};
-    // TODO(dp): Maybe I should re-export `NetworkMode` from `networking`?
     use threshold_types::network::NetworkMode;
     use tokio::runtime::Runtime;
 

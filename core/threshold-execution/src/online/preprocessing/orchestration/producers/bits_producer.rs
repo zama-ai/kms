@@ -31,7 +31,6 @@ where
     S: BaseSessionHandles + 'static,
     G: BitGenEven,
 {
-    // TODO(dp): these were all `pub(crate)`. Maybe add getters for them?
     pub batch_size: usize,
     pub total_size: usize,
     pub producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
