@@ -5,8 +5,7 @@ edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
-# TODO(dp): write a proper description
-description = "Session IDs"
+description = "Defines the SessionId type and provides utilities for generating and serializing session IDs."
 
 [dependencies]
 anyhow.workspace = true
