@@ -492,8 +492,11 @@ where
             .data_exists_at_epoch(&key_id, &new_epoch_id, &data_type_str)
             .await?
         {
-            // Removes obsolete keys that have already been converted
-            priv_storage.delete_data(&key_id, &data_type_str).await?;
+            // Removes obsolete keys that have already been converted,
+            // specifically from the legacy epoch.
+            priv_storage
+                .delete_data_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
+                .await?;
         } else {
             tracing::error!(
                 "No keys {} under legacy epoch ID {} does not appear to exist",
