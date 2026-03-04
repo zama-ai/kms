@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
         commons::{math::random::CompressionSeed, traits::ParallelByteRandomGenerator},
-        entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
+        entities::LweCompactPublicKeyOwned,
         prelude::{SeededLweCompactPublicKey, SeededLweCompactPublicKeyOwned},
     },
     shortint::{
@@ -178,16 +178,6 @@ where
     }
 }
 
-pub(crate) fn to_tfhe_hl_api_compact_public_key(
-    compact_lwe_pk: LweCompactPublicKey<Vec<u64>>,
-    params: CompactPublicKeyEncryptionParameters,
-    tag: tfhe::Tag,
-) -> tfhe::CompactPublicKey {
-    let ipk = shortint::CompactPublicKey::from_raw_parts(compact_lwe_pk, params);
-    let cpk = tfhe::integer::public_key::CompactPublicKey::from_raw_parts(ipk);
-    tfhe::CompactPublicKey::from_raw_parts(cpk, tag)
-}
-
 pub(crate) fn to_tfhe_hl_api_compressed_compact_public_key(
     seeded_compact_lwe_pk: SeededLweCompactPublicKey<Vec<u64>>,
     params: CompactPublicKeyEncryptionParameters,
@@ -351,13 +341,9 @@ mod tests {
         shortint::{parameters::LweDimension, CiphertextModulus},
         Seed,
     };
-    #[cfg(feature = "slow_tests")]
-    use tfhe::{prelude::FheDecrypt, ConfigBuilder, FheUint8};
     use tfhe_csprng::generators::SoftwareRandomGenerator;
 
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
-    #[cfg(feature = "slow_tests")]
-    use crate::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
         online::{
             gen_bits::{BitGenEven, SecureBitGenEven},
@@ -511,24 +497,6 @@ mod tests {
         let decoded = divide_round(decrypted.0, 1 << scaling) % (1 << message_log_modulus);
 
         assert_eq!(msg, decoded);
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn hl_pk_key_conversion() {
-        use crate::tfhe_internals::utils::expanded_encrypt;
-
-        let config = ConfigBuilder::default().build();
-        let (client_key, _server_key) = tfhe::generate_keys(config);
-        let pk = tfhe::CompactPublicKey::new(&client_key);
-        let raw_pk = pk.clone().into_raw_parts().0.into_raw_parts();
-        let (lcpk, params) = raw_pk.into_raw_parts();
-
-        let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, params, tfhe::Tag::default());
-        assert_eq!(hl_client_key.into_raw_parts(), pk.clone().into_raw_parts());
-        let ct: FheUint8 = expanded_encrypt(&pk, 42_u8, 8).unwrap();
-        let msg: u8 = ct.decrypt(&client_key);
-        assert_eq!(42, msg);
     }
 
     #[tracing_test::traced_test]

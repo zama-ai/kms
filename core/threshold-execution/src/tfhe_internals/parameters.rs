@@ -937,16 +937,11 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         match keyset_config {
             KeySetConfig::Standard(config) => match config.secret_key_config {
-                KeyGenSecretKeyConfig::GenerateAll
-                | KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
+                KeyGenSecretKeyConfig::GenerateAll => {
                     self.lwe_sk_num_bits_to_sample()
                         + self.lwe_hat_sk_num_bits_to_sample()
                         + self.glwe_sk_num_bits_to_sample()
-                        + if config.is_using_existing_compression_sk() {
-                            0
-                        } else {
-                            self.compression_sk_num_bits_to_sample()
-                        }
+                        + self.compression_sk_num_bits_to_sample()
                 }
                 KeyGenSecretKeyConfig::UseExisting => 0,
             },

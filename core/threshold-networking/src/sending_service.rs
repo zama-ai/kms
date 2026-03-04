@@ -1009,6 +1009,7 @@ mod tests {
         }
     }
 
+    // NOTE: we use tracing_test here since we're trying to debug a potential deadlock
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_two_set_network() {

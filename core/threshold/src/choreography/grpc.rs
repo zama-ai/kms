@@ -995,7 +995,6 @@ where
                         preproc.as_mut(),
                         dkg_params,
                         tag,
-                        None,
                     )
                     .await
                     .unwrap();
@@ -1020,7 +1019,6 @@ where
                             &mut preproc,
                             dkg_params,
                             tag,
-                            None,
                         )
                         .await
                         .unwrap();
@@ -1056,7 +1054,6 @@ where
                         preproc.as_mut(),
                         dkg_params,
                         tag,
-                        None,
                     )
                     .await
                     .unwrap();
@@ -1081,7 +1078,6 @@ where
                             &mut preproc,
                             dkg_params,
                             tag,
-                            None,
                         )
                         .await
                         .unwrap();

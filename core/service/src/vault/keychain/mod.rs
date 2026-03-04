@@ -2,7 +2,7 @@ use crate::{
     anyhow_error_and_log,
     backup::BackupCiphertext,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
-    cryptography::attestation::SecurityModuleProxy,
+    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
     vault::storage::StorageReader,
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
@@ -66,6 +66,16 @@ pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm, AesRng>),
     AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm, AesRng>),
     SecretSharing(secretsharing::SecretShareKeychain<AesRng>),
+}
+
+impl KeychainProxy {
+    /// Validate recovery material loaded from public storage, if this is a SecretSharing keychain.
+    pub fn validate_recovery_material(&self, verf_key: &PublicSigKey) -> anyhow::Result<()> {
+        if let KeychainProxy::SecretSharing(ref ssk) = self {
+            ssk.validate_recovery_material(verf_key)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(EnumTryAs, Clone)]
