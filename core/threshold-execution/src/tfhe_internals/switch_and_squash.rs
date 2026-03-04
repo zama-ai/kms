@@ -46,17 +46,15 @@ mod tests {
     };
 
     use crate::{
-        file_handling::tests::read_element,
-        {
-            constants::SMALL_TEST_KEY_PATH,
-            tfhe_internals::{
-                parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
-                switch_and_squash::from_expanded_msg,
-                test_feature::KeySet,
-            },
+        constants::SMALL_TEST_KEY_PATH,
+        tfhe_internals::{
+            parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
+            switch_and_squash::from_expanded_msg,
+            test_feature::KeySet,
         },
     };
     use algebra::base_ring::Z128;
+    use test_utils::read_element;
 
     /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.
     /// The function assumes padding will be used.

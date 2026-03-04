@@ -1063,7 +1063,6 @@ mod tests {
     use crate::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
         endpoints::decryption::{threshold_decrypt64, DecryptionMode},
-        file_handling::tests::read_element,
         runtime::{
             sessions::{session_parameters::GenericParameterHandles, small_session::SmallSession},
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
@@ -1086,6 +1085,7 @@ mod tests {
     use rstest::rstest;
     use std::num::Wrapping;
     use std::sync::Arc;
+    use test_utils::read_element;
     use tfhe::{set_server_key, FheUint8};
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 

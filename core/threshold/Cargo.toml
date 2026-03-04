@@ -83,6 +83,7 @@ proptest.workspace = true
 rstest.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
+test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 threshold-fhe = { workspace = true, features = ["testing"] }

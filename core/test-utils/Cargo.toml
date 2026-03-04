@@ -8,3 +8,6 @@ license.workspace = true
 description = "Testing utilities"
 
 [dependencies]
+anyhow.workspace = true
+bc2wrap.workspace = true
+serde.workspace = true

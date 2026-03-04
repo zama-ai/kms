@@ -1311,11 +1311,8 @@ mod tests {
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::{
-        file_handling::tests::read_element,
-        {
-            constants::SMALL_TEST_KEY_PATH,
-            runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        },
+        constants::SMALL_TEST_KEY_PATH,
+        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
     };
     use aes_prng::AesRng;
     use algebra::{
@@ -1330,6 +1327,7 @@ mod tests {
     };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
+    use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{prelude::FheEncrypt, FheUint8};
     use threshold_types::network::NetworkMode;

@@ -6,6 +6,7 @@ members = [
     "core/grpc",
     "core/session-id",
     "core/service",
+    "core/test-utils",
     "core/thread-handles",
     "core/threshold",
     "core/threshold-algebra",
@@ -90,6 +91,7 @@ kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interf
 networking = { package = "threshold-networking", path = "./core/threshold-networking" }
 observability = { path = "./observability" }  # Internal observability module
 session-id = { path = "./core/session-id" }
+test-utils = { path = "./core/test-utils" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
 threshold-types = { path = "./core/threshold-types" }
 thread-handles = { path = "./core/thread-handles" }

@@ -1205,10 +1205,8 @@ mod tests {
         set_server_key, FheUint8,
     };
 
-    use crate::{
-        constants::REAL_KEY_PATH, file_handling::tests::read_element,
-        tfhe_internals::test_feature::KeySet,
-    };
+    use crate::{constants::REAL_KEY_PATH, tfhe_internals::test_feature::KeySet};
+    use test_utils::read_element;
 
     // TODO does not work with test key. Enable if test keys get updated
     // // #[test]

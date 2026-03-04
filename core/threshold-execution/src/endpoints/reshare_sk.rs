@@ -695,11 +695,8 @@ mod tests {
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::{
-        file_handling::tests::read_element,
-        {
-            constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
-            runtime::sessions::session_parameters::GenericParameterHandles,
-        },
+        constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
+        runtime::sessions::session_parameters::GenericParameterHandles,
     };
     use aes_prng::AesRng;
     use algebra::{
@@ -713,6 +710,7 @@ mod tests {
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fmt::Display;
+    use test_utils::read_element;
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
     use tfhe::shortint::client_key::atomic_pattern::{

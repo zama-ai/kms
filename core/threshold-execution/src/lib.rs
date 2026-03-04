@@ -121,9 +121,6 @@ pub mod zk {
 }
 
 pub mod keyset_config;
-// TODO(dp): this is a literal copy of the one in `core/threshold`. Figure out what to do.
-#[cfg(any(test, feature = "testing"))]
-pub mod file_handling;
 
 #[cfg(feature = "non-wasm")]
 pub mod network_value;

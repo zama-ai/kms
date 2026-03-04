@@ -1612,7 +1612,6 @@ pub mod tests {
     use crate::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file;
     use crate::{
         endpoints::keygen::conformance::check_drift_technique_key,
-        file_handling::tests::read_element,
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::{
             large_session::LargeSession, session_parameters::GenericParameterHandles,
@@ -1624,19 +1623,15 @@ pub mod tests {
         },
     };
     use crate::{
-        file_handling::tests::write_element,
-        {
-            random::{get_rng, seed_from_rng},
-            tfhe_internals::{
-                parameters::{
-                    DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
-                    NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
-                    NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
-                    NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
-                },
-                test_feature::to_hl_client_key,
-                utils::tests::reconstruct_glwe_secret_key_from_file,
+        random::{get_rng, seed_from_rng},
+        tfhe_internals::{
+            parameters::{
+                DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
+                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
             },
+            test_feature::to_hl_client_key,
+            utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
     use algebra::{
@@ -1646,6 +1641,7 @@ pub mod tests {
     };
     use itertools::Itertools;
     use std::path::Path;
+    use test_utils::{read_element, write_element};
     use tfhe::{
         core_crypto::{
             algorithms::{
@@ -2352,16 +2348,14 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
         use crate::{
-            file_handling::tests::{read_element, write_element},
-            {
-                endpoints::keygen::distributed_decompression_keygen_z128,
-                tfhe_internals::{
-                    compression_decompression_key::CompressionPrivateKeyShares,
-                    glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
-                },
+            endpoints::keygen::distributed_decompression_keygen_z128,
+            tfhe_internals::{
+                compression_decompression_key::CompressionPrivateKeyShares,
+                glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
             },
         };
         use algebra::sharing::share::Share;
+        use test_utils::{read_element, write_element};
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;

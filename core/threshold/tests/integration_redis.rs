@@ -246,8 +246,8 @@ fn test_dkg_orchestrator_large(
         online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
     use itertools::Itertools;
+    use test_utils::write_element;
     use thread_handles::OsThreadGroup;
-    use threshold_fhe::file_handling::tests::write_element;
     use threshold_types::network::NetworkMode;
 
     let params_basics_handles = params.get_params_basics_handle();

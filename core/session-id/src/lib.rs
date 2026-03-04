@@ -66,8 +66,9 @@ mod tests {
     use crate::SessionId;
     use execution::{
         constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
-        file_handling::tests::read_element, tfhe_internals::test_feature::KeySet,
+        tfhe_internals::test_feature::KeySet,
     };
+    use test_utils::read_element;
 
     // Indeterministic cipher generation.
     // Encrypts a small message with deterministic randomness

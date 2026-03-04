@@ -7132,6 +7132,7 @@ version = "0.13.10-rc.0"
 dependencies = [
  "anyhow",
  "serde",
+ "test-utils",
  "tfhe",
  "threshold-execution",
  "threshold-hashing",
@@ -7535,6 +7536,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-utils"
+version = "0.13.10-rc.0"
+dependencies = [
+ "anyhow",
+ "bc2wrap",
+ "serde",
+]
+
+[[package]]
 name = "tests-utils"
 version = "0.13.10-rc.0"
 dependencies = [
@@ -7778,6 +7788,7 @@ dependencies = [
  "statrs",
  "strum",
  "tempfile",
+ "test-utils",
  "tfhe",
  "tfhe-csprng",
  "tfhe-versionable",
@@ -7876,6 +7887,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tempfile",
+ "test-utils",
  "tfhe",
  "tfhe-csprng",
  "tfhe-zk-pok",

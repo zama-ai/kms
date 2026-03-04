@@ -287,7 +287,6 @@ pub(super) async fn compute_hamming_weight_glwe_sk<
 
 #[cfg(test)]
 pub mod tests {
-    use crate::file_handling::tests::read_element;
     use crate::tfhe_internals::glwe_key::GlweSecretKeyShare;
     use crate::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::tfhe_internals::private_keysets::PrivateKeySet;
@@ -302,6 +301,7 @@ pub mod tests {
     use itertools::Itertools;
     use std::collections::HashMap;
     use std::path::Path;
+    use test_utils::read_element;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
 

@@ -11,6 +11,7 @@ description = "Defines the SessionId type and provides utilities for generating 
 anyhow.workspace = true
 hashing.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
+test-utils.workspace = true
 
 [dev-dependencies]
 execution = { workspace = true, features = ["testing"] }

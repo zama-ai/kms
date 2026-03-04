@@ -1,13 +1,13 @@
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use crate::{
-        file_handling::tests::{read_element, write_element},
         tests::helper::tests::generate_keys,
         tfhe_internals::{
             parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS},
             test_feature::KeySet,
         },
     };
+    use test_utils::{read_element, write_element};
 
     pub const DEFAULT_SEED: u64 = 1;
 
