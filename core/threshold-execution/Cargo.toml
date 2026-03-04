@@ -17,7 +17,6 @@ bc2wrap.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] } # TODO(dp): this crate does not  build any binaries, why is it using clap?
 const_format.workspace = true
-crypto-bigint = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 derive_more.workspace = true
 error-utils.workspace = true
@@ -110,5 +109,3 @@ non-wasm = [
 testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures"]
 slow_tests = ["testing", "algebra/all_extension_degrees"]
 malicious_strategies = ["testing"]
-# TODO(dp): Remove this feature.
-experimental = ["dep:crypto-bigint", "testing"]

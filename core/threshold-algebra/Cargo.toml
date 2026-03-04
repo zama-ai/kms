@@ -6,7 +6,6 @@ license.workspace   = true
 
 [dependencies]
 anyhow.workspace = true
-bc2wrap.workspace = true
 hashing.workspace = true
 g2p.workspace = true
 error-utils.workspace   = true
