@@ -7799,7 +7799,6 @@ dependencies = [
  "tfhe-zk-pok",
  "thread-handles",
  "threshold-algebra",
- "threshold-execution",
  "threshold-hashing",
  "threshold-networking",
  "threshold-types",

@@ -61,7 +61,6 @@ zeroize.workspace = true
 [dev-dependencies]
 async-std.workspace = true
 ctor.workspace = true
-execution.workspace = true
 futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
@@ -81,19 +80,6 @@ extension_degree_5 = ["algebra/extension_degree_5"]
 extension_degree_6 = ["algebra/extension_degree_6"]
 extension_degree_7 = ["algebra/extension_degree_7"]
 extension_degree_8 = ["algebra/extension_degree_8"]
-# "dep:attestation-doc-validation",
-# "dep:hyper-rustls-ring",
-# "dep:tokio-rustls",
-# "dep:tonic-health",
-# "dep:tonic-tls",
-# "dep:backoff",
-# "dep:tower",
-# "dep:tower-http",
-# "dep:observability",
-# "dep:opentelemetry",
-# "dep:redis",
-# "dep:rcgen",
-# "dep:x509-parser",
 
 non-wasm = [
 	"networking/non-wasm",
@@ -105,6 +91,6 @@ non-wasm = [
     "dep:redis",
 ]
 
-testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures", "dep:test-utils"]
+testing = ["non-wasm", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures", "dep:test-utils"]
 slow_tests = ["testing", "algebra/all_extension_degrees"]
 malicious_strategies = ["testing"]
