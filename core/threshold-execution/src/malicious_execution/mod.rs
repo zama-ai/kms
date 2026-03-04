@@ -43,7 +43,3 @@ pub mod endpoints {
 pub mod zk {
     pub mod ceremony;
 }
-
-// TODO(dp): fix
-// #[cfg(all(feature = "malicious_strategies", not(feature = "experimental")))]
-// pub mod malicious_moby;

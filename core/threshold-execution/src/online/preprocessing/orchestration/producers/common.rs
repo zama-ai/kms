@@ -27,7 +27,6 @@ impl<S: BaseSessionHandles, T> ProducerSession<S, T> {
 }
 
 /// Generic functions that spawn the threads for processing
-// TODO(dp): couldn't this move to `thread-handles`? Seems generally useful.
 pub fn execute_preprocessing<C, S: BaseSessionHandles + 'static, TaskOutput>(
     producer_sessions: Vec<ProducerSession<S, C>>,
     task_gen: impl Fn(S, Sender<C>, Option<ProgressTracker>) -> TaskOutput,

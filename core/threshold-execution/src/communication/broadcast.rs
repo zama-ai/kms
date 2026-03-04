@@ -636,12 +636,11 @@ mod tests {
     use crate::runtime::sessions::small_session::SmallSession;
     use crate::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
     use crate::small_execution::prf::PRSSConversions;
+    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use algebra::structure_traits::{ErrorCorrect, Invert};
     use itertools::Itertools;
     use session_id::SessionId;
-    // TODO(dp): Should really migrate this stuff to `threshold-execution`.
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use threshold_types::network::NetworkMode;
 
     fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(

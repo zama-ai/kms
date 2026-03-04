@@ -1,5 +1,9 @@
 //! Utilities for managing OS threads and Tokio tasks.
 
+// TODO: it might be a good idea to investigate which of the uses of the code in this crate
+// would actually be better if it used a `JoinSet`.
+// See for instance `execute_preprocessing` in kms/core/threshold-execution/src/online/preprocessing/orchestration/producers/common.rs
+
 use anyhow::anyhow;
 use futures::FutureExt;
 use rayon::ThreadPoolBuilder;
