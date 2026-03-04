@@ -16,9 +16,10 @@ use crate::{
     network_value::{BroadcastValue, NetworkValue},
     runtime::sessions::base_session::BaseSessionHandles,
 };
-use algebra::{poly::Poly, role::Role, structure_traits::Ring};
+use algebra::{poly::Poly, structure_traits::Ring};
 use error_utils::anyhow_error_and_log;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 /// Malicious implementation of the [`Broadcast`] protocol
 /// that simply does nothing.

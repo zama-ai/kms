@@ -1,5 +1,5 @@
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use clap::Parser;
 use hashing::{hash_element, DomainSep};
 use kms_lib::backup::SEED_PHRASE_DESC;

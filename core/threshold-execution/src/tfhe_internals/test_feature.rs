@@ -36,10 +36,10 @@ use crate::{
         lwe_key::LweSecretKeyShare, parameters::DkgMode, private_keysets::LweSecretKeyShareEnum,
     },
 };
+use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
-    role::Role,
     sharing::{
         shamir::{InputOp, ShamirSharings},
         share::Share,

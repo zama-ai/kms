@@ -8,7 +8,7 @@ use crate::consts::DEFAULT_THRESHOLD_KEY_ID;
 use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
 

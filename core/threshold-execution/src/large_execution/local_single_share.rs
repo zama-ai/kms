@@ -11,7 +11,6 @@ use crate::{
     },
 };
 use algebra::{
-    role::Role,
     sharing::{
         shamir::{RevealOp, ShamirSharings},
         share::Share,
@@ -25,6 +24,7 @@ use num_integer::div_ceil;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 use tracing::instrument;
 
 pub(crate) const LOCAL_SINGLE_MAX_ITER: usize = 30;
@@ -470,14 +470,13 @@ pub(crate) mod tests {
         sharing::open::{RobustOpen, SecureRobustOpen},
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        sharing::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{ErrorCorrect, Invert, Ring},
-    };
+    structure_traits::{ErrorCorrect, Invert, Ring},
+};
     use threshold_types::network::NetworkMode;
 
     use aes_prng::AesRng;
@@ -486,6 +485,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashSet;
+    use threshold_types::role::Role;
 
     async fn test_lsl_strategies<
         Z: Derive + Invert + ErrorCorrect,

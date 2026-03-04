@@ -20,9 +20,7 @@ use crate::{
     },
 };
 use algebra::{
-    role::{Role, TwoSetsRole},
     sharing::{
-        open::{ExternalOpeningInfo, OpeningKind},
         shamir::{
             fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync,
             ShamirSharings,
@@ -33,7 +31,12 @@ use algebra::{
 };
 use error_utils::anyhow_error_and_log;
 use thread_handles::spawn_compute_bound;
-use threshold_types::{network::NetworkMode, protocol::ProtocolDescription};
+use threshold_types::{
+    network::NetworkMode,
+    opening::{ExternalOpeningInfo, OpeningKind},
+    protocol::ProtocolDescription,
+    role::{Role, TwoSetsRole},
+};
 
 #[async_trait]
 pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
@@ -558,12 +561,12 @@ pub(crate) mod test {
         TestingParameters,
     };
     use algebra::{
-        galois_rings::degree_4::ResiduePolyF4Z128,
-        role::{Role, TwoSetsRole, TwoSetsThreshold},
-        sharing::shamir::{InputOp, ShamirSharings},
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    };
+    galois_rings::degree_4::ResiduePolyF4Z128,
+    sharing::shamir::{InputOp, ShamirSharings},
+    structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     use super::{RobustOpen, SecureRobustOpen};
 
@@ -780,8 +783,7 @@ pub(crate) mod test {
         num_parties_set_1: usize,
         robust_open: RO,
         session: TwoSetsBaseSession,
-    ) -> (algebra::role::TwoSetsRole, Option<Vec<Z>>, Option<Vec<Z>>) {
-        use algebra::role::TwoSetsRole;
+    ) -> (TwoSetsRole, Option<Vec<Z>>, Option<Vec<Z>>) {
         let mut secrets = None;
         let mut input_map = None;
         let mut external_opening_info = None;

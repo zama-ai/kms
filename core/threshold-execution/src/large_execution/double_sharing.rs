@@ -5,7 +5,6 @@ use super::{
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
     bivariate::MatrixMul,
-    role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring},
 };
 use async_trait::async_trait;
@@ -14,6 +13,7 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 use tracing::instrument;
 
 pub type SecureDoubleSharing<Z> = RealDoubleSharing<Z, SecureLocalDoubleShare>;
@@ -232,15 +232,15 @@ pub(crate) mod tests {
         runtime::sessions::large_session::LargeSession,
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        sharing::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
-    };
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
+};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     async fn test_doublesharing<
         Z: ErrorCorrect + Derive + Invert,

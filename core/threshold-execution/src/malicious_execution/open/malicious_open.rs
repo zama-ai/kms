@@ -7,10 +7,10 @@ use crate::{
     runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     sharing::open::{RobustOpen, SecureRobustOpen},
 };
-use algebra::{
+use algebra::structure_traits::{ErrorCorrect, Ring};
+use threshold_types::{
+    opening::{ExternalOpeningInfo, OpeningKind},
     role::TwoSetsRole,
-    sharing::open::{ExternalOpeningInfo, OpeningKind},
-    structure_traits::{ErrorCorrect, Ring},
 };
 use threshold_types::protocol::ProtocolDescription;
 

@@ -8,7 +8,7 @@ use std::{
 
 use super::ggen::gnetworking_client::GnetworkingClient;
 use crate::ggen::Status;
-use algebra::role::{RoleKind, RoleTrait};
+use threshold_types::role::{RoleKind, RoleTrait};
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
@@ -686,7 +686,7 @@ mod tests {
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
     use crate::sending_service::NetworkSession;
-    use algebra::role::{Role, TwoSetsRole};
+    use threshold_types::role::{Role, TwoSetsRole};
     use session_id::SessionId;
     use std::collections::HashMap;
     use std::sync::{Arc, OnceLock};

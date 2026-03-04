@@ -24,9 +24,9 @@ use crate::{
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
-    role::Role,
     sharing::{shamir::ShamirSharings, share::Share},
 };
+use threshold_types::role::Role;
 use hashing::DomainSep;
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},

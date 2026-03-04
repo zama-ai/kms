@@ -1,6 +1,7 @@
+use threshold_types::role::Role;
+
 use crate::{
     poly::Poly,
-    role::Role,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Ring, RingWithExceptionalSequence},
 };

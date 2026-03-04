@@ -17,7 +17,7 @@ use crate::{
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use kms_grpc::kms::v1::{
     CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
 };

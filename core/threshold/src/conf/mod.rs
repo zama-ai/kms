@@ -1,4 +1,4 @@
-use algebra::role::Role;
+use threshold_types::role::Role;
 use serde::{Deserialize, Serialize};
 use threshold_types::party::Identity;
 

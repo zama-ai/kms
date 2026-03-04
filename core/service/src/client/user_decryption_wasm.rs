@@ -12,7 +12,7 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     error_correction::MemoizedExceptionals,

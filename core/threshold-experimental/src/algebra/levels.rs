@@ -1259,7 +1259,7 @@ impl ScalingFactor for LevelKsw {
 mod tests {
     use aes_prng::AesRng;
     use algebra::poly::lagrange_interpolation;
-    use algebra::role::Role;
+    use threshold_types::role::Role;
     use algebra::sharing::shamir::{InputOp, RevealOp};
     use algebra::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use execution::config::BatchParams;

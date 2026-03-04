@@ -1,5 +1,5 @@
 use crate::engine::base::derive_request_id;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use alloy_primitives::Address;
 use execution::endpoints::decryption::DecryptionMode;
 use execution::online::preprocessing::redis::RedisConf;

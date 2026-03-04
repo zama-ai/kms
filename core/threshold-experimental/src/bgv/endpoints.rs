@@ -9,7 +9,7 @@ use crate::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::sharing::share::Share;
 use execution::runtime::sessions::{
     base_session::BaseSession,

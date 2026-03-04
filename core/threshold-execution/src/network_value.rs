@@ -10,10 +10,7 @@ use crate::{
     small_execution::{prf::PrfKey, prss::PartySet},
     zk::ceremony,
 };
-use algebra::{
-    role::Role,
-    structure_traits::{Ring, Zero},
-};
+use algebra::structure_traits::{Ring, Zero};
 use error_utils::anyhow_error_and_log;
 use hashing::{serialize_hash_element, DomainSep};
 use serde::{Deserialize, Serialize};
@@ -22,6 +19,7 @@ use std::collections::{BTreeMap, HashMap};
 use tfhe::zk::CompactPkeCrs;
 use thread_handles::spawn_compute_bound;
 use threshold_types::commitment::{Commitment, Opening};
+use threshold_types::role::Role;
 
 pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
 pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];

@@ -8,7 +8,8 @@ use execution::tfhe_internals::parameters::DkgParamsAvailable;
 use execution::tfhe_internals::public_keysets::FhePubKeySet;
 use execution::zk::ceremony::compute_witness_dim;
 
-use algebra::{base_ring::Z64, role::Role};
+use algebra::base_ring::Z64;
+use threshold_types::role::Role;
 use execution::zk::ceremony::InternalPublicParameter;
 use networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use observability::telemetry::ContextPropagator;

@@ -10,15 +10,13 @@ use crate::{
     },
     runtime::sessions::large_session::LargeSessionHandles,
 };
-use algebra::{
-    role::Role,
-    structure_traits::{Derive, ErrorCorrect, Invert},
-};
+use algebra::structure_traits::{Derive, ErrorCorrect, Invert};
 use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 /// Lie in broadcast as sender
 #[derive(Clone, Default)]

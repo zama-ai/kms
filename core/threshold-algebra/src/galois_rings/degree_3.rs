@@ -335,7 +335,6 @@ mod tests {
         base_ring::{Z128, Z64},
         galois_rings::common::{pack_residue_poly, TryFromWrapper},
         poly::Poly,
-        role::Role,
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
@@ -343,6 +342,7 @@ mod tests {
         structure_traits::{ErrorCorrect, Sample, Syndrome},
         PRSSConversions,
     };
+    use threshold_types::role::Role;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;

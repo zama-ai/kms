@@ -24,7 +24,7 @@
 //! they are not part of one of the two contexts.
 
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use algebra::role::TwoSetsRole;
+use threshold_types::role::TwoSetsRole;
 use alloy_dyn_abi::Eip712Domain;
 use execution::{
     endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},

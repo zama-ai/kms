@@ -5,8 +5,9 @@ use crate::runtime::sessions::session_parameters::DeSerializationRunTime;
 use error_utils::anyhow_error_and_log;
 use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
-use algebra::{role::Role, structure_traits::Ring};
+use algebra::structure_traits::Ring;
 use std::collections::{HashMap, HashSet};
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
@@ -641,6 +642,7 @@ mod tests {
     use itertools::Itertools;
     use session_id::SessionId;
     use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
     fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(
         senders: &HashSet<Role>,

@@ -1,6 +1,6 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
-use algebra::role::Role;
+use threshold_types::role::Role;
 use kms_grpc::identifiers::ContextId;
 use networking::tls::ReleasePCRValues;
 use serde::{Deserialize, Serialize};

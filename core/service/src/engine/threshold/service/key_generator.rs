@@ -774,7 +774,7 @@ impl<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >,
     ) -> anyhow::Result<DecompressionKey> {
-        use algebra::role::Role;
+        use threshold_types::role::Role;
         use execution::{
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{

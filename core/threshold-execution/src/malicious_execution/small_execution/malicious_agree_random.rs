@@ -7,8 +7,9 @@ use crate::{
         prf::PrfKey,
     },
 };
-use algebra::{role::Role, structure_traits::ErrorCorrect};
+use algebra::structure_traits::ErrorCorrect;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 // Malicious implementation of both [`AgreeRandom`] and [`AgreeRandomFromShare`]
 // that simply does nothing

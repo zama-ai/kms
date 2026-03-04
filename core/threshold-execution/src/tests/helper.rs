@@ -7,7 +7,7 @@ pub mod tests_and_benches {
     use tokio::time::Duration;
 
     use aes_prng::AesRng;
-    use algebra::role::{Role, TwoSetsRole, TwoSetsThreshold};
+use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures::Future;
     use rand::SeedableRng;
@@ -342,15 +342,13 @@ pub mod testing {
         },
     };
     use aes_prng::AesRng;
-    use algebra::{
-        role::Role,
-        structure_traits::{ErrorCorrect, Invert},
-    };
+    use algebra::structure_traits::{ErrorCorrect, Invert};
     use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
     use session_id::SessionId;
     use std::{collections::HashSet, sync::Arc};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
     use tokio::runtime::Runtime;
 
     /// Generates dummy parameters for unit tests with session ID = 1
@@ -429,10 +427,7 @@ pub mod tests {
         },
     };
     use aes_prng::AesRng;
-    use algebra::{
-        role::{Role, TwoSetsRole, TwoSetsThreshold},
-        structure_traits::{ErrorCorrect, Invert, Ring},
-    };
+    use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
     use networking::local::LocalNetworkingProducer;
@@ -444,6 +439,7 @@ pub mod tests {
         sync::Arc,
     };
     use threshold_types::network::{NetworkMode, Networking};
+    use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use tokio::task::JoinError;
 
     #[derive(Default, Clone)]

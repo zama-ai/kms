@@ -34,7 +34,7 @@ use crate::{
         Vault,
     },
 };
-use algebra::role::Role;
+use threshold_types::role::Role;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{

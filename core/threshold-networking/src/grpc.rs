@@ -13,7 +13,7 @@ use crate::constants::{
 };
 use crate::ggen::Status;
 use crate::health_check::HealthCheckSession;
-use algebra::role::{RoleKind, RoleTrait};
+use threshold_types::role::{RoleKind, RoleTrait};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -1198,7 +1198,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use algebra::role::Role;
+    use threshold_types::role::Role;
     use dashmap::DashMap;
     use threshold_types::party::{Identity, RoleAssignment};
     use tokio::sync::mpsc::channel;

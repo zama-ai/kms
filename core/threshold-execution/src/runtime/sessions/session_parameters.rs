@@ -1,4 +1,4 @@
-use algebra::role::{Role, RoleTrait, TwoSetsRole};
+use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use session_id::SessionId;
@@ -127,7 +127,7 @@ mod tests {
     use super::SessionParameters;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::tests::helper::testing::get_dummy_parameters_for_parties;
-    use algebra::role::Role;
+    use threshold_types::role::Role;
 
     #[test]
     fn too_large_threshold() {

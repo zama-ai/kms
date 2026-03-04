@@ -13,7 +13,7 @@ use tfhe::{
 
 use crate::online::triple::{open, open_list};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::{
     galois_rings::common::ResiduePoly,
     poly::Poly,
@@ -292,12 +292,11 @@ pub mod tests {
     use crate::tfhe_internals::private_keysets::PrivateKeySet;
     use crate::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        role::Role,
-        sharing::share::Share,
-        structure_traits::{ErrorCorrect, Ring},
-    };
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Ring},
+};
     use itertools::Itertools;
     use std::collections::HashMap;
     use std::path::Path;
@@ -306,6 +305,7 @@ pub mod tests {
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
 
     use super::reconstruct_bit_vec;
+    use threshold_types::role::Role;
 
     fn reconstruct_bit_vec_from_glwe_share_enum<const EXTENSION_DEGREE: usize>(
         input: HashMap<

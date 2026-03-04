@@ -15,10 +15,8 @@ use crate::{
         large_session::LargeSessionHandles,
     },
 };
-use algebra::{
-    role::{Role, RoleTrait},
-    structure_traits::Ring,
-};
+use threshold_types::role::{Role, RoleTrait};
+use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
 
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.

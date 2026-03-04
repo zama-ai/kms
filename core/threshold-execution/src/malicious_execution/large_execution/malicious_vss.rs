@@ -15,10 +15,10 @@ use crate::{
 use algebra::{
     bivariate::{BivariateEval, BivariatePoly},
     poly::Poly,
-    role::Role,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 ///Does nothing, and output an empty Vec
 #[derive(Default, Clone)]

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::choreography::choreographer::NetworkTopology;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use threshold_types::party::Identity;

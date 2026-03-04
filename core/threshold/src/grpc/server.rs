@@ -2,9 +2,9 @@ use crate::{choreography::grpc::GrpcChoreography, conf::party::PartyConf};
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
-    role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
+use threshold_types::role::Role;
 use execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, PreprocessorFactory,
 };

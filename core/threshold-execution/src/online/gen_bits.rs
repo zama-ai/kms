@@ -111,15 +111,15 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use algebra::{
-        role::Role,
-        sharing::share::Share,
-        structure_traits::{One, Ring, Sample, ZConsts, Zero},
-    };
+    sharing::share::Share,
+    structure_traits::{One, Ring, Sample, ZConsts, Zero},
+};
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
     macro_rules! test_bitgen {
         ($z:ty, $u:ty) => {

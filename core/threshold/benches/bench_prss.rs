@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use aes_prng::AesRng;
-use algebra::{galois_rings::degree_8::ResiduePolyF8Z128, role::Role};
+use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use threshold_types::role::Role;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use execution::{
     large_execution::vss::DummyVss,

@@ -2,7 +2,7 @@ use crate::runtime::sessions::session_parameters::{
     DeSerializationRunTime, GenericParameterHandles, GenericSessionParameters, ParameterHandles,
 };
 use aes_prng::AesRng;
-use algebra::role::{Role, RoleTrait, TwoSetsRole};
+use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 use rand::{CryptoRng, Rng, SeedableRng};
 use session_id::SessionId;
 use std::{collections::HashSet, sync::Arc};

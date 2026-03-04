@@ -29,7 +29,6 @@ use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
     poly::Poly,
-    role::Role,
     sharing::{
         shamir::{RevealOp, ShamirSharings},
         share::Share,
@@ -40,6 +39,7 @@ use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng, SeedableRng};
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 use tonic::async_trait;
 
 /// Struct for dummy preprocessing for use in interactive tests although it is constructed non-interactively.
@@ -529,10 +529,10 @@ mod tests {
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::get_base_session;
     use algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
-        structure_traits::Zero,
-    };
+    base_ring::{Z128, Z64},
+    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
+    structure_traits::Zero,
+};
     use paste::paste;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;

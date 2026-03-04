@@ -193,14 +193,14 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        structure_traits::Ring,
-    };
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    structure_traits::Ring,
+};
     use paste::paste;
     use std::num::Wrapping;
     use std::sync::Arc;
     use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
     macro_rules! test_triples {
         ($z:ty, $u:ty) => {

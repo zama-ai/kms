@@ -1,9 +1,9 @@
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::degree_4::ResiduePolyF4,
-    role::Role,
     sharing::share::Share,
 };
+use threshold_types::role::Role;
 use ctor::ctor;
 use execution::online::{
     preprocessing::{create_redis_factory, redis::RedisConf, PreprocessorFactory},

@@ -205,14 +205,13 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-        galois_rings::degree_4::ResiduePolyF4Z64,
-        role::Role,
-        sharing::{
+    galois_rings::degree_4::ResiduePolyF4Z64,
+    sharing::{
             shamir::{InputOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::Ring,
-    };
+    structure_traits::Ring,
+};
     use itertools::Itertools;
     use rand::SeedableRng;
     use tfhe::{
@@ -234,6 +233,7 @@ mod tests {
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
     use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
     use super::{
         encrypt_glwe_ciphertext_assign, GlweCiphertextShare, GlweSecretKeyShare,

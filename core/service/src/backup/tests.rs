@@ -17,7 +17,7 @@ use crate::{
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use itertools::Itertools;
 use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;

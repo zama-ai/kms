@@ -17,11 +17,11 @@ use crate::{
 use algebra::{
     bivariate::{BivariateEval, BivariatePoly},
     poly::Poly,
-    role::Role,
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
 use error_utils::anyhow_error_and_log;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 /// Secure implementation of VSS as defined in NIST document
 ///
@@ -1177,15 +1177,14 @@ pub(crate) mod tests {
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use algebra::{
-        bivariate::BivariateEval,
-        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        sharing::{
+    bivariate::BivariateEval,
+    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{ErrorCorrect, Invert},
-    };
+    structure_traits::{ErrorCorrect, Invert},
+};
     use futures_util::future::join;
     use rstest::rstest;
     use session_id::SessionId;

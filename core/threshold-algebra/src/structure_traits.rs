@@ -1,5 +1,5 @@
 use super::poly::Poly;
-use super::role::Role;
+use threshold_types::role::Role;
 use super::sharing::shamir::ShamirSharings;
 use hashing::DomainSep;
 use rand::CryptoRng;

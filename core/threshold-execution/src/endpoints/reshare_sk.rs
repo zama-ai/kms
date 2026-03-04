@@ -22,10 +22,10 @@ use crate::{
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
-    role::TwoSetsRole,
     structure_traits::{ErrorCorrect, Invert, Syndrome},
 };
 use error_utils::anyhow_error_and_log;
+use threshold_types::role::TwoSetsRole;
 
 use tfhe::shortint::parameters::CompressionParameters;
 use tracing::instrument;
@@ -700,13 +700,12 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-        role::{Role, TwoSetsThreshold},
-        sharing::{
+    sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{BaseRing, Ring, Sample},
-    };
+    structure_traits::{BaseRing, Ring, Sample},
+};
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fmt::Display;
@@ -721,6 +720,7 @@ mod tests {
     use tfhe::shortint::PBSParameters;
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use threshold_types::network::NetworkMode;
+use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     #[tokio::test]
     async fn reshare_no_error_f4() -> anyhow::Result<()> {

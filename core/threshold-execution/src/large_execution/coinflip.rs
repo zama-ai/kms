@@ -126,14 +126,14 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        structure_traits::{ErrorCorrect, Ring},
-    };
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    structure_traits::{ErrorCorrect, Ring},
+};
     use rand::SeedableRng;
     use rstest::rstest;
     use threshold_types::network::NetworkMode;
     use tokio::task::JoinSet;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_dummy_coinflip() {

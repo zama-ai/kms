@@ -26,7 +26,7 @@ use crate::util::key_setup::test_tools::{
 };
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{file::FileStorage, StorageType};
-use algebra::role::Role;
+use threshold_types::role::Role;
 use execution::endpoints::decryption::DecryptionMode;
 use execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "wasm_tests")]

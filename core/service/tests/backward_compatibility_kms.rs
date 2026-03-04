@@ -7,7 +7,7 @@
 mod common;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use algebra::role::Role;
+use threshold_types::role::Role;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},

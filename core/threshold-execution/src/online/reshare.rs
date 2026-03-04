@@ -15,8 +15,7 @@ use crate::{
 use algebra::{
     galois_rings::common::ResiduePoly,
     poly::Poly,
-    role::{Role, TwoSetsRole},
-    sharing::{open::ExternalOpeningInfo, shamir::ShamirSharings, share::Share},
+    sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome, Zero,
     },
@@ -28,7 +27,9 @@ use std::{
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     sync::Arc,
 };
+use threshold_types::opening::ExternalOpeningInfo;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::{Role, TwoSetsRole};
 use tokio::task::JoinSet;
 use tonic::async_trait;
 use zeroize::Zeroize;
@@ -1234,7 +1235,7 @@ mod tests {
     };
     use algebra::base_ring::Z128;
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use algebra::role::{DualRole, TwoSetsThreshold};
+use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
     use algebra::structure_traits::FromU128;
     use threshold_types::network::NetworkMode;
 

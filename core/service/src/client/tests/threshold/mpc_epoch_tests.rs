@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use algebra::role::Role;
+use threshold_types::role::Role;
 use execution::tfhe_internals::private_keysets::PrivateKeySet;
 use kms_grpc::{
     identifiers::EpochId,

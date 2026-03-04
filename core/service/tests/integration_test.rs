@@ -583,7 +583,7 @@ mod kms_server_binary_test {
 #[cfg(test)]
 mod kms_custodian_binary_tests {
     use aes_prng::AesRng;
-    use algebra::role::Role;
+    use threshold_types::role::Role;
     use assert_cmd::Command;
     use kms_grpc::{kms::v1::CustodianContext, RequestId};
     use kms_lib::{

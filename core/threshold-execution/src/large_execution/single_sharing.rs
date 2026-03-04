@@ -2,7 +2,6 @@ use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
     bivariate::{compute_powers, MatrixMul},
-    role::Role,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;
@@ -11,6 +10,7 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use std::collections::HashMap;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 use tracing::instrument;
 
 pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
@@ -213,13 +213,12 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::ResiduePolyF8;
     use algebra::{
-        role::Role,
-        sharing::{
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
-    };
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
+};
     #[cfg(feature = "extension_degree_8")]
     use ndarray::Ix2;
     use num_integer::div_ceil;
@@ -227,6 +226,7 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     async fn test_singlesharing<
         Z: Derive + ErrorCorrect + Invert,

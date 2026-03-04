@@ -15,13 +15,13 @@ use crate::{
     runtime::sessions::small_session::SmallSessionHandles,
 };
 use algebra::{
-    role::Role,
     sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
     structure_traits::{ErrorCorrect, Ring},
 };
 use error_utils::log_error_wrapper;
 use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 
 #[async_trait]
 pub trait Preprocessing<Z: Clone, S: BaseSessionHandles>:
@@ -435,16 +435,16 @@ mod test {
         },
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        randomness_check::execute_all_randomness_tests_loose,
-        role::Role,
-        sharing::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    randomness_check::execute_all_randomness_tests_loose,
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{ErrorCorrect, Invert, Ring},
-    };
+    structure_traits::{ErrorCorrect, Invert, Ring},
+};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     use super::RealSmallPreprocessing;
 

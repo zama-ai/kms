@@ -10,11 +10,11 @@ use crate::{
 };
 use algebra::{
     galois_rings::common::ResiduePoly,
-    role::TwoSetsRole,
     sharing::share::Share,
     structure_traits::{BaseRing, ErrorCorrect, Invert, Syndrome},
 };
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::TwoSetsRole;
 
 #[derive(Default, Clone)]
 pub struct DropReshareAsSet1;

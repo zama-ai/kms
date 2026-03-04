@@ -77,7 +77,7 @@ fn shamir_error_correct<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     sharing: &ShamirSharings<ResiduePoly<Z, EXTENSION_DEGREE>>,
     degree: usize,
     max_errs: usize,
-    #[cfg(test)] err_indices: Option<&mut Vec<(super::role::Role, usize)>>,
+    #[cfg(test)] err_indices: Option<&mut Vec<(threshold_types::role::Role, usize)>>,
 ) -> anyhow::Result<Poly<ResiduePoly<Z, EXTENSION_DEGREE>>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
@@ -216,7 +216,7 @@ pub fn error_correction<F: Field>(
 
 #[cfg(test)]
 mod tests {
-    use super::super::role::Role;
+    use threshold_types::role::Role;
     use std::num::Wrapping;
 
     use aes_prng::AesRng;

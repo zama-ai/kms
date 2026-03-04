@@ -2,7 +2,7 @@ use crate::algebra::levels::*;
 use crate::algebra::ntt::*;
 use crate::bgv::basics::*;
 use crate::bgv::ddec::keygen_shares;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
 use execution::network_value::NetworkValue;

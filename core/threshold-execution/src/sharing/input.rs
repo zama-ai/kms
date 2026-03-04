@@ -3,8 +3,8 @@ use error_utils::anyhow_error_and_log;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{task::JoinSet, time::timeout_at};
 
+use threshold_types::role::Role;
 use algebra::{
-    role::Role,
     sharing::{
         shamir::{InputOp, ShamirSharings},
         share::Share,

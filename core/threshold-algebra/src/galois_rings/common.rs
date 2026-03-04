@@ -13,10 +13,11 @@ use error_utils::anyhow_error_and_log;
 
 use crate::structure_traits::Field;
 use crate::PRSSConversions;
+use threshold_types::role::Role;
+
 use crate::{
     base_ring::{Z128, Z64},
     galois_fields::common::syndrome_decoding_z2,
-    role::Role,
     sharing::shamir::{ShamirFieldPoly, ShamirSharings},
     sharing::share::Share,
 };

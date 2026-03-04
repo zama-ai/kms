@@ -22,10 +22,10 @@ use crate::{
 };
 use algebra::{
     poly::Poly,
-    role::Role,
     sharing::share::Share,
     structure_traits::{FromU128, One, ZConsts, Zero},
 };
+use threshold_types::role::Role;
 use execution::small_execution::prss::PRSSPrimitives;
 use execution::{online::triple::open_list, runtime::sessions::small_session::SmallSessionHandles};
 

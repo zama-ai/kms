@@ -5,7 +5,8 @@ use crate::{
     algebra::ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
     bgv::basics::PublicKey,
 };
-use algebra::{role::Role, sharing::share::Share, structure_traits::FromU128};
+use algebra::{sharing::share::Share, structure_traits::FromU128};
+use threshold_types::role::Role;
 use crypto_bigint::{NonZero, U1536};
 use execution::{
     online::triple::{mult_list, open_list},

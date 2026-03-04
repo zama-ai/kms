@@ -30,7 +30,7 @@ use crate::{runtime::test_runtime::DistributedTestRuntime, small_execution::prf:
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 #[cfg(any(test, feature = "testing"))]
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
@@ -1316,21 +1316,21 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        role::Role,
-        sharing::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
-    };
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
+};
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{prelude::FheEncrypt, FheUint8};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     #[test]
     fn reconstruct_key() {

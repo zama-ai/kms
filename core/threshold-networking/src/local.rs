@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use error_utils::anyhow_error_and_log;
 
 use super::*;
-use algebra::role::RoleTrait;
+use threshold_types::role::RoleTrait;
 use constants::{
     NETWORK_TIMEOUT, NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS,
 };
@@ -279,7 +279,7 @@ struct LocalTaggedValue {
 
 #[cfg(test)]
 mod tests {
-    use algebra::role::{Role, TwoSetsRole};
+    use threshold_types::role::{Role, TwoSetsRole};
     use execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,
     };

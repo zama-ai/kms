@@ -960,10 +960,10 @@ mod test {
         use algebra::{
             base_ring::{Z128, Z64},
             galois_rings::degree_4::ResiduePolyF4Z128,
-            role::Role,
             sharing::share::Share,
         };
         use std::num::Wrapping;
+        use threshold_types::role::Role;
 
         #[test]
         fn test_definalizable_z128_round_trip_no_sns() {

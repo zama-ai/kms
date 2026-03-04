@@ -27,7 +27,7 @@ use crate::{
     vault::storage::Storage,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::Empty;

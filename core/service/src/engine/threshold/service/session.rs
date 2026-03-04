@@ -8,7 +8,7 @@ use aes_prng::AesRng;
 // === External Crates ===
 use crate::engine::{context::ContextInfo, utils::MetricedError};
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use algebra::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
+use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 use execution::{
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession},

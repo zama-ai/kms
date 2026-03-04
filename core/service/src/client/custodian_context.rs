@@ -6,7 +6,7 @@ use crate::{
     client::client_wasm::Client,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use kms_grpc::{
     kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
     RequestId,

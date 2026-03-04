@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use aes_prng::AesRng;
+use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
-    role::Role,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 

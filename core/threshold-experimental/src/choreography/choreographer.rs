@@ -5,7 +5,7 @@ use crate::algebra::levels::{LevelEll, LevelKsw};
 use crate::algebra::ntt::N65536;
 use crate::bgv::basics::{LevelEllCiphertext, PublicKey};
 
-use algebra::role::Role;
+use threshold_types::role::Role;
 use networking::choreography_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,

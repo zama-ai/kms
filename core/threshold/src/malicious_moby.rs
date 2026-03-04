@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tonic::transport::server::Router;
 
 use crate::grpc::server::{ChoreoRoutingHelper, SecureGrpcChoreography};
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,

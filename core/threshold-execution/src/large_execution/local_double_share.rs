@@ -11,16 +11,14 @@ use crate::{
     communication::broadcast::{Broadcast, SyncReliableBroadcast},
     runtime::sessions::large_session::LargeSessionHandles,
 };
-use algebra::{
-    role::Role,
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-};
+use algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence};
 use async_trait::async_trait;
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use num_integer::div_ceil;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use threshold_types::protocol::ProtocolDescription;
+use threshold_types::role::Role;
 use tracing::instrument;
 
 pub(crate) const LOCAL_DOUBLE_MAX_ITER: usize = 30;
@@ -409,19 +407,19 @@ pub(crate) mod tests {
     use threshold_types::network::NetworkMode;
 
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        role::Role,
-        sharing::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    };
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashSet;
+    use threshold_types::role::Role;
 
     async fn test_ldl_strategies<
         Z: RingWithExceptionalSequence + Derive + ErrorCorrect + Invert,

@@ -1,5 +1,5 @@
 use aes_prng::AesRng;
-use algebra::role::Role;
+use threshold_types::role::Role;
 use algebra::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
 use algebra::sharing::share::Share;
 use algebra::structure_traits::RingWithExceptionalSequence;

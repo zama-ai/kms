@@ -9,10 +9,10 @@ use common::load_and_unversionize;
 use aes_prng::AesRng;
 use algebra::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    role::Role,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring},
 };
+use threshold_types::role::Role;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
