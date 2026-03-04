@@ -1645,7 +1645,7 @@ mod tests {
 
     // ── Tests for remove_old_keys_for_0_13_20 ──
 
-    /// Test that base-path keys are deleted when epoch counterparts exist (threshold)
+    /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (threshold)
     pub async fn test_remove_old_keys_for_0_13_20_threshold<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
@@ -1661,16 +1661,6 @@ mod tests {
 
         let data_1 = vec![1, 2, 3];
         let data_2 = vec![4, 5, 6];
-
-        // Store at base path
-        storage
-            .store_bytes(&data_1, &key_id_1, &data_type)
-            .await
-            .unwrap();
-        storage
-            .store_bytes(&data_2, &key_id_2, &data_type)
-            .await
-            .unwrap();
 
         // Store at legacy epoch (so keys appear in all_data_ids_at_epoch)
         storage
@@ -1696,22 +1686,28 @@ mod tests {
             .await
             .unwrap();
 
-        // Base-path keys should be deleted
-        assert!(!storage.data_exists(&key_id_1, &data_type).await.unwrap());
-        assert!(!storage.data_exists(&key_id_2, &data_type).await.unwrap());
-
-        // Epoch data should still exist at both epochs
-        assert!(storage
+        // Legacy epoch keys should be deleted
+        assert!(!storage
             .data_exists_at_epoch(&key_id_1, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
             .await
             .unwrap());
+        assert!(!storage
+            .data_exists_at_epoch(&key_id_2, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
+
+        // DEFAULT_EPOCH_ID data should still exist
         assert!(storage
             .data_exists_at_epoch(&key_id_1, &DEFAULT_EPOCH_ID, &data_type)
             .await
             .unwrap());
+        assert!(storage
+            .data_exists_at_epoch(&key_id_2, &DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
     }
 
-    /// Test that base-path keys are deleted when epoch counterparts exist (centralized)
+    /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (centralized)
     pub async fn test_remove_old_keys_for_0_13_20_centralized<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
@@ -1722,10 +1718,7 @@ mod tests {
         let data_type = PrivDataType::FhePrivateKey.to_string();
         let data = vec![42, 43, 44];
 
-        storage
-            .store_bytes(&data, &key_id, &data_type)
-            .await
-            .unwrap();
+        // Store at legacy epoch and DEFAULT_EPOCH_ID
         storage
             .store_bytes_at_epoch(&data, &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
             .await
@@ -1739,7 +1732,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
+        // Legacy epoch key should be deleted
+        assert!(!storage
+            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
+        // DEFAULT_EPOCH_ID data should still exist
         assert!(storage
             .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
             .await
@@ -1755,7 +1753,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Test that base-path keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
+    /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
     pub async fn test_remove_old_keys_for_0_13_20_skips_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
@@ -1768,11 +1766,7 @@ mod tests {
         let data_type = PrivDataType::FheKeyInfo.to_string();
         let data = vec![9, 8, 7];
 
-        // Store at base path and legacy epoch, but NOT at DEFAULT_EPOCH_ID
-        storage
-            .store_bytes(&data, &key_id, &data_type)
-            .await
-            .unwrap();
+        // Store at legacy epoch only, NOT at DEFAULT_EPOCH_ID
         storage
             .store_bytes_at_epoch(&data, &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
             .await
@@ -1782,8 +1776,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Base-path key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
-        assert!(storage.data_exists(&key_id, &data_type).await.unwrap());
+        // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
+        assert!(storage
+            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+            .await
+            .unwrap());
     }
 
     // RAM storage tests — remove_old_keys_for_0_13_20
