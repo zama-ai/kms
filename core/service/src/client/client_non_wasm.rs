@@ -1,17 +1,19 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::cryptography::signatures::recover_address_from_ext_signature;
+use crate::cryptography::signatures::{recover_address_from_ext_signature, PublicSigKey};
 use crate::vault::storage::{
     crypto_material::{
-        get_client_signing_key, get_client_verification_key, get_core_verification_key,
+        get_client_signing_key, get_client_verification_key, get_core_verification_keys,
     },
     Storage, StorageReader,
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use attestation_doc_validation::nsm::Hash;
 use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
-use std::collections::HashMap;
+use kms_grpc::ContextId;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -53,31 +55,27 @@ impl Client {
         params: &DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
-        let pks = try_join_all(pub_storages.iter().map(|(party_id, cur_storage)| {
-            get_core_verification_key(cur_storage).map_ok(|pk| (*party_id, pk))
-        }))
-        .await?
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-
-        let pks_unique_count = pks.values().unique().count();
-
-        if pks_unique_count != pks.len() {
-            return Err(anyhow_error_and_log(format!(
-                "Duplicate public keys present in map: {} unique, {} total",
-                pks_unique_count,
-                pks.len()
-            )));
+        let mut verf_keys: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::new();
+        for storage in pub_storages.values() {
+            let pks = get_core_verification_keys(storage).await?;
+            for (cur_context_id, cur_pk) in pks {
+                if let Some(existing_pks) = verf_keys.get_mut(&cur_context_id) {
+                    existing_pks.insert(cur_pk);
+                } else {
+                    verf_keys.insert(cur_context_id, HashSet::from_iter([cur_pk]));
+                }
+            }
         }
 
         let client_pk = get_client_verification_key(&client_storage).await?;
         let client_sk = get_client_signing_key(&client_storage).await?;
 
         Ok(Client::new(
-            pks,
+            verf_keys,
             client_pk.address(),
             Some(client_sk),
             *params,
+            servers,
             decryption_mode,
         ))
     }

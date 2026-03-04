@@ -14,7 +14,7 @@ use crate::{
 use aes_prng::AesRng;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -392,7 +392,7 @@ pub async fn get_core_signing_keys<S: StorageReader>(
 /// Returns an error if the storage operation fails.
 pub async fn get_core_verification_keys<S: StorageReader>(
     storage: &S,
-) -> anyhow::Result<HashMap<RequestId, PublicSigKey>> {
+) -> anyhow::Result<HashMap<ContextId, PublicSigKey>> {
     read_all_data_versioned(storage, &PubDataType::VerfKey.to_string())
         .await
         .map_err(|e| {
@@ -410,18 +410,18 @@ pub async fn get_core_verification_keys<S: StorageReader>(
 /// * `storage` - The public storage backend containing verification keys
 ///
 /// # Returns
-/// A map of `RequestId` to `alloy_primitives::Address` for all verification keys in storage.
+/// A HashSet of `ContextId`s to `alloy_primitives::Address` for all verification keys in storage.
 ///
 /// # Errors
 /// Returns an error if the storage operation fails or if addresses cannot be derived from the verification keys.
 pub async fn get_core_addresses<S: StorageReader>(
     storage: &S,
-) -> anyhow::Result<Vec<alloy_primitives::Address>> {
+) -> anyhow::Result<HashMap<ContextId, alloy_primitives::Address>> {
     let verf_keys = get_core_verification_keys(storage).await?;
     Ok(verf_keys
         .into_iter()
         .map(|(req_id, pk)| pk.address())
-        .collect::<Vec<_>>())
+        .collect())
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {

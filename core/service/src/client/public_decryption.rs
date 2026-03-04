@@ -55,6 +55,7 @@ impl Client {
         &self,
         request: Option<PublicDecryptionRequest>,
         agg_resp: &[PublicDecryptionResponse],
+        amount_servers: usize,
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         use crate::engine::validation::select_most_common_public_dec;
@@ -63,6 +64,7 @@ impl Client {
             self.get_server_pks()?,
             request,
             agg_resp,
+            amount_servers,
             min_agree_count,
         )?;
 
