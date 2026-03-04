@@ -18,46 +18,28 @@ async-trait.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bc2wrap.workspace = true
-bincode.workspace = true
-cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-const_format.workspace = true
-crypto-bigint = { workspace = true, optional = true }
 dashmap.workspace = true
-derive_more.workspace = true
 error-utils.workspace = true
 execution.workspace = true
 futures.workspace = true
 futures-util.workspace = true
-g2p.workspace = true
 getrandom.workspace = true
-hashing.workspace = true
-hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
-mockall.workspace = true
-ndarray.workspace = true
 networking.workspace = true
-num-integer.workspace = true
-num-traits.workspace = true
 observability = { workspace = true, optional = true }
-oid-registry.workspace = true
 opentelemetry = { workspace = true, optional = true }
 paste.workspace = true
 peak_alloc = { workspace = true, optional = true }
-prost.workspace = true # TODO(dp): still needed here?
 rand.workspace = true
-rayon.workspace = true
 rcgen = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 session-id.workspace = true
-sha2.workspace = true
-sha3.workspace = true
-statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 tfhe = { workspace = true, features = [
@@ -67,7 +49,6 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tfhe-csprng.workspace = true
-tfhe-versionable.workspace = true
 tfhe-zk-pok = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
     "sync",
@@ -78,7 +59,6 @@ tokio = { workspace = true, features = [
 tokio-rustls = { workspace = true, optional = true }
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
-tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 threshold-types.workspace = true
@@ -109,7 +89,7 @@ threshold-fhe = { workspace = true, features = ["testing"] }
 tracing-test.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "opentelemetry", "prost"]
+ignored = ["getrandom", "opentelemetry"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
@@ -210,7 +190,7 @@ default = ["non-wasm", "extension_degree_4"]
 testing = ["dep:tokio", "non-wasm"]
 slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 # TODO(dp): still needed?
-experimental = ["dep:crypto-bigint"]
+experimental = []
 templating = ["minijinja"]
 choreographer = ["malicious_strategies", "threshold-types/choreographer", "networking/choreographer", "execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
@@ -229,7 +209,6 @@ non-wasm = [
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
-    "dep:tonic-tls",
     "dep:backoff",
     "dep:tower",
     "dep:tower-http",
