@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "TODO(dp): proper descr"
+description = "Provides networking for all threshold network components. GRPC, sessions, TLS."
 
 [dependencies]
 algebra.workspace = true

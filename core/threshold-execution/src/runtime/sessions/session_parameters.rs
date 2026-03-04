@@ -10,6 +10,7 @@ use std::collections::HashSet;
 /// Everything related to ddec should probably stay
 /// on Tokio as messages are small, but everything
 /// related to DKG should be sent to rayon
+// TODO(dp): If this moved to threshold-types I could perhaps break the circular dependency in network tests. OTOH there'd still be the issue of NetworkValue. :/
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum DeSerializationRunTime {
     Tokio,

@@ -1,13 +1,12 @@
 use super::ggen::gnetworking_client::GnetworkingClient;
-use observability::telemetry::ContextPropagator;
-use std::{collections::HashMap, time::Duration};
-use tokio::task::JoinSet;
-use tonic::{service::interceptor::InterceptedService, transport::Channel, Status};
-// TODO(dp): problematic.
 use crate::grpc::HealthTag;
 use algebra::role::RoleTrait;
 use error_utils::anyhow_error_and_log;
+use observability::telemetry::ContextPropagator;
+use std::{collections::HashMap, time::Duration};
 use threshold_types::party::Identity;
+use tokio::task::JoinSet;
+use tonic::{service::interceptor::InterceptedService, transport::Channel, Status};
 
 pub struct HealthCheckSession<R: RoleTrait> {
     /// My own [`Identity`]

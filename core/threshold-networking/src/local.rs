@@ -218,7 +218,6 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         )
     }
 
-    // TODO(dp): is this for tests only? Refactor out to free standing function and move to some test-utils?
     async fn get_timeout_current_round(&self) -> Instant {
         // initialize init_time on first access
         // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.

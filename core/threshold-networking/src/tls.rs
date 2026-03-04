@@ -1,4 +1,3 @@
-// TODO(dp): problematic.
 use session_id::SessionId;
 use threshold_types::party::MpcIdentity;
 
