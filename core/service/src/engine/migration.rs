@@ -38,7 +38,7 @@ where
 {
     migrate_fhe_keys_v0_12_to_v0_13(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
-        migrate_legacy_prss(priv_storage, &LEGACY_DEFAULT_EPOCH_ID).await?;
+        migrate_legacy_prss(priv_storage).await?;
     }
     Ok(())
 }
@@ -209,10 +209,7 @@ where
 /// by using the default value for the epoch ID.
 /// It then converts the old PRSSSetup data into the new PRSSSetupCombined format and stores it back in storage under the new epoch-aware path.
 #[expect(deprecated)]
-async fn migrate_legacy_prss<PrivS>(
-    priv_storage: &mut PrivS,
-    epoch_id: &EpochId,
-) -> anyhow::Result<()>
+async fn migrate_legacy_prss<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
 where
     PrivS: StorageExt + Sync + Send,
 {
@@ -290,7 +287,7 @@ so there is no legacy PRSS state to migrate.",
             };
             store_versioned_at_request_id(
                 priv_storage,
-                &(*epoch_id).into(),
+                &(*LEGACY_DEFAULT_EPOCH_ID).into(),
                 &new_prss,
                 &PrivDataType::PrssSetupCombined.to_string(),
             )
@@ -305,7 +302,7 @@ so there is no legacy PRSS state to migrate.",
                 .await?;
             tracing::info!(
                 "Successfully converted legacy PRSS Setup from storage for epoch ID {}.",
-                (*DEFAULT_EPOCH_ID)
+                (*LEGACY_DEFAULT_EPOCH_ID)
             );
         }
         (Err(e), Ok(_)) => tracing::error!("Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"),
@@ -1087,9 +1084,7 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID)
-            .await
-            .unwrap();
+        migrate_legacy_prss(&mut storage).await.unwrap();
 
         // Verify PrssSetupCombined was created at the legacy epoch ID (where we asked it to store)
         let legacy_epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
@@ -1142,17 +1137,13 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID)
-            .await
-            .unwrap();
+        migrate_legacy_prss(&mut storage).await.unwrap();
 
         // Write fresh legacy data again
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
 
         // Second migration should skip (PrssSetupCombined already exists)
-        migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID)
-            .await
-            .unwrap();
+        migrate_legacy_prss(&mut storage).await.unwrap();
 
         // PrssSetupCombined should still exist
         let epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
@@ -1187,7 +1178,7 @@ mod tests {
         let threshold = 1u8;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        let result = migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID).await;
+        let result = migrate_legacy_prss(&mut storage).await;
         assert!(result.is_ok());
         assert!(logs_contain("Failed to read both legacy PRSS Z128 and Z64"));
     }
@@ -1218,7 +1209,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID).await;
+        let result = migrate_legacy_prss(&mut storage).await;
         assert!(result.is_ok());
         assert!(logs_contain("Failed to read legacy PRSS Z64 from file"));
     }
@@ -1248,7 +1239,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss(&mut storage, &LEGACY_DEFAULT_EPOCH_ID).await;
+        let result = migrate_legacy_prss(&mut storage).await;
         assert!(result.is_ok());
         assert!(logs_contain("Failed to read legacy PRSS Z128 from file"));
     }
