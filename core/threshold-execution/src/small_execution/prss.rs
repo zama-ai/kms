@@ -1057,7 +1057,6 @@ mod tests {
     use crate::small_execution::agree_random::DSEP_AR;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
-    use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::tfhe_internals::utils::expanded_encrypt;
     use crate::{
@@ -1072,6 +1071,7 @@ mod tests {
     use aes_prng::AesRng;
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        randomness_check::execute_all_randomness_tests_loose,
         role::Role,
         sharing::{
             shamir::{RevealOp, ShamirSharings},

@@ -7736,6 +7736,7 @@ version = "0.13.10-rc.0"
 dependencies = [
  "aes-prng",
  "anyhow",
+ "bc2wrap",
  "error-utils",
  "g2p",
  "itertools 0.14.0",
@@ -7748,6 +7749,8 @@ dependencies = [
  "rstest",
  "serde",
  "sha3",
+ "statrs",
+ "strum",
  "tfhe-versionable",
  "threshold-hashing",
  "tracing",

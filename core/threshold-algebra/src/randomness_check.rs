@@ -5,10 +5,10 @@ use statrs::function::{
     erf,
     gamma::{gamma, gamma_li},
 };
-use strum::IntoEnumIterator;
 use strum::EnumIter;
+use strum::IntoEnumIterator;
 
-use algebra::structure_traits::Ring;
+use crate::structure_traits::Ring;
 
 const SAMPLE_COUNT: usize = 100; // inverse of significance level
 const SIGNIFICANCE_LEVEL: f64 = 1f64 / (SAMPLE_COUNT as f64);
@@ -246,11 +246,11 @@ mod tests {
     use itertools::Itertools;
     use rand::{RngCore, SeedableRng};
 
-    use crate::tests::randomness_check::{
+    use super::{
         execute_all_randomness_tests_tight, igamc, ring_monobit_test, ring_runs_test, runs_test,
         NUM_STD_DEV_NIST, SIGNIFICANCE_LEVEL,
     };
-    use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Sample};
+    use crate::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Sample};
 
     use super::monobit_test;
 

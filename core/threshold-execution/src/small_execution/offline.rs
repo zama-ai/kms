@@ -418,7 +418,6 @@ mod test {
     use crate::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
-    use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
         network_value::BroadcastValue,
         {
@@ -437,6 +436,7 @@ mod test {
     };
     use algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        randomness_check::execute_all_randomness_tests_loose,
         role::Role,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
