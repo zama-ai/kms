@@ -416,9 +416,9 @@ mod test {
     use crate::small_execution::agree_random::RobustSecureAgreeRandom;
     use crate::small_execution::offline::reconstruct_d_values;
     use crate::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
-    use crate::tests::helper::testing::get_networkless_base_session_for_parties; // TODO(dp): fix this
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters}; // TODO(dp): fix this
-    use crate::tests::randomness_check::execute_all_randomness_tests_loose; // TODO(dp): fix this
+    use crate::tests::helper::testing::get_networkless_base_session_for_parties;
+    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
         network_value::BroadcastValue,
         {

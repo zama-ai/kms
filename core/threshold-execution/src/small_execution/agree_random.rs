@@ -625,8 +625,8 @@ mod tests {
         AgreeRandom, AgreeRandomFromShare, DummyAgreeRandom, PassiveSecureAgreeRandom,
         RobustRealAgreeRandom, RobustSecureAgreeRandom,
     };
-    use crate::tests::helper::testing::get_networkless_base_session_for_parties; // TODO(dp): fix this
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters}; // TODO(dp): fix this
+    use crate::tests::helper::testing::get_networkless_base_session_for_parties;
+    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use threshold_types::{
         commitment::{
             commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
