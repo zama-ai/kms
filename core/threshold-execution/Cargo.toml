@@ -5,8 +5,7 @@ edition.workspace = true
 publish.workspace = true
 authors.workspace = true
 license.workspace = true
-# TODO(dp): write a proper description
-description = "Execution"
+description = "Execution runtime for MPC protocols, including distributed key generation, secret resharing, decryption, and reconstruction."
 
 [dependencies]
 aes.workspace = true
