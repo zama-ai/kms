@@ -395,7 +395,7 @@ where
     // sanity check the public materials
     let entries: Vec<_> = key_info_versioned
         .iter()
-        .map(|((id, _), info)| (*id, info.meta_data.pub_data_types()))
+        .map(|((id, _), info)| (*id, info.meta_data.clone()))
         .collect();
     sanity_check_public_materials(&public_storage, &entries).await?;
 
