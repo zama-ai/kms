@@ -46,7 +46,7 @@ use algebra::{
     },
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
-use error_utils::anyhow_error_and_log; // TODO(dp): extract own crate
+use error_utils::anyhow_error_and_log;
 
 use super::{
     parameters::{DKGParams, DKGParamsBasics},

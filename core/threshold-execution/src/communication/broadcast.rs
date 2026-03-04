@@ -626,9 +626,8 @@ impl Broadcast for SyncReliableBroadcast {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // TODO(dp): do we really need this?
-    // #[cfg(feature = "slow_tests")]
-    // use crate::malicious_execution::communication::malicious_broadcast::MaliciousBroadcastSenderEcho;
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::communication::malicious_broadcast::MaliciousBroadcastSenderEcho;
     use crate::malicious_execution::communication::malicious_broadcast::{
         MaliciousBroadcastDrop, MaliciousBroadcastSender,
     };
@@ -911,18 +910,17 @@ mod tests {
         .await;
     }
 
-    // TODO(dp): Sort out "slow_tests"
-    // #[cfg(feature = "slow_tests")]
-    // #[tokio::test]
-    // async fn test_malicious_sender_echo_broadcast() {
-    //     let malicious_strategy = MaliciousBroadcastSenderEcho::default();
-    //     let params = TestingParameters::init(4, 1, &[0], &[], &[], false, Some(1 + 3));
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    async fn test_malicious_sender_echo_broadcast() {
+        let malicious_strategy = MaliciousBroadcastSenderEcho::default();
+        let params = TestingParameters::init(4, 1, &[0], &[], &[], false, Some(1 + 3));
 
-    //     test_broadcast_from_all_w_corrupt_set_update_strategies::<
-    //         ResiduePolyF4Z128,
-    //         { ResiduePolyF4Z128::EXTENSION_DEGREE },
-    //         _,
-    //     >(params, malicious_strategy)
-    //     .await;
-    // }
+        test_broadcast_from_all_w_corrupt_set_update_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(params, malicious_strategy)
+        .await;
+    }
 }

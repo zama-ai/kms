@@ -355,7 +355,7 @@ mod tests {
     use tfhe::{prelude::FheDecrypt, ConfigBuilder, FheUint8};
     use tfhe_csprng::generators::SoftwareRandomGenerator;
 
-    use crate::tests::helper::tests_and_benches::execute_protocol_large; // TODO(dp): fix this
+    use crate::tests::helper::tests_and_benches::execute_protocol_large;
     #[cfg(feature = "slow_tests")]
     use crate::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{

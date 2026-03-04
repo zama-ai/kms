@@ -1,4 +1,3 @@
-// TODO(dp): This type is not in `execution`. It has to move, either into `threshold-execution` or to own crate. :/
 use algebra::role::{Role, RoleTrait, TwoSetsRole};
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};

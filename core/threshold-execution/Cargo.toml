@@ -15,7 +15,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 bc2wrap.workspace = true
 cfg-if.workspace = true
-clap = { workspace = true, features = ["derive", "env"] } # TODO(dp): this crate does not  build any binaries, why is it using clap?
+clap = { workspace = true, features = ["derive", "env"] }
 const_format.workspace = true
 ctor = { workspace = true, optional = true }
 derive_more.workspace = true
@@ -24,7 +24,7 @@ futures-util = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 hashing.workspace = true
 itertools.workspace = true
-mockall.workspace = true # TODO(dp): isn't this a testing utility?
+mockall.workspace = true
 ndarray.workspace = true
 networking.workspace = true
 num-integer.workspace = true

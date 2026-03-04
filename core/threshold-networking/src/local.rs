@@ -282,7 +282,7 @@ mod tests {
     use algebra::role::{Role, TwoSetsRole};
     use execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,
-    }; // TODO(dp): Circular.
+    };
     use threshold_types::network::Networking;
 
     use super::*;
