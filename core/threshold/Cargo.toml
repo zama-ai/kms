@@ -189,7 +189,7 @@ harness = false
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["non-wasm", "dep:tokio", "dep:test-utils"]
+testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:test-utils"]
 slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 templating = ["minijinja"]
 choreographer = ["malicious_strategies", "networking/choreographer", "execution/malicious_strategies"]
@@ -197,7 +197,7 @@ measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 
 # put all the dependencies that do not work well with wasm
-# namely libraries that doesn't work on 32-bit architectures
+# namely libraries that don't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
 	"execution/non-wasm",

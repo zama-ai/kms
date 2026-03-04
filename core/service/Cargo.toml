@@ -188,7 +188,7 @@ non-wasm = [
     "dep:x509-parser",
 ]
 slow_tests = ["testing"]
-wasm_tests = ["testing"]
+wasm_tests = ["testing", "execution/extension_degree_4"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
