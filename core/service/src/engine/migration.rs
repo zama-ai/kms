@@ -39,7 +39,7 @@ where
     Ok(())
 }
 
-/// Migrate from 0.13.x to 0.13.10
+/// Migrate from 0.12.x or 0.13.x to 0.13.10
 /// This is disabled for now and should only be enabled in the next version
 ///
 /// This involves removing already migrated FHE key material in the legacy storage location.
@@ -52,8 +52,6 @@ where
 {
     // Ensure old migration is done
     migrate_to_0_13_x(priv_storage, kms_type).await?;
-    // Remove moved keys
-    migrate_fhe_keys_after_0_13_x(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
         // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
         // That is, if a convertion to the PRSSCombined format has already been done, but under the legacy default epoch id
@@ -61,6 +59,8 @@ where
     }
     migrate_context_before_0_13_10(priv_storage).await?;
     migrate_fhe_keys_0_13_x_to_0_13_10(priv_storage, kms_type).await?;
+    // Remove moved keys (keys with legacy ID still remains)
+    migrate_fhe_keys_after_0_13_x(priv_storage, kms_type).await?;
     Ok(())
 }
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
@@ -95,7 +95,7 @@ where
     let data_type_str = data_type.to_string();
 
     // Get the default epoch ID for migrated keys
-    let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+    let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
 
     // Get all key IDs stored in the legacy format (directly under data_type directory)
     let legacy_key_ids = priv_storage.all_data_ids(&data_type_str).await?;
@@ -116,13 +116,13 @@ where
     for key_id in legacy_key_ids {
         // Check if this key already exists in the new epoch-aware format
         if priv_storage
-            .data_exists_at_epoch(&key_id, &default_epoch_id, &data_type_str)
+            .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
             .await?
         {
             tracing::info!(
                 "Key {} already exists at epoch {}, skipping migration",
                 key_id,
-                default_epoch_id
+                legacy_epoch_id
             );
             continue;
         }
@@ -133,13 +133,13 @@ where
 
         // Store the data at the new epoch-aware location
         priv_storage
-            .store_bytes_at_epoch(&data, &key_id, &default_epoch_id, &data_type_str)
+            .store_bytes_at_epoch(&data, &key_id, &legacy_epoch_id, &data_type_str)
             .await?;
 
         tracing::info!(
             "Migrated key {} from legacy format to epoch {}",
             key_id,
-            default_epoch_id
+            legacy_epoch_id
         );
         migrated_count += 1;
     }
@@ -164,19 +164,19 @@ where
     };
     let data_type_str = data_type.to_string();
     // Get the default epoch ID for migrated keys
-    let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+    let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
     let legacy_key_ids = storage.all_data_ids(&data_type_str).await?;
 
     for key_id in legacy_key_ids {
         // Check the converted key indeed exists before removing anything
         if storage
-            .data_exists_at_epoch(&key_id, &default_epoch_id, &data_type_str)
+            .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
             .await?
         {
             // Removes obsolete keys that have already been converted
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
-            tracing::error!("Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion", key_id, default_epoch_id);
+            tracing::error!("Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion", key_id, legacy_epoch_id);
         }
     }
     Ok(())
