@@ -146,7 +146,6 @@ where
     }
 }
 
-// #[cfg(not(feature = "experimental"))] // TODO(dp): figure out why this was not-experimental?
 pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
     EXTENSION_DEGREE,
     execution::small_execution::prss::RobustSecurePrssInit,

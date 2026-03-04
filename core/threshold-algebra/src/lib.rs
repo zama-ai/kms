@@ -10,7 +10,6 @@ pub mod sharing;
 pub mod structure_traits;
 pub mod syndrome;
 
-// TODO(dp): from execution, but used in algebra tests
 /// Trait required for PRSS executions
 pub trait PRSSConversions {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self;
