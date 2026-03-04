@@ -16,9 +16,9 @@ use crate::{
         prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, SecurePRSSState},
     },
 };
-use threshold_types::role::Role;
 use algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence};
 use session_id::SessionId;
+use threshold_types::role::Role;
 
 /// Defines a generic small session
 /// that accepts any arbitrary PRSS strategy

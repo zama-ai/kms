@@ -561,10 +561,10 @@ pub(crate) mod test {
         TestingParameters,
     };
     use algebra::{
-    galois_rings::degree_4::ResiduePolyF4Z128,
-    sharing::shamir::{InputOp, ShamirSharings},
-    structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-};
+        galois_rings::degree_4::ResiduePolyF4Z128,
+        sharing::shamir::{InputOp, ShamirSharings},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+    };
     use threshold_types::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 

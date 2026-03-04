@@ -2,11 +2,11 @@ use crate::runtime::sessions::session_parameters::{
     DeSerializationRunTime, GenericParameterHandles, GenericSessionParameters, ParameterHandles,
 };
 use aes_prng::AesRng;
-use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 use rand::{CryptoRng, Rng, SeedableRng};
 use session_id::SessionId;
 use std::{collections::HashSet, sync::Arc};
 use threshold_types::network::Networking;
+use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
 
 pub type NetworkingImpl<R> = Arc<dyn Networking<R> + Send + Sync>;
 pub type SingleSetNetworkingImpl = NetworkingImpl<Role>;

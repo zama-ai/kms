@@ -20,7 +20,6 @@ use crate::choreography::requests::{
 use aes_prng::AesRng;
 use algebra::base_ring::{Z128, Z64};
 use algebra::galois_rings::common::ResiduePoly;
-use threshold_types::role::Role;
 use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -86,6 +85,7 @@ use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_types::role::Role;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, RoleAssignment},

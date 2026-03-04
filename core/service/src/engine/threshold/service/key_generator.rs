@@ -774,7 +774,6 @@ impl<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >,
     ) -> anyhow::Result<DecompressionKey> {
-        use threshold_types::role::Role;
         use execution::{
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
@@ -783,6 +782,7 @@ impl<
         };
         use itertools::Itertools;
         use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
+        use threshold_types::role::Role;
 
         let output_party = Role::indexed_from_one(INPUT_PARTY_ID);
 

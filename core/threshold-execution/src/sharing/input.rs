@@ -3,7 +3,6 @@ use error_utils::anyhow_error_and_log;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{task::JoinSet, time::timeout_at};
 
-use threshold_types::role::Role;
 use algebra::{
     sharing::{
         shamir::{InputOp, ShamirSharings},
@@ -11,6 +10,7 @@ use algebra::{
     },
     structure_traits::Ring,
 };
+use threshold_types::role::Role;
 
 pub async fn robust_input<Z, S: BaseSessionHandles>(
     session: &mut S,

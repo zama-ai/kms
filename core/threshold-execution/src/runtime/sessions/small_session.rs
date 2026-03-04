@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use aes_prng::AesRng;
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
+use threshold_types::role::Role;
 
 use crate::{
     runtime::sessions::{

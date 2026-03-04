@@ -407,13 +407,13 @@ pub(crate) mod tests {
     use threshold_types::network::NetworkMode;
 
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-};
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+    };
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;

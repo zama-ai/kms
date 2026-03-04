@@ -9,7 +9,6 @@ use crate::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
 use aes_prng::AesRng;
-use threshold_types::role::Role;
 use algebra::sharing::share::Share;
 use execution::runtime::sessions::{
     base_session::BaseSession,
@@ -24,6 +23,7 @@ use session_id::DSEP_SESSION_ID;
 use session_id::{SessionId, SESSION_ID_BYTES};
 use std::collections::HashMap;
 use std::sync::Arc;
+use threshold_types::role::Role;
 
 fn session_id_from_bgv_ct(
     ciphertext: &LevelledCiphertext<LevelEll, N65536>,

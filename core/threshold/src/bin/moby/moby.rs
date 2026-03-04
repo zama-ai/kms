@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the same thing as this `moby` binary, but uses `ExperimentalChoreoRoutingHelper` instead of `DefaultChoreoRoutingHelper`.
     // Is it acceptable to have two binaries? `moby` and also `moby-stairway`? The alternative would be to move the `moby` binary to
     // `threshold-experimental` and build it there.
-    
+
     // Run the server and get the result
     let result = grpc::server::run::<EXTENSION_DEGREE>(&settings, DefaultChoreoRoutingHelper).await;
 

@@ -1,5 +1,4 @@
 use aes_prng::AesRng;
-use threshold_types::role::Role;
 use algebra::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
 use algebra::sharing::share::Share;
 use algebra::structure_traits::RingWithExceptionalSequence;
@@ -18,6 +17,7 @@ use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
 use threshold_experimental::algebra::levels::LevelOne;
+use threshold_types::role::Role;
 
 fn bench_decode_z2(c: &mut Criterion) {
     let degrees = vec![2_usize, 4, 8, 16, 32, 64];

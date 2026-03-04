@@ -26,7 +26,6 @@ use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
     sharing::{shamir::ShamirSharings, share::Share},
 };
-use threshold_types::role::Role;
 use hashing::DomainSep;
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
@@ -41,6 +40,7 @@ use std::{
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
+use threshold_types::role::Role;
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";

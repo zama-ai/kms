@@ -529,10 +529,10 @@ mod tests {
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::get_base_session;
     use algebra::{
-    base_ring::{Z128, Z64},
-    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
-    structure_traits::Zero,
-};
+        base_ring::{Z128, Z64},
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
+        structure_traits::Zero,
+    };
     use paste::paste;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;

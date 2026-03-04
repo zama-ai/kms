@@ -128,10 +128,10 @@ mod tests {
     use crate::bgv::runtime::BGVTestRuntime;
     use crate::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
     use aes_prng::AesRng;
-    use threshold_types::role::Role;
     use execution::runtime::test_runtime::generate_fixed_roles;
     use rand::{RngCore, SeedableRng};
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_bfv_keygen() {

@@ -4,7 +4,6 @@ use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use threshold_types::role::Role;
 use execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, PreprocessorFactory,
 };
@@ -12,6 +11,7 @@ use networking::constants::NETWORK_TIMEOUT_LONG;
 use networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;
 use std::sync::Arc;
+use threshold_types::role::Role;
 use tonic::transport::{server::Router, Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 

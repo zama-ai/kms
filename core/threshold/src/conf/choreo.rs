@@ -4,10 +4,10 @@
 use std::collections::HashMap;
 
 use crate::choreography::choreographer::NetworkTopology;
-use threshold_types::role::Role;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use threshold_types::party::Identity;
+use threshold_types::role::Role;
 use tonic::transport::Uri;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

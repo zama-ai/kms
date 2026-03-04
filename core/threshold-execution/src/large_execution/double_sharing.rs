@@ -232,13 +232,13 @@ pub(crate) mod tests {
         runtime::sessions::large_session::LargeSession,
     };
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
-};
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
+    };
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 

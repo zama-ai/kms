@@ -1,7 +1,6 @@
 use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use threshold_types::role::Role;
 use algebra::sharing::shamir::InputOp;
 use algebra::sharing::shamir::ShamirSharings;
 use algebra::sharing::share::Share;
@@ -19,6 +18,7 @@ use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
 use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

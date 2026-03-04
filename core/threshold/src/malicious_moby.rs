@@ -3,13 +3,13 @@ use std::sync::Arc;
 use tonic::transport::server::Router;
 
 use crate::grpc::server::{ChoreoRoutingHelper, SecureGrpcChoreography};
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
 use execution::online::preprocessing::PreprocessorFactory;
+use threshold_types::role::Role;
 
 use crate::choreography::grpc::GrpcChoreography;
 use execution::{

@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use error_utils::anyhow_error_and_log;
 
 use super::*;
-use threshold_types::role::RoleTrait;
 use constants::{
     NETWORK_TIMEOUT, NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS,
 };
 use threshold_types::network::{NetworkMode, Networking};
+use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -279,11 +279,11 @@ struct LocalTaggedValue {
 
 #[cfg(test)]
 mod tests {
-    use threshold_types::role::{Role, TwoSetsRole};
     use execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,
     };
     use threshold_types::network::Networking;
+    use threshold_types::role::{Role, TwoSetsRole};
 
     use super::*;
     use std::num::Wrapping;

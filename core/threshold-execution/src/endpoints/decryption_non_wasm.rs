@@ -29,8 +29,6 @@ use crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum;
 use crate::{runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions};
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
-#[cfg(any(test, feature = "testing"))]
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
@@ -58,6 +56,8 @@ use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
 use thread_handles::spawn_compute_bound;
+#[cfg(any(test, feature = "testing"))]
+use threshold_types::role::Role;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
@@ -1316,14 +1316,14 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-    base_ring::{Z128, Z64},
-    galois_rings::common::ResiduePoly,
-    sharing::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
-};
+        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
+    };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use test_utils::read_element;

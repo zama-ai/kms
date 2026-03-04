@@ -118,13 +118,13 @@ mod tests {
         },
         RandomPreprocessing,
     };
-use threshold_types::role::Role;
     use algebra::{
-    base_ring::{Z128, Z64},
-    galois_rings::common::ResiduePoly,
-    sharing::shamir::{RevealOp, ShamirSharings},
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
-};
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::shamir::{RevealOp, ShamirSharings},
+        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
+    };
+    use threshold_types::role::Role;
 
     fn check_randomness_reconstruction<const EXTENSION_DEGREE: usize>(
         all_parties_channels: Vec<

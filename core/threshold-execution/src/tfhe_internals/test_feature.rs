@@ -36,7 +36,6 @@ use crate::{
         lwe_key::LweSecretKeyShare, parameters::DkgMode, private_keysets::LweSecretKeyShareEnum,
     },
 };
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
@@ -47,6 +46,7 @@ use algebra::{
     structure_traits::{Ring, RingWithExceptionalSequence},
 };
 use error_utils::anyhow_error_and_log;
+use threshold_types::role::Role;
 
 use super::{
     parameters::{DKGParams, DKGParamsBasics},

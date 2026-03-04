@@ -8,7 +8,6 @@ use std::{
 
 use super::ggen::gnetworking_client::GnetworkingClient;
 use crate::ggen::Status;
-use threshold_types::role::{RoleKind, RoleTrait};
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
@@ -17,6 +16,7 @@ use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use session_id::SessionId;
+use threshold_types::role::{RoleKind, RoleTrait};
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     RwLock,
@@ -686,13 +686,13 @@ mod tests {
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
     use crate::sending_service::NetworkSession;
-    use threshold_types::role::{Role, TwoSetsRole};
     use session_id::SessionId;
     use std::collections::HashMap;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
+    use threshold_types::role::{Role, TwoSetsRole};
 
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]

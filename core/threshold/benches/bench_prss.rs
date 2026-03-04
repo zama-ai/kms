@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use threshold_types::role::Role;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use execution::{
     large_execution::vss::DummyVss,
@@ -22,6 +21,7 @@ use networking::local::LocalNetworkingProducer;
 use rand::SeedableRng;
 use session_id::SessionId;
 use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];

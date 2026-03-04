@@ -12,7 +12,6 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     error_correction::MemoizedExceptionals,
@@ -34,6 +33,7 @@ use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
+use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 

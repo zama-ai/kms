@@ -552,13 +552,13 @@ pub mod tests {
     use std::num::Wrapping;
 
     use crate::online::triple::Triple;
-use threshold_types::role::Role;
     use algebra::{
-    base_ring::{Z128, Z64},
-    galois_fields::gf16::GF16,
-    galois_rings::degree_4::ResiduePolyF4,
-    sharing::share::Share,
-};
+        base_ring::{Z128, Z64},
+        galois_fields::gf16::GF16,
+        galois_rings::degree_4::ResiduePolyF4,
+        sharing::share::Share,
+    };
+    use threshold_types::role::Role;
 
     macro_rules! test_triples {
         ($z:ty) => {

@@ -470,13 +470,13 @@ pub(crate) mod tests {
         sharing::open::{RobustOpen, SecureRobustOpen},
     };
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{ErrorCorrect, Invert, Ring},
-};
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
     use threshold_types::network::NetworkMode;
 
     use aes_prng::AesRng;

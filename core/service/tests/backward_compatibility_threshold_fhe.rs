@@ -12,7 +12,6 @@ use algebra::{
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring},
 };
-use threshold_types::role::Role;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -34,6 +33,7 @@ use rand::{RngCore, SeedableRng};
 use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
+use threshold_types::role::Role;
 
 use crate::common::load_and_unversionize_auxiliary;
 

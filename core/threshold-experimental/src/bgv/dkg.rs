@@ -6,7 +6,6 @@ use crate::{
     bgv::basics::PublicKey,
 };
 use algebra::{sharing::share::Share, structure_traits::FromU128};
-use threshold_types::role::Role;
 use crypto_bigint::{NonZero, U1536};
 use execution::{
     online::triple::{mult_list, open_list},
@@ -14,6 +13,7 @@ use execution::{
 };
 use itertools::Itertools;
 use std::{ops::Mul, sync::Arc};
+use threshold_types::role::Role;
 use tracing::instrument;
 
 #[derive(Clone)]

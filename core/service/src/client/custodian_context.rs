@@ -6,11 +6,11 @@ use crate::{
     client::client_wasm::Client,
 };
 use aes_prng::AesRng;
-use threshold_types::role::Role;
 use kms_grpc::{
     kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
     RequestId,
 };
+use threshold_types::role::Role;
 
 impl Client {
     pub fn new_custodian_context_request(

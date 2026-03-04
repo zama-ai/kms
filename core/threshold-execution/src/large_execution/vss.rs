@@ -1177,14 +1177,14 @@ pub(crate) mod tests {
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use algebra::{
-    bivariate::BivariateEval,
-    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-    sharing::{
+        bivariate::BivariateEval,
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{ErrorCorrect, Invert},
-};
+        structure_traits::{ErrorCorrect, Invert},
+    };
     use futures_util::future::join;
     use rstest::rstest;
     use session_id::SessionId;

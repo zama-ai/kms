@@ -216,8 +216,8 @@ pub fn error_correction<F: Field>(
 
 #[cfg(test)]
 mod tests {
-    use threshold_types::role::Role;
     use std::num::Wrapping;
+    use threshold_types::role::Role;
 
     use aes_prng::AesRng;
     use rand::SeedableRng;

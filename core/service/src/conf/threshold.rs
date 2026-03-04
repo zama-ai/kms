@@ -1,5 +1,4 @@
 use crate::engine::base::derive_request_id;
-use threshold_types::role::Role;
 use alloy_primitives::Address;
 use execution::endpoints::decryption::DecryptionMode;
 use execution::online::preprocessing::redis::RedisConf;
@@ -12,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum_macros::EnumIs;
 use threshold_types::party::Identity;
+use threshold_types::role::Role;
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 

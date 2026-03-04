@@ -423,19 +423,19 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-    poly::Poly,
-    sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
-    structure_traits::{ErrorCorrect, Invert, Ring, Zero},
-};
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        poly::Poly,
+        sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
+        structure_traits::{ErrorCorrect, Invert, Ring, Zero},
+    };
     use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::{collections::HashSet, num::Wrapping};
     use threshold_types::network::NetworkMode;
-    use tracing_test::traced_test;
     use threshold_types::role::Role;
+    use tracing_test::traced_test;
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions

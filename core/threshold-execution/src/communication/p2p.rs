@@ -15,9 +15,9 @@ use crate::{
         large_session::LargeSessionHandles,
     },
 };
-use threshold_types::role::{Role, RoleTrait};
 use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
+use threshold_types::role::{Role, RoleTrait};
 
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.
 /// Returns true if everything is fine.

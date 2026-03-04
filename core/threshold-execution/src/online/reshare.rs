@@ -1235,9 +1235,9 @@ mod tests {
     };
     use algebra::base_ring::Z128;
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
     use algebra::structure_traits::FromU128;
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
     use std::collections::HashMap;
 

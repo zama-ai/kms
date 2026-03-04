@@ -1070,14 +1070,14 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-    randomness_check::execute_all_randomness_tests_loose,
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        randomness_check::execute_all_randomness_tests_loose,
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{One, Zero},
-};
+        structure_traits::{One, Zero},
+    };
     use futures_util::future::{join, join_all};
     use hashing::hash_element_w_size;
     use rand::SeedableRng;

@@ -17,7 +17,6 @@ use crate::{
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
-use threshold_types::role::Role;
 use kms_grpc::kms::v1::{
     CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
 };
@@ -27,6 +26,7 @@ use rand::SeedableRng;
 use serial_test::serial;
 use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
+use threshold_types::role::Role;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]

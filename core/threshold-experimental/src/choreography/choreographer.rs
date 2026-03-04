@@ -5,7 +5,6 @@ use crate::algebra::levels::{LevelEll, LevelKsw};
 use crate::algebra::ntt::N65536;
 use crate::bgv::basics::{LevelEllCiphertext, PublicKey};
 
-use threshold_types::role::Role;
 use networking::choreography_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
@@ -13,6 +12,7 @@ use networking::choreography_gen::{
 use session_id::SessionId;
 use std::collections::HashMap;
 use threshold_fhe::choreography::choreographer::ChoreoRuntime;
+use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
 use tracing::{instrument, Instrument};

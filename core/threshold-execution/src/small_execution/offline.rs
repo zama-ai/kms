@@ -435,14 +435,14 @@ mod test {
         },
     };
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    randomness_check::execute_all_randomness_tests_loose,
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        randomness_check::execute_all_randomness_tests_loose,
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{ErrorCorrect, Invert, Ring},
-};
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 

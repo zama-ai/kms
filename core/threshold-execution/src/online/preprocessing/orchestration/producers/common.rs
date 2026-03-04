@@ -80,15 +80,15 @@ pub(crate) mod tests {
         runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
     };
     use algebra::{
-    base_ring::{Z128, Z64},
-    galois_rings::common::ResiduePoly,
-    sharing::share::Share,
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
-};
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        sharing::share::Share,
+        structure_traits::{Derive, ErrorCorrect, Invert, Solve},
+    };
     use session_id::SessionId;
     use thread_handles::OsThreadGroup;
     use threshold_types::network::NetworkMode;
-use threshold_types::role::Role;
+    use threshold_types::role::Role;
 
     pub type TripleChannels<R> = (Vec<Sender<Vec<Triple<R>>>>, Vec<Receiver<Vec<Triple<R>>>>);
     pub type ShareChannels<R> = (Vec<Sender<Vec<Share<R>>>>, Vec<Receiver<Vec<Share<R>>>>);

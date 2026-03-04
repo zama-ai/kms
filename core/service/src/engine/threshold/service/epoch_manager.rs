@@ -24,7 +24,6 @@
 //! they are not part of one of the two contexts.
 
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_types::role::TwoSetsRole;
 use alloy_dyn_abi::Eip712Domain;
 use execution::{
     endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
@@ -54,6 +53,7 @@ use kms_grpc::{
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_types::network::NetworkMode;
+use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};

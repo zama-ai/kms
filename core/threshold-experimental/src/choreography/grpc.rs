@@ -21,7 +21,6 @@ use crate::bgv::utils::{gen_key_set, transfer_pub_key};
 use crate::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
 use crate::constants::INPUT_PARTY_ID;
 use crate::constants::PLAINTEXT_MODULUS;
-use threshold_types::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::common::ResiduePoly,
@@ -62,6 +61,7 @@ use threshold_fhe::choreography::{
     },
     requests::Status,
 };
+use threshold_types::role::Role;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, RoleAssignment},

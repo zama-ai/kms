@@ -342,7 +342,6 @@ mod tests {
         structure_traits::{ErrorCorrect, Sample, Syndrome},
         PRSSConversions,
     };
-    use threshold_types::role::Role;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
@@ -350,6 +349,7 @@ mod tests {
     use rstest::rstest;
     use std::collections::HashSet;
     use std::num::Wrapping;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_is_zero() {

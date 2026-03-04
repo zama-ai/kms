@@ -213,12 +213,12 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::ResiduePolyF8;
     use algebra::{
-    sharing::{
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
-};
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
+    };
     #[cfg(feature = "extension_degree_8")]
     use ndarray::Ix2;
     use num_integer::div_ceil;

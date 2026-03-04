@@ -700,12 +700,12 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-    sharing::{
+        sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{BaseRing, Ring, Sample},
-};
+        structure_traits::{BaseRing, Ring, Sample},
+    };
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fmt::Display;
@@ -720,7 +720,7 @@ mod tests {
     use tfhe::shortint::PBSParameters;
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use threshold_types::network::NetworkMode;
-use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
+    use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
 
     #[tokio::test]
     async fn reshare_no_error_f4() -> anyhow::Result<()> {

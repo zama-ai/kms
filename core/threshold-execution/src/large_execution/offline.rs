@@ -312,17 +312,17 @@ mod tests {
         small_execution::offline::Preprocessing,
     };
     use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    sharing::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring},
-};
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring},
+    };
     use rstest::rstest;
-    use threshold_types::role::Role;
     use std::collections::HashSet;
     use threshold_types::network::NetworkMode;
+    use threshold_types::role::Role;
 
     async fn test_offline_strategies<
         Z: Derive + Invert + ErrorCorrect,

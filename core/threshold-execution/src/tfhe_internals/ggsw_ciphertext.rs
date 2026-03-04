@@ -381,10 +381,10 @@ mod tests {
     };
     use aes_prng::AesRng;
     use algebra::{
-    galois_rings::degree_4::ResiduePolyF4Z64,
-    sharing::{shamir::InputOp, shamir::ShamirSharings, share::Share},
-    structure_traits::Ring,
-};
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        sharing::{shamir::InputOp, shamir::ShamirSharings, share::Share},
+        structure_traits::Ring,
+    };
     use itertools::Itertools;
     use rand::SeedableRng;
     use tfhe::{
@@ -402,7 +402,7 @@ mod tests {
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
     use threshold_types::network::NetworkMode;
-use threshold_types::role::Role;
+    use threshold_types::role::Role;
 
     use super::{encrypt_constant_ggsw_ciphertext, ggsw_encode_message, GgswCiphertextShare};
 

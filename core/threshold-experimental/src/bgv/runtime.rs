@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use threshold_types::role::Role;
 use networking::local::{LocalNetworking, LocalNetworkingProducer};
 use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
 pub struct BGVTestRuntime {
     pub threshold: u8,

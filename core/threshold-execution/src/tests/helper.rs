@@ -7,10 +7,10 @@ pub mod tests_and_benches {
     use tokio::time::Duration;
 
     use aes_prng::AesRng;
-use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures::Future;
     use rand::SeedableRng;
+    use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use tokio::task::JoinSet;
     use tracing::warn;
 

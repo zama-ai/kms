@@ -1,5 +1,4 @@
 use super::poly::Poly;
-use threshold_types::role::Role;
 use super::sharing::shamir::ShamirSharings;
 use hashing::DomainSep;
 use rand::CryptoRng;
@@ -10,6 +9,7 @@ use std::{
     fmt::Display,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+use threshold_types::role::Role;
 
 pub trait Zero {
     const ZERO: Self;

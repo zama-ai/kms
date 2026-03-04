@@ -334,7 +334,6 @@ impl Monomials for ResiduePoly<Z128, 4> {
 
 #[cfg(test)]
 mod tests {
-    use threshold_types::role::Role;
     use super::*;
     use crate::base_ring::{Z128, Z64};
     use crate::galois_rings::common::{pack_residue_poly, TryFromWrapper};
@@ -352,6 +351,7 @@ mod tests {
     use rstest::rstest;
     use std::collections::HashSet;
     use std::num::Wrapping;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_is_zero() {

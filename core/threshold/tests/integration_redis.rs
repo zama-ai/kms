@@ -3,7 +3,6 @@ use algebra::{
     galois_rings::degree_4::ResiduePolyF4,
     sharing::share::Share,
 };
-use threshold_types::role::Role;
 use ctor::ctor;
 use execution::online::{
     preprocessing::{create_redis_factory, redis::RedisConf, PreprocessorFactory},
@@ -12,6 +11,7 @@ use execution::online::{
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
+use threshold_types::role::Role;
 
 #[cfg(feature = "testing")]
 use execution::{

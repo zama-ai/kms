@@ -2,7 +2,6 @@ use crate::algebra::levels::*;
 use crate::algebra::ntt::*;
 use crate::bgv::basics::*;
 use crate::bgv::ddec::keygen_shares;
-use threshold_types::role::Role;
 use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
 use execution::network_value::NetworkValue;
@@ -15,6 +14,7 @@ use std::sync::Arc;
 use tfhe::core_crypto::commons::math::random::RandomGenerator;
 use tfhe::XofSeed;
 use tfhe_csprng::generators::SoftwareRandomGenerator;
+use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::timeout_at;
 

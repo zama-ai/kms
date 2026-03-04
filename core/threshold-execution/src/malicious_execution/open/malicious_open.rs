@@ -8,11 +8,11 @@ use crate::{
     sharing::open::{RobustOpen, SecureRobustOpen},
 };
 use algebra::structure_traits::{ErrorCorrect, Ring};
+use threshold_types::protocol::ProtocolDescription;
 use threshold_types::{
     opening::{ExternalOpeningInfo, OpeningKind},
     role::TwoSetsRole,
 };
-use threshold_types::protocol::ProtocolDescription;
 
 /// Malicious implementation of the [`RobustOpen`] protocol
 /// that simply does nothing
