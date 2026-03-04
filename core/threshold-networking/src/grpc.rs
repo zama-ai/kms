@@ -482,7 +482,6 @@ impl GrpcNetworkingManager {
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
-                    #[cfg(feature = "choreographer")]
                     num_byte_sent: RwLock::new(0),
                 });
 
@@ -511,7 +510,6 @@ impl GrpcNetworkingManager {
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
-                    #[cfg(feature = "choreographer")]
                     num_byte_sent: RwLock::new(0),
                 });
 
@@ -910,7 +908,6 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
-#[cfg(feature = "choreographer")]
 lazy_static::lazy_static! {
     pub static ref NETWORK_RECEIVED_MEASUREMENT: DashMap<SessionId,usize> =
         DashMap::new();
@@ -1072,18 +1069,15 @@ impl Gnetworking for NetworkingImpl {
             tag.round_counter
         );
 
-        #[cfg(feature = "choreographer")]
-        {
-            match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
-                dashmap::Entry::Occupied(mut occupied_entry) => {
-                    let entry = occupied_entry.get_mut();
-                    *entry += request.tag.len() + request.value.len()
-                }
-                dashmap::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(request.tag.len() + request.value.len());
-                }
-            };
-        }
+        match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
+            dashmap::Entry::Occupied(mut occupied_entry) => {
+                let entry = occupied_entry.get_mut();
+                *entry += request.tag.len() + request.value.len()
+            }
+            dashmap::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(request.tag.len() + request.value.len());
+            }
+        };
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {

@@ -192,7 +192,7 @@ slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees
 # TODO(dp): still needed?
 experimental = []
 templating = ["minijinja"]
-choreographer = ["malicious_strategies", "threshold-types/choreographer", "networking/choreographer", "execution/malicious_strategies"]
+choreographer = ["malicious_strategies", "networking/choreographer", "execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 

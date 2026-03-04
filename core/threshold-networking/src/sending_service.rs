@@ -27,7 +27,6 @@ use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
 use super::ggen::SendValueRequest;
-#[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use thread_handles::ThreadHandleGroup;
@@ -440,7 +439,6 @@ pub struct NetworkSession {
     // Set keeping track of all servers that have already completed the session (i.e. servers which we are out-of-sync with)
     pub(crate) completed_parties: Arc<DashSet<RoleKind>>,
     // Measure the number of bytes sent by this session
-    #[cfg(feature = "choreographer")]
     pub(crate) num_byte_sent: RwLock<usize>,
     // Network mode is either async or sync
     pub(crate) network_mode: NetworkMode,
@@ -480,7 +478,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
-        #[cfg(feature = "choreographer")]
         {
             let mut sent = self.num_byte_sent.write().await;
             *sent += tag.len() + value.len();
@@ -640,12 +637,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         self.inner_get_network_mode()
     }
 
-    #[cfg(feature = "choreographer")]
     async fn get_num_byte_sent(&self) -> usize {
         *self.num_byte_sent.read().await
     }
 
-    #[cfg(feature = "choreographer")]
     async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
         if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
             Ok(*num_byte_received)
@@ -940,7 +935,6 @@ mod tests {
             receiving_channels: message_store,
             completed_parties: Arc::new(DashSet::new()),
             round_counter: tokio::sync::RwLock::new(0),
-            #[cfg(feature = "choreographer")]
             num_byte_sent: RwLock::new(0),
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },

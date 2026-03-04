@@ -27,11 +27,8 @@ pub trait Networking<R: RoleTrait> {
 
     async fn get_current_round(&self) -> usize;
 
-    // TODO(dp): Isn't it a bit sketchy to feature gate *trait* methods? Preferable to provide a default impl perhaps?
-    #[cfg(feature = "choreographer")]
     async fn get_num_byte_sent(&self) -> usize;
 
-    #[cfg(feature = "choreographer")]
     async fn get_num_byte_received(&self) -> anyhow::Result<usize>;
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.
