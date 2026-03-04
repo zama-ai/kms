@@ -512,15 +512,12 @@ pub async fn read_all_data_from_all_epochs_versioned<
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<(RequestId, EpochId), T>> {
-    // first read all the PRSS data
-    let epochs = storage
-        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
-        .await?;
+    // first read all the epochs
+    let epochs = storage.all_epoch_ids_for_data(data_type).await?;
 
     // then we know all the epochs, and we can read the data stored under each epoch
     let mut res = HashMap::new();
-    for epoch in epochs {
-        let epoch_id: EpochId = epoch.into();
+    for epoch_id in epochs {
         let id_set = storage.all_data_ids_at_epoch(&epoch_id, data_type).await?;
         for data_id in id_set.iter() {
             if !data_id.is_valid() {
