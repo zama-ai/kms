@@ -69,10 +69,10 @@ where
     Ok(())
 }
 
-/// Migrate to 0.14.0
+/// Migrate to 0.13.20
 /// This should only be activated after 0.13.10 has been released
 #[allow(dead_code)]
-pub async fn migrate_to_0_14_0<PrivS>(
+pub async fn migrate_to_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
 ) -> anyhow::Result<()>
@@ -82,7 +82,7 @@ where
     // Ensure old migration is done
     migrate_to_0_13_10(priv_storage, kms_type).await?;
     // Remove old keys with legacy epoch id.
-    remove_old_keys_for_0_14_0(priv_storage, kms_type).await?;
+    remove_old_keys_for_0_13_20(priv_storage, kms_type).await?;
     Ok(())
 }
 
@@ -90,7 +90,7 @@ where
 /// The migration should be applied to private storage created in v0.12.x,
 /// after the migration the private storage format should follow v0.13.x.
 /// Applying the migration on private storage format in v0.13.x will have no effect.
-/// This function should be removed in 0.14.x.
+/// This function should be removed in 0.13.20.
 ///
 /// In more detail, legacy format (v0.12.x) stores keys at: `<prefix>/<data_type>/<key_id>`.
 /// This function checks for FhePrivateKey (centralized) or FheKeyInfo (threshold) data
@@ -468,7 +468,7 @@ where
 }
 
 /// Remove private keys stored under the legacy epoch ID
-async fn remove_old_keys_for_0_14_0<PrivS>(
+async fn remove_old_keys_for_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
 ) -> anyhow::Result<()>
@@ -1641,10 +1641,10 @@ mod tests {
         test_migrate_fhe_keys_0_13_x_to_0_13_10_idempotent(&mut storage).await;
     }
 
-    // ── Tests for remove_old_keys_for_0_14_0 ──
+    // ── Tests for remove_old_keys_for_0_13_20 ──
 
     /// Test that base-path keys are deleted when epoch counterparts exist (threshold)
-    pub async fn test_remove_old_keys_for_0_14_0_threshold<S: StorageExt + Sync + Send>(
+    pub async fn test_remove_old_keys_for_0_13_20_threshold<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
         let key_id_1 = RequestId::from_str(
@@ -1690,7 +1690,7 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
             .unwrap();
 
@@ -1710,7 +1710,7 @@ mod tests {
     }
 
     /// Test that base-path keys are deleted when epoch counterparts exist (centralized)
-    pub async fn test_remove_old_keys_for_0_14_0_centralized<S: StorageExt + Sync + Send>(
+    pub async fn test_remove_old_keys_for_0_13_20_centralized<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
         let key_id = RequestId::from_str(
@@ -1733,7 +1733,7 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_14_0(storage, KMSType::Centralized)
+        remove_old_keys_for_0_13_20(storage, KMSType::Centralized)
             .await
             .unwrap();
 
@@ -1745,16 +1745,16 @@ mod tests {
     }
 
     /// Test with no legacy epoch keys — nothing to remove
-    pub async fn test_remove_old_keys_for_0_14_0_no_legacy<S: StorageExt + Sync + Send>(
+    pub async fn test_remove_old_keys_for_0_13_20_no_legacy<S: StorageExt + Sync + Send>(
         storage: &mut S,
     ) {
-        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
             .unwrap();
     }
 
     /// Test that base-path keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
-    pub async fn test_remove_old_keys_for_0_14_0_skips_without_new_epoch<
+    pub async fn test_remove_old_keys_for_0_13_20_skips_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
         storage: &mut S,
@@ -1776,7 +1776,7 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_14_0(storage, KMSType::Threshold)
+        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
             .unwrap();
 
@@ -1784,58 +1784,58 @@ mod tests {
         assert!(storage.data_exists(&key_id, &data_type).await.unwrap());
     }
 
-    // RAM storage tests — remove_old_keys_for_0_14_0
+    // RAM storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
     async fn test_remove_old_keys_threshold_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_centralized_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_no_legacy_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_no_legacy(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_skips_without_new_epoch_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
     }
 
-    // File storage tests — remove_old_keys_for_0_14_0
+    // File storage tests — remove_old_keys_for_0_13_20
     #[tokio::test]
     async fn test_remove_old_keys_threshold_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_centralized_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_no_legacy_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_no_legacy(&mut storage).await;
     }
 
     #[tokio::test]
     async fn test_remove_old_keys_skips_without_new_epoch_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
     }
 
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
@@ -2118,25 +2118,25 @@ mod tests {
         #[tokio::test]
         async fn test_remove_old_keys_threshold_s3() {
             let mut storage = create_s3_storage().await;
-            test_remove_old_keys_for_0_14_0_threshold(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
         }
 
         #[tokio::test]
         async fn test_remove_old_keys_centralized_s3() {
             let mut storage = create_s3_storage().await;
-            test_remove_old_keys_for_0_14_0_centralized(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
         }
 
         #[tokio::test]
         async fn test_remove_old_keys_no_legacy_s3() {
             let mut storage = create_s3_storage().await;
-            test_remove_old_keys_for_0_14_0_no_legacy(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_no_legacy(&mut storage).await;
         }
 
         #[tokio::test]
         async fn test_remove_old_keys_skips_without_new_epoch_s3() {
             let mut storage = create_s3_storage().await;
-            test_remove_old_keys_for_0_14_0_skips_without_new_epoch(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
         }
     }
 }
