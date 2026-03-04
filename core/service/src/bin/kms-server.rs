@@ -46,6 +46,10 @@ use tokio_rustls::rustls::{
     version::TLS13,
 };
 
+#[cfg(feature = "heap-profiling")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Parser)]
 #[clap(name = "KMS server")]
 #[clap(
@@ -346,6 +350,9 @@ fn main() -> anyhow::Result<()> {
 /// Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file.
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 async fn main_exec() -> anyhow::Result<()> {
+    #[cfg(feature = "heap-profiling")]
+    kms_lib::heap_profiling::install_sigusr1_handler();
+
     let args = KmsArgs::parse();
     let (mut core_config, tracer_provider, meter_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;

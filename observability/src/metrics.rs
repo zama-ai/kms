@@ -80,6 +80,10 @@ pub struct CoreMetrics {
     process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>, // CPU load for the current process in percentage
     total_memory_gauge: TaggedMetric<Gauge<u64>>,      // Total memory available
     process_memory_gauge: TaggedMetric<Gauge<u64>>,    // Memory usage for the current process
+    #[cfg(feature = "jemalloc-stats")]
+    jemalloc_allocated_gauge: TaggedMetric<Gauge<u64>>, // Bytes actively allocated by the application (via jemalloc)
+    #[cfg(feature = "jemalloc-stats")]
+    jemalloc_resident_gauge: TaggedMetric<Gauge<u64>>, // Bytes mapped by jemalloc from OS
     cpu_load_gauge: TaggedMetric<Gauge<f64>>, // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     // Trace guard for file-based logging
@@ -146,6 +150,12 @@ impl CoreMetrics {
             format!("{}_total_memory", config.prefix).into();
         let process_memory_metric: Cow<'static, str> =
             format!("{}_process_memory_usage", config.prefix).into();
+        #[cfg(feature = "jemalloc-stats")]
+        let jemalloc_allocated_metric: Cow<'static, str> =
+            format!("{}_jemalloc_allocated", config.prefix).into();
+        #[cfg(feature = "jemalloc-stats")]
+        let jemalloc_resident_metric: Cow<'static, str> =
+            format!("{}_jemalloc_resident", config.prefix).into();
         let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
         let memory_usage_metric: Cow<'static, str> =
             format!("{}_memory_usage", config.prefix).into();
@@ -318,6 +328,26 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         process_memory_gauge.record(0, &[]);
 
+        #[cfg(feature = "jemalloc-stats")]
+        let jemalloc_allocated_gauge = meter
+            .u64_gauge(jemalloc_allocated_metric)
+            .with_description("Bytes actively allocated by the application (via jemalloc)")
+            .with_unit("bytes")
+            .build();
+        #[cfg(feature = "jemalloc-stats")]
+        //Record 0 just to make sure the gauge is exported
+        jemalloc_allocated_gauge.record(0, &[]);
+
+        #[cfg(feature = "jemalloc-stats")]
+        let jemalloc_resident_gauge = meter
+            .u64_gauge(jemalloc_resident_metric)
+            .with_description("Bytes mapped by jemalloc from OS (resident set)")
+            .with_unit("bytes")
+            .build();
+        #[cfg(feature = "jemalloc-stats")]
+        //Record 0 just to make sure the gauge is exported
+        jemalloc_resident_gauge.record(0, &[]);
+
         let cpu_gauge = meter
             .f64_gauge(cpu_load_metric)
             .with_description("CPU load for KMS (averaged over all CPUs)")
@@ -358,6 +388,10 @@ impl CoreMetrics {
             total_memory_gauge: TaggedMetric::new(total_memory_gauge),
             process_cpu_usage_gauge: TaggedMetric::new(process_cpu_usage_gauge),
             process_memory_gauge: TaggedMetric::new(process_memory_gauge),
+            #[cfg(feature = "jemalloc-stats")]
+            jemalloc_allocated_gauge: TaggedMetric::new(jemalloc_allocated_gauge),
+            #[cfg(feature = "jemalloc-stats")]
+            jemalloc_resident_gauge: TaggedMetric::new(jemalloc_resident_gauge),
             trace_guard: Arc::new(Mutex::new(None)),
         }
     }
@@ -597,6 +631,22 @@ impl CoreMetrics {
         self.process_memory_gauge
             .metric
             .record(usage, &self.process_memory_gauge.with_tags(&[]));
+    }
+
+    /// Record jemalloc's active allocation size (stats.allocated)
+    #[cfg(feature = "jemalloc-stats")]
+    pub fn record_jemalloc_allocated(&self, usage: u64) {
+        self.jemalloc_allocated_gauge
+            .metric
+            .record(usage, &self.jemalloc_allocated_gauge.with_tags(&[]));
+    }
+
+    /// Record jemalloc's resident memory size (stats.resident)
+    #[cfg(feature = "jemalloc-stats")]
+    pub fn record_jemalloc_resident(&self, usage: u64) {
+        self.jemalloc_resident_gauge
+            .metric
+            .record(usage, &self.jemalloc_resident_gauge.with_tags(&[]));
     }
 }
 

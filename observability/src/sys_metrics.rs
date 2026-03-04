@@ -3,6 +3,8 @@ use std::{cmp::max, ffi::OsStr, fs, time::Duration};
 use sysinfo::{
     ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, MINIMUM_CPU_UPDATE_INTERVAL,
 };
+#[cfg(feature = "jemalloc-stats")]
+use tikv_jemalloc_ctl::stats as jemalloc_stats;
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
@@ -79,6 +81,28 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             // Update socat file descriptor count
             let socat_count = get_socat_file_descriptor_count(&system);
             METRICS.record_socat_file_descriptors(socat_count);
+
+            // Jemalloc allocator stats
+            #[cfg(feature = "jemalloc-stats")]
+            {
+                // Advance jemalloc's stats epoch to get fresh values
+                match tikv_jemalloc_ctl::epoch::mib() {
+                    Ok(epoch) => {
+                        if let Err(e) = epoch.advance() {
+                            tracing::debug!("jemalloc epoch advance failed: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("jemalloc epoch mib lookup failed: {e}");
+                    }
+                }
+                if let Ok(allocated) = jemalloc_stats::allocated::read() {
+                    METRICS.record_jemalloc_allocated(allocated as u64);
+                }
+                if let Ok(resident) = jemalloc_stats::resident::read() {
+                    METRICS.record_jemalloc_resident(resident as u64);
+                }
+            }
 
             // Ensure we sleep at least the time needed to accurately update CPU usage, as recommended by sysinfo documentation
             tokio::time::sleep(max(refresh_interval, MINIMUM_CPU_UPDATE_INTERVAL)).await;

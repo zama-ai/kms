@@ -35,6 +35,9 @@ pub mod testing;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
 
+#[cfg(feature = "heap-profiling")]
+pub mod heap_profiling;
+
 #[cfg(feature = "non-wasm")]
 pub use kms_grpc::utils::tonic_result::BoxedStatus;
 

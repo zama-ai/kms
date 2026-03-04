@@ -8,6 +8,10 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS k
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
 ARG LTO_RELEASE=release
 ARG APP_CACHE_DIR=kms
+# Extra Cargo features to enable, comma-separated (e.g., "heap-profiling" for jemalloc profiling)
+ARG CARGO_EXTRA_FEATURES=""
+ARG RUSTFLAGS=""
+ENV RUSTFLAGS=${RUSTFLAGS}
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
@@ -24,11 +28,11 @@ COPY docker ./docker
 RUN mkdir -p /app/kms/core/service/bin
 
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked,id=cargo-target-${LTO_RELEASE} \
     cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init --bin kms-custodian -F insecure && \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked,id=cargo-target-${LTO_RELEASE} \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init --bin kms-custodian -F insecure ${CARGO_EXTRA_FEATURES:+-F "$CARGO_EXTRA_FEATURES"} && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F threshold-fhe/testing -F insecure && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
