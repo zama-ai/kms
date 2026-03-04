@@ -79,7 +79,7 @@ k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 lazy_static.workspace = true
 ml-kem.workspace = true
-networking.workspace = true
+networking = { workspace = true, optional = true }
 nom.workspace = true
 observability = { workspace = true, optional = true }
 ordermap.workspace = true
@@ -160,10 +160,10 @@ tracing-test.workspace = true
 default = ["non-wasm"]
 testing = ["dep:tempfile"]
 non-wasm = [
-    "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
+    "networking/non-wasm",
+    "threshold-fhe/non-wasm",
 
-    "dep:thread-handles",
     "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -177,6 +177,7 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
+    "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
     "dep:tonic",

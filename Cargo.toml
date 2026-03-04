@@ -87,7 +87,7 @@ hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", de
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
-networking = { package = "threshold-networking", path = "./core/threshold-networking" }
+networking = { package = "threshold-networking", path = "./core/threshold-networking", default-features = false }
 observability = { path = "./observability" }  # Internal observability module
 session-id = { path = "./core/session-id" }
 test-utils = { path = "./core/test-utils" }

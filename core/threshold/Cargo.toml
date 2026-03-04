@@ -30,7 +30,7 @@ itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
-networking.workspace = true
+networking = { workspace = true, optional = true }
 observability = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
 paste.workspace = true
@@ -201,22 +201,23 @@ malicious_strategies = ["testing"]
 # or uses tokio
 non-wasm = [
 	"execution/non-wasm",
+	"networking/non-wasm",
 
     "dep:attestation-doc-validation",
+    "dep:backoff",
     "dep:hyper-rustls-ring",
+    "dep:observability",
+    "dep:opentelemetry",
+    "dep:rcgen",
+    "dep:redis",
+    "dep:tfhe-zk-pok",
     "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
-    "dep:backoff",
     "dep:tower",
     "dep:tower-http",
-    "dep:observability",
-    "dep:opentelemetry",
-    "dep:redis",
-    "dep:rcgen",
-    "dep:tfhe-zk-pok",
     "dep:x509-parser",
 ]
 
