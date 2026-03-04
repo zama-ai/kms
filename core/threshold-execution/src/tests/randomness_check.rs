@@ -6,7 +6,7 @@ use statrs::function::{
     gamma::{gamma, gamma_li},
 };
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
+use strum::EnumIter;
 
 use algebra::structure_traits::Ring;
 

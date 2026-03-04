@@ -80,7 +80,7 @@ impl<const EXTENSION_DEGREE: usize> RedisPreprocessorFactory<EXTENSION_DEGREE> {
     }
 }
 
-#[derive(Debug, Clone, Copy, strum_macros::EnumIter)]
+#[derive(Debug, Clone, Copy, strum::EnumIter)]
 pub enum CorrelatedRandomnessType {
     Triple,
     Randomness,

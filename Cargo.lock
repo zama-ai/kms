@@ -4417,7 +4417,6 @@ dependencies = [
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
- "threshold-fhe",
  "threshold-hashing",
  "tonic 0.13.1",
  "tonic-build",
@@ -7539,7 +7538,6 @@ dependencies = [
 name = "tests-utils"
 version = "0.13.10-rc.0"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn 2.0.109",
 ]
@@ -7728,7 +7726,6 @@ version = "0.13.10-rc.0"
 dependencies = [
  "aes-prng",
  "anyhow",
- "bc2wrap",
  "error-utils",
  "g2p",
  "itertools 0.14.0",
@@ -7760,7 +7757,6 @@ dependencies = [
  "cfg-if",
  "clap",
  "const_format",
- "crypto-bigint 0.6.1",
  "ctor",
  "derive_more",
  "error-utils",
@@ -7781,7 +7777,6 @@ dependencies = [
  "session-id",
  "statrs",
  "strum",
- "strum_macros",
  "tempfile",
  "tfhe",
  "tfhe-csprng",

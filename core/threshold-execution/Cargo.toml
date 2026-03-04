@@ -36,7 +36,6 @@ serde = { workspace = true, features = ["derive", "rc"] }
 session-id.workspace = true
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
-strum_macros.workspace = true # TODO(dp): why do we need both strum crates? Aren't the macros available in `strum` itself?
 zeroize.workspace = true
 
 # TODO(dp): see how much of this stuff is actually used in execution. And if they do not offer stand-alone crates at all.

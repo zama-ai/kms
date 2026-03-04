@@ -45,7 +45,7 @@ impl EncryptionType {
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
 pub struct TUniformBound(pub usize);
 
-#[derive(Debug, Clone, Copy, strum_macros::EnumIter, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, strum::EnumIter, PartialEq, Eq)]
 pub enum NoiseBounds {
     LweNoise(TUniformBound),
     LweHatNoise(TUniformBound),
@@ -1776,7 +1776,7 @@ pub(crate) fn compute_min_max_hw(pmax: f64, size: u64) -> (u64, u64) {
     (min_hw, max_hw)
 }
 
-#[cfg_attr(test, derive(strum_macros::EnumIter))]
+#[cfg_attr(test, derive(strum::EnumIter))]
 #[derive(ValueEnum, Clone, Debug)]
 #[allow(non_camel_case_types)]
 pub enum DkgParamsAvailable {
