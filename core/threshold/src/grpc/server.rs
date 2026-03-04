@@ -1,7 +1,3 @@
-// #[cfg(not(feature = "experimental"))]
-// use crate::choreography::grpc::GrpcChoreography;
-// #[cfg(not(feature = "experimental"))]
-// use crate::malicious_moby::add_strategy_to_router;
 use crate::{choreography::grpc::GrpcChoreography, conf::party::PartyConf};
 use algebra::{
     base_ring::{Z128, Z64},
@@ -12,8 +8,6 @@ use algebra::{
 use execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, PreprocessorFactory,
 };
-// #[cfg(feature = "experimental")]
-// use experimental::choreography::grpc::ExperimentalGrpcChoreography; // TODO(dp): circular dep.
 use networking::constants::NETWORK_TIMEOUT_LONG;
 use networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;

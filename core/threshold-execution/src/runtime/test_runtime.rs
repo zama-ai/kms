@@ -10,6 +10,7 @@ use crate::{
         prf::PRSSConversions,
         prss::{AbortRealPrssInit, DerivePRSSState, PRSSInit, PRSSSetup},
     },
+    tests::helper::tests_and_benches::get_seed_for_two_sets_role,
     tfhe_internals::private_keysets::PrivateKeySet,
 };
 use aes_prng::AesRng;
@@ -140,20 +141,7 @@ impl<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize>
         let rng = rng.unwrap_or_else(|| match party.get_role_kind() {
             RoleKind::SingleSet(role) => AesRng::seed_from_u64(role.one_based() as u64),
             RoleKind::TwoSet(two_sets_role) => {
-                // TODO(dp): Copied this code from `test_runtimes.rs`, which sucks, but there's a circular dependency on `threshold-fhe` so until I sort out the testing infra…
-                // Original code had this:
-                // use crate::tests::helper::tests_and_benches::get_seed_for_two_sets_role;
-
-                let seed = match two_sets_role {
-                    TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 60),
-                    TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 60),
-                    TwoSetsRole::Both(r) => {
-                        r.role_set_1.one_based() as u64
-                            | ((r.role_set_2.one_based() as u64) << 32)
-                            | (3 << 60)
-                    }
-                };
-
+                let seed = get_seed_for_two_sets_role(&two_sets_role);
                 AesRng::seed_from_u64(seed)
             }
         });

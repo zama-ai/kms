@@ -773,17 +773,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
-    // TODO(dp): this is a bit terrible. SessionId used to have a `new` method that takes a `RadixOrBoolCiphertext` but it's supposed to be deprecated and I didn't want to make `sesion-id` depend on that type so I removed it.
-    // If this is the only place that is used, then perhaps it's fine? Or do we need a way to cast a RadixOrBoolCiphertext to bytes, and then a `From<&[u8]>` or something?
-    let session_id = {
-        use session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES};
-        let hash = hashing::serialize_hash_element(&DSEP_SESSION_ID, ct)?;
-        let mut hash_arr = [0_u8; SESSION_ID_BYTES];
-        hash_arr.copy_from_slice(&hash[..SESSION_ID_BYTES]);
-        u128::from_le_bytes(hash_arr).into()
-    };
-
-    // let session_id = SessionId::new(ct)?;
+    let session_id = session_id::SessionId::new(ct)?;
 
     let mut set = JoinSet::new();
 
@@ -985,10 +975,10 @@ async fn open_masked_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let openeds = SecureRobustOpen::default()
+    let opened = SecureRobustOpen::default()
         .robust_open_list_to_all(session, res, session.threshold() as usize)
         .await?;
-    reconstruct_message(openeds, &keyshares.parameters)
+    reconstruct_message(opened, &keyshares.parameters)
 }
 
 async fn open_bit_composed_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
@@ -999,14 +989,14 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let mut out = Vec::with_capacity(res.len());
-    let openeds = SecureRobustOpen::default()
+    let opened = SecureRobustOpen::default()
         .robust_open_list_to_all(session, res, session.threshold() as usize)
         .await?;
 
-    match openeds {
+    match opened {
         Some(openeds) => {
-            for opened in openeds {
-                let v_scalar = opened.to_scalar()?;
+            for open in openeds {
+                let v_scalar = open.to_scalar()?;
                 out.push(v_scalar);
             }
         }
