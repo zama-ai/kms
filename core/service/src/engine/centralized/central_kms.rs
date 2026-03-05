@@ -1119,6 +1119,7 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::path::Path;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -1188,11 +1189,53 @@ pub(crate) mod tests {
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
+            for cur_type in PubDataType::iter() {
+                match cur_type {
+                    PubDataType::PublicKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.public_key,
+                            &PubDataType::PublicKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    PubDataType::ServerKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.server_key,
+                            &PubDataType::ServerKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    // Ensure that the compiler will alert us if we introduce a new public data type that we don't handle here
+                    // that way we won't forget to update the code here appropriately
+                    #[allow(deprecated)]
+                    PubDataType::PublicKeyMetadata
+                    | PubDataType::CRS
+                    | PubDataType::VerfKey
+                    | PubDataType::VerfAddress
+                    | PubDataType::DecompressionKey
+                    | PubDataType::CACert
+                    | PubDataType::RecoveryMaterial
+                    | PubDataType::CompressedXofKeySet => {
+                        // Skip
+                    }
+                }
+            }
             store_versioned_at_request_id(
                 &mut ram_storage,
                 cur_req_id,
                 &cur_keys.public_key,
                 &PubDataType::PublicKey.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                &mut ram_storage,
+                cur_req_id,
+                &cur_keys.server_key,
+                &PubDataType::ServerKey.to_string(),
             )
             .await?;
         }
