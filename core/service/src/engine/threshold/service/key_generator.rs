@@ -53,8 +53,8 @@ use crate::{
     engine::{
         base::{
             compute_info_compressed_keygen, compute_info_decompression_keygen,
-            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
-            DSEP_PUBDATA_KEY,
+            compute_info_standard_keygen, retrieve_parameters,
+            safe_serialize_hash_element_versioned, BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
@@ -971,12 +971,24 @@ impl<
         };
 
         // Compute all the info required for storing
+        let key_digest =
+            match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &decompression_key) {
+                Ok(digest) => digest,
+                Err(e) => {
+                    update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
+                        req_id,
+                        format!("Failed to compute decompression key digest: {e}"),
+                        OP_DECOMPRESSION_KEYGEN,
+                    );
+                    return;
+                }
+            };
         let info = match compute_info_decompression_keygen(
             &sk,
-            &DSEP_PUBDATA_KEY,
             &prep_id,
             req_id,
-            &decompression_key,
+            key_digest,
             &eip712_domain,
         ) {
             Ok(info) => info,
@@ -1270,12 +1282,46 @@ impl<
         match dkg_result {
             ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
                 //Compute all the info required for storing
+                let server_key_digest = match safe_serialize_hash_element_versioned(
+                    &DSEP_PUBDATA_KEY,
+                    &pub_key_set.server_key,
+                ) {
+                    Ok(digest) => digest,
+                    Err(e) => {
+                        update_err_req_in_meta_store(
+                            &mut meta_store.write().await,
+                            req_id,
+                            format!(
+                                "Computation of server key digest in standard key generation failed: {e}"
+                            ),
+                            op_tag,
+                        );
+                        return;
+                    }
+                };
+                let public_key_digest = match safe_serialize_hash_element_versioned(
+                    &DSEP_PUBDATA_KEY,
+                    &pub_key_set.public_key,
+                ) {
+                    Ok(digest) => digest,
+                    Err(e) => {
+                        update_err_req_in_meta_store(
+                            &mut meta_store.write().await,
+                            req_id,
+                            format!(
+                                "Computation of public key digest in standard key generation failed: {e}"
+                            ),
+                            op_tag,
+                        );
+                        return;
+                    }
+                };
                 let info = match compute_info_standard_keygen(
                     &sk,
-                    &DSEP_PUBDATA_KEY,
                     &prep_id,
                     req_id,
-                    &pub_key_set,
+                    server_key_digest,
+                    public_key_digest,
                     &eip712_domain,
                 ) {
                     Ok(info) => info,
@@ -1334,12 +1380,28 @@ impl<
             }
             ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
                 //Compute info for compressed keygen
+                let compressed_keyset_digest = match safe_serialize_hash_element_versioned(
+                    &DSEP_PUBDATA_KEY,
+                    &compressed_keyset,
+                ) {
+                    Ok(digest) => digest,
+                    Err(e) => {
+                        update_err_req_in_meta_store(
+                            &mut meta_store.write().await,
+                            req_id,
+                            format!(
+                                "Computation of compressed keyset digest in key generation failed: {e}"
+                            ),
+                            op_tag,
+                        );
+                        return;
+                    }
+                };
                 let info = match compute_info_compressed_keygen(
                     &sk,
-                    &DSEP_PUBDATA_KEY,
                     &prep_id,
                     req_id,
-                    &compressed_keyset,
+                    compressed_keyset_digest,
                     &eip712_domain,
                 ) {
                     Ok(info) => info,

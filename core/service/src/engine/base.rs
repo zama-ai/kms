@@ -41,7 +41,6 @@ use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::xof_key_set::CompressedXofKeySet;
-use tfhe::zk::CompactPkeCrs;
 use tfhe::FheUint80;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
@@ -57,7 +56,6 @@ use threshold_fhe::execution::endpoints::decryption::{
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_fhe::hashing::hash_element;
 use threshold_fhe::hashing::serialize_hash_element;
 use threshold_fhe::hashing::DomainSep;
@@ -147,12 +145,20 @@ impl KmsFheKeyHandles {
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
     ) -> anyhow::Result<Self> {
+        let server_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &keyset.server_key,
+        )?;
+        let public_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &keyset.public_key,
+        )?;
         let public_key_info = compute_info_standard_keygen(
             sig_key,
-            &crate::engine::base::DSEP_PUBDATA_KEY,
             preproc_id,
             key_id,
-            keyset,
+            server_key_digest,
+            public_key_digest,
             eip712_domain,
         )?;
 
@@ -181,12 +187,15 @@ impl KmsFheKeyHandles {
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
     ) -> anyhow::Result<Self> {
+        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            compressed_keyset,
+        )?;
         let public_key_info = compute_info_compressed_keygen(
             sig_key,
-            &crate::engine::base::DSEP_PUBDATA_KEY,
             preproc_id,
             key_id,
-            compressed_keyset,
+            compressed_keyset_digest,
             eip712_domain,
         )?;
 
@@ -239,14 +248,11 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
 
 pub(crate) fn compute_info_crs(
     sk: &PrivateSigKey,
-    domain_separator: &DomainSep,
     crs_id: &RequestId,
-    pp: &CompactPkeCrs,
+    crs_digest: Vec<u8>,
+    max_num_bits: usize,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<CrsGenMetadata> {
-    let max_num_bits = max_num_bits_from_crs(pp);
-    let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
-
     let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -270,17 +276,12 @@ pub(crate) fn compute_external_signature_preprocessing(
 
 pub(crate) fn compute_info_standard_keygen(
     sk: &PrivateSigKey,
-    domain_separator: &DomainSep,
     prep_id: &RequestId,
     key_id: &RequestId,
-    keyset: &FhePubKeySet,
+    server_key_digest: Vec<u8>,
+    public_key_digest: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let server_key_digest =
-        safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
-    let public_key_digest =
-        safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
-
     tracing::info!(
         "Computed server key digest: {} and public key digest: {}",
         hex::encode(&server_key_digest),
@@ -308,14 +309,11 @@ pub(crate) fn compute_info_standard_keygen(
 
 pub(crate) fn compute_info_decompression_keygen(
     sk: &PrivateSigKey,
-    domain_separator: &DomainSep,
     prep_id: &RequestId,
     key_id: &RequestId,
-    decompression_key: &DecompressionKey,
+    key_digest: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let key_digest = safe_serialize_hash_element_versioned(domain_separator, decompression_key)?;
-
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
     };
@@ -333,15 +331,11 @@ pub(crate) fn compute_info_decompression_keygen(
 /// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
 pub(crate) fn compute_info_compressed_keygen(
     sk: &PrivateSigKey,
-    domain_separator: &DomainSep,
     prep_id: &RequestId,
     key_id: &RequestId,
-    compressed_keyset: &CompressedXofKeySet,
+    compressed_keyset_digest: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let compressed_keyset_digest =
-        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
-
     tracing::info!(
         "Computed xof keyset digest: {}",
         hex::encode(&compressed_keyset_digest),
@@ -1040,8 +1034,7 @@ pub(crate) mod tests {
         prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
     };
     use threshold_fhe::execution::{
-        keyset_config::StandardKeySetConfig,
-        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
+        keyset_config::StandardKeySetConfig, tfhe_internals::utils::expanded_encrypt,
     };
 
     #[test]
@@ -1399,17 +1392,13 @@ pub(crate) mod tests {
         let public_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
 
-        let keyset = FhePubKeySet {
-            public_key,
-            server_key,
-        };
         let domain = dummy_domain();
         let meta_data = compute_info_standard_keygen(
             &sk,
-            &crate::engine::base::DSEP_PUBDATA_KEY,
             &prep_id,
             &key_id,
-            &keyset,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
             &domain,
         )
         .unwrap();
@@ -1522,10 +1511,10 @@ pub(crate) mod tests {
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let meta_data = compute_info_standard_keygen(
                 &bad_sk,
-                &crate::engine::base::DSEP_PUBDATA_KEY,
                 &prep_id,
                 &key_id,
-                &keyset,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
                 &domain,
             )
             .unwrap();

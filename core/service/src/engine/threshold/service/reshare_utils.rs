@@ -3,7 +3,7 @@
 use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
-        base::{compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata},
+        base::{retrieve_parameters, BaseKmsStruct, KeyGenMetadata},
         threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
         utils::{
             verify_compressed_key_digest_from_bytes, verify_key_digest_from_bytes, MetricedError,
