@@ -34,10 +34,11 @@ pub fn dump_heap_profile() -> Result<String, String> {
 
     let seq = DUMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let path_str = format!("{HEAP_DUMP_DIR}/prof.{seq:04}.heap");
-    let path_c = format!("{path_str}\0");
+    let path_c =
+        std::ffi::CString::new(path_str.clone()).map_err(|e| format!("invalid path: {e}"))?;
 
     // jemalloc mallctl expects a pointer to the filename string
-    let ptr = path_c.as_ptr() as *const std::ffi::c_char;
+    let ptr = path_c.as_ptr();
     // SAFETY: `ptr` points to a valid null-terminated C string (`path_c`) that
     // outlives this call. jemalloc's `prof.dump` mallctl expects a `const char *`
     // and `raw::write` passes `&ptr` as `newp`, matching the expected ABI.
