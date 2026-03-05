@@ -498,9 +498,9 @@ where
                 .await?;
         } else {
             tracing::error!(
-                "No keys {} under legacy epoch ID {} does not appear to exist",
+                "No keys {} under epoch ID {} does not appear to exist",
                 key_id,
-                *LEGACY_DEFAULT_EPOCH_ID
+                new_epoch_id
             );
         }
     }
