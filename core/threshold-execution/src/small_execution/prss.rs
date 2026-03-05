@@ -1349,6 +1349,7 @@ mod tests {
         assert_eq!(*out_dec, ref_res);
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(0)]
     #[case(1)]
@@ -1385,6 +1386,7 @@ mod tests {
         assert_eq!(state.counters.przs_ctr, 0);
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(4, 1)]
     #[case(10, 3)]
@@ -1912,6 +1914,7 @@ mod tests {
     // - 3 + threshold  rounds for bcast in prss check
     // - 3 + threshold  rounds for bcast in przs check
     // total = 9 + 2t
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[], &[], &[], false, Some(11)))]
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(11)))]
@@ -1942,6 +1945,7 @@ mod tests {
     // - 3 + threshold  rounds for bcast in prss check
     // - 3 + threshold  rounds for bcast in przs check
     // total = 11 + 3t
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[], &[], &[], false, Some(14)))]
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(14)))]
@@ -1968,6 +1972,7 @@ mod tests {
     // Test PRSS init with abort with malicious parties that drop from start
     // they all should abort as we will unwrap the honest parties' result
     // which are thus errors, hence why the function should panic.
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], true, None))]
@@ -1987,6 +1992,7 @@ mod tests {
     // Test PRSS robust init with malicious parties that drop from start
     // The honest parties should execute correctly, except they catch the
     // malicious parties.
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], true, None))]
@@ -2013,6 +2019,7 @@ mod tests {
     // Test PRSS robust init with actively malicious parties that
     // follow the [`MaliciousPrssHonestInitRobustThenRandom`] strategy.
     // We don't expect to catch it because it tells the truth in checks.
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], false, None))]
@@ -2061,6 +2068,7 @@ mod tests {
     // Test PRSS robust init with actively malicious parties that
     // follow the [`MaliciousPrssHonestInitLieAll`] strategy.
     // We expect to catch it because it lies in checks.
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], true, None))]

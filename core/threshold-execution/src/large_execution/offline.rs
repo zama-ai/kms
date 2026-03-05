@@ -457,6 +457,7 @@ mod tests {
     // = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + m*(3 + threshold)) + 1
     // Note: 3 batches, so above rounds times 3
     // m = 20 for extension degree 4
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
@@ -471,6 +472,7 @@ mod tests {
     }
 
     // Rounds: same as for z128, see above
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
@@ -484,6 +486,7 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught<
         V: Vss,
@@ -560,6 +563,7 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught_bis<
         V: Vss,
@@ -631,6 +635,7 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_not_caught<
         V: Vss,
@@ -766,6 +771,7 @@ mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught_9p<
         V: Vss,
@@ -842,6 +848,7 @@ mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_caught_bis_9p<
         V: Vss,
@@ -914,6 +921,7 @@ mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_large_offline_malicious_subprotocols_not_caught_9p<
         V: Vss,

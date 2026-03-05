@@ -588,6 +588,7 @@ pub(crate) mod tests {
     //      coinflip = vss + open = (1 + 3 + t) + 1
     //      verify = m reliable_broadcast = m*(3 + t) rounds
     // with m = div_ceil(DISPUTE_STAT_SEC,Z::LOG_SIZE_EXCEPTIONAL_SET) (=20 for ResiduePolyF4)
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(4, 1, Some(88)))]
     #[case(TestingParameters::init_honest(7, 2, Some(109)))]
@@ -607,6 +608,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_lsl_malicious_subprotocols_caught<
         V: Vss,
@@ -660,6 +662,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_lsl_malicious_subprotocols_not_caught<
         V: Vss,
@@ -707,6 +710,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::new(&params.roles_to_lie_to), SyncReliableBroadcast::default())]
     #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None), MaliciousCoinflipRecons::<SecureVss,SecureRobustOpen>::default(), RealShareDispute::default(), SyncReliableBroadcast::default())]
@@ -743,6 +747,7 @@ pub(crate) mod tests {
     //Parties should finish after second iteration,
     //catching malicious users only if it lies about too many parties
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_malicious_receiver_lsl_malicious_subprotocols<
         V: Vss,
@@ -797,6 +802,7 @@ pub(crate) mod tests {
     //Tests for when some parties lie about shares they sent
     //Parties should finish after second iteration, catching malicious sender always because it keeps lying
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     async fn test_malicious_sender_lsl_malicious_subprotocols<
         V: Vss,

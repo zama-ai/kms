@@ -1283,6 +1283,7 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest::rstest]
     async fn test_reshare_malicious_subprotocols<
         RO: RobustOpen + 'static,

@@ -650,6 +650,7 @@ mod test {
     // - 5 + t for robust PRSS init
     // - 3 + t for broadcast
     // total = 8 + 2t
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[], &[], &[], false, Some(10)))]
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(10)))]
@@ -673,6 +674,7 @@ mod test {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
@@ -696,6 +698,7 @@ mod test {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
@@ -719,6 +722,7 @@ mod test {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
@@ -748,6 +752,7 @@ mod test {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
     //with (5,1) we are able to reconstruct so we don't run the unhappy path and don't catch malicious party
@@ -785,6 +790,7 @@ mod test {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
     //with (5,1) we are able to reconstruct so we don't run the unhappy path and don't catch malicious party

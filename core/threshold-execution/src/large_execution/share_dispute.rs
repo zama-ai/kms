@@ -613,6 +613,7 @@ pub(crate) mod tests {
     }
 
     // Rounds: 1 per share dispute (2 here, since we run single and double)
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(4, 1, Some(2)))]
     #[case(TestingParameters::init_dispute(4, 1, &[(1,2),(0,3)]))]
@@ -636,6 +637,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]
@@ -665,6 +667,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]

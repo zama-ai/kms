@@ -1469,6 +1469,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(4, 1, Some(5)), 1)]
     #[case(TestingParameters::init_honest(4, 1, Some(5)), 5)]
@@ -1568,6 +1569,7 @@ pub(crate) mod tests {
 
     //This is honest execution, so no malicious strategy
     // Rounds (happy path): We expect 3+1+t rounds
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init_honest(4, 1, Some(5)), 1)]
     #[case(TestingParameters::init_honest(4, 1, Some(5)), 5)]
@@ -1588,6 +1590,7 @@ pub(crate) mod tests {
     }
 
     // Test the behaviour where the adversary does not send the correct number of secrets
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 4)]
     #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 4)]
@@ -1611,6 +1614,7 @@ pub(crate) mod tests {
 
     // Test that when the sender sends a polynomial that has too
     // high degree it's caught
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[3],&[],&[],true,None), 4)]
     #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 4)]
@@ -1640,6 +1644,7 @@ pub(crate) mod tests {
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
@@ -1672,6 +1677,7 @@ pub(crate) mod tests {
     ///If it lies to strictly more than t parties, we expect this party to get caught
     //Otherwise, we expect everything to happen normally - dispute will settle
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 2)]
@@ -1708,6 +1714,7 @@ pub(crate) mod tests {
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
@@ -1739,6 +1746,7 @@ pub(crate) mod tests {
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
     #[cfg(feature = "slow_tests")]
+    #[tokio::test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 2)]

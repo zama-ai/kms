@@ -290,6 +290,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
@@ -301,6 +302,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[tokio::test]
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]

@@ -255,6 +255,7 @@ mod tests {
         test_bit_lift::<4, _>(params, 10, SecureBitLift).await;
     }
 
+    #[tokio::test]
     #[rstest::rstest]
     async fn malicious_lift<B: BitLift + 'static>(
         #[values(

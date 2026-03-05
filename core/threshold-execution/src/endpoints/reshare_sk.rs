@@ -827,6 +827,7 @@ mod tests {
         simulate_reshare_same_set::<8>(false, true).await
     }
 
+    #[tokio::test]
     #[rstest::rstest]
     async fn reshare_no_error_f4_two_sets(
         #[values(0, 2, 4)] intersection_size: usize,
@@ -847,6 +848,7 @@ mod tests {
         .await
     }
 
+    #[tokio::test]
     #[rstest::rstest]
     async fn reshare_with_error_f4_two_sets(
         #[values(0, 2, 4)] intersection_size: usize,
