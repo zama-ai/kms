@@ -6,8 +6,9 @@ use crate::{
         base::{compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata},
         threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
         utils::{
-            verify_compressed_key_digest_from_bytes, verify_key_digest_from_bytes, MetricedError,
-            ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
+            verifiy_crs_digest_from_bytes, verify_compressed_key_digest_from_bytes,
+            verify_key_digest_from_bytes, MetricedError, ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH,
+            ERR_SERVER_KEY_DIGEST_MISMATCH,
         },
         validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
@@ -30,7 +31,7 @@ use kms_grpc::{
 };
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
-use tfhe::{xof_key_set::CompressedXofKeySet, ServerKey};
+use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs, ServerKey};
 use threshold_fhe::{
     execution::{
         endpoints::reshare_sk::{
@@ -160,7 +161,7 @@ fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
     }
 }
 
-async fn fetch_public_materials_from_peers<
+async fn fetch_public_fhe_materials_from_peers<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
@@ -342,7 +343,7 @@ async fn fetch_public_materials_from_peers<
 
 /// Attempt to get and verify the public materials needed for resharing.
 /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
-pub(crate) async fn get_verified_public_materials<
+pub(crate) async fn get_verified_fhe_public_materials<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
@@ -413,7 +414,7 @@ pub(crate) async fn get_verified_public_materials<
             }
             Err(_) => {
                 // If local retrieval fails, attempt to fetch from s3 of another party
-                fetch_public_materials_from_peers::<_, _, G, R>(
+                fetch_public_fhe_materials_from_peers::<_, _, G, R>(
                     crypto_storage,
                     key_id,
                     context_id,
@@ -526,7 +527,7 @@ pub(crate) async fn get_verified_public_materials<
             }
             _ => {
                 // if local retrieval fails, attempt to fetch from s3 of another party
-                fetch_public_materials_from_peers::<_, _, G, R>(
+                fetch_public_fhe_materials_from_peers::<_, _, G, R>(
                     crypto_storage,
                     key_id,
                     context_id,
@@ -547,6 +548,57 @@ pub(crate) async fn get_verified_public_materials<
     }
 }
 
+pub(crate) async fn get_verified_crs_material<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    G: ReadOnlyS3StorageGetter<R>,
+    R: StorageReader,
+>(
+    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    request_id: &RequestId,
+    crs_id: &RequestId,
+    context_id: &ContextId,
+    crs_digest: &Vec<u8>,
+    ro_storage_getter: &G,
+) -> Result<CompactPkeCrs, MetricedError> {
+    // Load raw bytes from own public storage
+    let crs_bytes_res: anyhow::Result<Vec<u8>> = {
+        let pub_storage = crypto_storage.inner.get_public_storage();
+        let guard_storage = pub_storage.lock().await;
+        guard_storage
+            .load_bytes(crs_id, &PubDataType::CRS.to_string())
+            .await
+    };
+
+    match crs_bytes_res {
+        Ok(crs_bytes) => {
+            verifiy_crs_digest_from_bytes(&crs_bytes, crs_digest).map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*request_id),
+                    anyhow::anyhow!("CRS digest verification failed: {}", e),
+                    tonic::Code::Internal,
+                )
+            })?;
+
+            tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&crs_bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*request_id),
+                    anyhow::anyhow!("Failed to deserialize CRS: {}", e),
+                    tonic::Code::Internal,
+                )
+            })
+        }
+        //TODO: fetch from peers
+        Err(_) => todo!(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -556,8 +608,8 @@ mod tests {
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
-    use crate::engine::threshold::service::reshare_utils::fetch_public_materials_from_peers;
-    use crate::engine::threshold::service::reshare_utils::get_verified_public_materials;
+    use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
+    use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
     use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
@@ -727,7 +779,7 @@ mod tests {
                 counter: RefCell::new(0),
                 ram_storages: vec![RamStorage::new()],
             };
-            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 &key_id,
                 &context_id,
@@ -756,7 +808,7 @@ mod tests {
                 (PubDataType::ServerKey, vec![0, 1, 2, 4]),
                 (PubDataType::PublicKey, vec![3, 4, 5, 6]),
             ]);
-            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 &key_id,
                 &context_id,
@@ -780,7 +832,7 @@ mod tests {
         {
             // sunshine
             // use the dummy s3 storage to fetch the keys from ram storage
-            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            let _keyset = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 &key_id,
                 &context_id,
@@ -801,7 +853,7 @@ mod tests {
                 ram_storages: vec![RamStorage::new(), ro_storage_getter.ram_storages[0].clone()],
             };
 
-            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            let _keyset = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 &key_id,
                 &context_id,
@@ -852,7 +904,7 @@ mod tests {
                 (PubDataType::ServerKey, vec![9, 8, 7, 6]),
                 (PubDataType::PublicKey, vec![5, 4, 3, 2]),
             ]);
-            let err = get_verified_public_materials(
+            let err = get_verified_fhe_public_materials(
                 &crypto_storage,
                 &req_id,
                 &key_id,
@@ -904,7 +956,7 @@ mod tests {
                 .unwrap();
             }
 
-            let _key = get_verified_public_materials(
+            let _key = get_verified_fhe_public_materials(
                 &crypto_storage,
                 &req_id,
                 &key_id,
@@ -1075,7 +1127,7 @@ mod tests {
             setup_public_materials_test_compressed(key_id, context_id, true).await;
 
         let verified_material =
-            fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 &key_id,
                 &context_id,
@@ -1103,7 +1155,7 @@ mod tests {
         // use wrong digests to trigger error
         let wrong_key_digests: HashMap<PubDataType, Vec<u8>> =
             HashMap::from_iter([(PubDataType::CompressedXofKeySet, vec![0, 1, 2, 4])]);
-        let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+        let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
             &crypto_storage,
             &key_id,
             &context_id,
@@ -1140,7 +1192,7 @@ mod tests {
             .unwrap();
         }
 
-        let verified_material = get_verified_public_materials(
+        let verified_material = get_verified_fhe_public_materials(
             &crypto_storage,
             &req_id,
             &key_id,
@@ -1184,7 +1236,7 @@ mod tests {
 
         let bad_key_digests: HashMap<PubDataType, Vec<u8>> =
             HashMap::from_iter([(PubDataType::CompressedXofKeySet, vec![9, 8, 7, 6])]);
-        let err = get_verified_public_materials(
+        let err = get_verified_fhe_public_materials(
             &crypto_storage,
             &req_id,
             &key_id,

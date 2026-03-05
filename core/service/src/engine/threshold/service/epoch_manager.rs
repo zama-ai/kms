@@ -71,10 +71,10 @@ use crate::{
     engine::{
         base::{
             compute_info_compressed_keygen, compute_info_standard_keygen, retrieve_parameters,
-            KeyGenMetadata, DSEP_PUBDATA_KEY,
+            CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::service::{
-            reshare_utils::{get_verified_public_materials, VerifiedPublicMaterial},
+            reshare_utils::{get_verified_fhe_public_materials, VerifiedPublicMaterial},
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
             PublicKeyMaterial, ThresholdFheKeys,
         },
@@ -126,6 +126,13 @@ struct VerifiedKeyInfo {
     pub extra_data: Vec<u8>,
 }
 
+struct VerifiedCrsInfo {
+    pub crs_id: kms_grpc::RequestId,
+    pub crs_digest: Vec<u8>,
+    pub max_num_bits: u32,
+    pub eip712_domain: Eip712Domain,
+}
+
 #[derive(Debug)]
 struct VerifiedPreviousEpochInfo {
     /// The KMS context of the parties that will reshare
@@ -134,6 +141,7 @@ struct VerifiedPreviousEpochInfo {
     /// epochId we reshare the shares from.
     pub epoch_id: EpochId,
     pub keys_info: Vec<VerifiedKeyInfo>,
+    pub crs_info: Vec<VerifiedCrsInfo>,
 }
 
 /// Parses the [`PreviousEpochInfo`] proto message and verifies its contents.
@@ -214,24 +222,49 @@ fn verify_epoch_info(
         })
         .try_collect()?;
 
+    let crs_info = previous_epoch
+        .crs_info
+        .into_iter()
+        .map(|crs_info| {
+            let crs_id = parse_optional_grpc_request_id(
+                &crs_info.crs_id,
+                RequestIdParsingErr::Other("CRS ID in PreviousEpochInfo".to_string()),
+            )
+            .map_err(make_metriced_err)?;
+
+            let eip712_domain = optional_protobuf_to_alloy_domain(crs_info.domain.as_ref())
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(*epoch_id_as_request_id),
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                })?;
+
+            Ok(VerifiedCrsInfo {
+                crs_id,
+                crs_digest: crs_info.crs_digest,
+                max_num_bits: crs_info.max_num_bits,
+                eip712_domain,
+            })
+        })
+        .try_collect()?;
+
     Ok(VerifiedPreviousEpochInfo {
         context_id,
         epoch_id,
         keys_info,
+        crs_info,
     })
 }
 
 #[derive(Clone)]
 pub enum EpochOutput {
     PRSSInitOnly,
-    Reshare(Vec<KeyGenMetadata>),
+    Reshare((Vec<KeyGenMetadata>, Vec<CrsGenMetadata>)),
 }
 
-impl From<Vec<KeyGenMetadata>> for EpochOutput {
-    fn from(meta: Vec<KeyGenMetadata>) -> Self {
-        EpochOutput::Reshare(meta)
-    }
-}
 /// The Epoch Manager takes over the role of the Initiator and Resharer
 pub struct RealThresholdEpochManager<
     PubS: Storage + Send + Sync + 'static,
@@ -688,7 +721,7 @@ impl<
 
         let verified_materials = join_all(verified_previous_epoch.keys_info.iter().map(
             |key_info| async {
-                get_verified_public_materials(
+                get_verified_fhe_public_materials(
                     &self.crypto_storage,
                     &epoch_id_as_request_id,
                     &key_info.key_id,
@@ -779,7 +812,7 @@ impl<
 
         let verified_materials = join_all(verified_previous_epoch.keys_info.iter().map(
             |key_info| async {
-                get_verified_public_materials(
+                get_verified_fhe_public_materials(
                     &self.crypto_storage,
                     &epoch_id_as_request_id,
                     &key_info.key_id,

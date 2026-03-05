@@ -534,7 +534,8 @@ where
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_crs_with_meta_store(
         &self,
-        req_id: &RequestId,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
@@ -555,9 +556,10 @@ where
             };
 
             let f1 = async {
-                let result = store_versioned_at_request_id(
+                let result = store_versioned_at_request_and_epoch_id(
                     &mut (*priv_storage),
-                    req_id,
+                    crs_id,
+                    epoch_id,
                     &crs_info,
                     &PrivDataType::CrsInfo.to_string(),
                 )
@@ -565,7 +567,7 @@ where
                 if let Err(e) = &result {
                     tracing::error!(
                         "Failed to store CRS info to private storage for request {}: {}",
-                        req_id,
+                        crs_id,
                         e
                     );
                 }
@@ -574,7 +576,7 @@ where
             let f2 = async {
                 let result = store_versioned_at_request_id(
                     &mut (*pub_storage),
-                    req_id,
+                    crs_id,
                     &pp,
                     &PubDataType::CRS.to_string(),
                 )
@@ -582,7 +584,7 @@ where
                 if let Err(e) = &result {
                     tracing::error!(
                         "Failed to store CRS to public storage for request {}: {}",
-                        req_id,
+                        crs_id,
                         e
                     );
                 }
@@ -591,21 +593,22 @@ where
             let f3 = async {
                 match back_vault {
                     Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_id(
+                        let backup_result = store_versioned_at_request_and_epoch_id(
                             &mut (*guarded_backup_vault),
-                            req_id,
+                            crs_id,
+                            epoch_id,
                             &crs_info,
                             &PrivDataType::CrsInfo.to_string(),
                         )
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted crs info to backup storage for request {req_id}: {e}");
+                            tracing::error!("Failed to store encrypted crs info to backup storage for request {crs_id}: {e}");
                         }
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {req_id}");
+                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {crs_id}");
                         true
                     }
                 }
@@ -616,7 +619,7 @@ where
         if r1
             && r2
             && r3
-            && update_ok_req_in_meta_store(&mut guarded_meta_store, req_id, crs_info, op_metric_tag)
+            && update_ok_req_in_meta_store(&mut guarded_meta_store, crs_id, crs_info, op_metric_tag)
         {
             // everything is ok, there's no cache to update
         } else {
@@ -624,7 +627,7 @@ where
             // Ignore any failure to delete something since it might
             // be because the data did not get created
             // In any case, we can't do much.
-            self.purge_crs_material(req_id, guarded_meta_store).await;
+            self.purge_crs_material(crs_id, guarded_meta_store).await;
         }
     }
 
