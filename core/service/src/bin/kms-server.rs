@@ -636,6 +636,16 @@ async fn main_exec() -> anyhow::Result<()> {
         }
     };
 
+    // Validate keychain recovery material now that we have the verification key
+    if let Some(ref keychain) = private_vault.keychain {
+        keychain.validate_recovery_material(&base_kms.verf_key())?;
+    }
+    if let Some(ref vault) = backup_vault {
+        if let Some(ref keychain) = vault.keychain {
+            keychain.validate_recovery_material(&base_kms.verf_key())?;
+        }
+    }
+
     // compute corresponding public key and derive address from private sig key
     #[allow(deprecated)]
     let pk_bytes = base_kms.verf_key().pk().to_encoded_point(false).to_bytes();

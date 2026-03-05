@@ -15,12 +15,12 @@ num_reconstruct = 1
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
-# fhe_params = "Test" # Small, insecure parameters for testing
-fhe_params = "Default" # Large, secure parameters
+fhe_params = "Test" # Small, insecure parameters for testing
+# fhe_params = "Default" # Large, secure parameters
 
 # List of connection info to each of the cores (in the centralized case, there will only be a single core)
 [[cores]]
-# The ID of the given KMS server (monotonically increasing positive integer starting at 1) 
+# The ID of the given KMS server (monotonically increasing positive integer starting at 1)
 # (in the centralized case it must be 1)
 party_id = 1
 # The address of the given KMS server, including the port
