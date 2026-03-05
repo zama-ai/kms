@@ -67,7 +67,7 @@ ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
-execution.workspace = true
+execution = { workspace = true, features = ["extension_degree_4"] }
 futures-util.workspace = true
 hashing.workspace = true
 hex.workspace = true
