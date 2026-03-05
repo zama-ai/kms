@@ -7,8 +7,8 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - Install jeprof:
-#       Ubuntu/Debian: apt install google-perftools
-#       macOS:         brew install gperftools
+#       Ubuntu/Debian: apt install jemalloc
+#       macOS:         brew install jemalloc
 #   - graphviz for SVG output:
 #       Ubuntu/Debian: apt install graphviz
 #       macOS:         brew install graphviz
@@ -36,7 +36,7 @@ DUMP_DIR="${2:?Usage: $0 <kms-server-binary> <heap-dump-dir>}"
 
 # ── Find jeprof ──────────────────────────────────────────────────────────
 JEPROF=""
-for cmd in jeprof google-pprof pprof; do
+for cmd in jeprof; do
     if command -v "$cmd" &>/dev/null; then
         JEPROF="$cmd"
         break
@@ -45,9 +45,9 @@ done
 
 if [ -z "$JEPROF" ]; then
     echo "ERROR: jeprof not found. Install with:"
-    echo "  Ubuntu/Debian: apt install google-perftools"
-    echo "  macOS:         brew install gperftools"
-    echo "  Or build from: https://github.com/gperftools/gperftools"
+    echo "  Ubuntu/Debian: apt install jemalloc"
+    echo "  macOS:         brew install jemalloc"
+    echo "  Or build from: https://github.com/jemalloc/jemalloc"
     exit 1
 fi
 
@@ -167,8 +167,8 @@ else
     DUMPS_WORK=("${WORK_ALL[@]}")
 fi
 
-LATEST_ORIG="${DUMPS_ORIG[-1]}"
-LATEST_WORK="${DUMPS_WORK[-1]}"
+LATEST_ORIG="${DUMPS_ORIG[@]: -1}"
+LATEST_WORK="${DUMPS_WORK[@]: -1}"
 
 # ── 1. Top allocation sites in the latest dump ───────────────────────────
 echo ""
