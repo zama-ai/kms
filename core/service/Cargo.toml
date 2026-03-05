@@ -140,7 +140,7 @@ zeroize.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
+execution = { workspace = true, features = ["testing", "malicious_strategies", "extension_degree_4"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
