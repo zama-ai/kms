@@ -66,15 +66,6 @@ portable_realpath() {
     fi
 }
 
-# md5: Linux has md5sum, macOS has md5
-portable_md5() {
-    if command -v md5sum &>/dev/null; then
-        md5sum | cut -d' ' -f1
-    else
-        md5 -q
-    fi
-}
-
 # sed -i: GNU sed uses -i '', BSD (macOS) sed requires -i ''
 portable_sed_i() {
     local expr="$1"
@@ -88,6 +79,13 @@ portable_sed_i() {
 
 ABS_BINARY="$(portable_realpath "$BINARY")"
 BINARY_NAME="$(basename "$BINARY")"
+
+# Extract the binary load base address from a heap dump's MAPPED_LIBRARIES
+get_binary_base() {
+    grep -A9999 '^MAPPED_LIBRARIES:' "$1" 2>/dev/null \
+        | grep -F "$ABS_BINARY" | grep -E "^[0-9a-f].*r.xp " \
+        | head -1 | cut -d'-' -f1
+}
 
 # ── Working directory for processed heap dumps ───────────────────────────
 # We create copies with the binary path in MAPPED_LIBRARIES rewritten to
@@ -110,12 +108,11 @@ done
 # ── Prepare a heap dump for jeprof ───────────────────────────────────────
 # 1. Inject MAPPED_LIBRARIES if jemalloc didn't include it
 # 2. Rewrite the binary path so jeprof can match it to the local binary
+DUMP_COUNTER=0
 prepare_dump() {
     local src="$1"
-    # Use a hash-based name to avoid collisions from nested dirs
-    local hash
-    hash=$(echo "$src" | portable_md5)
-    local dst="$WORK_DIR/${hash}.heap"
+    local dst="$WORK_DIR/${DUMP_COUNTER}.heap"
+    DUMP_COUNTER=$((DUMP_COUNTER + 1))
     cp "$src" "$dst"
 
     # Inject MAPPED_LIBRARIES from maps.txt if the dump doesn't have it
@@ -136,39 +133,30 @@ prepare_dump() {
 }
 
 # ── Find heap dumps, sorted by modification time (oldest first) ──────────
-ALL_DUMPS=()
-while IFS= read -r f; do
-    ALL_DUMPS+=("$f")
+# Prepare working copies and partition manual vs auto in a single pass.
+# Auto-dumps (in /auto/ subdir from prof_gdump) fire at memory peaks and can
+# invert diff direction, so we prefer manual dumps (from SIGUSR1) for diffs.
+ALL_ORIG=()            # all original paths
+WORK_ALL=()            # all working copies
+MANUAL_ORIGINALS=()    # manual-only originals
+MANUAL_WORK=()         # manual-only working copies
+while IFS= read -r heap; do
+    work="$(prepare_dump "$heap")"
+    ALL_ORIG+=("$heap")
+    WORK_ALL+=("$work")
+    if [[ "$heap" != *"/auto/"* ]]; then
+        MANUAL_ORIGINALS+=("$heap")
+        MANUAL_WORK+=("$work")
+    fi
 done < <(find "$DUMP_DIR" -name '*.heap' -type f -exec ls -1tr {} +)
 
-if [ ${#ALL_DUMPS[@]} -eq 0 ]; then
+if [ ${#ALL_ORIG[@]} -eq 0 ]; then
     echo "ERROR: No .heap files found in $DUMP_DIR"
     echo "Did you run 'make dump-heap-profiles'?"
     exit 1
 fi
 
-echo "Found ${#ALL_DUMPS[@]} heap dump(s)"
-
-# Prepare working copies using parallel indexed arrays (avoids bash 4+ associative arrays)
-ALL_ORIG=()   # original paths  (indexed in lockstep)
-WORK_ALL=()   # working copies  (indexed in lockstep)
-for heap in "${ALL_DUMPS[@]}"; do
-    work="$(prepare_dump "$heap")"
-    ALL_ORIG+=("$heap")
-    WORK_ALL+=("$work")
-done
-
-# For diffing, exclude auto-dumps (in /auto/ subdir from prof_gdump) — they
-# fire at memory peaks and can invert the diff direction. Keep only manual
-# dumps (from SIGUSR1, not under an auto/ directory).
-MANUAL_ORIGINALS=()
-MANUAL_WORK=()
-for i in "${!ALL_ORIG[@]}"; do
-    if [[ "${ALL_ORIG[$i]}" != *"/auto/"* ]]; then
-        MANUAL_ORIGINALS+=("${ALL_ORIG[$i]}")
-        MANUAL_WORK+=("${WORK_ALL[$i]}")
-    fi
-done
+echo "Found ${#ALL_ORIG[@]} heap dump(s)"
 
 if [ ${#MANUAL_WORK[@]} -ge 2 ]; then
     DUMPS_ORIG=("${MANUAL_ORIGINALS[@]}")
@@ -193,12 +181,7 @@ if grep -q '??:0' "$OUT_DIR/top-leaks.txt" 2>/dev/null; then
     echo "WARNING: jeprof could not resolve symbols (??:0)."
 
     # Try to extract the binary base address from MAPPED_LIBRARIES
-    BASE_ADDR=""
-    if grep -q 'MAPPED_LIBRARIES:' "$LATEST_WORK" 2>/dev/null; then
-        BASE_ADDR=$(grep -A9999 '^MAPPED_LIBRARIES:' "$LATEST_WORK" \
-            | grep -F "$ABS_BINARY" | grep -E "^[0-9a-f].*r.xp " \
-            | head -1 | cut -d'-' -f1)
-    fi
+    BASE_ADDR=$(get_binary_base "$LATEST_WORK")
 
     if [ -n "$BASE_ADDR" ] && command -v addr2line &>/dev/null; then
         echo "  Falling back to manual addr2line (binary base: 0x${BASE_ADDR})"
@@ -238,11 +221,6 @@ if [ ${#DUMPS_WORK[@]} -ge 2 ]; then
 
     # Detect cross-run diffs: if the ASLR base addresses differ, the dumps
     # are from different process instances and the diff is meaningless.
-    get_binary_base() {
-        grep -A9999 '^MAPPED_LIBRARIES:' "$1" 2>/dev/null \
-            | grep -F "$ABS_BINARY" | grep -E "^[0-9a-f].*r.xp " \
-            | head -1 | cut -d'-' -f1
-    }
     BASE_EARLIEST=$(get_binary_base "$EARLIEST_WORK")
     BASE_LATEST=$(get_binary_base "$LATEST_WORK")
 
