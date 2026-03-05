@@ -4,7 +4,7 @@ Detect memory leaks in KMS core nodes using jemalloc heap profiling.
 
 ## How it works
 
-The `heap-profiling` Cargo profile builds with jemalloc and preserves debug symbols. At runtime, jemalloc samples allocations and dumps heap snapshots on memory peaks and on `SIGUSR1`. Comparing two snapshots shows only allocations that *grew* — i.e., your leaks.
+The `heap-profiling` Cargo profile builds with jemalloc and preserves debug symbols. At runtime, jemalloc samples allocations and dumps heap snapshots on memory peaks and on `SIGUSR1`. Comparing two snapshots shows only allocations that *grew* — these are your leak *candidates*. Some growth may be legitimate (caches warming up, connection pools expanding, etc.), so the analyst must judge which sites represent actual leaks.
 
 > **Note:** `heap-profiling` is used as both a Cargo **feature** (enables jemalloc code paths and SIGUSR1 handler) and a Cargo **profile** (preserves debug info for jeprof). The docker-compose file enables both automatically.
 
