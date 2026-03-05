@@ -61,8 +61,7 @@ async fn threshold_handles_w_vaults(
         #[cfg(feature = "slow_tests")]
         ensure_default_material_exists().await;
     } else {
-        // Only ensure that the signing key is there s.t. the KMS can start
-        // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
+        // Only ensure that the signing keys and contexts are there s.t. the KMS can start
         ensure_dir_exist(test_data_path).await;
         ensure_client_keys_exist(test_data_path, true).await;
         let _ = ensure_threshold_server_signing_keys_exist(

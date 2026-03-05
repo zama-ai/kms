@@ -362,13 +362,13 @@ async fn get_unique<
 /// * `storage` - The private storage backend containing signing keys
 ///
 /// # Returns
-/// A map of `RequestId` to `PrivateSigKey` for all signing keys in storage.
+/// A map of `ContextId` to `PrivateSigKey` for all signing keys in storage.
 ///
 /// # Errors
 /// Returns an error if the storage operation fails.
 pub async fn get_core_signing_keys<S: StorageReader>(
     storage: &S,
-) -> anyhow::Result<HashMap<RequestId, PrivateSigKey>> {
+) -> anyhow::Result<HashMap<ContextId, PrivateSigKey>> {
     read_all_data_versioned(storage, &PrivDataType::SigningKey.to_string())
         .await
         .map_err(|e| {
@@ -378,6 +378,12 @@ pub async fn get_core_signing_keys<S: StorageReader>(
                 storage.info()
             )
         })
+        .map(|data_map: HashMap<RequestId, PrivateSigKey>| {
+            data_map
+                .into_iter()
+                .map(|(req_id, key)| (req_id.into(), key))
+                .collect()
+        })
 }
 
 /// Returns all core verification keys from storage.
@@ -386,7 +392,7 @@ pub async fn get_core_signing_keys<S: StorageReader>(
 /// * `storage` - The public storage backend containing verification keys
 ///
 /// # Returns   
-/// A map of `RequestId` to `PublicSigKey` for all verification keys in storage.
+/// A map of `ContextId` to `PublicSigKey` for all verification keys in storage.
 ///
 /// # Errors
 /// Returns an error if the storage operation fails.
@@ -402,6 +408,12 @@ pub async fn get_core_verification_keys<S: StorageReader>(
                 storage.info()
             )
         })
+        .map(|data_map: HashMap<RequestId, PublicSigKey>| {
+            data_map
+                .into_iter()
+                .map(|(req_id, key)| (req_id.into(), key))
+                .collect()
+        })
 }
 
 /// Returns the core addresses derived from the verification keys in storage.
@@ -410,7 +422,7 @@ pub async fn get_core_verification_keys<S: StorageReader>(
 /// * `storage` - The public storage backend containing verification keys
 ///
 /// # Returns
-/// A HashSet of `ContextId`s to `alloy_primitives::Address` for all verification keys in storage.
+/// A HashMap of `ContextId`s to `alloy_primitives::Address` for all verification keys in storage.
 ///
 /// # Errors
 /// Returns an error if the storage operation fails or if addresses cannot be derived from the verification keys.
@@ -420,7 +432,7 @@ pub async fn get_core_addresses<S: StorageReader>(
     let verf_keys = get_core_verification_keys(storage).await?;
     Ok(verf_keys
         .into_iter()
-        .map(|(req_id, pk)| pk.address())
+        .map(|(context_id, pk)| (context_id, pk.address()))
         .collect())
 }
 
