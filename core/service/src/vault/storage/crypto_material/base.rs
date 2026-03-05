@@ -208,7 +208,7 @@ where
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
-                &vec![
+                &[
                     PubDataType::PublicKey.to_string(),
                     PubDataType::ServerKey.to_string(),
                 ],
@@ -222,7 +222,7 @@ where
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &vec![PubDataType::CompressedXofKeySet.to_string()],
+            &[PubDataType::CompressedXofKeySet.to_string()],
             &priv_types,
         )
         .await
