@@ -598,7 +598,7 @@ The kms core locally checks for existence of the public key material, and if it 
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--context-id <PREV_CONTEXT_ID> --epoch-id <PREV_EPOCH_ID> --key-id <KEY_ID> --preproc-id <PREPROC_ID> --server-key-digest <DIGEST> --public-key-digest <DIGEST>]
+$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>]"]
 ```
 
 Required arguments:
@@ -606,12 +606,14 @@ Required arguments:
  - `--new-context-id <CONTEXT_ID>`: the context ID for which the new epoch is created.
 
 Optional arguments (for resharing from a previous epoch). These must all be provided together or not at all:
- - `--context-id <PREV_CONTEXT_ID>`: the context ID of the previous epoch.
- - `--epoch-id <PREV_EPOCH_ID>`: the epoch ID of the previous epoch.
- - `--key-id <KEY_ID>`: the key ID to reshare.
- - `--preproc-id <PREPROC_ID>`: the preprocessing ID used to generate the key.
- - `--server-key-digest <DIGEST>`: the hex-encoded server key digest to use for resharing.
- - `--public-key-digest <DIGEST>`: the hex-encoded public key digest to use for resharing.
+ - `context-id <PREV_CONTEXT_ID>`: the context ID of the previous epoch.
+ - `epoch-id <PREV_EPOCH_ID>`: the epoch ID of the previous epoch.
+ - `previous_keys`: An array with the information about the keys reshare:
+    - `key-id <KEY_ID>`: the ID of the key
+    - `preproc-id <PREPROC_ID>`: the preprocessing ID used to generate the key.
+    - `server-key-digest <DIGEST>`: the hex-encoded server key digest to use for resharing (if the key is not compressed).
+    - `public-key-digest <DIGEST>`: the hex-encoded public key digest to use for resharing (if the key is not compressed).
+    - `xof_key_digest <DIGEST>`: the hex-encoded xof key digest to use for resharing (if the key is compressed)
 
 #### Destroying an MPC Epoch
 

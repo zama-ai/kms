@@ -728,10 +728,10 @@ pub struct NewEpochParameters {
     /// Format is:
     ///
     /// For compressed keyset
-    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id:<key_id>,preproc_id:<preproc_id>,xof_key_digest:<key_digest>;...]`
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...]`
     ///
     /// For non-compressed keyset
-    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id:<key_id>,preproc_id:<preproc_id>,server_key_digest:<server_key_digest>,public_key_digest:<public_key_digest>;...]`
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...]`
     #[clap(long)]
     pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
