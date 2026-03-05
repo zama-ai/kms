@@ -497,18 +497,21 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
       github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      (github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'nightly-tests'))
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     env:
       EVENT_NAME: ${{ github.event_name }}
+      HAS_NIGHTLY_TESTS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'nightly-tests') }}
     steps:
       - name: Set matrix
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          if [[ "${EVENT_NAME}" == "schedule" ]]; then
+          if [[ "${EVENT_NAME}" == "schedule" || "${HAS_NIGHTLY_TESTS_LABEL}" == "true" ]]; then
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
             MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
@@ -537,7 +540,9 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
       github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      (github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'nightly-tests'))
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
