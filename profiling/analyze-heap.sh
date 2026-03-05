@@ -66,7 +66,7 @@ portable_realpath() {
     fi
 }
 
-# sed -i: GNU sed uses -i '', BSD (macOS) sed requires -i ''
+# sed -i: GNU sed uses -i (no suffix arg), BSD (macOS) sed requires -i '' (explicit empty suffix)
 portable_sed_i() {
     local expr="$1"
     local file="$2"
