@@ -1,4 +1,4 @@
-use crate::engine::base::{KeyGenMetadata, DSEP_PUBDATA_KEY};
+use crate::engine::base::{KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
@@ -50,6 +50,17 @@ pub(crate) fn verify_compressed_key_digest_from_bytes(
     let actual_digest = hash_element(&DSEP_PUBDATA_KEY, compressed_keyset_bytes);
     if actual_digest != expected_digest {
         anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
+    }
+    Ok(())
+}
+
+pub(crate) fn verifiy_crs_digest_from_bytes(
+    crs_bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_digest = hash_element(&DSEP_PUBDATA_CRS, crs_bytes);
+    if actual_digest != expected_digest {
+        anyhow::bail!("CRS digest mismatch");
     }
     Ok(())
 }

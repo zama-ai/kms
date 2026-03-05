@@ -260,6 +260,10 @@ message CrsGenRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
+
+  // MPC Epoch ID because we tie all key material to epochs
+  // In particular this is used to store the CRS at the correct location in the private storage
+  RequestId epoch_id = 6;
 }
 
 message CrsGenResult {
@@ -772,17 +776,6 @@ message CrsInfo {
 
   // The EIP712 domain from the initial CrsGenRequest
   Eip712DomainMsg domain = 4;
-
-  // EIP-712 signature on the CRS generation result using the following structure:
-  // struct CrsgenVerification {
-  //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.
-  //     uint256 crsId;
-  //     /// @notice The max bit length of the generated CRS.
-  //     uint256 maxBitLength;
-  //     /// @notice The digest of the generated CRS.
-  //     bytes crsDigest;
-  // }
-  bytes external_signature = 5;
 }
 
 message PreviousEpochInfo {
