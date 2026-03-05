@@ -773,7 +773,32 @@ message KeyInfo {
   // If there are no key_digests, the digest verification is skipped.
   repeated KeyDigest key_digests = 4;
   Eip712DomainMsg domain = 5;
+}
 
+message CrsInfo {
+  // The 32 Byte / 256 Bit ID of the initial CrsGenRequest
+  RequestId request_id = 1;
+
+  // The digest of the generated CRS.
+  // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
+  bytes crs_digest = 2;
+
+  // This is the maximum number of bits that can be proven.
+  uint32 max_num_bits = 3;
+
+  // The EIP712 domain from the initial CrsGenRequest
+  Eip712DomainMsg domain = 4;
+
+  // EIP-712 signature on the CRS generation result using the following structure:
+  // struct CrsgenVerification {
+  //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.
+  //     uint256 crsId;
+  //     /// @notice The max bit length of the generated CRS.
+  //     uint256 maxBitLength;
+  //     /// @notice The digest of the generated CRS.
+  //     bytes crsDigest;
+  // }
+  bytes external_signature = 5;
 }
 
 message PreviousEpochInfo {
@@ -784,6 +809,8 @@ message PreviousEpochInfo {
   RequestId epoch_id = 2;
   // Info about all the keys to be reshared (if any)
   repeated KeyInfo keys_info = 3;
+  // Info about all CRS to be re-signed
+  repeated CrsInfo crs_info = 4;
 }
 
 message NewMpcEpochRequest {
@@ -801,6 +828,7 @@ message NewMpcEpochRequest {
 
 message EpochResultResponse {
   repeated KeyGenResult reshare_responses = 1;
+  repeated CrsGenResult crs_responses = 2;
 }
 
 message DestroyMpcEpochRequest {

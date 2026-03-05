@@ -550,6 +550,9 @@ impl<
         ))
     }
 
+    //TODO: That's probably where we want to deal with CRS fetching and re-signing
+    // as that's called (only) by all the parties in the new context/epoch.
+
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
     async fn store_reshared_keys(
@@ -1201,6 +1204,7 @@ impl<
                 );
                 Ok(Response::new(EpochResultResponse {
                     reshare_responses: vec![],
+                    crs_responses: vec![],
                 }))
             }
             EpochOutput::Reshare(results) => {
