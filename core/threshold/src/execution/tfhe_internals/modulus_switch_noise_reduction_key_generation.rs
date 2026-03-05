@@ -1,9 +1,7 @@
 use itertools::Itertools;
 use tfhe::{
     core_crypto::prelude::ParallelByteRandomGenerator,
-    shortint::server_key::{
-        CompressedModulusSwitchNoiseReductionKey, ModulusSwitchNoiseReductionKey,
-    },
+    shortint::server_key::CompressedModulusSwitchNoiseReductionKey,
 };
 use tracing::instrument;
 
@@ -23,44 +21,6 @@ use crate::{
         },
     },
 };
-
-/// Generate the modulus switching noise reduction key from the small LWE key.
-/// This key is essentially encryptions of zeros, and it's used as a part of
-/// the bootstrap algorithm if it exists, right before modulus switching.
-#[instrument(name="Gen MSNRK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub(crate) async fn generate_mod_switch_noise_reduction_key<
-    Z: BaseRing,
-    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    S: BaseSessionHandles,
-    Gen: ParallelByteRandomGenerator,
-    const EXTENSION_DEGREE: usize,
->(
-    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: &MSNRKParams,
-    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-    session: &mut S,
-    preprocessing: &mut P,
-) -> anyhow::Result<ModulusSwitchNoiseReductionKey<u64>>
-where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let output = generate_encrypted_zeros(
-        input_lwe_sk,
-        params,
-        mpc_encryption_rng,
-        session,
-        preprocessing,
-    )?;
-
-    let opened_ciphertext_list = lwe_ciphertext::open_to_tfhers_type(output, session).await?;
-
-    Ok(ModulusSwitchNoiseReductionKey {
-        modulus_switch_zeros: opened_ciphertext_list,
-        ms_bound: params.params.ms_bound,
-        ms_r_sigma_factor: params.params.ms_r_sigma_factor,
-        ms_input_variance: params.params.ms_input_variance,
-    })
-}
 
 #[instrument(name="Gen Compressed MSNRK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_mod_switch_noise_reduction_key<

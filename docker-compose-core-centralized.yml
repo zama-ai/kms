@@ -22,6 +22,7 @@ services:
       - "docker-compose-kms-core.env"
     ports:
       - "50051:50051"
+      - "9646:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50051"
       interval: 1s
