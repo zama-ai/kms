@@ -27,7 +27,7 @@ jobs:
         with:
           # Define paths that trigger specific component workflows
           # Changes to observability affect multiple components
-          list-files: 'json'
+          list-files: "json"
           filters: |
             dockerfile:
               - 'docker/**/Dockerfile'
@@ -88,7 +88,7 @@ jobs:
           build-args: |
             RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
             TARGETARCH=amd64
-          context: '.'
+          context: "."
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
@@ -102,11 +102,11 @@ jobs:
             base:latest
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # v0.34.2
         with:
           image-ref: base:latest
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
+          format: "table"
+          severity: "CRITICAL,HIGH"
           output: trivy-result.txt
 
       - name: Check Trivy result file
