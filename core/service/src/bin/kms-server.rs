@@ -701,7 +701,6 @@ async fn main_exec() -> anyhow::Result<()> {
                     backup_vault,
                     security_module,
                     mpc_listener,
-                    base_kms,
                     tls_identity,
                     need_peer_tcp_proxy,
                     false,

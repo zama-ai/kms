@@ -1,12 +1,16 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+    sync::Arc,
+};
 
 // === External Crates ===
 use kms_grpc::{
     identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
-    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    RequestId,
+    rpc_types::{KMSType, PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    ContextId, RequestId,
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
@@ -56,6 +60,7 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
+        context::ContextInfo,
         context_manager::{ensure_default_threshold_context_in_storage, ThresholdContextManager},
         prepare_shutdown_signals,
         threshold::{
@@ -73,7 +78,7 @@ use crate::{
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage,
+            crypto_material::{get_core_signing_keys, ThresholdCryptoMaterialStorage},
             read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
         },
         Vault,
@@ -344,7 +349,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
-    base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     peer_tcp_proxy: bool,
     run_prss: bool,
@@ -367,6 +371,51 @@ where
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
 
+    // Construct BaseKmsStruct from signing keys and contexts in storage
+    let my_id = threshold_config.my_id.ok_or_else(|| {
+        anyhow_error_and_log("my_id is required in threshold config")
+    })? as u32;
+
+    let sig_keys_map = get_core_signing_keys(&private_storage).await?;
+    let sig_keys: Vec<_> = sig_keys_map.into_values().collect();
+
+    let context_map: HashMap<RequestId, ContextInfo> =
+        read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string()).await?;
+    let mut contexts: Vec<ContextInfo> = context_map.into_values().collect();
+
+    if sig_keys.len() > 1 {
+        // Multiple keys: validate that contexts exist for each key
+        let context_addresses: HashSet<_> = contexts
+            .iter()
+            .filter_map(|c| c.my_node(my_id).ok().flatten())
+            .filter_map(|n| n.verification_key.map(|vk| vk.address()))
+            .collect();
+        for sk in &sig_keys {
+            let addr = sk.verf_key().address();
+            if !context_addresses.contains(&addr) {
+                anyhow::bail!(
+                    "No context found for signing key with address {}",
+                    addr
+                );
+            }
+        }
+    } else if sig_keys.len() == 1 && contexts.is_empty() {
+        // Single key, no contexts: create default context
+        ensure_default_threshold_context_in_storage(
+            &mut private_storage,
+            threshold_config,
+            &sig_keys[0].verf_key(),
+        )
+        .await?;
+        // Reload contexts after creating the default
+        let context_map: HashMap<RequestId, ContextInfo> =
+            read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string())
+                .await?;
+        contexts = context_map.into_values().collect();
+    }
+
+    let base_kms = BaseKmsStruct::new(KMSType::Threshold, my_id, sig_keys, contexts)?;
+
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
         read_all_data_from_all_epochs_versioned(
@@ -380,9 +429,11 @@ where
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
 
-    // Validate the recovery material against the provided verification key
+    // Validate the recovery material against the verification key for each context
     for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
+        let context_id: ContextId = (*cur_req_id).into();
+        let verf_key = base_kms.get_verf_key(&context_id)?;
+        if !cur_rec_material.validate(&verf_key) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
@@ -495,7 +546,7 @@ where
     let preproc_factory = match &threshold_config.preproc_redis {
         None => create_memory_factory(),
         Some(ref conf) => {
-            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
+            create_redis_factory(format!("REDIS_{}", my_id), conf)
         }
     };
 
@@ -518,16 +569,6 @@ where
         threshold_config.min_dec_cache,
     )));
     let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
-
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // If we're still using peer config, we need to manually write the default context into storage.
-    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    ensure_default_threshold_context_in_storage(
-        &mut private_storage,
-        threshold_config,
-        &base_kms.verf_key(),
-    )
-    .await?;
 
     let private_storage_info = private_storage.info();
 

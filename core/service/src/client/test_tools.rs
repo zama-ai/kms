@@ -1,7 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
-use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::threshold::service::new_real_threshold_kms;
@@ -10,7 +9,7 @@ use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::{
-    crypto_material::get_core_signing_keys, file::FileStorage, Storage, StorageType,
+    file::FileStorage, Storage, StorageType,
 };
 use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
@@ -25,7 +24,6 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -145,9 +143,6 @@ pub async fn setup_threshold_no_client<
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
                 core_config,
@@ -156,7 +151,6 @@ pub async fn setup_threshold_no_client<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
                 false,
                 run_prss,
@@ -374,14 +368,6 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let secret_keys = get_core_signing_keys(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(
-                KMSType::Threshold,
-                my_id_copy,
-                secret_keys.values().collect(),
-            )
-            .unwrap();
-
             let server = new_real_threshold_kms(
                 core_config,
                 cur_pub_storage,
@@ -389,7 +375,6 @@ pub async fn setup_threshold_with_custom_peers<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
                 false,
                 run_prss,
