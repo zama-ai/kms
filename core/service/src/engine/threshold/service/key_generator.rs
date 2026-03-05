@@ -18,6 +18,7 @@ use observability::{
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_fhe::{
     algebra::{
@@ -77,7 +78,10 @@ use crate::{
         },
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{
+        crypto_material::{CryptoMaterialReader, ThresholdCryptoMaterialStorage},
+        Storage, StorageExt,
+    },
 };
 
 // === Current Module Imports ===
@@ -342,6 +346,14 @@ impl<
         // we must validate the parameter before passing it into the background process
         internal_keyset_config.validate()?;
 
+        // Read existing key tag from public storage if needed
+        let existing_key_tag: Option<tfhe::Tag> = if internal_keyset_config.use_existing_key_tag() {
+            let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()?;
+            Some(Self::read_existing_key_tag(&crypto_storage, &existing_keyset_id).await?)
+        } else {
+            None
+        };
+
         let keygen_background = async move {
             // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
             match &preproc_handle_w_mode {
@@ -366,20 +378,6 @@ impl<
                     // Nothing to remove
                 }
             }
-            // Read existing key tag from public storage if needed
-            let existing_key_tag: Option<tfhe::Tag> =
-                if internal_keyset_config.get_use_existing_key_tag() {
-                    let existing_keyset_id = internal_keyset_config
-                        .get_existing_keyset_id()
-                        .expect("validated");
-                    Some(
-                        Self::read_existing_key_tag(&crypto_storage, &existing_keyset_id)
-                            .await
-                            .expect("failed to read existing key tag from public storage"),
-                    )
-                } else {
-                    None
-                };
 
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -1418,29 +1416,28 @@ impl<
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         existing_keyset_id: &RequestId,
     ) -> anyhow::Result<tfhe::Tag> {
-        use crate::vault::storage::crypto_material::CryptoMaterialReader;
-        use tfhe::prelude::Tagged;
-
         let pub_storage = crypto_storage.inner.public_storage.lock().await;
 
-        if let Ok(compressed_keyset) =
+        let tag = if let Ok(compressed_keyset) =
             <CompressedXofKeySet as CryptoMaterialReader>::read_from_storage(
                 &*pub_storage,
                 existing_keyset_id,
             )
             .await
         {
-            return Ok(compressed_keyset
+            compressed_keyset
                 .clone()
                 .into_raw_parts()
                 .1
                 .into_raw_parts()
-                .1);
-        }
+                .1
+        } else {
+            let server_key: tfhe::ServerKey =
+                CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id).await?;
+            server_key.tag().clone()
+        };
 
-        let server_key: tfhe::ServerKey =
-            CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id).await?;
-        Ok(server_key.tag().clone())
+        Ok(tag)
     }
 }
 

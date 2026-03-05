@@ -576,6 +576,7 @@ pub struct SharedKeyGenParameters {
     #[clap(long)]
     pub existing_epoch_id: Option<EpochId>,
     /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
+    /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub use_existing_key_tag: bool,
     pub context_id: Option<ContextId>,

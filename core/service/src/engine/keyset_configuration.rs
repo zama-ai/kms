@@ -175,7 +175,7 @@ impl InternalKeySetConfig {
         Ok(keyset_id)
     }
 
-    pub fn get_use_existing_key_tag(&self) -> bool {
+    pub fn use_existing_key_tag(&self) -> bool {
         self.keyset_added_info
             .as_ref()
             .is_some_and(|info| info.use_existing_key_tag)

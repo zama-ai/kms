@@ -533,12 +533,12 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
             assert_eq!(
                 pk.tag(),
                 &expected_tag,
-                "Party {party_id} should have tag propagated from existing keyset"
+                "Public key for party {party_id} should have tag propagated from existing keyset"
             );
             assert_eq!(
                 server_key.tag(),
                 &expected_tag,
-                "Party {party_id} should have tag propagated from existing keyset"
+                "Server key for party {party_id} should have tag propagated from existing keyset"
             );
         }
     }
