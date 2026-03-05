@@ -583,6 +583,7 @@ impl<
         new_private_keysets: Vec<PrivateKeySet<4>>,
     ) -> anyhow::Result<()> {
         let mut all_infos = Vec::new();
+        let mut storage_tasks = Vec::new();
         for (verified_material, (new_private_keyset, key_info)) in
             verified_materials.into_iter().zip_eq(
                 new_private_keysets
@@ -623,15 +624,17 @@ impl<
                         meta_data: info.clone(),
                     };
 
-                    crypto_storage
-                        .inner_write_threshold_keys(
-                            &key_info.key_id,
-                            &new_epoch_id,
-                            threshold_fhe_keys,
-                            fhe_pubkeys,
-                            Arc::clone(&meta_store),
-                        )
-                        .await;
+                    storage_tasks.push(
+                        crypto_storage
+                            .inner_write_threshold_keys(
+                                &key_info.key_id,
+                                &new_epoch_id,
+                                threshold_fhe_keys,
+                                fhe_pubkeys,
+                                Arc::clone(&meta_store),
+                            )
+                            .boxed(),
+                    );
                     all_infos.push(info);
                 }
                 VerifiedPublicMaterial::Compressed(compressed_keyset) => {
@@ -661,20 +664,29 @@ impl<
                         meta_data: info.clone(),
                     };
 
-                    crypto_storage
-                        .inner_write_threshold_keys_compressed(
-                            &key_info.key_id,
-                            &new_epoch_id,
-                            threshold_fhe_keys,
-                            &compressed_keyset,
-                            Arc::clone(&meta_store),
-                        )
-                        .await;
+                    let meta_store = Arc::clone(&meta_store);
+                    storage_tasks.push(
+                        async move {
+                            let compressed_keyset = compressed_keyset;
+                            crypto_storage
+                                .inner_write_threshold_keys_compressed(
+                                    &key_info.key_id,
+                                    &new_epoch_id,
+                                    threshold_fhe_keys,
+                                    &compressed_keyset,
+                                    meta_store,
+                                )
+                                .await
+                        }
+                        .boxed(),
+                    );
                     all_infos.push(info);
                 }
             }
         }
 
+        // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
+        join_all(storage_tasks.into_iter()).await;
         meta_store
             .write()
             .await
