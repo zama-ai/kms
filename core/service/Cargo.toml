@@ -178,7 +178,7 @@ non-wasm = [
     "dep:x509-parser",
 ]
 heap-profiling = [
-    "observability?/jemalloc-stats",
+    "observability?/heap-profiling",
     "dep:tikv-jemalloc-ctl",
     "dep:tikv-jemallocator",
 ]

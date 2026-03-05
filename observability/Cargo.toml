@@ -49,4 +49,4 @@ ignored = ["strum"]
 
 [features]
 default = []
-jemalloc-stats = ["dep:tikv-jemalloc-ctl"]
+heap-profiling = ["dep:tikv-jemalloc-ctl"]

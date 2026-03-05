@@ -3,7 +3,7 @@ use std::{cmp::max, ffi::OsStr, fs, time::Duration};
 use sysinfo::{
     ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, MINIMUM_CPU_UPDATE_INTERVAL,
 };
-#[cfg(feature = "jemalloc-stats")]
+#[cfg(feature = "heap-profiling")]
 use tikv_jemalloc_ctl::stats as jemalloc_stats;
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
@@ -83,7 +83,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             METRICS.record_socat_file_descriptors(socat_count);
 
             // Jemalloc allocator stats
-            #[cfg(feature = "jemalloc-stats")]
+            #[cfg(feature = "heap-profiling")]
             {
                 // Advance jemalloc's stats epoch to get fresh values
                 match tikv_jemalloc_ctl::epoch::mib() {
