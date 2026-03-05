@@ -67,7 +67,7 @@ use crate::{
     engine::{
         base::{
             compute_info_compressed_keygen, compute_info_standard_keygen, retrieve_parameters,
-            KeyGenMetadata, DSEP_PUBDATA_KEY,
+            safe_serialize_hash_element_versioned, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::service::{
             reshare_utils::{get_verified_public_materials, VerifiedPublicMaterial},
@@ -503,12 +503,20 @@ impl<
     ) -> anyhow::Result<()> {
         match verified_material {
             VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                let server_key_digest = safe_serialize_hash_element_versioned(
+                    &DSEP_PUBDATA_KEY,
+                    &fhe_pubkeys.server_key,
+                )?;
+                let public_key_digest = safe_serialize_hash_element_versioned(
+                    &DSEP_PUBDATA_KEY,
+                    &fhe_pubkeys.public_key,
+                )?;
                 let info = match compute_info_standard_keygen(
                     sk,
-                    &DSEP_PUBDATA_KEY,
                     &verified_previous_epoch.preproc_id,
                     &verified_previous_epoch.key_id,
-                    &fhe_pubkeys,
+                    server_key_digest,
+                    public_key_digest,
                     &verified_previous_epoch.eip712_domain,
                 ) {
                     Ok(info) => info,
@@ -541,12 +549,13 @@ impl<
                     .await;
             }
             VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                let compressed_keyset_digest =
+                    safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
                 let info = match compute_info_compressed_keygen(
                     sk,
-                    &DSEP_PUBDATA_KEY,
                     &verified_previous_epoch.preproc_id,
                     &verified_previous_epoch.key_id,
-                    &compressed_keyset,
+                    compressed_keyset_digest,
                     &verified_previous_epoch.eip712_domain,
                 ) {
                     Ok(info) => info,

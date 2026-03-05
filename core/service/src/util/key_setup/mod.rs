@@ -4,8 +4,10 @@ cfg_if::cfg_if! {
 
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
-        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
+        use crate::engine::base::{compute_info_crs, compute_info_standard_keygen, CrsGenMetadata};
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
+        use crate::consts::SAFE_SER_SIZE_LIMIT;
+        use threshold_fhe::hashing::hash_element;
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
@@ -1016,6 +1018,25 @@ where
         tracing::info!("Threshold FHE keys exists, skipping generation");
         return false;
     }
+
+    // Delete any stale public data before regenerating.
+    // FileStorage::store_data skips writing if data already exists, so leftover public
+    // data from a previous generation would not be overwritten.
+    for pub_storage in pub_storages.iter_mut() {
+        let _ = pub_storage
+            .delete_data(key_id, &PubDataType::PublicKey.to_string())
+            .await;
+        let _ = pub_storage
+            .delete_data(key_id, &PubDataType::ServerKey.to_string())
+            .await;
+    }
+    // Also delete stale private data so it gets re-written with fresh digests.
+    for priv_storage in priv_storages.iter_mut() {
+        let _ = priv_storage
+            .delete_data_at_epoch(key_id, epoch_id, &PrivDataType::FheKeyInfo.to_string())
+            .await;
+    }
+
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
@@ -1053,25 +1074,45 @@ where
     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
+    // Serialize the public keys ONCE so we can use the same bytes for both
+    // digest computation and storage, avoiding any potential mismatch from double
+    // serialization.
+    let mut public_key_bytes = Vec::new();
+    tfhe::safe_serialization::safe_serialize(
+        &keyset.public_keys.public_key,
+        &mut public_key_bytes,
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .expect("Failed to serialize public key");
+    let mut server_key_bytes = Vec::new();
+    tfhe::safe_serialization::safe_serialize(
+        &keyset.public_keys.server_key,
+        &mut server_key_bytes,
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .expect("Failed to serialize server key");
+
+    // Compute digests from the serialized bytes
+    let public_key_digest = hash_element(&DSEP_PUBDATA_KEY, &public_key_bytes);
+    let server_key_digest = hash_element(&DSEP_PUBDATA_KEY, &server_key_bytes);
+
     // Store keys for each party
     let domain = dummy_domain();
     for i in 1..=amount_parties {
-        // Get signing key for this party
-
         let sk = &signing_keys[i - 1];
-        // Compute info with proper error handling
-        let info = match crate::engine::base::compute_info_standard_keygen(
+        // Compute info from pre-computed digests
+        let info = match compute_info_standard_keygen(
             sk,
-            &DSEP_PUBDATA_KEY,
             &INSECURE_PREPROCESSING_ID,
             key_id,
-            &keyset.public_keys,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
             &domain,
         ) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to compute key info for party {}: {}", i, e);
-                continue; // Skip this party but try others
+                continue;
             }
         };
         let threshold_fhe_keys = ThresholdFheKeys {
@@ -1084,40 +1125,40 @@ where
             meta_data: info,
         };
 
-        // Store public key
+        // Store public key using pre-serialized bytes
         tracing::info!("Storing public key");
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &keyset.public_keys.public_key,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
+        if let Err(store_err) = pub_storages[i - 1]
+            .store_bytes(
+                &public_key_bytes,
+                key_id,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await
         {
             tracing::error!(
                 "Failed to store public key for party {}: {}",
                 { i },
                 store_err
             );
-            continue; // Skip this party but try others
+            continue;
         }
         log_storage_success(key_id, pub_storages[i - 1].info(), "key data", true, true);
 
-        // Store public server key
-        if let Err(store_err) = store_versioned_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &keyset.public_keys.server_key,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await
+        // Store public server key using pre-serialized bytes
+        if let Err(store_err) = pub_storages[i - 1]
+            .store_bytes(
+                &server_key_bytes,
+                key_id,
+                &PubDataType::ServerKey.to_string(),
+            )
+            .await
         {
             tracing::error!(
                 "Failed to store public server key for party {}: {}",
                 { i },
                 store_err
             );
-            continue; // Skip this party but try others
+            continue;
         }
         log_storage_success(
             key_id,
@@ -1218,6 +1259,21 @@ where
         return false;
     }
 
+    // Delete any stale public CRS data before regenerating.
+    // FileStorage::store_data skips writing if data already exists, so leftover public
+    // data from a previous generation would not be overwritten.
+    for pub_storage in pub_storages.iter_mut() {
+        let _ = pub_storage
+            .delete_data(crs_id, &PubDataType::CRS.to_string())
+            .await;
+    }
+    // Also delete stale private CRS info so it gets re-written with fresh digests.
+    for priv_storage in priv_storages.iter_mut() {
+        let _ = priv_storage
+            .delete_data(crs_id, &PrivDataType::CrsInfo.to_string())
+            .await;
+    }
+
     // Collect signing keys from all private storages
     // PANICS: If any signing key cannot be retrieved - critical for security
     let signing_keys: Vec<_> = future::join_all(
@@ -1263,6 +1319,15 @@ where
             panic!("Failed to convert internal_pp to tfhe_zk_pok_pp: {e}");
         });
 
+    // Serialize the CRS ONCE so we can use the same bytes for both
+    // digest computation and storage, avoiding any potential mismatch from double
+    // serialization.
+    let mut crs_bytes = Vec::new();
+    tfhe::safe_serialization::safe_serialize(&pp, &mut crs_bytes, SAFE_SER_SIZE_LIMIT)
+        .expect("Failed to serialize CRS");
+    let crs_digest = hash_element(&DSEP_PUBDATA_CRS, &crs_bytes);
+    let max_num_bits = threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs(&pp);
+
     // Store the CRS for each party
     // PANICS: if the private and public storage and signing keys are not of equal length
     let domain = dummy_domain();
@@ -1270,16 +1335,13 @@ where
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
-        // Compute signed metadata for CRS verification
-        // PANICS: If signature generation fails - would compromise security model
-
-        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
+        // Compute signed metadata for CRS verification from pre-computed digest
+        let crs_info = compute_info_crs(cur_sk, crs_id, crs_digest.clone(), max_num_bits, &domain)
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");
             });
 
-        // Store private CRS info with signature - essential for verification chain
-        // PANICS: If storage fails - system would be in inconsistent state
+        // Store private CRS info with signature
         store_versioned_at_request_id::<PrivS, CrsGenMetadata>(
             cur_priv,
             crs_id,
@@ -1293,18 +1355,13 @@ where
 
         log_storage_success(crs_id, cur_priv.info(), "CRS data", false, true);
 
-        // Store public CRS parameters - must be available for all cryptographic operations
-        // PANICS: If storage fails - system would be unable to perform cryptographic operations
-        store_versioned_at_request_id::<PubS, tfhe::zk::CompactPkeCrs>(
-            cur_pub,
-            crs_id,
-            &pp,
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap_or_else(|e| {
-            panic!("Failed to store public CRS for party: {e}");
-        });
+        // Store public CRS parameters using pre-serialized bytes
+        cur_pub
+            .store_bytes(&crs_bytes, crs_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Failed to store public CRS for party: {e}");
+            });
         log_storage_success(crs_id, cur_pub.info(), "CRS data", true, true);
     }
     true

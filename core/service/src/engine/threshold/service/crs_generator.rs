@@ -36,7 +36,10 @@ use tracing::Instrument;
 use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
+        base::{
+            compute_info_crs, safe_serialize_hash_element_versioned, BaseKmsStruct, CrsGenMetadata,
+            DSEP_PUBDATA_CRS,
+        },
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
         validation::{parse_grpc_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
@@ -364,7 +367,9 @@ impl<
         };
 
         let res_info_pp = pp.and_then(|pp| {
-            compute_info_crs(&sk, &DSEP_PUBDATA_CRS, req_id, &pp, &eip712_domain)
+            let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+            let max_num_bits = threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs(&pp);
+            compute_info_crs(&sk, req_id, crs_digest, max_num_bits, &eip712_domain)
                 .map(|pub_info| (pp, pub_info))
         });
 

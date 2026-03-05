@@ -1,5 +1,8 @@
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::engine::base::{compute_info_decompression_keygen, KeyGenMetadata, DSEP_PUBDATA_KEY};
+use crate::engine::base::{
+    compute_info_decompression_keygen, safe_serialize_hash_element_versioned, KeyGenMetadata,
+    DSEP_PUBDATA_KEY,
+};
 use crate::engine::centralized::central_kms::{
     async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKeyGenResult,
     CentralizedKms,
@@ -376,12 +379,26 @@ pub(crate) async fn key_gen_background<
                     return;
                 }
             };
+            let key_digest = match safe_serialize_hash_element_versioned(
+                &DSEP_PUBDATA_KEY,
+                &decompression_key,
+            ) {
+                Ok(digest) => digest,
+                Err(e) => {
+                    let _ = update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
+                        req_id,
+                        format!("Failed to compute decompression key digest: {e}"),
+                        op_tag,
+                    );
+                    return;
+                }
+            };
             let info = match compute_info_decompression_keygen(
                 &sk,
-                &DSEP_PUBDATA_KEY,
                 preproc_id,
                 req_id,
-                &decompression_key,
+                key_digest,
                 &eip712_domain,
             ) {
                 Ok(info) => info,

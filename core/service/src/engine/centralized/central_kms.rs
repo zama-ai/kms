@@ -368,13 +368,13 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
-    let crs_info = crate::engine::base::compute_info_crs(
-        sk,
+    let crs_digest = crate::engine::base::safe_serialize_hash_element_versioned(
         &crate::engine::base::DSEP_PUBDATA_CRS,
-        req_id,
         &pp,
-        eip712_domain,
     )?;
+    let max_num_bits = threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs(&pp);
+    let crs_info =
+        crate::engine::base::compute_info_crs(sk, req_id, crs_digest, max_num_bits, eip712_domain)?;
     Ok((pp, crs_info))
 }
 
