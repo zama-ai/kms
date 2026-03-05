@@ -75,20 +75,16 @@ tonic-build.workspace = true
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
-async-std.workspace = true
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
 ctor.workspace = true
 execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
-proptest.workspace = true
-rstest.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 threshold-fhe = { workspace = true, features = ["testing"] }
-tracing-test.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["getrandom", "opentelemetry"]
