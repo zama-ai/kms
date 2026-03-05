@@ -845,7 +845,7 @@ pub fn parse_extra_data(extra_data: &[u8]) -> anyhow::Result<(u8, ContextId, Epo
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use aes_prng::AesRng;
     use kms_grpc::{
@@ -855,15 +855,16 @@ mod tests {
             UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
-        RequestId,
+        ContextId, RequestId,
     };
 
     use rand::SeedableRng;
 
     use crate::{
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{gen_sig_keys, internal_sign},
+            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
         },
         engine::{
             base::derive_request_id,
@@ -883,6 +884,16 @@ mod tests {
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
+
+    /// Build a valid `extra_data` field for test responses.
+    /// Format: version (1 byte) + context_id (ID_LENGTH bytes) + epoch_id (ID_LENGTH bytes)
+    fn test_extra_data(context_id: &ContextId) -> Vec<u8> {
+        let mut data = Vec::with_capacity(1 + 2 * ID_LENGTH);
+        data.push(1u8); // version
+        data.extend_from_slice(context_id.as_bytes());
+        data.extend_from_slice(context_id.as_bytes()); // epoch_id (reuse context_id bytes for simplicity)
+        data
+    }
 
     #[test]
     fn test_validate_public_decrypt_req() {
@@ -1268,14 +1279,6 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
-
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
 
         let request_id = Some(
             derive_request_id("test_validate_public_decrypt_meta_response")
@@ -1283,7 +1286,7 @@ mod tests {
                 .into(),
         );
         let pivot = PublicDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+            verification_key: bc2wrap::serialize(&vk0).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
@@ -1299,7 +1302,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).unwrap()
             );
         }
 
@@ -1310,7 +1313,7 @@ mod tests {
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err()
+                validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).is_err()
             );
         }
 
@@ -1322,7 +1325,7 @@ mod tests {
                     .into(),
             );
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1336,7 +1339,7 @@ mod tests {
             let bad_signature_buf = bad_signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &bad_signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &bad_signature_buf)
                     .unwrap()
             );
         }
@@ -1349,7 +1352,7 @@ mod tests {
                     .into(),
             );
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1362,11 +1365,10 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
-
         // use a bad response (bad validation key)
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
@@ -1384,7 +1386,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
@@ -1406,7 +1408,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
@@ -1417,7 +1419,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+                validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).unwrap()
             );
         }
     }
@@ -1429,12 +1431,13 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let extra_data = test_extra_data(&context_id);
+        let pks: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::from_iter([(
+            context_id,
+            HashSet::from_iter([vk0.clone(), vk1.clone(), vk2]),
+        )]);
+        let amount_servers = 3;
 
         let request_id = Some(
             derive_request_id("test_validate_public_decrypt_responses")
@@ -1443,7 +1446,7 @@ mod tests {
         );
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1458,12 +1461,12 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![1, 2, 3, 4], // some extra data that is different from resp1
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk1).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1478,7 +1481,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![],
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1491,7 +1494,7 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1501,7 +1504,7 @@ mod tests {
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1513,7 +1516,7 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1525,7 +1528,7 @@ mod tests {
         {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
-                    verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                    verification_key: bc2wrap::serialize(&vk1).unwrap(),
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
@@ -1547,12 +1550,12 @@ mod tests {
                     signature: signature_buf,
                     payload: Some(payload),
                     external_signature: vec![],
-                    extra_data: vec![],
+                    extra_data: extra_data.clone(),
                 }
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1564,7 +1567,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1580,12 +1583,13 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let extra_data = test_extra_data(&context_id);
+        let pks: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::from_iter([(
+            context_id,
+            HashSet::from_iter([vk0.clone(), vk1.clone(), vk2]),
+        )]);
+        let amount_servers = 3;
 
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let request = PublicDecryptionRequest {
@@ -1609,7 +1613,7 @@ mod tests {
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1624,12 +1628,12 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![1, 2, 3], // some extra data, independent of resp1
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk1).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1644,7 +1648,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![],
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1655,6 +1659,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 1
             )
             .unwrap_err()
@@ -1669,6 +1674,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 3
             )
             .unwrap_err()
@@ -1710,6 +1716,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1742,6 +1749,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1779,6 +1787,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1789,7 +1798,14 @@ mod tests {
         // request is empty, which should pass
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_public_decrypt_responses_against_request(&pks, None, &agg_resp, 2).unwrap();
+            validate_public_decrypt_responses_against_request(
+                &pks,
+                None,
+                &agg_resp,
+                amount_servers,
+                2,
+            )
+            .unwrap();
         }
 
         // happy path
@@ -1799,6 +1815,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 2,
             )
             .unwrap();

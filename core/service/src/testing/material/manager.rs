@@ -7,7 +7,7 @@ use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P,
     DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
     DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID,
+    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID,
     TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
     TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
 };
@@ -362,30 +362,35 @@ impl TestMaterialManager {
                 fs::create_dir_all(&dest_pub).await?;
                 fs::create_dir_all(&dest_priv).await?;
 
-                // Copy verification keys
-                self.copy_key_files(
+                // Copy all verification keys
+                self.copy_all_key_type_files(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfKey.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
                 )
                 .await?;
 
-                // Copy verification addresses
-                self.copy_key_files(
+                // Copy all verification addresses
+                self.copy_all_key_type_files(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfAddress.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
                 )
                 .await?;
 
-                // Copy signing keys
-                self.copy_key_files(
+                // Copy all signing keys
+                self.copy_all_key_type_files(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::SigningKey.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
+                )
+                .await?;
+
+                // Copy all context info
+                self.copy_all_key_type_files(
+                    &source_priv,
+                    &dest_priv,
+                    &PrivDataType::ContextInfo.to_string(),
                 )
                 .await?;
             }
@@ -400,27 +405,32 @@ impl TestMaterialManager {
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_key_files(
+            self.copy_all_key_type_files(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfKey.to_string(),
-                &SIGNING_KEY_ID.to_string(),
             )
             .await?;
 
-            self.copy_key_files(
+            self.copy_all_key_type_files(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfAddress.to_string(),
-                &SIGNING_KEY_ID.to_string(),
             )
             .await?;
 
-            self.copy_key_files(
+            self.copy_all_key_type_files(
                 &source_priv,
                 &dest_priv,
                 &PrivDataType::SigningKey.to_string(),
-                &SIGNING_KEY_ID.to_string(),
+            )
+            .await?;
+
+            // Copy all context info
+            self.copy_all_key_type_files(
+                &source_priv,
+                &dest_priv,
+                &PrivDataType::ContextInfo.to_string(),
             )
             .await?;
         }
@@ -602,6 +612,45 @@ impl TestMaterialManager {
             // Copy PRSS setup files
             self.copy_key_files(&source_priv, &dest_priv, "PrssSetup", PRSS_INIT_REQ_ID)
                 .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Copy all files for a given key type directory (e.g., all VerfKey files regardless of ID)
+    async fn copy_all_key_type_files(
+        &self,
+        source_dir: &Path,
+        dest_dir: &Path,
+        key_type: &str,
+    ) -> Result<()> {
+        let source_type_dir = source_dir.join(key_type);
+        let dest_type_dir = dest_dir.join(key_type);
+
+        if !source_type_dir.exists() {
+            tracing::warn!(
+                "Source directory does not exist, skipping copy: {}",
+                source_type_dir.display()
+            );
+            return Ok(());
+        }
+
+        fs::create_dir_all(&dest_type_dir).await?;
+
+        let mut entries = fs::read_dir(&source_type_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let source_file = entry.path();
+            if source_file.is_file() {
+                let dest_file = dest_type_dir.join(entry.file_name());
+                fs::copy(&source_file, &dest_file).await.with_context(|| {
+                    format!(
+                        "Failed to copy {} from {} to {}",
+                        key_type,
+                        source_file.display(),
+                        dest_file.display()
+                    )
+                })?;
+            }
         }
 
         Ok(())
