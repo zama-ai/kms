@@ -59,7 +59,7 @@ where
     migrate_to_0_13_x(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
         // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
-        // That is, if a convertion to the PRSSCombined format has already been done, but under the legacy default epoch id
+        // That is, if a conversion to the PRSSCombined format has already been done, but under the legacy default epoch id
         migrate_combined_prss_to_0_13_10(priv_storage).await?;
     }
     migrate_context_before_0_13_10(priv_storage).await?;
