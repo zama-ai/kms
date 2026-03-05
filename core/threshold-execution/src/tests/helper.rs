@@ -400,14 +400,10 @@ pub mod testing {
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
-    use crate::tests::test_data_setup::tests::{
-        ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS,
-    };
     use crate::tests::{
         helper::tests_and_benches::get_seed_for_two_sets_role, test_data_setup::tests::DEFAULT_SEED,
     };
     use crate::{
-        constants::{REAL_KEY_PATH, SMALL_TEST_KEY_PATH, TEMP_DKG_DIR},
         runtime::{
             sessions::{
                 base_session::{BaseSession, GenericBaseSession},
@@ -433,7 +429,6 @@ pub mod tests {
     use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
     use session_id::SessionId;
-    use std::fs;
     use std::{
         collections::{HashMap, HashSet},
         sync::Arc,
@@ -979,8 +974,15 @@ pub mod tests {
         )
     }
 
+    #[cfg(test)]
     #[ctor::ctor]
     fn setup_data_for_integration() {
+        use crate::constants::{REAL_KEY_PATH, SMALL_TEST_KEY_PATH, TEMP_DKG_DIR};
+        use crate::tests::test_data_setup::tests::{
+            ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS,
+        };
+        use std::fs;
+
         // Ensure temp/dkg dir exists (also creates the temp dir)
         if let Err(e) = fs::create_dir_all(TEMP_DKG_DIR) {
             println!("Error creating temp/dkg directory {TEMP_DKG_DIR}: {e:?}");
