@@ -862,7 +862,6 @@ mod tests {
                 extra_verification_keys: vec![],
             });
         }
-        // todo add check to context maanger that context id in context matches name
         let context_info = ContextInfo {
             mpc_nodes,
             context_id: *LEGACY_DEFAULT_MPC_CONTEXT,
