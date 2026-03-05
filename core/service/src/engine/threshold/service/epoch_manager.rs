@@ -57,7 +57,10 @@ use threshold_fhe::{
             offline::{Preprocessing, SecureSmallPreprocessing},
             prss::{PRSSInit, PRSSSetup},
         },
-        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
+        tfhe_internals::{
+            parameters::{DKGParams, DkgMode},
+            private_keysets::PrivateKeySet,
+        },
     },
     networking::NetworkMode,
 };
@@ -99,10 +102,12 @@ use crate::{
 // we thus define a set of counters to make sure
 // the derived sessions are unique.
 const PRSS_SESSION_COUNTER: u64 = 0;
-const RESHARE_Z64_SESSION_COUNTER: u64 = 1;
-const RESHARE_Z128_SESSION_COUNTER: u64 = 2;
-const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 3;
-const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 4;
+const LIFT_Z64_SESSION_COUNTER: u64 = 1;
+const LIFT_Z128_SESSION_COUNTER: u64 = 2;
+const RESHARE_Z64_SESSION_COUNTER: u64 = 3;
+const RESHARE_Z128_SESSION_COUNTER: u64 = 4;
+const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 5;
+const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 6;
 
 #[derive(Debug)]
 struct VerifiedKeyInfo {
@@ -416,6 +421,32 @@ impl<
         join_all(futures).await.into_iter().collect()
     }
 
+    /// Creates the sessions needed by parties in set 1 for lifting keys to Z128 resharing
+    async fn create_set1_sessions(
+        session_maker_immutable: ImmutableSessionMaker,
+        epoch_id: EpochId,
+        context_id: ContextId,
+    ) -> anyhow::Result<(
+        SmallSession<ResiduePolyF4Z128>,
+        SmallSession<ResiduePolyF4Z64>,
+    )> {
+        let session_z128 =
+            async { epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
+                .and_then(|id| {
+                    session_maker_immutable.make_small_sync_session_z128(id, context_id, epoch_id)
+                })
+                .await?;
+
+        let session_z64 =
+            async { epoch_id.derive_session_id_with_counter(LIFT_Z64_SESSION_COUNTER) }
+                .and_then(|id| {
+                    session_maker_immutable.make_small_sync_session_z64(id, context_id, epoch_id)
+                })
+                .await?;
+
+        Ok((session_z128, session_z64))
+    }
+
     async fn reshare_as_set_1(
         &self,
         mut two_sets_session: TwoSetsBaseSession,
@@ -430,11 +461,42 @@ impl<
 
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
+        let immutable_session_maker = self.session_maker.make_immutable();
+        let sk = self.base_kms.sig_key().map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id_as_request_id),
+                e,
+                tonic::Code::FailedPrecondition,
+            )
+        })?;
+
         let task = async move {
             let mut keys_metadata = Vec::new();
-            for ((mut private_keys, key_metadata), key_info) in
+            let (mut session_z128, mut session_z64) = Self::create_set1_sessions(
+                immutable_session_maker,
+                verified_previous_epoch.epoch_id,
+                verified_previous_epoch.context_id,
+            )
+            .await?;
+
+            for ((private_keys, key_metadata), key_info) in
                 keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
             {
+                // Lift to expected domain
+                let mut private_keys = match key_info
+                    .key_parameters
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                {
+                    DkgMode::Z64 => private_keys.lift_to_z64(),
+                    DkgMode::Z128 => {
+                        private_keys
+                            .lift_to_z128_integrated(&mut session_z64, &mut session_z128)
+                            .await?
+                    }
+                };
+
                 Reshare::reshare_sk_two_sets_as_s1(
                     &mut two_sets_session,
                     &mut private_keys,
@@ -762,7 +824,14 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
 
         let task = async move {
-            let (mut session_z128, mut session_z64, session_online) =
+            let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
+                immutable_session_maker.clone(),
+                verified_previous_epoch.epoch_id,
+                verified_previous_epoch.context_id,
+            )
+            .await?;
+
+            let (mut session_z128_set_2, mut session_z64_set_2, session_online) =
                 Self::create_set2_sessions(immutable_session_maker, new_epoch_id, new_context_id)
                     .await?;
 
@@ -775,17 +844,34 @@ impl<
             let mut new_private_keysets = Vec::new();
             let sessions_online = &mut (two_sets_session, session_online);
 
-            for (key_info, (mut private_keyset, _)) in verified_previous_epoch
+            for (key_info, (private_keys, _)) in verified_previous_epoch
                 .keys_info
                 .iter()
                 .zip_eq(keys.into_iter())
             {
+                // Lift to expected domain
+                let mut private_keys = match key_info
+                    .key_parameters
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                {
+                    DkgMode::Z64 => private_keys.lift_to_z64(),
+                    DkgMode::Z128 => {
+                        private_keys
+                            .lift_to_z128_integrated(
+                                &mut session_z64_set_1,
+                                &mut session_z128_set_1,
+                            )
+                            .await?
+                    }
+                };
+
                 let num_needed_preproc =
                     ResharePreprocRequired::new(num_parties_set_1, key_info.key_parameters);
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
-                        &mut session_z64,
-                        &mut session_z128,
+                        &mut session_z64_set_2,
+                        &mut session_z128_set_2,
                         &num_needed_preproc,
                     )
                     .await?;
@@ -794,7 +880,7 @@ impl<
                     sessions_online,
                     &mut correlated_randomness_z128,
                     &mut correlated_randomness_z64,
-                    &mut private_keyset,
+                    &mut private_keys,
                     key_info.key_parameters,
                 )
                 .await?;
