@@ -3512,8 +3512,7 @@ async fn test_threshold_reshare() -> Result<()> {
     let previous_key_info = PreviousKeyInfo {
         key_id: key_id.into(),
         preproc_id,
-        server_key_digest,
-        public_key_digest,
+        key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
     };
     let resharing_result = reshare_isolated(
         &config_path,

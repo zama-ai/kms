@@ -416,6 +416,8 @@ pub(crate) fn check_standard_keyset_ext_signature(
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
+    tracing::info!("Checking external signature for standard keyset: key_id:{},preproc_id:{},server_key_digest:{},public_key_digest:{}",key_id, prep_id, hex::encode(&server_key_digest), hex::encode(&public_key_digest));
+
     let sol_type =
         KeygenVerification::new_standard(prep_id, key_id, server_key_digest, public_key_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
@@ -441,6 +443,8 @@ pub(crate) fn check_compressed_keyset_ext_signature(
 ) -> anyhow::Result<()> {
     let keyset_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+
+    tracing::info!("Checking external signature for compressed keyset: key_id:{},preproc_id:{},xof_keyset_digest:{}",key_id, prep_id, hex::encode(&keyset_digest));
 
     let sol_type = KeygenVerification::new_compressed(prep_id, key_id, keyset_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;

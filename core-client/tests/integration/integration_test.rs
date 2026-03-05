@@ -1780,8 +1780,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             previous_keys: vec![PreviousKeyInfo {
                 key_id: key_id.into(),
                 preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-                server_key_digest,
-                public_key_digest,
+                key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
             }],
         }),
     });

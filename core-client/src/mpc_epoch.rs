@@ -1,6 +1,6 @@
 use crate::{
     dummy_domain, keygen::check_standard_keyset_ext_signature,
-    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf,
+    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf, DigestKeySet,
     NewEpochParameters, PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use kms_grpc::{
@@ -25,28 +25,43 @@ impl PreviousEpochParameters {
             .previous_keys
             .iter()
             .map(|previous_key_info| {
-                let digest = vec![
-                    KeyDigest {
-                        key_type: PubDataType::ServerKey.to_string(),
-                        digest: hex::decode(previous_key_info.server_key_digest.clone())
-                            .unwrap_or_else(|e| {
-                                panic!(
+                let digest = match &previous_key_info.key_digest {
+                    DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest) => {
+                        vec![
+                            KeyDigest {
+                                key_type: PubDataType::ServerKey.to_string(),
+                                digest: hex::decode(server_key_digest.clone()).unwrap_or_else(
+                                    |e| {
+                                        panic!(
                                     "Unable to decode the provided server key digest {:?}: {:?}",
-                                    previous_key_info.server_key_digest, e
+                                    server_key_digest, e
                                 )
-                            }),
-                    },
-                    KeyDigest {
-                        key_type: PubDataType::PublicKey.to_string(),
-                        digest: hex::decode(previous_key_info.public_key_digest.clone())
-                            .unwrap_or_else(|e| {
-                                panic!(
+                                    },
+                                ),
+                            },
+                            KeyDigest {
+                                key_type: PubDataType::PublicKey.to_string(),
+                                digest: hex::decode(public_key_digest.clone()).unwrap_or_else(
+                                    |e| {
+                                        panic!(
                                     "Unable to decode the provided public key digest {:?}: {:?}",
-                                    previous_key_info.public_key_digest, e
+                                    public_key_digest, e
                                 )
-                            }),
-                    },
-                ];
+                                    },
+                                ),
+                            },
+                        ]
+                    }
+                    DigestKeySet::CompressedKeySet(xof_key_digest) => vec![KeyDigest {
+                        key_type: PubDataType::CompressedXofKeySet.to_string(),
+                        digest: hex::decode(xof_key_digest.clone()).unwrap_or_else(|e| {
+                            panic!(
+                                "Unable to decode the provided xof key digest {:?}: {:?}",
+                                xof_key_digest, e
+                            )
+                        }),
+                    }],
+                };
 
                 KeyInfo {
                     key_id: Some(previous_key_info.key_id.into()),
@@ -58,11 +73,14 @@ impl PreviousEpochParameters {
             })
             .collect::<Vec<_>>();
 
-        PreviousEpochInfo {
+        let resp = PreviousEpochInfo {
             context_id: Some(self.context_id.into()),
             epoch_id: Some(self.epoch_id.into()),
             keys_info,
-        }
+        };
+
+        println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
+        resp
     }
 }
 
