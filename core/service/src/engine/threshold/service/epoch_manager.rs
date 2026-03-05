@@ -462,14 +462,6 @@ impl<
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
 
         let task = async move {
             let mut keys_metadata = Vec::new();
