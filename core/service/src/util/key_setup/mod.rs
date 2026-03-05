@@ -1016,12 +1016,9 @@ where
             for t in &pub_types {
                 let _ = delete_at_request_id(pub_storage, key_id, t).await;
             }
-            let _ = delete_at_request_id(
-                priv_storage,
-                key_id,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await;
+            let _ =
+                delete_at_request_id(priv_storage, key_id, &PrivDataType::FheKeyInfo.to_string())
+                    .await;
             break;
         }
     }
