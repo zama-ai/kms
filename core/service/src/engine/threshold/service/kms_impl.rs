@@ -67,7 +67,7 @@ use crate::{
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
-        utils::sanity_check_public_materials,
+        utils::{sanity_check_crs_materials, sanity_check_public_materials},
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
@@ -395,13 +395,15 @@ where
     // sanity check the public materials
     let entries: Vec<_> = key_info_versioned
         .iter()
-        .map(|((id, _), info)| (*id, info.meta_data.pub_data_types()))
+        .map(|((id, _), info)| (*id, info.meta_data.clone()))
         .collect();
     sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+    sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config

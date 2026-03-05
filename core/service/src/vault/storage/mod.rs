@@ -512,15 +512,12 @@ pub async fn read_all_data_from_all_epochs_versioned<
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<(RequestId, EpochId), T>> {
-    // first read all the PRSS data
-    let epochs = storage
-        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
-        .await?;
+    // first read all the epochs
+    let epochs = storage.all_epoch_ids_for_data(data_type).await?;
 
     // then we know all the epochs, and we can read the data stored under each epoch
     let mut res = HashMap::new();
-    for epoch in epochs {
-        let epoch_id: EpochId = epoch.into();
+    for epoch_id in epochs {
         let id_set = storage.all_data_ids_at_epoch(&epoch_id, data_type).await?;
         for data_id in id_set.iter() {
             if !data_id.is_valid() {
@@ -923,6 +920,7 @@ pub mod tests {
         storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
+    #[tracing_test::traced_test]
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
         let mut rng = AesRng::seed_from_u64(98765);
         let epoch1 = EpochId::new_random(&mut rng);
@@ -992,18 +990,19 @@ pub mod tests {
         assert!(ids.contains(&id4));
         assert!(ids.contains(&id5));
 
-        // Case 3: Data in both epoch and non-epoch storage (should error)
+        // Case 3: Data in both epoch and non-epoch storage (should produce warning and only return epoched data)
         storage
             .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
             .await
             .unwrap();
 
-        let result = storage.all_data_ids_from_all_epochs(&data_type).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("inconsistent storage"));
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&id1));
+        assert!(logs_contain("inconsistent storage"));
 
         // Clean up
         storage
@@ -1123,6 +1122,7 @@ pub mod tests {
     /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
     /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
     /// `key_id` is used in both locations.
+    #[tracing_test::traced_test]
     pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
         storage: &mut S,
     ) {
@@ -1226,16 +1226,13 @@ pub mod tests {
         assert!(epoch2_data_ids.contains(&shared_key_id));
 
         // --- Verify that all_data_ids_from_all_epochs detects the inconsistency ---
-        // Since we have data in both epoch and non-epoch storage, this should error
-        let result = storage.all_data_ids_from_all_epochs(&data_type).await;
-        assert!(
-            result.is_err(),
-            "Expected error when both epoch and non-epoch data exist"
-        );
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("inconsistent storage"));
+        // Since we have data in both epoch and non-epoch storage, this should produce a warning return the epoched data
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids, epoch1_data_ids);
+        assert!(logs_contain("inconsistent storage"));
 
         // --- Clean up ---
         storage

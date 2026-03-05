@@ -19,7 +19,7 @@ use crate::engine::context_manager::CentralizedContextManager;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 #[cfg(feature = "non-wasm")]
-use crate::engine::utils::sanity_check_public_materials;
+use crate::engine::utils::{sanity_check_crs_materials, sanity_check_public_materials};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
@@ -878,7 +878,7 @@ impl<
         // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
-            .map(|((id, _), handle)| (*id, handle.public_key_info.pub_data_types()))
+            .map(|((id, _), handle)| (*id, handle.public_key_info.clone()))
             .collect();
         sanity_check_public_materials(&public_storage, &entries).await?;
         tracing::info!(
@@ -891,6 +891,9 @@ impl<
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+        sanity_check_crs_materials(&public_storage, &crs_info).await?;
+
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
@@ -1119,6 +1122,7 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::path::Path;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -1188,11 +1192,53 @@ pub(crate) mod tests {
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
+            for cur_type in PubDataType::iter() {
+                match cur_type {
+                    PubDataType::PublicKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.public_key,
+                            &PubDataType::PublicKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    PubDataType::ServerKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.server_key,
+                            &PubDataType::ServerKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    // Ensure that the compiler will alert us if we introduce a new public data type that we don't handle here
+                    // that way we won't forget to update the code here appropriately
+                    #[allow(deprecated)]
+                    PubDataType::PublicKeyMetadata
+                    | PubDataType::CRS
+                    | PubDataType::VerfKey
+                    | PubDataType::VerfAddress
+                    | PubDataType::DecompressionKey
+                    | PubDataType::CACert
+                    | PubDataType::RecoveryMaterial
+                    | PubDataType::CompressedXofKeySet => {
+                        // Skip
+                    }
+                }
+            }
             store_versioned_at_request_id(
                 &mut ram_storage,
                 cur_req_id,
                 &cur_keys.public_key,
                 &PubDataType::PublicKey.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                &mut ram_storage,
+                cur_req_id,
+                &cur_keys.server_key,
+                &PubDataType::ServerKey.to_string(),
             )
             .await?;
         }

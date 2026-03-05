@@ -232,6 +232,26 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     Ok(())
 }
 
+fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
+    if cf.get_num_requests() == 0 {
+        return Err(anyhow::anyhow!("Number of requests cannot be zero."));
+    }
+
+    if cf.get_batch_size() == 0 {
+        return Err(anyhow::anyhow!("Batch size cannot be zero."));
+    }
+
+    if cf.get_parallel_requests() > cf.get_num_requests() {
+        return Err(anyhow::anyhow!(
+            "Number of parallel requests ({}) cannot be > total number of requests ({}).",
+            cf.get_parallel_requests(),
+            cf.get_num_requests()
+        ));
+    }
+
+    Ok(())
+}
+
 impl<'de> Deserialize<'de> for CoreClientConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -524,7 +544,7 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'i', default_value_t = 0)]
     pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
@@ -550,7 +570,7 @@ pub struct CipherFile {
     /// Delay (in ms) between consecutive requests for decrypt operations
     #[clap(long, default_value_t = 0)]
     pub inter_request_delay_ms: u64,
-    /// Number of requests to be sent in parallel
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
 }
@@ -1269,6 +1289,7 @@ pub async fn execute_cmd(
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1341,6 +1362,7 @@ pub async fn execute_cmd(
             .await?
         }
         CCCommand::UserDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(
                 internal_client.expect("UserDecrypt requires a KMS client"),
             ));
@@ -1983,11 +2005,11 @@ mod tests {
             .unwrap();
 
         tracing::info!("Core Client Config: {:?}", cc_conf_test);
-        // check that the fhe_params value from the config toml ("Default") is read correctly
-        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Default));
+        // check that the fhe_params value from the config toml ("Test") is read correctly
+        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Test));
 
-        // now set the env variable that overwrites fhe_params with "Test", which should take precedence if it's set
-        env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
+        // now set the env variable that overwrites fhe_params with "Default", which should take precedence if it's set
+        env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
 
         let cc_conf_default: CoreClientConfig = Settings::builder()
             .path(&path_to_config)
@@ -1996,7 +2018,7 @@ mod tests {
             .init_conf()
             .unwrap();
 
-        // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
-        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Test));
+        // check that the fhe_params value from the env var ("Default") is read correctly, even if the toml contains "Test"
+        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
     }
 }
