@@ -89,6 +89,7 @@ use super::BucketMetaStore;
 
 const DKG_Z64_SESSION_COUNTER: u64 = 1;
 const DKG_Z128_SESSION_COUNTER: u64 = 2;
+const ERR_FAILED_TO_READ_EXISTING_TAG: &str = "Failed to read existing tag";
 
 struct DkgSessions {
     session_z64: SmallSession<ResiduePolyF4Z64>,
@@ -1418,26 +1419,26 @@ impl<
     ) -> anyhow::Result<tfhe::Tag> {
         let pub_storage = crypto_storage.inner.public_storage.lock().await;
 
-        let tag = if let Ok(compressed_keyset) =
+        let res = if let Ok(compressed_keyset) =
             <CompressedXofKeySet as CryptoMaterialReader>::read_from_storage(
                 &*pub_storage,
                 existing_keyset_id,
             )
             .await
         {
-            compressed_keyset
+            Ok(compressed_keyset
                 .clone()
                 .into_raw_parts()
                 .1
                 .into_raw_parts()
-                .1
+                .1)
         } else {
-            let server_key: tfhe::ServerKey =
-                CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id).await?;
-            server_key.tag().clone()
+            CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id)
+                .await
+                .map(|server_key: tfhe::ServerKey| server_key.tag().clone())
         };
 
-        Ok(tag)
+        res.map_err(|e| anyhow::anyhow!("{}: {e}", ERR_FAILED_TO_READ_EXISTING_TAG))
     }
 }
 
@@ -1845,6 +1846,54 @@ mod tests {
     async fn aborted() {
         // TODO this is not easy to test since it requires meta store to fail
         // we don't have a trait for meta store
+    }
+
+    #[tokio::test]
+    async fn use_existing_key_tag_with_wrong_keyset_id() {
+        // When use_existing_key_tag is true but existing_keyset_id points to a
+        // non-existent key in storage, launch_dkg should fail with Internal
+        // because read_existing_key_tag cannot find any key material.
+        let (prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
+        let key_id = RequestId::new_random(&mut OsRng);
+        let wrong_keyset_id = RequestId::new_random(&mut OsRng);
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let keyset_config = KeySetConfig {
+            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32,
+                compressed_key_config: 0,
+            }),
+        };
+        let keyset_added_info = KeySetAddedInfo {
+            existing_keyset_id: Some(wrong_keyset_id.into()),
+            use_existing_key_tag: true,
+            ..Default::default()
+        };
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(prep_id.into()),
+            domain: Some(domain),
+            keyset_config: Some(keyset_config),
+            keyset_added_info: Some(keyset_added_info),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
+        });
+
+        let res = kg.key_gen(request).await.unwrap_err();
+        assert_eq!(res.code(), tonic::Code::Internal);
+
+        assert!(res
+            .internal_err()
+            .to_string()
+            .contains(ERR_FAILED_TO_READ_EXISTING_TAG));
     }
 
     #[tokio::test]
