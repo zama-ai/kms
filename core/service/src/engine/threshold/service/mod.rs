@@ -20,6 +20,7 @@ pub(crate) mod epoch_manager;
 //mod initiator;
 mod key_generator;
 mod preprocessor;
+pub mod tls_setup;
 mod public_decryptor;
 pub(crate) mod reshare_utils;
 pub mod session;

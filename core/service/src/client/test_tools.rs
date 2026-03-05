@@ -2,7 +2,6 @@ use crate::client::client_wasm::Client;
 use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
@@ -152,7 +151,6 @@ pub async fn setup_threshold_no_client<
                 None,
                 mpc_listener,
                 None,
-                false,
                 run_prss,
                 mpc_core_rx.map(drop),
             )
@@ -376,7 +374,6 @@ pub async fn setup_threshold_with_custom_peers<
                 None,
                 mpc_listener,
                 None,
-                false,
                 run_prss,
                 mpc_core_rx.map(drop),
             )
@@ -702,7 +699,7 @@ pub async fn setup_centralized_no_client<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
-    mut priv_storage: PrivS,
+    priv_storage: PrivS,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
@@ -715,11 +712,6 @@ pub async fn setup_centralized_no_client<
         .pop()
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let sk = get_core_signing_key(&priv_storage).await.unwrap();
-
-    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
-        .await
-        .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
@@ -729,7 +721,6 @@ pub async fn setup_centralized_no_client<
         priv_storage,
         backup_vault,
         None,
-        sk,
     )
     .await
     .expect("Could not create KMS");

@@ -675,7 +675,7 @@ impl BaseKmsStruct {
         kms_type: KMSType,
         my_id: u32,
         verf_keys: Vec<PublicSigKey>,
-        contexts: Vec<ContextInfo>,
+        contexts: Vec<ContextId>,
     ) -> anyhow::Result<Self> {
         tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
         let addresses: HashMap<Address, PublicSigKey> = verf_keys

@@ -29,16 +29,13 @@ use threshold_fhe::{
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
-        tls::AttestedVerifier,
-    },
+    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
 };
+
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
 };
-use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::{
@@ -52,7 +49,7 @@ use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
-    conf::CoreConfig,
+    conf::{threshold::ThresholdPartyConf, CoreConfig},
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
     cryptography::attestation::SecurityModuleProxy,
     engine::{
@@ -60,7 +57,7 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context::ContextInfo,
+        context::{ContextInfo, SoftwareVersion},
         context_manager::{ensure_default_threshold_context_in_storage, ThresholdContextManager},
         prepare_shutdown_signals,
         threshold::{
@@ -76,9 +73,12 @@ use crate::{
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
+    vault::keychain::RootKeyMeasurements,
     vault::{
         storage::{
-            crypto_material::{get_core_signing_keys, ThresholdCryptoMaterialStorage},
+            crypto_material::{
+                get_core_signing_keys, get_core_verification_keys, ThresholdCryptoMaterialStorage,
+            },
             read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
         },
         Vault,
@@ -349,8 +349,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
-    tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    peer_tcp_proxy: bool,
+    private_vault_root_key_measurements: Option<Arc<RootKeyMeasurements>>,
     run_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
@@ -372,49 +371,121 @@ where
         .unwrap_or_else(|| TelemetryConfig::builder().build());
 
     // Construct BaseKmsStruct from signing keys and contexts in storage
-    let my_id = threshold_config.my_id.ok_or_else(|| {
-        anyhow_error_and_log("my_id is required in threshold config")
-    })? as u32;
-
-    let sig_keys_map = get_core_signing_keys(&private_storage).await?;
-    let sig_keys: Vec<_> = sig_keys_map.into_values().collect();
-
-    let context_map: HashMap<RequestId, ContextInfo> =
-        read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string()).await?;
-    let mut contexts: Vec<ContextInfo> = context_map.into_values().collect();
-
-    if sig_keys.len() > 1 {
-        // Multiple keys: validate that contexts exist for each key
-        let context_addresses: HashSet<_> = contexts
-            .iter()
-            .filter_map(|c| c.my_node(my_id).ok().flatten())
-            .filter_map(|n| n.verification_key.map(|vk| vk.address()))
-            .collect();
-        for sk in &sig_keys {
-            let addr = sk.verf_key().address();
-            if !context_addresses.contains(&addr) {
-                anyhow::bail!(
-                    "No context found for signing key with address {}",
-                    addr
-                );
-            }
-        }
-    } else if sig_keys.len() == 1 && contexts.is_empty() {
-        // Single key, no contexts: create default context
-        ensure_default_threshold_context_in_storage(
-            &mut private_storage,
-            threshold_config,
-            &sig_keys[0].verf_key(),
-        )
-        .await?;
-        // Reload contexts after creating the default
-        let context_map: HashMap<RequestId, ContextInfo> =
-            read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string())
+    let my_id = threshold_config
+        .my_id
+        .ok_or_else(|| anyhow_error_and_log("my_id is required in threshold config"))?
+        as u32;
+    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+            .await?;
+    let base_kms = match get_core_signing_keys(&private_storage).await {
+        Ok(sig_keys_map) => {
+            anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
+            if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
+                // Create default context if needed
+                ensure_default_threshold_context_in_storage(
+                    &mut private_storage,
+                    threshold_config,
+                    &default_sk.verf_key(),
+                )
                 .await?;
-        contexts = context_map.into_values().collect();
+            }
+
+            let context_map: HashMap<RequestId, ContextInfo> =
+                read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string())
+                    .await?;
+
+            // Validate that contexts exist for each key
+            for cur_context in sig_keys_map.keys() {
+                context_map.get(cur_context.try_into()?).ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "No context found for signing key with context id {cur_context}"
+                    ))
+                })?;
+            }
+            let sig_keys: Vec<_> = sig_keys_map.into_values().collect();
+            BaseKmsStruct::new(
+                KMSType::Threshold,
+                my_id,
+                sig_keys,
+                context_map.into_values().collect(),
+            )?
+        }
+        Err(e) => {
+            tracing::warn!("Error loading signing keys: {e:?}");
+            tracing::warn!(
+                "SIGNING KEYS NOT AVAILABLE, ENTERING RECOVERY MODE!\n\
+                 Only backup recovery operations should be done and TLS must not be available!\n\
+                 Make sure to use a configuration file without TLS configured and\n\
+                 make sure to validate that the current verification key in public storage \
+                 is EXACTLY equal to the one on the gateway before proceeding!"
+            );
+            let verf_keys: Vec<_> = get_core_verification_keys(&public_storage)
+                .await?
+                .into_values()
+                .collect();
+            // Recover contexts from validation material since we might not have access to the ContextInfo in private storage
+            let contexts: Vec<ContextId> =
+                validation_material.keys().map(|c| (*c).into()).collect();
+            BaseKmsStruct::new_no_signing_keys(KMSType::Centralized, my_id, verf_keys, contexts)?
+        }
+    };
+
+    tracing::info!(
+        "Starting threshold KMS server v{}, with id {:?}, listening for MPC communication on {:?}...",
+        SoftwareVersion::current()?,
+        threshold_config.my_id,
+        mpc_listener.local_addr()?,
+    );
+    if let Some(peers) = &threshold_config.peers {
+        tracing::info!(
+            "Parameters: using threshold t={}, knowing n={} parties in total (myself included)",
+            threshold_config.threshold,
+            peers.len()
+        );
     }
 
-    let base_kms = BaseKmsStruct::new(KMSType::Threshold, my_id, sig_keys, contexts)?;
+    // Build TLS config for MPC communication
+    let tls_config = match &threshold_config.tls {
+        Some(tls_conf) => {
+            let sig_keys = get_core_signing_keys(&private_storage).await?;
+            let (first_context_id, first_sk) = sig_keys
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No signing keys found for TLS setup"))?;
+            let signing_key_id: RequestId = first_context_id.into();
+            Some(
+                super::tls_setup::build_tls_config(
+                    &threshold_config.peers,
+                    tls_conf,
+                    security_module.clone(),
+                    private_vault_root_key_measurements,
+                    &public_storage,
+                    Arc::new(first_sk),
+                    &signing_key_id,
+                    #[cfg(feature = "insecure")]
+                    config.mock_enclave.is_some_and(|m| m),
+                )
+                .await?,
+            )
+        }
+        None => {
+            tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
+            None
+        }
+    };
+
+    let need_security_module = security_module.is_some();
+    #[cfg(not(feature = "insecure"))]
+    let peer_tcp_proxy = need_security_module;
+    #[cfg(feature = "insecure")]
+    let peer_tcp_proxy = need_security_module && !config.mock_enclave.is_some_and(|m| m);
+
+    if peer_tcp_proxy {
+        tracing::warn!("KMS server will connect to peers through vsock proxies");
+    } else {
+        tracing::warn!("KMS server will connect to peers directly");
+    };
 
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
@@ -425,9 +496,6 @@ where
         .await?;
 
     let mut public_key_info = HashMap::new();
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
 
     // Validate the recovery material against the verification key for each context
     for (cur_req_id, cur_rec_material) in &validation_material {
@@ -545,9 +613,7 @@ where
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &threshold_config.preproc_redis {
         None => create_memory_factory(),
-        Some(ref conf) => {
-            create_redis_factory(format!("REDIS_{}", my_id), conf)
-        }
+        Some(ref conf) => create_redis_factory(format!("REDIS_{}", my_id), conf),
     };
 
     let num_sessions_preproc = threshold_config

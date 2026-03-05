@@ -2,8 +2,8 @@ use crate::anyhow_error_and_log;
 use crate::backup::operator::RecoveryValidationMaterial;
 #[cfg(feature = "non-wasm")]
 use crate::conf::CoreConfig;
-use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
+use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
@@ -29,9 +29,14 @@ use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt}
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 
+use crate::engine::context::ContextInfo;
+use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
-    crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
+    crypto_material::{
+        get_core_signing_keys, get_core_verification_keys, CentralizedCryptoMaterialStorage,
+    },
+    read_all_data_versioned,
 };
 use crate::vault::{storage::Storage, Vault};
 use aes_prng::AesRng;
@@ -43,7 +48,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
@@ -902,14 +907,72 @@ impl<
     pub async fn new(
         config: CoreConfig,
         public_storage: PubS,
-        private_storage: PrivS,
+        mut private_storage: PrivS,
         backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
-        sk: PrivateSigKey,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
         (HealthReporter, HealthServer<impl Health>),
     )> {
+        // Construct BaseKmsStruct from signing keys in storage
+        // Centralized mode always uses party_id = 1
+        let my_id = 1u32;
+        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+                .await?;
+        let base_kms = match get_core_signing_keys(&private_storage).await {
+            Ok(sig_keys_map) => {
+                anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
+                if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
+                    // Create default centralized context if needed
+                    create_default_centralized_context_in_storage(
+                        &mut private_storage,
+                        &default_sk,
+                    )
+                    .await?;
+                }
+                let context_map: HashMap<RequestId, ContextInfo> = read_all_data_versioned(
+                    &private_storage,
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await?;
+                // Validate that contexts exist for each key
+                for cur_context in sig_keys_map.keys() {
+                    context_map.get(cur_context.into()).ok_or_else(|| {
+                        anyhow_error_and_log(format!(
+                            "No context found for signing key with context id {cur_context}"
+                        ))
+                    })?;
+                }
+                let contexts: Vec<ContextInfo> = context_map.into_values().collect();
+                let sig_keys: Vec<_> = sig_keys_map.into_values().collect();
+                BaseKmsStruct::new(KMSType::Centralized, my_id, sig_keys, contexts)?
+            }
+            Err(e) => {
+                tracing::warn!("Error loading signing keys: {e:?}");
+                tracing::warn!(
+                    "SIGNING KEYS NOT AVAILABLE, ENTERING RECOVERY MODE!\n\
+                     Only backup recovery operations should be done and TLS must not be available!\n\
+                     Make sure to use a configuration file without TLS configured and\n\
+                     make sure to validate that the current verification key in public storage \
+                     is EXACTLY equal to the one on the gateway before proceeding!"
+                );
+                let verf_keys: Vec<_> = get_core_verification_keys(&public_storage)
+                    .await?
+                    .into_values()
+                    .collect();
+                // Recover contexts from validation material since we might not have access to the ContextInfo in private storage
+                let contexts: Vec<ContextId> =
+                    validation_material.keys().map(|c| (*c).into()).collect();
+                BaseKmsStruct::new_no_signing_keys(
+                    KMSType::Centralized,
+                    my_id,
+                    verf_keys,
+                    contexts,
+                )?
+            }
+        };
+
         let key_info: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
                 &private_storage,
@@ -932,11 +995,11 @@ impl<
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-                .await?;
-        let verf_key = PublicSigKey::from_sk(&sk);
+        // TODO also validate prss material against fhe keys
+        // Validate recovery material against all verification keys in the base_kms
         for (cur_req_id, rec_material) in validation_material.iter() {
+            let context_id: kms_grpc::ContextId = (*cur_req_id).into();
+            let verf_key = base_kms.get_verf_key(&context_id)?;
             if !rec_material.validate(&verf_key) {
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
@@ -951,7 +1014,6 @@ impl<
             backup_vault,
             key_info,
         );
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
 
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
@@ -1530,7 +1592,6 @@ pub(crate) mod tests {
                     .unwrap(),
                 None,
                 None,
-                keys.centralized_kms_keys.sig_sk.clone(),
             )
             .await
             .unwrap();

@@ -60,7 +60,6 @@ mod tests {
             private_storage,
             None,
             None,
-            sig_key,
         )
         .await
         .expect("Could not create KMS");
