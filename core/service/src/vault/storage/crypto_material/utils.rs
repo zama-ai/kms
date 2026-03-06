@@ -14,7 +14,7 @@ use crate::{
 use aes_prng::AesRng;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -310,7 +310,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     }
 }
 
-/// Generalizes `get_core_signing_key`, `get_client_verification_key` and
+/// Generalizes `get_client_signing_key`, `get_client_verification_key` and
 /// `get_core_ca_cert`. Can be used to implement a getter for any per-entity
 /// (core or client) data.
 ///
@@ -356,14 +356,93 @@ async fn get_unique<
     Ok(value)
 }
 
-pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
-    get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await
+/// Returns all core signing keys from storage.
+///
+/// # Arguments
+/// * `storage` - The private storage backend containing signing keys
+///
+/// # Returns
+/// A map of `ContextId` to `PrivateSigKey` for all signing keys in storage.
+///
+/// # Errors
+/// Returns an error if the storage operation fails.
+pub async fn get_core_signing_keys<S: StorageReader>(
+    storage: &S,
+) -> anyhow::Result<HashMap<ContextId, PrivateSigKey>> {
+    let keys: HashMap<ContextId, PrivateSigKey> =
+        read_all_data_versioned(storage, &PrivDataType::SigningKey.to_string())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to read {} from \"{}\": {e}",
+                    PrivDataType::SigningKey,
+                    storage.info()
+                )
+            })
+            .map(|data_map: HashMap<RequestId, PrivateSigKey>| {
+                data_map
+                    .into_iter()
+                    .map(|(req_id, key)| (req_id.into(), key))
+                    .collect()
+            })?;
+    if keys.is_empty() {
+        anyhow::bail!(
+            "{} storage should contain at least one entry, but is empty \"{}\"",
+            PrivDataType::SigningKey,
+            storage.info()
+        );
+    }
+    Ok(keys)
 }
 
-pub async fn get_core_verification_key<S: StorageReader>(
+/// Returns all core verification keys from storage.
+///
+/// # Arguments
+/// * `storage` - The public storage backend containing verification keys
+///
+/// # Returns   
+/// A map of `ContextId` to `PublicSigKey` for all verification keys in storage.
+///
+/// # Errors
+/// Returns an error if the storage operation fails.
+pub async fn get_core_verification_keys<S: StorageReader>(
     storage: &S,
-) -> anyhow::Result<PublicSigKey> {
-    get_unique::<S, PublicSigKey, PubDataType>(storage, PubDataType::VerfKey).await
+) -> anyhow::Result<HashMap<ContextId, PublicSigKey>> {
+    read_all_data_versioned(storage, &PubDataType::VerfKey.to_string())
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read {} from \"{}\": {e}",
+                PubDataType::VerfKey,
+                storage.info()
+            )
+        })
+        .map(|data_map: HashMap<RequestId, PublicSigKey>| {
+            data_map
+                .into_iter()
+                .map(|(req_id, key)| (req_id.into(), key))
+                .collect()
+        })
+}
+
+/// Returns the core addresses derived from the verification keys in storage.
+///
+/// # Arguments
+/// * `storage` - The public storage backend containing verification keys
+///
+/// # Returns
+/// A HashMap of `ContextId`s to `alloy_primitives::Address` for all verification keys in storage.
+///
+/// # Errors
+/// Returns an error if the storage operation fails or if addresses cannot be derived from the verification keys.
+pub async fn get_core_addresses<S: StorageReader>(
+    storage: &S,
+) -> anyhow::Result<HashMap<ContextId, alloy_primitives::Address>> {
+    let verf_keys = get_core_verification_keys(storage).await?;
+    Ok(verf_keys
+        .into_iter()
+        .map(|(context_id, pk)| (context_id, pk.address()))
+        .collect())
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {

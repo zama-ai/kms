@@ -16,7 +16,7 @@ use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, Unifi
 use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::engine::validation::DSEP_USER_DECRYPTION;
+use crate::engine::validation::{parse_extra_data, DSEP_USER_DECRYPTION};
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
 #[cfg(feature = "wasm_tests")]
@@ -24,7 +24,7 @@ use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
-use crate::vault::storage::crypto_material::get_core_signing_key;
+use crate::vault::storage::crypto_material::{get_core_signing_key, get_core_signing_keys};
 use crate::vault::storage::{file::FileStorage, StorageType};
 #[cfg(feature = "wasm_tests")]
 use kms_grpc::kms::v1::TypedPlaintext;
@@ -690,7 +690,7 @@ async fn process_batch_threshold_user_decryption(
         UnifiedPrivateEncKey,
     )>,
     response_map: HashMap<RequestId, Vec<UserDecryptionResponse>>,
-    server_private_keys: HashMap<u32, PrivateSigKey>,
+    server_private_keys: HashMap<u32, HashMap<ContextId, PrivateSigKey>>,
 ) {
     for req in &reqs {
         let (req, enc_pk, enc_sk) = req;
@@ -741,10 +741,13 @@ async fn process_batch_threshold_user_decryption(
                                 payload.party_id -= 1;
                             }
                             let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
+                            let (_, context_id, _) = parse_extra_data(&resp.extra_data).unwrap();
                             let sig = internal_sign(
                                 &DSEP_USER_DECRYPTION,
                                 &sig_payload_vec,
-                                &server_private_keys[&orig_party_id],
+                                &server_private_keys[&orig_party_id]
+                                    .get(&context_id)
+                                    .unwrap(),
                             )
                             .unwrap();
                             resp.signature = sig.sig.to_vec();
@@ -791,18 +794,20 @@ async fn process_batch_threshold_user_decryption(
     }
 }
 
-async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+async fn get_server_private_keys(
+    amount_parties: usize,
+) -> HashMap<u32, HashMap<ContextId, PrivateSigKey>> {
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
         let priv_storage = FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap();
-        let sk = get_core_signing_key(&priv_storage)
+        let sks = get_core_signing_keys(&priv_storage)
             .await
             .inspect_err(|e| {
-                tracing::error!("signing key hashmap is not exactly 1, {}", e);
+                tracing::error!("Could not retrieve signing keys, {}", e);
             })
             .unwrap();
-        server_private_keys.insert(i as u32 + 1, sk);
+        server_private_keys.insert(i as u32 + 1, sks);
     }
     server_private_keys
 }

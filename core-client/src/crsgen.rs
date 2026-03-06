@@ -320,7 +320,7 @@ mod tests {
     use super::*;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
-        consts::{SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
+        consts::{TEST_CENTRAL_CRS_ID, TEST_PARAM},
         cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
@@ -335,13 +335,7 @@ mod tests {
         let mut priv_storage = RamStorage::new();
 
         // make sure signing keys exist
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await;
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true).await;
 
         // compute a small CRS for testing
         let crs_id = &TEST_CENTRAL_CRS_ID;

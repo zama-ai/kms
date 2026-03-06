@@ -4,7 +4,7 @@
 //! test environments with automatic cleanup.
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMaterialSpec};
@@ -315,7 +315,6 @@ impl ThresholdTestEnvBuilder {
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storages,
             &mut priv_storages,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=self.party_count)
@@ -327,7 +326,7 @@ impl ThresholdTestEnvBuilder {
         .await;
 
         // Ensure client signing/verification keys exist
-        ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_dir.path()), true).await;
 
         // Create backup vaults for each party if requested
         let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {

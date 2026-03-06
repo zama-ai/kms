@@ -1,4 +1,4 @@
-use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH};
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{preproc_proto_to_keyset_config, InternalKeySetConfig};
 use crate::engine::utils::MetricedError;
@@ -352,7 +352,7 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
 fn validate_public_decrypt_meta_data(
-    server_pks: &HashMap<u32, PublicSigKey>,
+    verf_key: &PublicSigKey,
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
@@ -365,12 +365,6 @@ fn validate_public_decrypt_meta_data(
                     other_resp.request_id,
                     other_resp.verification_key
                 );
-        return Ok(false);
-    }
-    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
-    if !server_pks.values().contains(&resp_verf_key) {
-        tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);
     }
 
@@ -390,7 +384,7 @@ fn validate_public_decrypt_meta_data(
         &DSEP_PUBLIC_DECRYPTION,
         &bc2wrap::serialize(&other_resp)?,
         &sig,
-        &resp_verf_key,
+        &verf_key,
     )
     .is_err()
     {
@@ -443,15 +437,16 @@ pub(crate) fn select_most_common_public_dec(
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
 fn validate_public_decrypt_responses(
-    server_pks: &HashMap<u32, PublicSigKey>,
+    server_pks: &HashMap<ContextId, HashSet<PublicSigKey>>,
     agg_resp: &[PublicDecryptionResponse],
+    amount_servers: usize,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
         return Ok(None);
     }
     // Pick a pivot response
-    let min_occurence = (server_pks.len() - 1) / 3 + 1; // note that this is floored division
+    let min_occurence = (amount_servers - 1) / 3 + 1; // note that this is floored division
     let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find public decryption pivot"),
@@ -459,6 +454,7 @@ fn validate_public_decrypt_responses(
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut verification_keys = HashSet::new();
     for cur_resp in agg_resp {
+        let (_version, context_id, epoch_id) = parse_extra_data(&cur_resp.extra_data)?;
         let cur_payload = match &cur_resp.payload {
             Some(cur_payload) => cur_payload,
             None => {
@@ -466,20 +462,37 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
+        // Find the correct verf key
+        let cur_verf_key = match server_pks.get(&context_id) {
+            Some(keys) => {
+                // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+                let cur_verf_key: PublicSigKey =
+                    bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+                if keys.contains(&cur_verf_key) {
+                    cur_verf_key
+                } else {
+                    tracing::warn!("Server verification key {} is not in the set of permissible keys for context ID {}", hex::encode(&cur_payload.verification_key), context_id);
+                    continue;
+                }
+            }
+            None => {
+                tracing::warn!("Context ID {} in public decryption response does not match any known context ID", context_id);
+                continue;
+            }
+        };
 
         // check the uniqueness of verification key
-        if verification_keys.contains(&cur_payload.verification_key) {
+        if verification_keys.contains(&cur_verf_key) {
             tracing::warn!(
                 "At least two servers gave the same verification key {}",
                 hex::encode(&cur_payload.verification_key),
             );
             continue;
         }
-
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
         if !validate_public_decrypt_meta_data(
-            server_pks,
+            &cur_verf_key,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
@@ -494,7 +507,7 @@ fn validate_public_decrypt_responses(
         }
 
         // add the verified response
-        verification_keys.insert(cur_payload.verification_key.clone());
+        verification_keys.insert(cur_verf_key);
         resp_parsed_payloads.push(cur_payload.clone());
     }
     Ok(Some(resp_parsed_payloads))
@@ -508,13 +521,14 @@ fn validate_public_decrypt_responses(
 /// In addition, if the original request is provided:
 /// - The response matches the original request
 pub(crate) fn validate_public_decrypt_responses_against_request(
-    server_pks: &HashMap<u32, PublicSigKey>,
+    server_pks: &HashMap<ContextId, HashSet<PublicSigKey>>,
     request: Option<PublicDecryptionRequest>,
     agg_resp: &[PublicDecryptionResponse],
+    amount_servers: usize,
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
     let resp_parsed_payloads = crate::some_or_err(
-        validate_public_decrypt_responses(server_pks, agg_resp)?,
+        validate_public_decrypt_responses(server_pks, agg_resp, amount_servers)?,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
     )?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
@@ -808,9 +822,31 @@ fn unpack_new_mpc_epoch_req(
     Ok((context_id, epoch_id, req.previous_epoch))
 }
 
+/// Extracts information from the `extraData` field
+/// Returns the version (as an u8), the context ID and the epoch ID.
+/// TODO temporary helper until https://github.com/zama-ai/kms-internal/issues/2925 is done
+pub fn parse_extra_data(extra_data: &[u8]) -> anyhow::Result<(u8, ContextId, EpochId)> {
+    if extra_data[0] != 1 {
+        anyhow::bail!("Unsupported version in extraData: {}", extra_data[0]);
+    }
+    if extra_data.len() < 1 + 2 * ID_LENGTH {
+        anyhow::bail!(
+            "extraData is too short, expected at least {} bytes, got {}",
+            1 + 2 * ID_LENGTH,
+            extra_data.len()
+        );
+    }
+    let context_slice = &extra_data[1..=ID_LENGTH];
+    let epoch_slice = &extra_data[1..=ID_LENGTH];
+    let context_id = ContextId::try_from(context_slice)?;
+    let epoch_id = EpochId::try_from(epoch_slice)?;
+    // todo is validity checked with tryfrom?
+    Ok((extra_data[0], context_id, epoch_id))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use aes_prng::AesRng;
     use kms_grpc::{
@@ -820,15 +856,16 @@ mod tests {
             UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
-        RequestId,
+        ContextId, RequestId,
     };
 
     use rand::SeedableRng;
 
     use crate::{
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{gen_sig_keys, internal_sign},
+            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
         },
         engine::{
             base::derive_request_id,
@@ -848,6 +885,16 @@ mod tests {
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
+
+    /// Build a valid `extra_data` field for test responses.
+    /// Format: version (1 byte) + context_id (ID_LENGTH bytes) + epoch_id (ID_LENGTH bytes)
+    fn test_extra_data(context_id: &ContextId) -> Vec<u8> {
+        let mut data = Vec::with_capacity(1 + 2 * ID_LENGTH);
+        data.push(1u8); // version
+        data.extend_from_slice(context_id.as_bytes());
+        data.extend_from_slice(context_id.as_bytes()); // epoch_id (reuse context_id bytes for simplicity)
+        data
+    }
 
     #[test]
     fn test_validate_public_decrypt_req() {
@@ -1233,14 +1280,6 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
-
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
 
         let request_id = Some(
             derive_request_id("test_validate_public_decrypt_meta_response")
@@ -1248,7 +1287,7 @@ mod tests {
                 .into(),
         );
         let pivot = PublicDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+            verification_key: bc2wrap::serialize(&vk0).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
@@ -1264,7 +1303,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).unwrap()
             );
         }
 
@@ -1275,7 +1314,7 @@ mod tests {
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err()
+                validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).is_err()
             );
         }
 
@@ -1287,7 +1326,7 @@ mod tests {
                     .into(),
             );
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1301,7 +1340,7 @@ mod tests {
             let bad_signature_buf = bad_signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &bad_signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &bad_signature_buf)
                     .unwrap()
             );
         }
@@ -1314,7 +1353,7 @@ mod tests {
                     .into(),
             );
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1327,11 +1366,10 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
-
         // use a bad response (bad validation key)
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
@@ -1349,7 +1387,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
@@ -1371,7 +1409,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
+                !validate_public_decrypt_meta_data(&vk0, &pivot, &bad_value, &signature_buf)
                     .unwrap()
             );
         }
@@ -1382,7 +1420,7 @@ mod tests {
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
+                validate_public_decrypt_meta_data(&vk0, &pivot, &pivot, &signature_buf).unwrap()
             );
         }
     }
@@ -1394,12 +1432,13 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let extra_data = test_extra_data(&context_id);
+        let pks: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::from_iter([(
+            context_id,
+            HashSet::from_iter([vk0.clone(), vk1.clone(), vk2]),
+        )]);
+        let amount_servers = 3;
 
         let request_id = Some(
             derive_request_id("test_validate_public_decrypt_responses")
@@ -1408,7 +1447,7 @@ mod tests {
         );
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1423,12 +1462,12 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![1, 2, 3, 4], // some extra data that is different from resp1
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk1).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1443,7 +1482,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![],
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1456,7 +1495,7 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1466,7 +1505,7 @@ mod tests {
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1478,7 +1517,7 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
+                validate_public_decrypt_responses(&pks, &bad_agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1490,7 +1529,7 @@ mod tests {
         {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
-                    verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                    verification_key: bc2wrap::serialize(&vk1).unwrap(),
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
@@ -1512,12 +1551,12 @@ mod tests {
                     signature: signature_buf,
                     payload: Some(payload),
                     external_signature: vec![],
-                    extra_data: vec![],
+                    extra_data: extra_data.clone(),
                 }
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1529,7 +1568,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
+                validate_public_decrypt_responses(&pks, &agg_resp, amount_servers)
                     .unwrap()
                     .unwrap()
                     .len(),
@@ -1545,12 +1584,13 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let extra_data = test_extra_data(&context_id);
+        let pks: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::from_iter([(
+            context_id,
+            HashSet::from_iter([vk0.clone(), vk1.clone(), vk2]),
+        )]);
+        let amount_servers = 3;
 
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let request = PublicDecryptionRequest {
@@ -1574,7 +1614,7 @@ mod tests {
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk0).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1589,12 +1629,12 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![1, 2, 3], // some extra data, independent of resp1
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
+                verification_key: bc2wrap::serialize(&vk1).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
@@ -1609,7 +1649,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature: vec![],
-                extra_data: vec![],
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1620,6 +1660,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 1
             )
             .unwrap_err()
@@ -1634,6 +1675,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 3
             )
             .unwrap_err()
@@ -1675,6 +1717,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1707,6 +1750,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1744,6 +1788,7 @@ mod tests {
                 &pks,
                 Some(bad_request),
                 &agg_resp,
+                amount_servers,
                 2
             )
             .unwrap_err()
@@ -1754,7 +1799,14 @@ mod tests {
         // request is empty, which should pass
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_public_decrypt_responses_against_request(&pks, None, &agg_resp, 2).unwrap();
+            validate_public_decrypt_responses_against_request(
+                &pks,
+                None,
+                &agg_resp,
+                amount_servers,
+                2,
+            )
+            .unwrap();
         }
 
         // happy path
@@ -1764,6 +1816,7 @@ mod tests {
                 &pks,
                 Some(request.clone()),
                 &agg_resp,
+                amount_servers,
                 2,
             )
             .unwrap();

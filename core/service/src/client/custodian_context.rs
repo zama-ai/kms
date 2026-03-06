@@ -8,7 +8,7 @@ use crate::{
 use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
-    RequestId,
+    ContextId, RequestId,
 };
 use threshold_fhe::execution::runtime::party::Role;
 
@@ -16,6 +16,7 @@ impl Client {
     pub fn new_custodian_context_request(
         &mut self,
         request_id: &RequestId,
+        mpc_context_id: &ContextId,
         amount_custodians: usize,
         threshold: u32,
     ) -> anyhow::Result<(NewCustodianContextRequest, Vec<String>)> {
@@ -23,11 +24,12 @@ impl Client {
             custodian_setup_msgs(&mut self.rng, amount_custodians)?;
         Ok((
             NewCustodianContextRequest {
-                new_context: Some(CustodianContext {
+                new_custodian_context: Some(CustodianContext {
                     custodian_nodes: custodian_setup_msgs,
                     context_id: Some((*request_id).into()),
                     threshold,
                 }),
+                mpc_context_id: Some((*mpc_context_id).into()),
             },
             mnemonics,
         ))

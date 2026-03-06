@@ -169,11 +169,6 @@ cfg_if::cfg_if! {
 
 #[cfg(feature = "non-wasm")]
 lazy_static::lazy_static! {
-    // The static ID we will use for the signing key for each of the MPC parties.
-    // We do so, since there is ever only one conceptual signing key per party (at least for now).
-    // This is a bit hackish, but it works for now.
-    pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
-
     // TODO(zama-ai/kms-internal/issues/2758)
     // In the future we will remove the default context.
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([

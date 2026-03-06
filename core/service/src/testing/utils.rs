@@ -548,8 +548,8 @@ pub mod setup {
     };
     use crate::{
         consts::{
-            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
+            TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
             TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
@@ -586,7 +586,7 @@ pub mod setup {
     async fn testing_material(path: Option<&Path>) {
         ensure_dir_exist(path).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
@@ -644,7 +644,7 @@ pub mod setup {
         };
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
@@ -700,7 +700,6 @@ pub mod setup {
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await;
@@ -754,7 +753,6 @@ pub mod setup {
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
@@ -796,7 +794,6 @@ pub mod setup {
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
     use kms_grpc::rpc_types::PrivDataType;
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -820,10 +817,10 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await
+        .is_some()
     );
     // Validate the keys were made
     let pub_ids = central_pub_storage

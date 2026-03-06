@@ -1,6 +1,7 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
+use crate::client::mpc_context;
+use crate::engine::base::{self, CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{query_key_material_availability, MetricedError};
@@ -36,6 +37,7 @@ use crate::{
 };
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
+use kms_grpc::ContextId;
 use kms_grpc::{
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::PubDataType,
@@ -95,6 +97,7 @@ where
         &self,
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+        mpc_context: &ContextId,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
@@ -122,7 +125,9 @@ where
             ephem_op_enc_key: serialized_pub_key,
             cts: grpc_cts,
             backup_id: Some(backup_id.into()),
-            operator_verification_key: bc2wrap::serialize(&self.base_kms.verf_key())?,
+            operator_verification_key: bc2wrap::serialize(
+                self.base_kms.get_verf_key(mpc_context)?.as_ref(),
+            )?,
         };
         tracing::info!(
             "Generated outer recovery request for backup_id/context_id={}",
@@ -145,15 +150,15 @@ where
         RecoveryValidationMaterial,
         HashMap<Role, InternalCustodianRecoveryOutput>,
     )> {
-        let context_id = parse_optional_grpc_request_id(
+        let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
         let recovery_material = {
             load_recovery_validation_material(
                 &self.crypto_storage.get_public_storage(),
-                &context_id,
-                &self.base_kms.verf_key(),
+                &self.base_kms,
+                &custodian_context_id,
             )
             .await?
         };
@@ -161,7 +166,9 @@ where
             filter_custodian_data(
                 req.custodian_recovery_outputs,
                 &recovery_material,
-                &self.base_kms.verf_key(),
+                self.base_kms
+                    .get_verf_key(&recovery_material.payload.mpc_context)?
+                    .as_ref(),
                 ephemeral_dec_key,
                 ephemeral_enc_key,
             )
@@ -178,7 +185,11 @@ where
                     ));
         }
 
-        Ok((context_id, recovery_material, parsed_custodian_rec))
+        Ok((
+            custodian_context_id,
+            recovery_material,
+            parsed_custodian_rec,
+        ))
     }
 }
 
@@ -292,7 +303,22 @@ where
                 })?
         };
         // Validate that the recovery material is correct
-        if !recovery_material.validate(&self.base_kms.verf_key()) {
+        if !recovery_material.validate(
+            self.base_kms
+                .get_verf_key(&recovery_material.payload.mpc_context)
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_CUSTODIAN_RECOVERY_INIT,
+                        None,
+                        anyhow::anyhow!(
+                            "Could not find verification key for MPC context {}: {e}",
+                            recovery_material.payload.mpc_context
+                        ),
+                        tonic::Code::Internal,
+                    )
+                })?
+                .as_ref(),
+        ) {
             return Err(MetricedError::new(
                 OP_CUSTODIAN_RECOVERY_INIT,
                 None,
@@ -301,7 +327,11 @@ where
             ));
         }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
-            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
+            .gen_outer_recovery_request(
+                backup_id,
+                recovery_material.payload.cts,
+                &recovery_material.payload.mpc_context,
+            )
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -358,6 +388,20 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        let verf_key = self
+            .base_kms
+            .get_verf_key(&recovery_material.payload.mpc_context)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!(
+                        "Could not find verification key for the MPC context signed {}: {e}",
+                        recovery_material.payload.mpc_context
+                    ),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -368,7 +412,7 @@ where
                         let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
                         let operator = Operator::new_for_validating(
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
-                            (*self.base_kms.verf_key()).clone(),
+                            (*verf_key).clone(),
                             recovery_material.custodian_context().threshold as usize,
                             amount_custodians,
                         ).map_err(|e| {
@@ -491,20 +535,27 @@ where
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
-    context_id: &RequestId,
-    verf_key: &PublicSigKey,
+    base_kms: &BaseKmsStruct,
+    custodian_context_id: &RequestId,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,
 {
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
-        .read_data(context_id, &PubDataType::RecoveryMaterial.to_string())
+        .read_data(
+            custodian_context_id,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
         .await?;
-    if &recovery_material.custodian_context().context_id != context_id {
+    if &recovery_material.custodian_context().context_id != custodian_context_id {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
-    if !recovery_material.validate(verf_key) {
+    if !recovery_material.validate(
+        base_kms
+            .get_verf_key(&recovery_material.payload.mpc_context)?
+            .as_ref(),
+    ) {
         anyhow::bail!("Could not verify the signature on the recovery material",);
     }
     Ok(recovery_material)

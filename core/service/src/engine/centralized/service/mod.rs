@@ -54,16 +54,10 @@ mod tests {
         .await
         .unwrap();
         let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
-        let (kms, _health_service) = RealCentralizedKms::new(
-            core_config,
-            public_storage,
-            private_storage,
-            None,
-            None,
-            sig_key,
-        )
-        .await
-        .expect("Could not create KMS");
+        let (kms, _health_service) =
+            RealCentralizedKms::new(core_config, public_storage, private_storage, None, None)
+                .await
+                .expect("Could not create KMS");
 
         let kms_node = NodeInfo {
             mpc_identity: "test_node".to_string(),

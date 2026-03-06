@@ -1,17 +1,13 @@
 use crate::client::client_wasm::Client;
 use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
-use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::{
-    crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
-};
+use crate::vault::storage::{file::FileStorage, Storage, StorageType};
 use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
 use crate::{
@@ -25,7 +21,6 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -145,9 +140,6 @@ pub async fn setup_threshold_no_client<
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
                 core_config,
@@ -156,9 +148,7 @@ pub async fn setup_threshold_no_client<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
-                false,
                 run_prss,
                 mpc_core_rx.map(drop),
             )
@@ -374,9 +364,6 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-
             let server = new_real_threshold_kms(
                 core_config,
                 cur_pub_storage,
@@ -384,9 +371,7 @@ pub async fn setup_threshold_with_custom_peers<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
-                false,
                 run_prss,
                 mpc_core_rx.map(drop),
             )
@@ -712,7 +697,7 @@ pub async fn setup_centralized_no_client<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
-    mut priv_storage: PrivS,
+    priv_storage: PrivS,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
@@ -725,24 +710,13 @@ pub async fn setup_centralized_no_client<
         .pop()
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let sk = get_core_signing_key(&priv_storage).await.unwrap();
-
-    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
-        .await
-        .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
-        core_config,
-        pub_storage,
-        priv_storage,
-        backup_vault,
-        None,
-        sk,
-    )
-    .await
-    .expect("Could not create KMS");
+    let (kms, (health_reporter, health_service)) =
+        RealCentralizedKms::new(core_config, pub_storage, priv_storage, backup_vault, None)
+            .await
+            .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
     tokio::spawn(async move {

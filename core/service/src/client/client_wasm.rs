@@ -1,9 +1,10 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
+use kms_grpc::{ContextId, RequestId};
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::*;
@@ -12,8 +13,8 @@ use wasm_bindgen::prelude::*;
 /// for everything else, we use the Pk variant.
 #[derive(Clone)]
 pub enum ServerIdentities {
-    Pks(HashMap<u32, PublicSigKey>),
-    Addrs(HashMap<u32, alloy_primitives::Address>),
+    Pks(HashMap<ContextId, HashSet<PublicSigKey>>),
+    Addrs(HashMap<ContextId, HashSet<alloy_primitives::Address>>),
 }
 
 impl ServerIdentities {
@@ -43,6 +44,7 @@ pub struct Client {
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
+    pub(crate) servers: usize,
     pub(crate) decryption_mode: DecryptionMode,
 }
 
@@ -56,20 +58,22 @@ impl Client {
     /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
     /// from a [PublicStorage].
     ///
-    /// * `server_pks` - a set of tkms core public keys.
+    /// * `server_pks` - a map mapping a context ID to the total set of public keys that are acceptable for that context.
     /// * `client_address` - the client wallet address.
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
     ///   in a secure location, e.g., hardware wallet or web extension.
     ///   Calling functions that requires `client_sk` when it is None will return an error.
     /// * `params` - the FHE parameters.
+    /// * `servers` - the number of servers in the MPC setup. This is used to determine the decryption mode to use.
     /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall.
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
-        server_pks: HashMap<u32, PublicSigKey>,
+        server_pks: HashMap<ContextId, HashSet<PublicSigKey>>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
+        servers: usize,
         decryption_mode: Option<DecryptionMode>,
     ) -> Self {
         let decryption_mode = decryption_mode.unwrap_or_default();
@@ -79,12 +83,16 @@ impl Client {
             server_identities: ServerIdentities::Pks(server_pks),
             client_address,
             client_sk,
+            servers,
             params,
             decryption_mode,
         }
     }
 
-    pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {
+    // todo more substantial change since this messes with validation logic. we need to get context id from request extradata and use this to pick the right key
+    pub fn get_server_pks(
+        &self,
+    ) -> anyhow::Result<&HashMap<u32, HashMap<ContextId, PublicSigKey>>> {
         match &self.server_identities {
             ServerIdentities::Pks(inner) => Ok(inner),
             ServerIdentities::Addrs(_) => {
@@ -92,10 +100,13 @@ impl Client {
             }
         }
     }
-
-    pub fn get_server_addrs(&self) -> HashMap<u32, alloy_primitives::Address> {
+    //todo should be updated
+    pub fn get_server_addrs(&self) -> HashMap<u32, HashMap<ContextId, alloy_primitives::Address>> {
         match &self.server_identities {
-            ServerIdentities::Pks(pks) => pks.iter().map(|(i, pk)| (*i, pk.address())).collect(),
+            ServerIdentities::Pks(pks) => pks
+                .iter()
+                .map(|(i, pk_set)| (*i, pk_set.iter().map(|pk| pk.address()).collect()))
+                .collect(),
             ServerIdentities::Addrs(inner) => inner.clone(),
         }
     }
