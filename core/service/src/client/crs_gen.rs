@@ -301,6 +301,7 @@ pub(crate) mod tests {
             alloy_primitives::Address::new([1; 20]), // The all 1 address
             None,
             TEST_PARAM,
+            0, // servers - not used in this test
             None,
         );
         let request_id = RequestId::default();

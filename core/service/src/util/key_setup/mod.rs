@@ -3,6 +3,7 @@ cfg_if::cfg_if! {
         pub mod test_tools;
 
         use crate::dummy_domain;
+        use crate::consts::DEFAULT_MPC_CONTEXT;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
@@ -363,13 +364,30 @@ where
     }
 
     // Get signing key with proper error handling
-    let sk = match get_core_signing_key(priv_storage).await {
+    let sks = match get_core_signing_keys(priv_storage).await {
         Ok(key) => key,
         Err(e) => {
-            tracing::error!("Failed to get signing key: {}", e);
-            return false; // Cannot proceed without signing key
+            tracing::error!("Failed to get signing keys: {}", e);
+            return false; // Cannot proceed without signing keys
+                          // TODO does not match method signature , should panic
         }
     };
+    // Get signing keys for this party
+    if sks.len() > 1 {
+        tracing::warn!(
+            "Multiple signing keys found for central party, I will only use the default {}",
+            *DEFAULT_MPC_CONTEXT,
+        );
+    }
+    let sk = if let Some(cur_sk) = sks.get(&DEFAULT_MPC_CONTEXT) {
+        cur_sk.clone()
+    } else {
+        panic!(
+            "No signing key found for central party in context {}",
+            *DEFAULT_MPC_CONTEXT
+        );
+    };
+
     let mut rng = get_rng(deterministic, Some(0));
 
     // Calculate max_num_bits based on DKG parameters - now handles errors internally
@@ -482,12 +500,28 @@ where
     }
 
     // Get signing key with proper error handling
-    let sk = match get_core_signing_key(priv_storage).await {
-        Ok(key) => key,
+    let sks = match get_core_signing_keys(priv_storage).await {
+        Ok(keys) => keys,
         Err(e) => {
-            tracing::error!("Failed to get signing key: {}", e);
-            return false; // Cannot proceed without signing key
+            tracing::error!("Failed to get signing keys: {}", e);
+            return false; // Cannot proceed without signing keys
+                          // TODO does not match method signature , should panic
         }
+    };
+    // Get signing keys for this party
+    if sks.len() > 1 {
+        tracing::warn!(
+            "Multiple signing keys found for central party, I will only use the default {}",
+            *DEFAULT_MPC_CONTEXT,
+        );
+    }
+    let sk = if let Some(cur_sk) = sks.get(&DEFAULT_MPC_CONTEXT) {
+        cur_sk.clone()
+    } else {
+        panic!(
+            "No signing key found for central party in context {}",
+            *DEFAULT_MPC_CONTEXT
+        );
     };
 
     let seed = match deterministic {
@@ -1013,13 +1047,16 @@ where
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
-    let mut signing_keys = Vec::new();
+    let mut signing_keys = HashMap::new();
     for (i, cur_storage) in priv_storages.iter().enumerate() {
-        match get_core_signing_key(cur_storage).await {
-            Ok(key) => signing_keys.push(key),
+        match get_core_signing_keys(cur_storage).await {
+            Ok(keys) => {
+                signing_keys.insert(i as u32 + 1, keys);
+            }
             Err(e) => {
-                tracing::error!("Failed to get signing key for party {}: {}", i + 1, e);
+                tracing::error!("Failed to get signing keys for party {}: {}", i + 1, e);
                 return false; // Cannot proceed without signing keys
+                              // todo does not match method signature , should panic
             }
         }
     }
@@ -1050,12 +1087,29 @@ where
     // Store keys for each party
     let domain = dummy_domain();
     for i in 1..=amount_parties {
-        // Get signing key for this party
-
-        let sk = &signing_keys[i - 1];
+        let cur_party_id = i as u32;
+        // TODO refactor to reuse
+        // Get signing keys for this party
+        if signing_keys[&cur_party_id].len() > 1 {
+            tracing::warn!(
+                "Multiple signing keys found for party {}, I will only use the default {}",
+                cur_party_id,
+                *DEFAULT_MPC_CONTEXT,
+            );
+        }
+        let cur_sk = if let Some(cur_sk) = signing_keys[&cur_party_id].get(&DEFAULT_MPC_CONTEXT) {
+            cur_sk.clone()
+        } else {
+            tracing::error!(
+                "No signing key found for party {} in context {}",
+                cur_party_id,
+                *DEFAULT_MPC_CONTEXT
+            );
+            continue; // Skip this party but try others
+        };
         // Compute info with proper error handling
         let info = match crate::engine::base::compute_info_standard_keygen(
-            sk,
+            &cur_sk,
             &DSEP_PUBDATA_KEY,
             &INSECURE_PREPROCESSING_ID,
             key_id,
@@ -1064,7 +1118,11 @@ where
         ) {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!("Failed to compute key info for party {}: {}", i, e);
+                tracing::error!(
+                    "Failed to compute key info for party {}: {}",
+                    cur_party_id,
+                    e
+                );
                 continue; // Skip this party but try others
             }
         };
@@ -1133,7 +1191,7 @@ where
         {
             tracing::error!(
                 "Failed to store private key data for party {}: {}",
-                { i },
+                cur_party_id,
                 store_err
             );
             continue; // Skip this party but try others
@@ -1213,16 +1271,16 @@ where
     }
 
     // Collect signing keys from all private storages
-    // PANICS: If any signing key cannot be retrieved - critical for security
+    // PANICS: If any signing keys cannot be retrieved - critical for security
     let signing_keys: Vec<_> = future::join_all(
         priv_storages
             .iter()
-            .map(|storage| get_core_signing_key(storage)),
+            .map(|storage| get_core_signing_keys(storage)),
     )
     .await
     .into_iter()
     .collect::<Result<_, _>>()
-    .unwrap_or_else(|e| panic!("Failed to get signing key: {e}"));
+    .unwrap_or_else(|e| panic!("Failed to get signing keys: {e}"));
 
     // Calculate max_num_bits based on DKG parameters
     // PANICS: If parameters are invalid and yield zero bits (security critical)
@@ -1260,14 +1318,21 @@ where
     // Store the CRS for each party
     // PANICS: if the private and public storage and signing keys are not of equal length
     let domain = dummy_domain();
-    for (cur_pub, (cur_priv, cur_sk)) in pub_storages
+    for (cur_pub, (cur_priv, cur_sks)) in pub_storages
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
+        let cur_sk = if let Some(cur_sk) = cur_sks.get(&DEFAULT_MPC_CONTEXT) {
+            cur_sk.clone()
+        } else {
+            panic!(
+                "No signing key found for at least one party in context {}",
+                *DEFAULT_MPC_CONTEXT
+            );
+        };
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
-
-        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
+        let crs_info = compute_info_crs(&cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");
             });

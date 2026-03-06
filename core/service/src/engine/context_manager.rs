@@ -20,7 +20,8 @@ use crate::engine::validation::{
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_context_at_id, delete_custodian_context_at_id, store_context_at_id, StorageExt,
+    delete_context_at_id, delete_custodian_context_at_id, read_context_at_id, store_context_at_id,
+    StorageExt,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -234,7 +235,13 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.get_sig_key()?.as_ref(),
+            self.base_kms
+                .get_sig_key(
+                    context
+                        .context_id()
+                        .ok_or_else(|| anyhow::anyhow!("Context ID is not set"))?,
+                )?
+                .as_ref(),
             backup_dec_key,
             &inner_context,
         )
@@ -354,12 +361,19 @@ where
     }
 }
 
-pub async fn create_default_centralized_context_in_storage<
+pub async fn ensure_default_centralized_context_in_storage<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
     sk: &PrivateSigKey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ContextInfo> {
+    if let Ok(context) = read_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT).await {
+        tracing::info!(
+            "Default centralized context with ID {} already exists in storage, skipping creation",
+            *DEFAULT_MPC_CONTEXT
+        );
+        return Ok(context);
+    }
     // Create and store the default context for centralized mode testing
     let verification_key = PublicSigKey::from_sk(sk);
     let context_info = ContextInfo {
@@ -382,7 +396,7 @@ pub async fn create_default_centralized_context_in_storage<
         .await
         .expect("Could not store default context");
 
-    Ok(())
+    Ok(context_info)
 }
 
 /// Create and store the default MPC context for threshold mode from peer configuration.
@@ -391,22 +405,23 @@ pub async fn create_default_centralized_context_in_storage<
 /// in private storage under `DEFAULT_MPC_CONTEXT`. If a context already exists at that ID,
 /// it is deleted first to ensure consistency with the latest peer list.
 ///
-/// Returns `Ok(())` if peers are present and context was created, or if no peers are configured.
+/// Returns `Ok()` if peers are present and context was created, or if no peers are configured.
 ///
 /// # Arguments
 /// * `priv_storage` - The private storage to write the context to
 /// * `threshold_config` - The threshold party configuration containing peers, threshold, etc.
 /// * `verf_key` - The verification key of this party
-pub async fn ensure_default_threshold_context_in_storage<
+pub async fn overwrite_default_threshold_context_in_storage<
+    // TODO do we actually want to overwrite
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
     threshold_config: &ThresholdPartyConf,
     verf_key: &PublicSigKey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ContextInfo> {
     let peers = match &threshold_config.peers {
         Some(peers) => peers,
-        None => return Ok(()), // No peers configured, nothing to do
+        None => anyhow::bail!("No peer configuration. Cannot make threshold context"), // No peers configured, nothing to do
     };
 
     let context_id = *DEFAULT_MPC_CONTEXT;
@@ -491,7 +506,7 @@ pub async fn ensure_default_threshold_context_in_storage<
 
     store_context_at_id(priv_storage, &context_id, &context_info).await?;
 
-    Ok(())
+    Ok(context_info)
 }
 
 pub struct CentralizedContextManager<

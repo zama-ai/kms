@@ -369,7 +369,7 @@ async fn get_unique<
 pub async fn get_core_signing_keys<S: StorageReader>(
     storage: &S,
 ) -> anyhow::Result<HashMap<ContextId, PrivateSigKey>> {
-    read_all_data_versioned(storage, &PrivDataType::SigningKey.to_string())
+    let keys = read_all_data_versioned(storage, &PrivDataType::SigningKey.to_string())
         .await
         .map_err(|e| {
             anyhow::anyhow!(
@@ -383,7 +383,15 @@ pub async fn get_core_signing_keys<S: StorageReader>(
                 .into_iter()
                 .map(|(req_id, key)| (req_id.into(), key))
                 .collect()
-        })
+        })?;
+    if keys.values().is_empty() {
+        anyhow::bail!(
+            "{} storage should contain at least one entry, but is empty \"{}\"",
+            PrivDataType::SigningKey,
+            storage.info()
+        );
+    }
+    keys
 }
 
 /// Returns all core verification keys from storage.

@@ -1,9 +1,5 @@
 // === Standard Library ===
-use std::{
-    collections::{HashMap, HashSet},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -49,7 +45,7 @@ use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
-    conf::{threshold::ThresholdPartyConf, CoreConfig},
+    conf::CoreConfig,
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
     cryptography::attestation::SecurityModuleProxy,
     engine::{
@@ -58,7 +54,9 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
         context::{ContextInfo, SoftwareVersion},
-        context_manager::{ensure_default_threshold_context_in_storage, ThresholdContextManager},
+        context_manager::{
+            overwrite_default_threshold_context_in_storage, ThresholdContextManager,
+        },
         prepare_shutdown_signals,
         threshold::{
             service::{
@@ -383,7 +381,7 @@ where
             anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
             if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
                 // Create default context if needed
-                ensure_default_threshold_context_in_storage(
+                overwrite_default_threshold_context_in_storage(
                     &mut private_storage,
                     threshold_config,
                     &default_sk.verf_key(),
@@ -397,7 +395,7 @@ where
 
             // Validate that contexts exist for each key
             for cur_context in sig_keys_map.keys() {
-                context_map.get(cur_context.try_into()?).ok_or_else(|| {
+                context_map.get(&(*cur_context).into()).ok_or_else(|| {
                     anyhow_error_and_log(format!(
                         "No context found for signing key with context id {cur_context}"
                     ))

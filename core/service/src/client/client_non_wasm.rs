@@ -75,7 +75,7 @@ impl Client {
             client_pk.address(),
             Some(client_sk),
             *params,
-            servers,
+            pub_storages.len(),
             decryption_mode,
         ))
     }
@@ -108,7 +108,7 @@ impl Client {
             tracing::error!("Could not recover address from signature");
             return None;
         };
-
+        // todo depends on context id
         self.get_server_addrs()
             .into_values()
             .find(|&verf_key| verf_key == addr)

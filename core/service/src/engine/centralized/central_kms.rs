@@ -30,7 +30,7 @@ use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt}
 use observability::conf::TelemetryConfig;
 
 use crate::engine::context::ContextInfo;
-use crate::engine::context_manager::create_default_centralized_context_in_storage;
+use crate::engine::context_manager::ensure_default_centralized_context_in_storage;
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::{
@@ -925,7 +925,7 @@ impl<
                 anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
                 if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
                     // Create default centralized context if needed
-                    create_default_centralized_context_in_storage(
+                    ensure_default_centralized_context_in_storage(
                         &mut private_storage,
                         &default_sk,
                     )
@@ -938,7 +938,7 @@ impl<
                 .await?;
                 // Validate that contexts exist for each key
                 for cur_context in sig_keys_map.keys() {
-                    context_map.get(cur_context.into()).ok_or_else(|| {
+                    context_map.get(&(*cur_context).into()).ok_or_else(|| {
                         anyhow_error_and_log(format!(
                             "No context found for signing key with context id {cur_context}"
                         ))
@@ -1192,8 +1192,8 @@ pub(crate) mod tests {
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
     };
     use crate::consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEYS_PATH,
-        TEST_CENTRAL_KEY_ID, TEST_PARAM,
+        DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID,
+        TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -1820,7 +1820,6 @@ pub(crate) mod tests {
                     .unwrap(),
                 None,
                 None,
-                keys.centralized_kms_keys.sig_sk.clone(),
             )
             .await
             .unwrap();
@@ -1841,13 +1840,19 @@ pub(crate) mod tests {
             let mut keys = ephemeral_signcryption_key_generation(
                 &mut rng,
                 &client_verf_key.verf_key_id(),
-                kms.base_kms.get_sig_key().ok().as_deref(),
+                kms.base_kms
+                    .get_sig_key(&DEFAULT_MPC_CONTEXT)
+                    .ok()
+                    .as_deref(),
             );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(
                     &mut rng,
                     &client_verf_key.verf_key_id(),
-                    kms.base_kms.get_sig_key().ok().as_deref(),
+                    kms.base_kms
+                        .get_sig_key(&DEFAULT_MPC_CONTEXT)
+                        .ok()
+                        .as_deref(),
                 );
                 // Change the decryption key
                 keys.unsigncryption_key.decryption_key =
@@ -1871,7 +1876,10 @@ pub(crate) mod tests {
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            kms.base_kms.get_sig_key().unwrap().as_ref(),
+            kms.base_kms
+                .get_sig_key(&DEFAULT_MPC_CONTEXT)
+                .unwrap()
+                .as_ref(),
             &mut rng,
             &ct,
             fhe_type,
