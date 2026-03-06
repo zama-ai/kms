@@ -691,12 +691,13 @@ mod tests {
     use crate::tests::helper::tests_and_benches::{
         execute_protocol_small, execute_protocol_two_sets,
     };
-    use crate::tests::test_data_setup::tests::TEST_PARAMETERS;
-    use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
+    use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::{
-        constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
+        constants::SMALL_TEST_KEY_PATH,
+        online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
+        tests::test_data_setup::ensure_test_data_setup,
     };
     use aes_prng::AesRng;
     use algebra::{
@@ -877,6 +878,7 @@ mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
+        ensure_test_data_setup();
         let num_parties = 7;
         let threshold = 2;
 
@@ -886,8 +888,8 @@ mod tests {
                 read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
 
             // we make the shares shorter to make sure the test doesn't take too long
-            // NOTE that TEST_PARAMETERS must be the parameters of SMALL_TEST_KEY_PATH
-            let new_params = get_truncated_client_keys_params(TEST_PARAMETERS);
+            // NOTE that PARAMS_TEST_BK_SNS must be the parameters of SMALL_TEST_KEY_PATH
+            let new_params = get_truncated_client_keys_params(PARAMS_TEST_BK_SNS);
             truncate_client_keys(&mut keyset, new_params);
 
             let (key_shares, expected_sk) = generate_key_with_error_in_s1(
@@ -993,10 +995,11 @@ mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
+        ensure_test_data_setup();
         let mut task = |mut common_session: GenericBaseSession<TwoSetsRole>,
                         session_set_1: Option<BaseSession>,
                         session_set_2: Option<BaseSession>| async move {
-            let new_params = get_truncated_client_keys_params(TEST_PARAMETERS);
+            let new_params = get_truncated_client_keys_params(PARAMS_TEST_BK_SNS);
             let (mut party_keyshare, expected_sk, _key_shares) = if let Some(session_set_1) =
                 session_set_1.as_ref()
             {
