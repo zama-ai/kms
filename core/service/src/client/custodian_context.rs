@@ -29,7 +29,7 @@ impl Client {
                     context_id: Some((*request_id).into()),
                     threshold,
                 }),
-                mpc_context_id: Some(*mpc_context_id.into()),
+                mpc_context_id: Some((*mpc_context_id).into()),
             },
             mnemonics,
         ))

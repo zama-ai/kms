@@ -90,7 +90,9 @@ impl Client {
     }
 
     // todo more substantial change since this messes with validation logic. we need to get context id from request extradata and use this to pick the right key
-    pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<ContextId, HashSet<PublicSigKey>>> {
+    pub fn get_server_pks(
+        &self,
+    ) -> anyhow::Result<&HashMap<u32, HashMap<ContextId, PublicSigKey>>> {
         match &self.server_identities {
             ServerIdentities::Pks(inner) => Ok(inner),
             ServerIdentities::Addrs(_) => {
@@ -99,7 +101,7 @@ impl Client {
         }
     }
     //todo should be updated
-    pub fn get_server_addrs(&self) -> HashMap<ContextId, HashSet<alloy_primitives::Address>> {
+    pub fn get_server_addrs(&self) -> HashMap<u32, HashMap<ContextId, alloy_primitives::Address>> {
         match &self.server_identities {
             ServerIdentities::Pks(pks) => pks
                 .iter()

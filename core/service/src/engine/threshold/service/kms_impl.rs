@@ -415,7 +415,7 @@ where
                 "SIGNING KEYS NOT AVAILABLE, ENTERING RECOVERY MODE!\n\
                  Only backup recovery operations should be done and TLS must not be available!\n\
                  Make sure to use a configuration file without TLS configured and\n\
-                 make sure to validate that the current verification key in public storage \
+                 make sure to validate that the current verification keys in public storage \
                  is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_keys = get_core_verification_keys(&public_storage).await?;
@@ -496,8 +496,16 @@ where
         if !cur_rec_material.validate(&verf_key) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
+        // Validate keychain recovery material now that we have the verification key
+        if let Some(ref keychain) = private_vault.keychain {
+            keychain.validate_recovery_material(&base_kms.get_verf_key(&context_id))?;
+        }
+        if let Some(ref vault) = backup_vault {
+            if let Some(ref keychain) = vault.keychain {
+                keychain.validate_recovery_material(&base_kms.get_verf_key(&))?;
+            }
+        }
     }
-
     // Build public_key_info map
     for ((id, _), info) in &key_info_versioned {
         public_key_info.insert(*id, info.meta_data.clone());
