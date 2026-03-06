@@ -67,7 +67,7 @@ mod tests {
     // TODO(dp): this is stupid, why do we need an actual cipher here? We should just generate one, add it here as data and assert that the  derived SessionId is fine (whatever that means)
     use execution::{
         constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
-        tests::test_data_setup::ensure_test_data_setup, tfhe_internals::test_feature::KeySet,
+        tests::ensure_test_data_setup, tfhe_internals::test_feature::KeySet,
     };
     use test_utils::read_element;
 
