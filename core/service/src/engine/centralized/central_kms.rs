@@ -19,7 +19,7 @@ use crate::engine::context_manager::CentralizedContextManager;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 #[cfg(feature = "non-wasm")]
-use crate::engine::utils::sanity_check_public_materials;
+use crate::engine::utils::{sanity_check_crs_materials, sanity_check_public_materials};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
@@ -88,37 +88,19 @@ pub(crate) enum CentralizedKeyGenResult {
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
+pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
-    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
-    compression_key_id: Option<RequestId>,
     key_id: &RequestId,
     preproc_id: &RequestId,
-    epoch_id: &EpochId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<CentralizedKeyGenResult>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-{
+) -> anyhow::Result<CentralizedKeyGenResult> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let key_id_copy = key_id.to_owned();
     let preproc_id_copy = preproc_id.to_owned();
-
-    let existing_key_handle = match compression_key_id {
-        Some(compression_key_id_inner) => {
-            let existing_key_handle = storage
-                .read_centralized_fhe_keys(&compression_key_id_inner, epoch_id)
-                .await?;
-            Some(existing_key_handle)
-        }
-        None => None,
-    };
 
     match keyset_config.computation_key_type {
         threshold_fhe::execution::keyset_config::ComputeKeyType::Cpu => {
@@ -135,7 +117,6 @@ where
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
-                existing_key_handle,
                 &key_id_copy,
                 &preproc_id_copy,
                 seed,
@@ -146,7 +127,6 @@ where
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
-                existing_key_handle,
                 &key_id_copy,
                 &preproc_id_copy,
                 seed,
@@ -242,7 +222,6 @@ fn generate_compressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
-    _existing_key_handle: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
     seed: Option<Seed>,
@@ -250,11 +229,6 @@ fn generate_compressed_fhe_keys(
 ) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
     match keyset_config {
         KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
-        KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
-            anyhow::bail!(
-                "Generating compressed fhe keys from existing shares is not supported yet"
-            )
-        }
         KeyGenSecretKeyConfig::UseExisting => {
             anyhow::bail!(
                 "Generating compressed fhe keys from existing shares is not supported yet"
@@ -310,12 +284,10 @@ fn generate_compressed_fhe_keys(
     Ok((compressed_keyset, handles))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
-    existing_key_handle_for_compression_key: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
     seed: Option<Seed>,
@@ -325,19 +297,6 @@ pub fn generate_fhe_keys(
         let tag = key_id.into();
         let client_key = match compression_config {
             KeyGenSecretKeyConfig::GenerateAll => generate_client_fhe_key(params, tag, seed),
-            KeyGenSecretKeyConfig::UseExistingCompressionSecretKey => {
-                match existing_key_handle_for_compression_key {
-                    Some(key_handle) => {
-                        // we generate the client key as usual,
-                        // but we replace the compression private key using an existing compression private key
-                        let client_key = generate_client_fhe_key(params, tag, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, rerand_key_params, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key,rerand_key_params, tag)
-                    },
-                    None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
-                }
-            }
             KeyGenSecretKeyConfig::UseExisting => {
                 anyhow::bail!("This is not implemented yet")
             }
@@ -975,7 +934,7 @@ impl<
         // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
-            .map(|((id, _), handle)| (*id, handle.public_key_info.pub_data_types()))
+            .map(|((id, _), handle)| (*id, handle.public_key_info.clone()))
             .collect();
         sanity_check_public_materials(&public_storage, &entries).await?;
         tracing::info!(
@@ -1344,7 +1303,6 @@ pub(crate) mod tests {
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
-            None,
             &RequestId::from_str(key_id).unwrap(),
             &preproc_id,
             seed,
@@ -1359,7 +1317,6 @@ pub(crate) mod tests {
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
-            None,
             &RequestId::from_str(other_key_id).unwrap(),
             &preproc_id,
             seed,
@@ -1412,7 +1369,6 @@ pub(crate) mod tests {
             &sig_sk,
             DEFAULT_PARAM,
             StandardKeySetConfig::default().secret_key_config,
-            None,
             &key_id,
             &preproc_id,
             None,
@@ -1438,7 +1394,6 @@ pub(crate) mod tests {
             &sig_sk,
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,
-            None,
             &key_id,
             &preproc_id,
             seed,

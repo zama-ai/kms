@@ -123,6 +123,10 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     for i in 0..num_requests {
         // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
         if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
+            tracing::info!(
+                "Current status {i}/{num_requests}. Sleeping for {:?} before sending {parallel_requests} more parallel requests.",
+                inter_request_delay
+            );
             tokio::time::sleep(inter_request_delay).await;
         }
         let req_id = RequestId::new_random(rng);
@@ -247,6 +251,10 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     for i in 0..num_requests {
         // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
         if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
+            tracing::info!(
+                "Current status {i}/{num_requests}. Sleeping for {:?} before sending {parallel_requests} more parallel requests.",
+                inter_request_delay
+            );
             tokio::time::sleep(inter_request_delay).await;
         }
         let req_id = RequestId::new_random(rng);

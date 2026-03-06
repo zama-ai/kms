@@ -1,7 +1,6 @@
 use clap::Parser;
 use kms_core_client::{execute_cmd, setup_logging, CmdConfig};
 use kms_lib::engine::context::SoftwareVersion;
-use kms_lib::util::key_setup::ensure_client_keys_exist;
 use std::path::Path;
 use validator::Validate;
 
@@ -20,9 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     }
 
     let keys_folder: &Path = Path::new("keys");
-
     ensure_client_keys_exist(Some(keys_folder), true).await;
-
     let res = execute_cmd(&config, keys_folder).await;
 
     match res {
