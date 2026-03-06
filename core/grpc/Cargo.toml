@@ -31,6 +31,7 @@ strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
 tonic = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -46,12 +47,12 @@ wasm-bindgen.workspace = true
 tracing-test = { workspace = true}
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["prost", "wasm-bindgen"]
+ignored = ["prost", "tonic-prost", "wasm-bindgen"]
 
 [features]
 default = ["non-wasm"]
-non-wasm = ["dep:tonic"]
+non-wasm = ["dep:tonic", "dep:tonic-prost"]
 insecure = []
