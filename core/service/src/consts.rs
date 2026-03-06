@@ -177,13 +177,13 @@ lazy_static::lazy_static! {
     // TODO(zama-ai/kms-internal/issues/2758)
     // In the future we will remove the default context.
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
-        1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
-        4,
+        7u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1,
     ]);
 
     // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
     pub static ref DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        8u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     ]);
 }
