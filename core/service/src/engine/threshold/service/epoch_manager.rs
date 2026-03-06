@@ -628,9 +628,6 @@ impl<
         ))
     }
 
-    //TODO: That's probably where we want to deal with CRS fetching and re-signing
-    // as that's called (only) by all the parties in the new context/epoch.
-
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
     async fn store_reshared_keys(
@@ -760,8 +757,22 @@ impl<
                 &crs,
                 &crs_info.eip712_domain,
             )?;
-            //TODO: write to storage
-            crs_metadatas.push(crs_meta_data);
+            crs_metadatas.push(crs_meta_data.clone());
+            let meta_store = Arc::clone(&meta_store);
+            storage_tasks.push(
+                async move {
+                    crypto_storage
+                        .inner_write_crs(
+                            &crs_info.crs_id,
+                            &new_epoch_id,
+                            crs.clone(),
+                            &crs_meta_data,
+                            meta_store,
+                        )
+                        .await
+                }
+                .boxed(),
+            );
         }
 
         // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.

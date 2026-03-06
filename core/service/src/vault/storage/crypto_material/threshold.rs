@@ -70,6 +70,22 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         Arc::clone(&self.inner.private_storage)
     }
 
+    /// Write the CRS to the storage backend.
+    /// On failure, the meta_store is used to purge dangling data.
+    /// On success, the meta_store is NOT updated; the caller is responsible for that.
+    pub(crate) async fn inner_write_crs<T: Clone>(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: &CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
+    ) {
+        self.inner
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info, meta_store)
+            .await
+    }
+
     /// Write the CRS to the storage backend as well as the cache,
     /// and update the [meta_store] to "Done" if the procedure is successful.
     ///

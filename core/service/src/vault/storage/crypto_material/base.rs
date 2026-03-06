@@ -528,25 +528,17 @@ where
         }
     }
 
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
+    /// Write the CRS to the storage backend.
+    /// On failure, the meta_store is used to purge dangling data.
+    /// On success, the meta_store is NOT updated; the caller is responsible for that.
+    pub(crate) async fn inner_write_crs<T: Clone>(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
+        crs_info: &CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let mut guarded_meta_store = meta_store.write().await;
-
         let (r1, r2, r3) = {
             // Enforce locking order for internal types
             let mut pub_storage = self.public_storage.lock().await;
@@ -561,7 +553,7 @@ where
                     &mut (*priv_storage),
                     crs_id,
                     epoch_id,
-                    &crs_info,
+                    crs_info,
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await;
@@ -598,7 +590,7 @@ where
                             &mut (*guarded_backup_vault),
                             crs_id,
                             epoch_id,
-                            &crs_info,
+                            crs_info,
                             &PrivDataType::CrsInfo.to_string(),
                         )
                         .await;
@@ -617,27 +609,48 @@ where
             tokio::join!(f1, f2, f3)
         };
 
-        if r1
-            && r2
-            && r3
-            && update_ok_req_in_meta_store(&mut guarded_meta_store, crs_id, crs_info, op_metric_tag)
-        {
+        if r1 && r2 && r3 {
             // everything is ok, there's no cache to update
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might
             // be because the data did not get created
             // In any case, we can't do much.
+            let guarded_meta_store = meta_store.write().await;
             self.purge_crs_material(crs_id, guarded_meta_store).await;
         }
     }
 
+    /// Write the CRS to the storage backend as well as the cache,
+    /// and update the [meta_store] to "Done" if the procedure is successful.
+    ///
+    /// When calling this function more than once, the same [meta_store]
+    /// must be used, otherwise the storage state may become inconsistent.
+    pub async fn write_crs_with_meta_store(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
+    ) {
+        let info = crs_info.clone();
+        self.inner_write_crs(crs_id, epoch_id, pp, &crs_info, Arc::clone(&meta_store))
+            .await;
+
+        // Not much we can do if this fails
+        // Note: it will fail if inner_write_crs failed
+        let _ =
+            update_ok_req_in_meta_store(&mut meta_store.write().await, crs_id, info, op_metric_tag);
+    }
+
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
     /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
-    pub async fn purge_crs_material(
+    pub async fn purge_crs_material<T: Clone>(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
