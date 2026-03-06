@@ -1227,20 +1227,6 @@ pub(crate) mod tests {
                     }
                 }
             }
-            store_versioned_at_request_id(
-                &mut ram_storage,
-                cur_req_id,
-                &cur_keys.public_key,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
-            store_versioned_at_request_id(
-                &mut ram_storage,
-                cur_req_id,
-                &cur_keys.server_key,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await?;
         }
         Ok(ram_storage)
     }

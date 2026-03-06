@@ -11,7 +11,7 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits, check_data_exists, data_exists, get_core_signing_key,
         };
-        use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
+        use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
         use std::sync::Arc;
@@ -474,6 +474,9 @@ where
         let mut all = true;
         for t in &pub_types {
             all &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
+            all &= data_exists(pub_storage, other_key_id, t)
+                .await
+                .unwrap_or(false);
         }
         all
     };
@@ -490,10 +493,12 @@ where
     // PUB data is incomplete — purge any leftover fragments and regenerate everything.
     for t in &pub_types {
         let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        let _ = delete_at_request_id(pub_storage, other_key_id, t).await;
     }
-    let _ = delete_at_request_id(
+    let _ = delete_at_request_and_epoch_id(
         priv_storage,
         key_id,
+        epoch_id,
         &PrivDataType::FhePrivateKey.to_string(),
     )
     .await;
@@ -1006,26 +1011,30 @@ where
     ];
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
-        let mut pub_complete = true;
         for t in &pub_types {
-            pub_complete &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
-        }
-        if !pub_complete {
-            all_data_exists = false;
-            // Purge any leftover fragments before regeneration
-            for t in &pub_types {
-                let _ = delete_at_request_id(pub_storage, key_id, t).await;
-            }
-            let _ =
-                delete_at_request_id(priv_storage, key_id, &PrivDataType::FheKeyInfo.to_string())
-                    .await;
-            break;
+            all_data_exists &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
         }
     }
     if all_data_exists {
         tracing::info!("Threshold FHE keys exists, skipping generation");
         return false;
     }
+    // Purge obsolete data
+    for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
+        use crate::vault::storage::delete_at_request_and_epoch_id;
+
+        for t in &pub_types {
+            let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        }
+        let _ = delete_at_request_and_epoch_id(
+            priv_storage,
+            key_id,
+            epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await;
+    }
+
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
