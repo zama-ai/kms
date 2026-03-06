@@ -1,11 +1,11 @@
-use tonic_build::Builder;
+use tonic_prost_build::Builder;
 
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str =
-    "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq, Ord, PartialOrd)]";
+    "#[derive(serde::Deserialize, serde::Serialize, Ord, PartialOrd)]";
 
 fn default_builder() -> Builder {
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .type_attribute("OperatorBackupOutput", EXTENDED_DERIVES)
         .type_attribute("PkeSchemeType", DERIVES)
         .type_attribute("SigningSchemeType", DERIVES)

@@ -97,7 +97,7 @@ serial_test.workspace = true
 test-context.workspace = true
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["kms", "strum"]
