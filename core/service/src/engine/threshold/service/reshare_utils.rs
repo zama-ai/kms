@@ -4,6 +4,7 @@ use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
         base::{compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata},
+        context::ContextInfo,
         threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
         utils::{
             verifiy_crs_digest_from_bytes, verify_compressed_key_digest_from_bytes,
@@ -161,6 +162,18 @@ fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
     }
 }
 
+async fn fetch_context_from_storage<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+>(
+    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    context_id: &ContextId,
+) -> anyhow::Result<ContextInfo> {
+    let priv_storage = crypto_storage.get_private_storage();
+    let guard_storage = priv_storage.lock().await;
+    read_context_at_id(&(*guard_storage), context_id).await
+}
+
 async fn fetch_public_fhe_materials_from_peers<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -177,11 +190,7 @@ async fn fetch_public_fhe_materials_from_peers<
     let is_compressed = key_digests.contains_key(&PubDataType::CompressedXofKeySet);
 
     // fetch the context info
-    let context = {
-        let priv_storage = crypto_storage.get_private_storage();
-        let guard_storage = priv_storage.lock().await;
-        read_context_at_id(&(*guard_storage), context_id).await?
-    };
+    let context = fetch_context_from_storage(crypto_storage, context_id).await?;
 
     let mut errors = Vec::new();
     for node in context.mpc_nodes {
@@ -548,6 +557,82 @@ pub(crate) async fn get_verified_fhe_public_materials<
     }
 }
 
+async fn fetch_public_crs_materials_from_peers<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    G: ReadOnlyS3StorageGetter<R>,
+    R: StorageReader,
+>(
+    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    crs_id: &RequestId,
+    context_id: &ContextId,
+    crs_digests: &Vec<u8>,
+    ro_storage_getter: &G,
+) -> anyhow::Result<CompactPkeCrs> {
+    // fetch the context info
+    let context = fetch_context_from_storage(crypto_storage, context_id).await?;
+
+    let mut errors = Vec::new();
+    for node in context.mpc_nodes {
+        // to simplify logic, it's ok to iterate over myself too
+        //
+        // the public storage URL consists of the bucket name and the URL
+        // we need to parse this information accordingly
+        let (url, bucket) = split_url(&node.public_storage_url)?;
+        let region = find_region_from_s3_url(&node.public_storage_url)?;
+
+        // this is not an operation that is frequently used, so we can create a new s3 client each time
+        let s3_client = build_anonymous_s3_client(url::Url::parse(&url)?, region).await?;
+        let pub_storage = ro_storage_getter.get_storage(
+            s3_client,
+            bucket,
+            StorageType::PUB,
+            node.public_storage_prefix.as_deref(),
+            None,
+        )?;
+
+        let crs_bytes = pub_storage
+            .load_bytes(crs_id, &PubDataType::CRS.to_string())
+            .await;
+        match crs_bytes {
+            Ok(crs_bytes) => match verifiy_crs_digest_from_bytes(&crs_bytes, crs_digests) {
+                Ok(()) => {
+                    // Assumes that if the digest match deserialize will either succeed or fail for all peers,
+                    // so it's ok to error out if this fails
+                    return tfhe::safe_serialization::safe_deserialize(
+                        std::io::Cursor::new(&crs_bytes),
+                        crate::consts::SAFE_SER_SIZE_LIMIT,
+                    )
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e));
+                }
+                Err(e) => {
+                    let msg = format!(
+                        "CRS digest verification failed from peer {}: {}",
+                        node.party_id, e
+                    );
+                    tracing::warn!(msg);
+                    errors.push(msg);
+                }
+            },
+            Err(e) => {
+                let msg = format!(
+                    "{} from peer {}: {e:?}",
+                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
+                );
+                tracing::warn!(msg);
+                errors.push(msg);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Failed to fetch valid crs materials from any peer, error count: {}, first error: {:?}, last error: {:?}",
+        errors.len(),
+        errors[0],
+        errors[errors.len() - 1],
+    );
+}
+
 pub(crate) async fn get_verified_crs_material<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -594,8 +679,22 @@ pub(crate) async fn get_verified_crs_material<
                 )
             })
         }
-        //TODO: fetch from peers
-        Err(_) => todo!(),
+        Err(_) => fetch_public_crs_materials_from_peers::<_, _, G, R>(
+            crypto_storage,
+            crs_id,
+            context_id,
+            crs_digest,
+            ro_storage_getter,
+        )
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(*request_id),
+                anyhow::anyhow!("Failed to fetch CRS materials from peers: {}", e),
+                tonic::Code::Internal,
+            )
+        }),
     }
 }
 

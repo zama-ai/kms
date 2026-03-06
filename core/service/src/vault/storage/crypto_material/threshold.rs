@@ -25,9 +25,8 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         storage::{
-            crypto_material::log_storage_success, read_versioned_at_request_id,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id, Storage,
-            StorageExt, StorageReader,
+            crypto_material::log_storage_success, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id, Storage, StorageExt, StorageReader,
         },
         Vault,
     },
