@@ -1,8 +1,7 @@
 use tonic_prost_build::Builder;
 
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
-const EXTENDED_DERIVES: &str =
-    "#[derive(serde::Deserialize, serde::Serialize, Ord, PartialOrd)]";
+const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Ord, PartialOrd)]";
 
 fn default_builder() -> Builder {
     tonic_prost_build::configure()
