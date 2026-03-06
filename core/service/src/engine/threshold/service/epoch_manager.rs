@@ -1444,7 +1444,7 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::{
-        kms::v1::{FheParameter, KeyInfo, NewMpcEpochRequest},
+        kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
@@ -1789,6 +1789,7 @@ pub(crate) mod tests {
         let context_id = derive_request_id("context_id").unwrap();
         let key_id = derive_request_id("key_id").unwrap();
         let preproc_id = derive_request_id("preproc_id").unwrap();
+        let crs_id = derive_request_id("crs_id").unwrap();
 
         let alloy_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -1806,6 +1807,12 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1827,6 +1834,12 @@ pub(crate) mod tests {
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
                 domain: Some(domain.clone()),
             }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1839,6 +1852,12 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1855,6 +1874,12 @@ pub(crate) mod tests {
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
                 domain: Some(domain.clone()),
             }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1867,6 +1892,12 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1883,6 +1914,12 @@ pub(crate) mod tests {
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
                 domain: Some(domain.clone()),
             }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1895,6 +1932,12 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1911,6 +1954,12 @@ pub(crate) mod tests {
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
                 domain: Some(domain.clone()),
             }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1924,6 +1973,52 @@ pub(crate) mod tests {
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
                 domain: Some(domain),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(crs_id.into()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid crs id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: Some(bad_req_id.clone()),
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
+            }],
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing crs id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            keys_info: vec![KeyInfo {
+                key_id: Some(key_id.into()),
+                preproc_id: Some(preproc_id.into()),
+                key_parameters: FheParameter::Test as i32,
+                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                domain: Some(domain.clone()),
+            }],
+            crs_info: vec![CrsInfo {
+                crs_id: None,
+                crs_digest: vec![],
+                max_num_bits: 128,
+                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();

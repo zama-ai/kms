@@ -361,8 +361,13 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 
     // First request should succeed
     let req_id_1 = derive_request_id("test_ratelimiter_isolated_1")?;
-    let req =
-        internal_client.crs_gen_request(&req_id_1, Some(16), Some(FheParameter::Test), &domain)?;
+    let req = internal_client.crs_gen_request(
+        &req_id_1,
+        None,
+        Some(16),
+        Some(FheParameter::Test),
+        &domain,
+    )?;
 
     let mut client = env.clients.get(&1).expect("Client 1 should exist").clone();
     let res = client.crs_gen(req).await;
@@ -370,8 +375,13 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 
     // Second request should be rejected due to rate limiter
     let req_id_2 = derive_request_id("test_ratelimiter_isolated_2")?;
-    let req_2 =
-        internal_client.crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), &domain)?;
+    let req_2 = internal_client.crs_gen_request(
+        &req_id_2,
+        None,
+        Some(1),
+        Some(FheParameter::Test),
+        &domain,
+    )?;
     let res_2 = client.crs_gen(req_2).await;
 
     assert!(res_2.is_err(), "Second CRS gen request should be rejected");

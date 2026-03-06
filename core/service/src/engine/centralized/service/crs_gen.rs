@@ -4,7 +4,7 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
-use kms_grpc::RequestId;
+use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
@@ -55,7 +55,7 @@ pub async fn crs_gen_impl<
         .start();
     let inner = request.into_inner();
     let max_bits = inner.max_num_bits;
-    let (req_id, context_id, _witness_dimension, params, eip712_domain, extra_data) =
+    let (req_id, epoch_id, context_id, _witness_dimension, params, eip712_domain, extra_data) =
         validate_crs_gen_request(inner, op_tag)?;
     let metric_tags = vec![
         (TAG_CRS_ID, req_id.to_string()),
@@ -103,6 +103,7 @@ pub async fn crs_gen_impl<
             let _permit = permit;
             crs_gen_background(
                 &req_id,
+                &epoch_id,
                 rng,
                 meta_store,
                 crypto_storage,
@@ -195,6 +196,7 @@ pub(crate) async fn crs_gen_background<
     PrivS: StorageExt + Send + Sync + 'static,
 >(
     req_id: &RequestId,
+    epoch_id: &EpochId,
     rng: AesRng,
     meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -231,7 +233,7 @@ pub(crate) async fn crs_gen_background<
     };
 
     crypto_storage
-        .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_tag)
+        .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
         .await;
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
@@ -258,9 +260,11 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_sunshine").unwrap();
+        let epoch_id = derive_request_id("test_crs_gen_sunshine_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
+            epoch_id: Some(epoch_id.into()),
             context_id: None,
             epoch_id: None,
             params: FheParameter::Test.into(),
@@ -281,9 +285,11 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_already_exists").unwrap();
+        let epoch_id = derive_request_id("test_crs_gen_already_exists_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
+            epoch_id: Some(epoch_id.into()),
             context_id: None,
             epoch_id: None,
             params: FheParameter::Test.into(),
@@ -305,12 +311,14 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_invalid_argument").unwrap();
+        let epoch_id = derive_request_id("test_crs_gen_invalid_argument_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         // wrong params
         {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 epoch_id: None,
                 params: 123, // invalid params
@@ -328,6 +336,7 @@ mod tests {
         {
             let request = CrsGenRequest {
                 request_id: None, // missing
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 epoch_id: None,
                 params: FheParameter::Test.into(),
@@ -347,6 +356,7 @@ mod tests {
                 request_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_request_id".to_string(),
                 }),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 epoch_id: None,
                 params: FheParameter::Test.into(),
@@ -364,6 +374,7 @@ mod tests {
         {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 epoch_id: None,
                 params: FheParameter::Test.into(),
@@ -381,6 +392,7 @@ mod tests {
         {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_context_id".to_string(),
                 }),
@@ -400,12 +412,47 @@ mod tests {
         {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain),
                 extra_data: vec![],
                 max_num_bits: Some(123), // invalid
+            };
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // invalid epoch ID format
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                epoch_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "not_a_valid_epoch_id".to_string(),
+                }),
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: Some(domain.clone()),
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // missing epoch ID
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                epoch_id: None, // missing
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: Some(domain),
+                max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
                 .await
@@ -430,10 +477,12 @@ mod tests {
         let (mut kms, _) = setup_central_test_kms(&mut rng).await;
         kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
         let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
+        let epoch_id = derive_request_id("test_crs_gen_resource_exhausted_epoch").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
+            epoch_id: Some(epoch_id.into()),
             context_id: None,
             epoch_id: None,
             params: FheParameter::Test.into(),

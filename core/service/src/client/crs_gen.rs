@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_CRS;
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -11,6 +12,7 @@ use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::CrsgenVerification;
+use kms_grpc::EpochId;
 use kms_grpc::RequestId;
 use tfhe::zk::CompactPkeCrs;
 use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
@@ -19,6 +21,7 @@ impl Client {
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,
+        epoch_id: Option<EpochId>,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
         eip712_domain: &Eip712Domain,
@@ -33,13 +36,18 @@ impl Client {
             )));
         }
 
+        let epoch_id = match epoch_id {
+            Some(e) => Some(e.into()),
+            None => Some((*DEFAULT_EPOCH_ID).into()), // default epoch ID if not provided
+        };
+
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
             context_id: None,
-            epoch_id: None,
+            epoch_id,
             extra_data: vec![],
         })
     }

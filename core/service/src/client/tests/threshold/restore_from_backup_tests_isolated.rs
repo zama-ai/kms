@@ -18,7 +18,7 @@
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::dummy_domain;
@@ -345,7 +345,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             domain: Some(domain_msg.clone()),
             extra_data: vec![],
             context_id: None,
-            epoch_id: None,
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
         crs_tasks.spawn(async move { cur_client.crs_gen(tonic::Request::new(req)).await });
     }
