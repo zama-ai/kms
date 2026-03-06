@@ -1,4 +1,4 @@
-use crate::engine::base::{KeyGenMetadata, DSEP_PUBDATA_KEY};
+use crate::engine::base::{CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
 use hashing::hash_element;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
@@ -17,6 +17,7 @@ pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest misma
 pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
 pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
     "Compressed xof keyset digest mismatch";
+pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
 
 /// Verify key digests using raw bytes from storage.
 /// This avoids re-serializing the keys, which would produce different bytes
@@ -50,6 +51,20 @@ pub(crate) fn verify_compressed_key_digest_from_bytes(
     let actual_digest = hash_element(&DSEP_PUBDATA_KEY, compressed_keyset_bytes);
     if actual_digest != expected_digest {
         anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
+    }
+    Ok(())
+}
+
+/// Verify CRS digest using raw bytes from storage.
+/// This avoids re-serializing the CRS, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+pub(crate) fn verify_crs_digest_from_bytes(
+    crs_bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_digest = hash_element(&DSEP_PUBDATA_CRS, crs_bytes);
+    if actual_digest != expected_digest {
+        anyhow::bail!(ERR_CRS_DIGEST_MISMATCH);
     }
     Ok(())
 }
@@ -162,6 +177,43 @@ where
                 );
                 let pub_data_types: HashSet<PubDataType> = hash_map.keys().cloned().collect();
                 check_readability(public_storage, id, &pub_data_types).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sanity check that CRS materials can be read from storage and verify their integrity.
+///
+/// For each entry, verifies that the CRS can be successfully retrieved from public storage.
+/// When `CrsGenMetadata::Current` metadata is available, also verifies the integrity of the
+/// loaded data by comparing digests. For `CrsGenMetadata::LegacyV0` entries (which lack digest
+/// information), only readability is checked.
+pub async fn sanity_check_crs_materials<S>(
+    public_storage: &S,
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+) -> anyhow::Result<()>
+where
+    S: StorageReader + Sync,
+{
+    for (id, metadata) in crs_entries {
+        match metadata {
+            CrsGenMetadata::Current(inner) => {
+                let crs_bytes = public_storage
+                    .load_bytes(id, &PubDataType::CRS.to_string())
+                    .await?;
+                verify_crs_digest_from_bytes(&crs_bytes, &inner.crs_digest)?;
+            }
+            CrsGenMetadata::LegacyV0(_) => {
+                tracing::info!(
+                    "Legacy CRS metadata for id={id}, performing readability check only (no digest verification)"
+                );
+                read_versioned_at_request_id::<_, tfhe::zk::CompactPkeCrs>(
+                    public_storage,
+                    id,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await?;
             }
         }
     }
@@ -391,14 +443,18 @@ impl From<MetricedError> for Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cryptography::signatures::gen_sig_keys;
     use crate::engine::base::{safe_serialize_hash_element_versioned, KeyGenMetadataInner};
+    use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
     use std::collections::HashMap;
+    use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::shortint::ClassicPBSParameters;
+    use tfhe::xof_key_set::CompressedXofKeySet;
 
     #[test]
     #[tracing_test::traced_test]
@@ -587,6 +643,77 @@ mod tests {
         assert!(logs_contain("readability check only"));
     }
 
+    #[tokio::test]
+    async fn sanity_check_crs_valid_digest() {
+        let mut rng = AesRng::seed_from_u64(70);
+        let crs_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+
+        let metadata = CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
+            crs_id,
+            crs_digest: digest,
+            max_num_bits: 64,
+            external_signature: vec![],
+        });
+
+        let entries = HashMap::from_iter([(crs_id, metadata)]);
+        sanity_check_crs_materials(&storage, &entries)
+            .await
+            .expect("valid CRS digest should pass");
+    }
+
+    #[tokio::test]
+    async fn sanity_check_crs_invalid_digest() {
+        let mut rng = AesRng::seed_from_u64(71);
+        let crs_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        let (_crs, mut digest) = setup_crs(&mut storage, &crs_id).await;
+        // Corrupt the digest
+        digest[0] ^= 0xFF;
+
+        let metadata = CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
+            crs_id,
+            crs_digest: digest,
+            max_num_bits: 64,
+            external_signature: vec![],
+        });
+
+        let entries = HashMap::from_iter([(crs_id, metadata)]);
+        let err = sanity_check_crs_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_CRS_DIGEST_MISMATCH),
+            "expected CRS digest mismatch, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn sanity_check_crs_legacy_readability_only() {
+        let mut rng = AesRng::seed_from_u64(72);
+        let crs_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+
+        // Set up CRS in storage (we won't use the digest — legacy has no digest info)
+        let _crs_and_digest = setup_crs(&mut storage, &crs_id).await;
+
+        use kms_grpc::rpc_types::SignedPubDataHandleInternal;
+        let legacy_handle = SignedPubDataHandleInternal::new(String::new(), vec![], vec![]);
+        let metadata = CrsGenMetadata::LegacyV0(legacy_handle);
+
+        let entries = HashMap::from_iter([(crs_id, metadata)]);
+        sanity_check_crs_materials(&storage, &entries)
+            .await
+            .expect("legacy CRS readability check should pass");
+
+        assert!(logs_contain("Legacy CRS metadata"));
+        assert!(logs_contain("readability check only"));
+    }
+
     async fn setup_standard_keys(
         storage: &mut RamStorage,
         key_id: &RequestId,
@@ -639,9 +766,6 @@ mod tests {
         storage: &mut RamStorage,
         key_id: &RequestId,
     ) -> HashMap<PubDataType, Vec<u8>> {
-        use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
-        use tfhe::xof_key_set::CompressedXofKeySet;
-
         let params = crate::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
         let max_norm_hwt = params
@@ -677,5 +801,31 @@ mod tests {
         .unwrap();
 
         HashMap::from_iter([(PubDataType::CompressedXofKeySet, digest)])
+    }
+
+    async fn setup_crs(
+        storage: &mut RamStorage,
+        crs_id: &RequestId,
+    ) -> (tfhe::zk::CompactPkeCrs, Vec<u8>) {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let params = crate::consts::TEST_PARAM;
+        let domain = crate::dummy_domain();
+        let max_num_bits = 64u32;
+
+        let (crs, metadata) =
+            gen_centralized_crs(&sk, &params, Some(max_num_bits), &domain, crs_id, &mut rng)
+                .unwrap();
+
+        let digest = match &metadata {
+            CrsGenMetadata::Current(inner) => inner.crs_digest.clone(),
+            _ => panic!("expected Current metadata"),
+        };
+
+        store_versioned_at_request_id(storage, crs_id, &crs, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+
+        (crs, digest)
     }
 }
