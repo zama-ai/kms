@@ -241,7 +241,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{constants::SMALL_TEST_KEY_PATH, tfhe_internals::test_feature::KeySet};
+    use crate::{
+        constants::SMALL_TEST_KEY_PATH, tests::test_data_setup::ensure_test_data_setup,
+        tfhe_internals::test_feature::KeySet,
+    };
     use algebra::base_ring::Z128;
     use networking::local::LocalNetworkingProducer;
     use test_utils::read_element;
@@ -249,6 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_box_sending() {
+        ensure_test_data_setup();
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let alice = Role::indexed_from_one(1);
         let bob = Role::indexed_from_one(2);

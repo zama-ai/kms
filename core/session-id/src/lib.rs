@@ -64,15 +64,17 @@ mod tests {
     use tfhe::{prelude::FheEncrypt, FheUint8};
 
     use crate::SessionId;
+    // TODO(dp): this is stupid, why do we need an actual cipher here? We should just generate one, add it here as data and assert that the  derived SessionId is fine (whatever that means)
     use execution::{
         constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
-        tfhe_internals::test_feature::KeySet,
+        tests::test_data_setup::ensure_test_data_setup, tfhe_internals::test_feature::KeySet,
     };
     use test_utils::read_element;
 
     // Indeterministic cipher generation.
     // Encrypts a small message with deterministic randomness
     fn generate_cipher(_key_name: &str, message: u8) -> RadixOrBoolCiphertext {
+        ensure_test_data_setup();
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
