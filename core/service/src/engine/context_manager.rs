@@ -123,7 +123,27 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
-        let inner = request.into_inner().new_context.ok_or_else(|| {
+        let inner = request.into_inner();
+        let mpc_context_id = inner
+            .mpc_context_id
+            .ok_or_else(|| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("mpc_context_id is required in NewCustodianContextRequest"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?
+            .try_into()
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("Failed to parse mpc_context_id: {}", e),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
             MetricedError::new(
                 OP_NEW_CUSTODIAN_CONTEXT,
                 None,
@@ -132,13 +152,14 @@ where
             )
         })?;
         tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
-            inner.context_id,
-            inner.threshold,
-            inner.custodian_nodes.len()
+            "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
+            mpc_context_id,
+            custodian_context.context_id,
+            custodian_context.threshold,
+            custodian_context.custodian_nodes.len()
         );
 
-        self.inner_new_custodian_context(inner.clone())
+        self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
@@ -221,7 +242,11 @@ where
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
-    async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
+    async fn inner_new_custodian_context(
+        &self,
+        context: CustodianContext,
+        mpc_context_id: ContextId,
+    ) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
@@ -235,15 +260,10 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms
-                .get_sig_key(
-                    context
-                        .context_id()
-                        .ok_or_else(|| anyhow::anyhow!("Context ID is not set"))?,
-                )?
-                .as_ref(),
+            self.base_kms.get_sig_key(&mpc_context_id)?.as_ref(),
             backup_dec_key,
             &inner_context,
+            mpc_context_id,
         )
         .await?;
 
@@ -934,6 +954,7 @@ async fn gen_recovery_validation(
     sig_key: &PrivateSigKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
+    mpc_context_id: ContextId,
 ) -> anyhow::Result<RecoveryValidationMaterial> {
     let operator = Operator::new_for_sharing(
         custodian_context
@@ -962,6 +983,7 @@ async fn gen_recovery_validation(
         commitments,
         custodian_context.to_owned(),
         sig_key,
+        mpc_context_id,
     )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",

@@ -674,36 +674,21 @@ impl BaseKmsStruct {
     pub fn new_no_signing_keys(
         kms_type: KMSType,
         my_id: u32,
-        verf_keys: Vec<PublicSigKey>,
-        contexts: Vec<ContextId>,
+        verf_keys: HashMap<ContextId, PublicSigKey>,
     ) -> anyhow::Result<Self> {
         tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
         let addresses: HashMap<Address, PublicSigKey> = verf_keys
-            .iter()
+            .values()
             .map(|cur_pk| (cur_pk.address(), cur_pk.clone()))
             .collect();
 
-        let mut verf_keys_map = HashMap::new();
-        for cur_context in contexts.iter() {
-            let context_id = cur_context.context_id();
-            let my_node = cur_context
-                .my_node(my_id)?
-                .ok_or_else(|| anyhow::anyhow!("My node not found in context {}", context_id))?;
-            if let Some(verf_key) = my_node.verification_key {
-                tracing::info!("Found verfication key for context {}", context_id,);
-                verf_keys_map.insert(*context_id, Arc::new(verf_key));
-            } else {
-                anyhow::bail!(
-                    "No verification key associated with my node, {}, in context {}",
-                    my_id,
-                    context_id
-                );
-            }
-        }
         Ok(BaseKmsStruct {
             kms_type,
             my_id,
-            verf_keys: verf_keys_map,
+            verf_keys: verf_keys
+                .into_iter()
+                .map(|(c, k): (ContextId, PublicSigKey)| (c, Arc::new(k)))
+                .collect(),
             sig_keys: HashMap::new(),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })

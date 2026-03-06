@@ -418,14 +418,8 @@ where
                  make sure to validate that the current verification key in public storage \
                  is EXACTLY equal to the one on the gateway before proceeding!"
             );
-            let verf_keys: Vec<_> = get_core_verification_keys(&public_storage)
-                .await?
-                .into_values()
-                .collect();
-            // Recover contexts from validation material since we might not have access to the ContextInfo in private storage
-            let contexts: Vec<ContextId> =
-                validation_material.keys().map(|c| (*c).into()).collect();
-            BaseKmsStruct::new_no_signing_keys(KMSType::Centralized, my_id, verf_keys, contexts)?
+            let verf_keys = get_core_verification_keys(&public_storage).await?;
+            BaseKmsStruct::new_no_signing_keys(KMSType::Centralized, my_id, verf_keys)?
         }
     };
 

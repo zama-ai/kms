@@ -7,8 +7,8 @@ use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P,
     DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
     DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID,
-    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, TEST_CENTRAL_CRS_ID,
+    TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
     TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
@@ -405,12 +405,8 @@ impl TestMaterialManager {
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_all_key_type_files(
-                &source_pub,
-                &dest_pub,
-                &PubDataType::VerfKey.to_string(),
-            )
-            .await?;
+            self.copy_all_key_type_files(&source_pub, &dest_pub, &PubDataType::VerfKey.to_string())
+                .await?;
 
             self.copy_all_key_type_files(
                 &source_pub,

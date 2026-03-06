@@ -620,7 +620,9 @@ message DestroyMpcContextRequest {
 
 message NewCustodianContextRequest {
   // The new custodian context to create.
-  CustodianContext new_context = 1;
+  CustodianContext new_custodian_context = 1;
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId mpc_context_id = 2;
 }
 
 message DestroyCustodianContextRequest {

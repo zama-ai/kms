@@ -7,9 +7,7 @@ use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::{
-    file::FileStorage, Storage, StorageType,
-};
+use crate::vault::storage::{file::FileStorage, Storage, StorageType};
 use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
 use crate::{
@@ -715,15 +713,10 @@ pub async fn setup_centralized_no_client<
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
-        core_config,
-        pub_storage,
-        priv_storage,
-        backup_vault,
-        None,
-    )
-    .await
-    .expect("Could not create KMS");
+    let (kms, (health_reporter, health_service)) =
+        RealCentralizedKms::new(core_config, pub_storage, priv_storage, backup_vault, None)
+            .await
+            .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
     tokio::spawn(async move {
