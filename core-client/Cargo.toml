@@ -105,7 +105,7 @@ ignored = ["kms", "strum"]
 # These are the threshold tests that require PRSS infrastructure:
 #   preproc+keygen, MPC context init/switch, reshare, full-gen preproc.
 # Un-ignores tests guarded with `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`.
-# Compiles setup helpers that run threshold servers with `run_prss=true`.
+# Compiles setup helpers that run threshold servers with `ensure_default_prss=true`.
 #
 # This flag only gates code/tests; it does NOT generate key material by itself.
 # Material requirements:
