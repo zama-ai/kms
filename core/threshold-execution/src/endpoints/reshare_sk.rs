@@ -694,10 +694,9 @@ mod tests {
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::{
-        constants::SMALL_TEST_KEY_PATH,
-        online::preprocessing::dummy::DummyPreprocessing,
+        constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
-        tests::test_data_setup::ensure_test_data_setup,
+        tests::ensure_test_data_setup,
     };
     use aes_prng::AesRng;
     use algebra::{

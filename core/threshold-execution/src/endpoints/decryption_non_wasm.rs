@@ -1313,7 +1313,7 @@ mod tests {
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
         runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tests::test_data_setup::ensure_test_data_setup,
+        tests::ensure_test_data_setup,
     };
     use aes_prng::AesRng;
     use algebra::{

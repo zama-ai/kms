@@ -242,7 +242,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        constants::SMALL_TEST_KEY_PATH, tests::test_data_setup::ensure_test_data_setup,
+        constants::SMALL_TEST_KEY_PATH, tests::ensure_test_data_setup,
         tfhe_internals::test_feature::KeySet,
     };
     use algebra::base_ring::Z128;
