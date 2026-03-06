@@ -824,6 +824,7 @@ fn unpack_new_mpc_epoch_req(
 
 /// Extracts information from the `extraData` field
 /// Returns the version (as an u8), the context ID and the epoch ID.
+/// TODO temporary helper until https://github.com/zama-ai/kms-internal/issues/2925 is done
 pub fn parse_extra_data(extra_data: &[u8]) -> anyhow::Result<(u8, ContextId, EpochId)> {
     if extra_data[0] != 1 {
         anyhow::bail!("Unsupported version in extraData: {}", extra_data[0]);

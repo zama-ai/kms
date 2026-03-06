@@ -625,10 +625,11 @@ impl<
 {
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
+        context_id: &ContextId,
         dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<Signature> {
-        self.base_kms.sign(dsep, msg)
+        self.base_kms.sign(context_id, dsep, msg)
     }
 
     fn digest<T: ?Sized + AsRef<[u8]>>(

@@ -754,10 +754,8 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        match self.sig_keys.as_ref() {
-            None => anyhow::bail!("KMS has no signing key"),
-            Some(sk) => internal_sign(dsep, msg, sk),
-        }
+        let sk = self.get_sig_key(&context_id)?;
+        internal_sign(dsep, msg, sk.as_ref())
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
@@ -1073,12 +1071,12 @@ impl Named for CrsGenMetadata {
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
 // an external signature on the batch and any extra data.
 #[cfg(feature = "non-wasm")]
-pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
+pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, ContextId, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
 #[cfg(feature = "non-wasm")]
-pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
+pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, ContextId, Vec<u8>);
 
 #[cfg(test)]
 pub(crate) mod tests {

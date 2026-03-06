@@ -67,7 +67,7 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
+            parse_ext_data, parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
             DSEP_USER_DECRYPTION,
         },
     },
@@ -188,7 +188,7 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, ContextId, Vec<u8>)> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -390,7 +390,7 @@ impl<
             &signcryption_key.receiver_enc_key,
             extra_data.clone(),
         )?;
-        Ok((payload, external_signature, extra_data))
+        Ok((payload, external_signature, context_id, extra_data))
     }
 
     #[cfg(test)]
@@ -499,7 +499,7 @@ impl<
             OP_USER_DECRYPT_REQUEST,
         )?;
 
-        let sk = (*self.base_kms.get_sig_key().map_err(|e| {
+        let sk = (*self.base_kms.get_sig_key(&context_id).map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(req_id),
@@ -583,7 +583,7 @@ impl<
                 })?;
 
         // Retrieve the UserDecryptMetaStore object
-        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+        let (payload, external_signature, context_id, extra_data) = retrieve_from_meta_store(
             self.user_decrypt_meta_store.read().await,
             &request_id,
             OP_USER_DECRYPT_RESULT,
@@ -598,10 +598,9 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-
         let sig = self
             .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+            .sign(&context_id, &DSEP_USER_DECRYPTION, &sig_payload_vec)
             .map_err(|e| {
                 MetricedError::new(
                     OP_USER_DECRYPT_RESULT,

@@ -20,6 +20,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::solidity_types::UserDecryptionLinker;
+use kms_grpc::ContextId;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -133,14 +134,15 @@ impl Client {
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&payload.verification_key)?;
 
         // NOTE: ID starts at 1
-        let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != cur_verf_key.address() {
-                return Err(anyhow_error_and_log("server address is not consistent"));
-            }
-            server_addr
-        } else {
-            return Err(anyhow_error_and_log("missing server address at ID 1"));
-        };
+        let expected_server_addr =
+            if let Some(server_addr) = stored_server_addrs.get(&request.context_id) {
+                if !server_addr.contains(&cur_verf_key.address()) {
+                    return Err(anyhow_error_and_log("server address is not consistent"));
+                }
+                cur_verf_key.address()
+            } else {
+                return Err(anyhow_error_and_log("missing server address at ID 1"));
+            };
 
         // prefer the normal ECDSA verification over the EIP712 one
         if resp.signature.is_empty() {
@@ -157,7 +159,7 @@ impl Client {
                 &payload,
                 request,
                 eip712_domain,
-                expected_server_addr,
+                &expected_server_addr,
             )
             .inspect_err(|e| {
                 tracing::warn!("signature on received response is not valid ({})", e)
@@ -737,6 +739,7 @@ pub struct ParsedUserDecryptionRequest {
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
+    context_id: ContextId,
 }
 
 impl ParsedUserDecryptionRequest {
@@ -746,6 +749,7 @@ impl ParsedUserDecryptionRequest {
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
+        context_id: ContextId,
     ) -> Self {
         Self {
             signature,
@@ -753,6 +757,7 @@ impl ParsedUserDecryptionRequest {
             enc_key,
             ciphertext_handles,
             eip712_verifying_contract,
+            context_id,
         }
     }
 
@@ -784,6 +789,7 @@ pub(crate) struct ParsedUserDecryptionRequestHex {
     enc_key: String,
     ciphertext_handles: Vec<String>,
     eip712_verifying_contract: String,
+    context_id: String,
 }
 
 impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
@@ -815,6 +821,8 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
                 .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
                 .collect::<Result<Vec<_>, JsError>>()?,
             eip712_verifying_contract,
+            context_id: ContextId::try_from(req_hex.context_id.clone())
+                .map_err(|e| JsError::new(&e.to_string()))?,
         };
         Ok(out)
     }
@@ -848,6 +856,7 @@ impl From<&ParsedUserDecryptionRequest> for ParsedUserDecryptionRequestHex {
                 .map(|hdl| hex::encode(&hdl.0))
                 .collect::<Vec<_>>(),
             eip712_verifying_contract: value.eip712_verifying_contract.to_checksum(None),
+            context_id: value.context_id.to_string(),
         }
     }
 }
@@ -879,6 +888,8 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             enc_key: value.enc_key.clone(),
             ciphertext_handles,
             eip712_verifying_contract,
+            context_id: ContextId::try_from(value.context_id.clone())
+                .map_err(|e| JsError::new(&e.to_string()))?,
         };
         Ok(out)
     }
