@@ -497,10 +497,7 @@ impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
 
         let mut sess =
             get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
-        let random_agreed_keys = DummyAgreeRandom::default()
-            .execute(&mut sess)
-            .await
-            .unwrap();
+        let random_agreed_keys = DummyAgreeRandom::default().execute(&mut sess).await?;
 
         let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
         let alpha_powers = embed_parties_and_compute_alpha_powers(num_parties, threshold)?;
