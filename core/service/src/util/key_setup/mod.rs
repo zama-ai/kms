@@ -1010,7 +1010,7 @@ where
         PubDataType::ServerKey.to_string(),
     ];
     let mut all_data_exists = true;
-    for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
+    for pub_storage in pub_storages.iter() {
         for t in &pub_types {
             all_data_exists &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
         }
