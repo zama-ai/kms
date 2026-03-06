@@ -19,7 +19,7 @@ use crate::engine::context_manager::CentralizedContextManager;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 #[cfg(feature = "non-wasm")]
-use crate::engine::utils::sanity_check_public_materials;
+use crate::engine::utils::{sanity_check_crs_materials, sanity_check_public_materials};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
@@ -891,6 +891,9 @@ impl<
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+        sanity_check_crs_materials(&public_storage, &crs_info).await?;
+
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
