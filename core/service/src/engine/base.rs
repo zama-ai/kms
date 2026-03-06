@@ -698,6 +698,10 @@ impl BaseKmsStruct {
         self.kms_type
     }
 
+    pub fn all_context_ids(&self) -> Vec<ContextId> {
+        self.verf_keys.keys().cloned().collect()
+    }
+
     pub fn get_sig_key(&self, context: &ContextId) -> anyhow::Result<Arc<PrivateSigKey>> {
         self.sig_keys
             .get(context)

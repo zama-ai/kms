@@ -956,6 +956,21 @@ impl<
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
         }
+        for cur_context_id in base_kms.all_context_ids() {
+            // Validate keychain recovery material now that we have the verification key
+            if let Some(ref keychain) = private_vault.keychain {
+                keychain
+                    .validate_recovery_material(base_kms.get_verf_key(&cur_context_id)?.as_ref())?;
+            }
+            if let Some(ref vault) = backup_vault {
+                if let Some(ref keychain) = vault.keychain {
+                    keychain.validate_recovery_material(
+                        base_kms.get_verf_key(&cur_context_id)?.as_ref(),
+                    )?;
+                }
+            }
+        }
+
         let custodian_meta_store =
             Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
         let tracker = Arc::new(TaskTracker::new());
