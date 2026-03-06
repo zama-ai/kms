@@ -249,6 +249,8 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
 async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
+    use crate::consts::DEFAULT_EPOCH_ID;
+
     // Setup using builder pattern with backup vault
     let env = CentralizedTestEnv::builder()
         .with_test_name("crs_backup")
@@ -269,6 +271,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         max_num_bits: Some(16),
         domain: Some(domain_msg),
         context_id: None,
+        epoch_id: Some(*DEFAULT_EPOCH_ID.into()),
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
     assert_eq!(resp.into_inner(), Empty {});

@@ -9,6 +9,7 @@ cfg_if::cfg_if! {
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::CrsGenRequest;
     use kms_grpc::kms::v1::{Empty, FheParameter};
+    use kms_grpc::kms::v1::CrsInfo;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::RequestId;
     use serial_test::serial;
@@ -96,7 +97,7 @@ pub(crate) async fn crs_gen(
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 async move {
-                    run_crs(
+                    let _ = run_crs(
                         parameter,
                         &clients_clone,
                         &internalclient_clone,
@@ -104,7 +105,7 @@ pub(crate) async fn crs_gen(
                         &cur_id,
                         max_bits,
                     )
-                    .await
+                    .await;
                 }
             });
         }
@@ -116,7 +117,7 @@ pub(crate) async fn crs_gen(
                 "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
             ))
             .unwrap();
-            run_crs(
+            let _ = run_crs(
                 parameter,
                 &kms_clients,
                 &internal_client,
@@ -138,18 +139,18 @@ pub async fn run_crs(
     insecure: bool,
     crs_req_id: &RequestId,
     max_bits: Option<u32>,
-) {
+) -> Vec<CrsInfo> {
     let dkg_param: WrappedDKGParams = parameter.into();
     let domain = dummy_domain();
     let crs_req = internal_client
-        .crs_gen_request(crs_req_id, max_bits, Some(parameter), &domain)
+        .crs_gen_request(crs_req_id, None, max_bits, Some(parameter), &domain)
         .unwrap();
 
     let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
     for response in responses {
         response.unwrap();
     }
-    wait_for_crsgen_result(&vec![crs_req], kms_clients, internal_client, &dkg_param).await;
+    wait_for_crsgen_result(&vec![crs_req], kms_clients, internal_client, &dkg_param).await
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -197,12 +198,13 @@ pub async fn wait_for_crsgen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     param: &DKGParams,
-) {
+) -> Vec<CrsInfo> {
     let amount_parties = kms_clients.len();
     // wait a bit for the crs generation to finish
     let joined_responses =
         crate::par_poll_responses!(kms_clients, reqs, get_crs_gen_result, amount_parties);
 
+    let mut results = Vec::new();
     // first check the happy path
     // the public parameter is checked in ddec tests, so we don't specifically check _pp
     for req in reqs {
@@ -222,6 +224,7 @@ pub async fn wait_for_crsgen_result(
             })
             .collect();
         // domain should always exist
+        let domain_msg = req.domain.clone();
         let domain = protobuf_to_alloy_domain(&req.domain.clone().unwrap()).unwrap();
 
         // we need to setup the storage devices in the right order
@@ -260,6 +263,14 @@ pub async fn wait_for_crsgen_result(
             )
             .await
             .unwrap();
+
+        let ref_response = res_storage[0].0.clone();
+        results.push(CrsInfo {
+            crs_id: ref_response.request_id,
+            crs_digest: ref_response.crs_digest,
+            max_num_bits: ref_response.max_num_bits,
+            domain: domain_msg,
+        });
 
         // if there are only THRESHOLD results then we do not have consensus as at least THRESHOLD+1 is needed
         assert!(internal_client
@@ -358,6 +369,7 @@ pub async fn wait_for_crsgen_result(
             .await
             .is_err());
     }
+    results
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
