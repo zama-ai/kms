@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    RequestId,
+    EpochId, RequestId,
 };
 use observability::{
     metrics::{self, DurationGuard},
@@ -103,7 +103,7 @@ impl<
 
         let inner = request.into_inner();
         let max_bits = inner.max_num_bits;
-        let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
+        let (req_id, epoch_id, context_id, witness_dim, dkg_params, eip712_domain) =
             validate_crs_gen_request(inner, op_tag)?;
         // Find the role of the current server and validate the context exists
         let my_role = self
@@ -147,6 +147,7 @@ impl<
             dkg_params,
             &eip712_domain,
             permit,
+            epoch_id,
             context_id,
             sigkey,
             timer,
@@ -166,6 +167,7 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
+        epoch_id: EpochId,
         context_id: ContextId,
         sk: Arc<PrivateSigKey>,
         timer: DurationGuard<'static>,
@@ -206,7 +208,7 @@ impl<
                 let _inner_timer = timer;
                 let _inner_permit = permit;
                 tokio::select! {
-                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, insecure) => {
+                   ()  = Self::crs_gen_background(&req_id, &epoch_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, insecure) => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -290,6 +292,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn crs_gen_background(
         req_id: &RequestId,
+        epoch_id: &EpochId,
         witness_dim: usize,
         max_num_bits: Option<u32>,
         mut base_session: BaseSession,
@@ -389,7 +392,7 @@ impl<
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         crypto_storage
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_tag)
+            .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await;
 
         let crs_stop_timer = Instant::now();
@@ -628,6 +631,7 @@ mod tests {
                 request_id: None,
                 domain: Some(domain),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             };
 
             let request = Request::new(req);
@@ -658,6 +662,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             };
 
             let request = Request::new(req);
@@ -675,6 +680,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 domain: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             };
 
             let request = Request::new(req);
@@ -695,6 +701,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             };
 
             let request = Request::new(req);
@@ -737,6 +744,7 @@ mod tests {
             request_id: Some(req_id.into()),
             domain: Some(domain),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
         let request = Request::new(req);
@@ -760,6 +768,7 @@ mod tests {
             request_id: Some(req_id.into()),
             domain: Some(domain),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -791,6 +800,7 @@ mod tests {
             request_id: Some(req_id.into()),
             domain: Some(domain),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
         let request = Request::new(req);
@@ -818,6 +828,7 @@ mod tests {
             request_id: Some(req_id.into()),
             domain: Some(domain),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
         crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
@@ -843,6 +854,7 @@ mod tests {
             request_id: Some(req_id.into()),
             domain: Some(domain),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         };
 
         let request = Request::new(req);

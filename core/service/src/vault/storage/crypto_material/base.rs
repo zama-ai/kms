@@ -54,6 +54,7 @@ pub(crate) trait PrivateMaterialUnderEpoch {}
 
 impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
 impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
+impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.

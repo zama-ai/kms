@@ -717,11 +717,24 @@ fn unpack_key_gen_request(
     ))
 }
 
+// Note to reviewer: My proposition of having a dedicated
+// struct e.g. VerifiedCrsGenRequest instead of this big tuple still stands :)
+// (akin to the Verified struct I use in epoch_manager)
 #[allow(clippy::type_complexity)]
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
     op_tag: &'static str,
-) -> Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain), MetricedError> {
+) -> Result<
+    (
+        RequestId,
+        EpochId,
+        ContextId,
+        usize,
+        DKGParams,
+        Eip712Domain,
+    ),
+    MetricedError,
+> {
     unpack_crs_gen_request(req).map_err(|e| {
         MetricedError::new(
             op_tag,
@@ -735,7 +748,14 @@ pub(crate) fn validate_crs_gen_request(
 #[allow(clippy::type_complexity)]
 fn unpack_crs_gen_request(
     req: CrsGenRequest,
-) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
+) -> anyhow::Result<(
+    RequestId,
+    EpochId,
+    ContextId,
+    usize,
+    DKGParams,
+    Eip712Domain,
+)> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
@@ -743,6 +763,9 @@ fn unpack_crs_gen_request(
         request_id = ?req_id,
         "Received new crs generation request"
     );
+
+    let epoch_id =
+        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::CrsGenRequest)?;
 
     // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
@@ -760,7 +783,6 @@ fn unpack_crs_gen_request(
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // remove the default context when all of context is ready
-    // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
         Some(ctx) => parse_grpc_request_id(ctx, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
@@ -768,7 +790,14 @@ fn unpack_crs_gen_request(
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, context_id, witness_dim, params, eip712_domain))
+    Ok((
+        req_id,
+        epoch_id,
+        context_id,
+        witness_dim,
+        params,
+        eip712_domain,
+    ))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
