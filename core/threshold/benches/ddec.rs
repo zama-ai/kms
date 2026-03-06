@@ -13,7 +13,7 @@ use threshold_execution::{
     constants::REAL_KEY_PATH,
     endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
     runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-    tests::test_data_setup::ensure_real_keys_setup,
+    tests::ensure_real_keys_setup,
     tfhe_internals::{
         test_feature::{keygen_all_party_shares_from_keyset, KeySet},
         utils::expanded_encrypt,

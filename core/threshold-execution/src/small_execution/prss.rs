@@ -1110,9 +1110,9 @@ mod tests {
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSessionHandles;
     use crate::small_execution::agree_random::DSEP_AR;
+    use crate::tests::ensure_test_data_setup;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
-    use crate::tests::test_data_setup::ensure_test_data_setup;
     use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
     use crate::tfhe_internals::utils::expanded_encrypt;
     use crate::{

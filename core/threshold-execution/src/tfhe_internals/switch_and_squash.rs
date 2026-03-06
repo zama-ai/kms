@@ -47,7 +47,7 @@ mod tests {
 
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
-        tests::test_data_setup::ensure_test_data_setup,
+        tests::ensure_test_data_setup,
         tfhe_internals::{
             parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
             switch_and_squash::from_expanded_msg,
