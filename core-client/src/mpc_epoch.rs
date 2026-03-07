@@ -1,11 +1,11 @@
 use crate::{
     dummy_domain, keygen::check_standard_keyset_ext_signature,
-    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf,
+    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf, DigestKeySet,
     NewEpochParameters, PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, PreviousEpochInfo},
+    kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{alloy_to_protobuf_domain, PubDataType},
     RequestId,
@@ -21,26 +21,66 @@ use tonic::transport::Channel;
 
 impl PreviousEpochParameters {
     pub(crate) fn convert_to_grpc(&self, fhe_params: FheParameter) -> PreviousEpochInfo {
-        let key_digests = vec![
-            (KeyDigest {
-                key_type: PubDataType::ServerKey.to_string(),
-                digest: hex::decode(&self.server_key_digest).unwrap(),
-            }),
-            (KeyDigest {
-                key_type: PubDataType::PublicKey.to_string(),
-                digest: hex::decode(&self.public_key_digest).unwrap(),
-            }),
-        ];
+        let keys_info = self
+            .previous_keys
+            .iter()
+            .map(|previous_key_info| {
+                let digest = match &previous_key_info.key_digest {
+                    DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest) => {
+                        vec![
+                            KeyDigest {
+                                key_type: PubDataType::ServerKey.to_string(),
+                                digest: hex::decode(server_key_digest.clone()).unwrap_or_else(
+                                    |e| {
+                                        panic!(
+                                    "Unable to decode the provided server key digest {:?}: {:?}",
+                                    server_key_digest, e
+                                )
+                                    },
+                                ),
+                            },
+                            KeyDigest {
+                                key_type: PubDataType::PublicKey.to_string(),
+                                digest: hex::decode(public_key_digest.clone()).unwrap_or_else(
+                                    |e| {
+                                        panic!(
+                                    "Unable to decode the provided public key digest {:?}: {:?}",
+                                    public_key_digest, e
+                                )
+                                    },
+                                ),
+                            },
+                        ]
+                    }
+                    DigestKeySet::CompressedKeySet(xof_key_digest) => vec![KeyDigest {
+                        key_type: PubDataType::CompressedXofKeySet.to_string(),
+                        digest: hex::decode(xof_key_digest.clone()).unwrap_or_else(|e| {
+                            panic!(
+                                "Unable to decode the provided xof key digest {:?}: {:?}",
+                                xof_key_digest, e
+                            )
+                        }),
+                    }],
+                };
 
-        PreviousEpochInfo {
-            key_id: Some(self.key_id.into()),
-            preproc_id: Some(self.preproc_id.into()),
+                KeyInfo {
+                    key_id: Some(previous_key_info.key_id.into()),
+                    preproc_id: Some(previous_key_info.preproc_id.into()),
+                    key_parameters: fhe_params.into(),
+                    key_digests: digest,
+                    domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let resp = PreviousEpochInfo {
             context_id: Some(self.context_id.into()),
             epoch_id: Some(self.epoch_id.into()),
-            key_parameters: fhe_params.into(),
-            key_digests,
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-        }
+            keys_info,
+        };
+
+        println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
+        resp
     }
 }
 
@@ -139,70 +179,111 @@ pub(crate) async fn do_new_epoch(
     }
 
     if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
+        let (expected_key_ids, expected_preproc_ids): (
+            Vec<kms_grpc::kms::v1::RequestId>,
+            Vec<kms_grpc::kms::v1::RequestId>,
+        ) = previous_epoch
+            .previous_keys
+            .iter()
+            .map(|k| (k.key_id.into(), k.preproc_id.into()))
+            .unzip();
+
         let mut response_vec = Vec::new();
         while let Some(response) = response_tasks.join_next().await {
             let (core_conf, response) = response?;
             let response = response?;
             let resp = response.into_inner();
-            assert_eq!(resp.key_id, Some(previous_epoch.key_id.into()));
-            assert_eq!(
-                resp.preprocessing_id,
-                Some(previous_epoch.preproc_id.into())
-            );
+
+            let resp_key_ids = resp
+                .reshare_responses
+                .iter()
+                .map(|k| {
+                    k.request_id
+                        .clone()
+                        .expect("No key ID found in resharing response")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(resp_key_ids, expected_key_ids);
+
+            let resp_preproc_ids = resp
+                .reshare_responses
+                .iter()
+                .map(|k| {
+                    k.preprocessing_id
+                        .clone()
+                        .expect("No preprocessing ID found in resharing response")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(resp_preproc_ids, expected_preproc_ids,);
             response_vec.push((core_conf, resp));
         }
         let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-        // We try to download all because all parties needed to respond for a successful resharing
-        let element_id: RequestId = previous_epoch.key_id.into();
+        for (key_id, preproc_id) in expected_key_ids
+            .into_iter()
+            .zip(expected_preproc_ids.into_iter())
+        {
+            // We try to download all because all parties needed to respond for a successful resharing
+            let key_id: RequestId = key_id.try_into().unwrap();
 
-        let party_confs = fetch_public_elements(
-            &element_id.to_string(),
-            &key_types,
-            cc_conf,
-            destination_prefix,
-            true,
-        )
-        .await
-        .unwrap();
+            let party_confs = fetch_public_elements(
+                &key_id.to_string(),
+                &key_types,
+                cc_conf,
+                destination_prefix,
+                true,
+            )
+            .await?;
 
-        assert_eq!(
-            party_confs.len(),
-            num_parties,
-            "Did not fetch keys from all parties after resharing!"
-        );
+            assert_eq!(
+                party_confs.len(),
+                num_parties,
+                "Did not fetch keys from all parties after resharing!"
+            );
 
-        let storage_prefix = Some(
-            cc_conf
-                .cores
-                .iter()
-                .find(|c| c == &&party_confs[0])
-                .expect("party ID not found in config")
-                .object_folder
-                .as_str(),
-        );
+            let storage_prefix = Some(
+                cc_conf
+                    .cores
+                    .iter()
+                    .find(|c| c == &&party_confs[0])
+                    .expect("party ID not found in config")
+                    .object_folder
+                    .as_str(),
+            );
 
-        let key_id = previous_epoch.key_id.into();
-        let public_key =
-            load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
-        let server_key: ServerKey = load_material_from_pub_storage(
-            Some(destination_prefix),
-            &key_id,
-            PubDataType::ServerKey,
-            storage_prefix,
-        )
-        .await;
-
-        for response in response_vec {
-            check_standard_keyset_ext_signature(
-                &public_key,
-                &server_key,
-                &previous_epoch.preproc_id,
+            let public_key =
+                load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
+            let server_key: ServerKey = load_material_from_pub_storage(
+                Some(destination_prefix),
                 &key_id,
-                &response.1.external_signature,
-                &dummy_domain(),
-                kms_addrs,
-            )?;
+                PubDataType::ServerKey,
+                storage_prefix,
+            )
+            .await;
+
+            let preproc_id: RequestId = preproc_id.try_into().unwrap();
+            for (_, response) in response_vec.iter() {
+                let signature = response
+                    .reshare_responses
+                    .iter()
+                    .find(|r| {
+                        r.request_id.as_ref().unwrap() == &key_id.into()
+                            && r.preprocessing_id.as_ref().unwrap() == &preproc_id.into()
+                    })
+                    .expect("No resharing response found for the key and preprocessing ID")
+                    .external_signature
+                    .clone();
+
+                check_standard_keyset_ext_signature(
+                    &public_key,
+                    &server_key,
+                    &preproc_id,
+                    &key_id,
+                    &signature,
+                    &dummy_domain(),
+                    kms_addrs,
+                )?;
+            }
         }
     } else {
         // If it was just a PRSS init simply make sure all is ok

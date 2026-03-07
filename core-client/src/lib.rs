@@ -706,6 +706,25 @@ pub struct RecoveryParameters {
     pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub enum DigestKeySet {
+    CompressedKeySet(String),
+    /// The first string is the server key digest, the second string is the public key digest.
+    NonCompressedKeySet(String, String),
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviousKeyInfo {
+    /// Key id of the key to reshare
+    pub key_id: KeyId,
+
+    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing done for the key specified by `key_id`.
+    pub preproc_id: RequestId,
+
+    /// The hex-encoded server key digest to use for resharing for the key to reshare.
+    pub key_digest: DigestKeySet,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct PreviousEpochParameters {
     #[clap(long)]
@@ -714,18 +733,9 @@ pub struct PreviousEpochParameters {
     #[clap(long)]
     pub epoch_id: EpochId,
 
+    /// Information about the keys to reshare in the new epoch.
     #[clap(long)]
-    pub key_id: KeyId,
-
-    #[clap(long)]
-    pub preproc_id: RequestId,
-    /// The hex-encoded server key digest to use for resharing.
-    #[clap(long)]
-    pub server_key_digest: String,
-
-    /// The hex-encoded public key digest to use for resharing.
-    #[clap(long)]
-    pub public_key_digest: String,
+    pub previous_keys: Vec<PreviousKeyInfo>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -738,7 +748,15 @@ pub struct NewEpochParameters {
     #[clap(long)]
     pub new_context_id: ContextId,
 
-    #[command(flatten)]
+    /// Optional parameters for resharing keys from a previous epoch in the new epoch.
+    /// Format is:
+    ///
+    /// For compressed keyset
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...]`
+    ///
+    /// For non-compressed keyset
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...]`
+    #[clap(long)]
     pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
 
@@ -882,6 +900,147 @@ impl EncryptionResult {
             context_id,
             epoch_id,
         }
+    }
+}
+
+impl FromStr for PreviousEpochParameters {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut context_id = None;
+        let mut epoch_id = None;
+        let mut previous_keys = Vec::new();
+
+        let mut string_iterator = s.split(";");
+
+        while let Some(pair) = string_iterator.next() {
+            let (key, value) = pair
+                .split_once(':')
+                .ok_or_else(|| format!("Invalid key:value pair: {}", pair))?;
+
+            match key {
+                "context_id" => {
+                    println!("Parsing context_id: {}", value);
+                    context_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid context_id: {e}"))?,
+                    )
+                }
+                "epoch_id" => {
+                    epoch_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid epoch_id: {e}"))?,
+                    )
+                }
+                "previous_keys" => {
+                    let value = value
+                        .strip_prefix('[')
+                        .and_then(|v| v.strip_suffix(']'))
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_keys value must be enclosed in square brackets: {}",
+                                value
+                            )
+                        })?;
+                    for key_info_str in value.split(';') {
+                        previous_keys.push(key_info_str.parse()?);
+                        string_iterator.next(); // Skip the semicolon separator
+                    }
+                }
+                _ => return Err(format!("Unknown field: {}", key)),
+            }
+        }
+
+        Ok(PreviousEpochParameters {
+            context_id: context_id.ok_or("Missing context_id")?,
+            epoch_id: epoch_id.ok_or("Missing epoch_id")?,
+            previous_keys,
+        })
+    }
+}
+
+impl FromStr for PreviousKeyInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut key_id = None;
+        let mut preproc_id = None;
+        let mut xof_key_digest = None;
+        let mut server_key_digest = None;
+        let mut public_key_digest = None;
+
+        for pair in s.split(',') {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid key:value pair: {}", pair))?;
+
+            match key {
+                "key_id" => {
+                    assert!(key_id.is_none(), "Duplicate key_id field");
+                    key_id = Some(value.parse().map_err(|e| format!("Invalid key_id: {e}"))?);
+                }
+                "preproc_id" => {
+                    assert!(preproc_id.is_none(), "Duplicate preproc_id field");
+                    preproc_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid preproc_id: {e}"))?,
+                    )
+                }
+                "xof_key_digest" => {
+                    assert!(xof_key_digest.is_none(), "Duplicate xof_key_digest field");
+                    assert!(
+                        server_key_digest.is_none(),
+                        "xof_key_digest field is mutually exclusive with server_key_digest and public_key_digest fields"
+                    );
+                    xof_key_digest = Some(value.to_string());
+                }
+                "server_key_digest" => {
+                    assert!(
+                        server_key_digest.is_none(),
+                        "Duplicate server_key_digest field"
+                    );
+                    assert!(
+                        xof_key_digest.is_none(),
+                        "server_key_digest field is mutually exclusive with xof_key_digest field"
+                    );
+                    server_key_digest = Some(value.to_string());
+                }
+                "public_key_digest" => {
+                    assert!(
+                        public_key_digest.is_none(),
+                        "Duplicate public_key_digest field"
+                    );
+                    assert!(
+                        xof_key_digest.is_none(),
+                        "public_key_digest field is mutually exclusive with xof_key_digest field"
+                    );
+                    public_key_digest = Some(value.to_string());
+                }
+                _ => return Err(format!("Unknown field: {}", key)),
+            }
+        }
+
+        assert_eq!(
+            server_key_digest.is_some(),
+            public_key_digest.is_some(),
+            "If server_key_digest or public_key_digest is provided, both must be provided   "
+        );
+        let key_digest = if let Some(xof_digest) = xof_key_digest {
+            DigestKeySet::CompressedKeySet(xof_digest)
+        } else {
+            DigestKeySet::NonCompressedKeySet(
+                server_key_digest.ok_or("Missing server_key_digest")?,
+                public_key_digest.ok_or("Missing public_key_digest")?,
+            )
+        };
+        Ok(PreviousKeyInfo {
+            key_id: key_id.ok_or("Missing key_id")?,
+            preproc_id: preproc_id.ok_or("Missing preproc_id")?,
+            key_digest,
+        })
     }
 }
 
