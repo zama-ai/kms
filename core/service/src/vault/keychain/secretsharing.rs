@@ -270,7 +270,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tfhe::safe_serialization::safe_serialize;
-    use threshold_fhe::execution::runtime::party::Role;
+    use threshold_types::role::Role;
 
     #[tokio::test]
     async fn test_new_keychain_without_pub_storage() {

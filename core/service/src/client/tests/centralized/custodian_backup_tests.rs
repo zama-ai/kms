@@ -26,7 +26,7 @@ use rand::SeedableRng;
 use serial_test::serial;
 use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]

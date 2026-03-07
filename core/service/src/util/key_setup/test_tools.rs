@@ -12,6 +12,7 @@ use crate::vault::storage::{
     read_versioned_at_request_id, StorageReader, StorageReaderExt, StorageType,
 };
 use crate::vault::{Vault, VaultDataType};
+use execution::tfhe_internals::utils::expanded_encrypt;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
@@ -27,7 +28,6 @@ use tfhe::{
     FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
     Unversionize, Versionize,
 };
-use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -563,10 +563,10 @@ pub(crate) mod setup {
         },
         vault::storage::{file::FileStorage, StorageType},
     };
+    use execution::tfhe_internals::parameters::DKGParams;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
     use std::path::Path;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist(path: Option<&Path>) {
         match path {

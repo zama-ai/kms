@@ -1,44 +1,39 @@
 //! Choreographer is a GRPC client that communicates with
 //! the kms-core (with the moby binary) parties to do benchmarks.
 //! It is a trusted entity and should not be used with production kms-core.
-use crate::choreography::grpc::gen::{
-    CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ReshareRequest,
-    ThresholdDecryptRequest, ThresholdKeyGenResultRequest,
-};
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
-use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
-use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use crate::execution::zk::ceremony::compute_witness_dim;
-use crate::{
-    algebra::base_ring::Z64,
-    choreography::grpc::gen::choreography_client::ChoreographyClient,
-    execution::{
-        runtime::party::{Identity, Role},
-        zk::ceremony::InternalPublicParameter,
-    },
-    networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
-    session_id::SessionId,
-};
+use execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+use execution::tfhe_internals::parameters::DkgParamsAvailable;
+use execution::tfhe_internals::public_keysets::FhePubKeySet;
+use execution::zk::ceremony::compute_witness_dim;
+
+use algebra::base_ring::Z64;
+use execution::zk::ceremony::InternalPublicParameter;
+use networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
+use session_id::SessionId;
 use std::collections::HashMap;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_types::party::Identity;
+use threshold_types::role::Role;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
 use tracing::{instrument, Instrument};
 
-use super::grpc::gen::{
-    PreprocKeyGenRequest, PrssInitRequest, StatusCheckRequest, ThresholdDecryptResultRequest,
-    ThresholdKeyGenRequest,
-};
 use super::grpc::SupportedRing;
 use super::requests::{
     PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, ReshareParams, SessionType, Status,
     TfheType, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
     ThroughtputParams,
+};
+use networking::choreography_gen::{
+    choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
+    PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
+    StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
+    ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
 
 pub struct ChoreoRuntime {

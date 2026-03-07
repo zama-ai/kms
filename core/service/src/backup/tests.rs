@@ -22,7 +22,7 @@ use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
 use std::collections::BTreeMap;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 
 #[tracing_test::traced_test]
 #[test]

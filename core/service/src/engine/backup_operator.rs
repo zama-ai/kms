@@ -54,7 +54,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 

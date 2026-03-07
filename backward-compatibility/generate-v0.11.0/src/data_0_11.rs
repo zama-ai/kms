@@ -3,6 +3,8 @@
 //! for kms-core v0.11.0
 
 use aes_prng::AesRng;
+use algebra::role::Role;
+use algebra::sharing::share::Share;
 use kms_0_11_0::cryptography::internal_crypto_types::gen_sig_keys;
 use kms_0_11_0::engine::base::KmsFheKeyHandles;
 use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
@@ -15,13 +17,9 @@ use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, R
 use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
 use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_11_0::{
-    execution::{
-        runtime::party::Role,
-        sharing::share::Share,
-        tfhe_internals::{
-            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
-            test_feature::initialize_key_material,
-        },
+    execution::tfhe_internals::{
+        parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
+        test_feature::initialize_key_material,
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };

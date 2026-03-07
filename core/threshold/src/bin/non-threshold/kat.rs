@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use clap::Parser;
+use execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
 use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
 use tfhe::xof_key_set::CompressedXofKeySet;
@@ -13,7 +14,6 @@ use tfhe::{
     ClientKey, CompressedServerKey, FheUint64, Seed,
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
-use threshold_fhe::execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
 
 const CLIENT_KEY_PATH: &str = "client_key.bin";
 const SERVER_KEY_PATH: &str = "server_key.bin";

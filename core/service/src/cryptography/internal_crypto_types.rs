@@ -1,7 +1,7 @@
 use crate::consts::{DEFAULT_PARAM, TEST_PARAM};
 use crate::cryptography::error::CryptographyError;
+use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::FheParameter;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
 #[macro_export]
 macro_rules! impl_generic_versionize {

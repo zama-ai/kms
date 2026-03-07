@@ -607,7 +607,7 @@ mod kms_custodian_binary_tests {
     use rand::SeedableRng;
     use std::path::MAIN_SEPARATOR;
     use std::{collections::BTreeMap, path::Path, thread};
-    use threshold_fhe::execution::runtime::party::Role;
+    use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
         let h = thread::spawn(|| {

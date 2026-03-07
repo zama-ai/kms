@@ -2,8 +2,6 @@
 name = "threshold-fhe"
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
-authors.workspace = true
 license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -14,48 +12,37 @@ license.workspace = true
 # Maintain alphabetical order
 aes.workspace = true
 aes-prng.workspace = true
+algebra = { workspace = true, default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bc2wrap.workspace = true
-bincode.workspace = true
-cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-const_format.workspace = true
-crypto-bigint = { workspace = true, optional = true }
 dashmap.workspace = true
-derive_more.workspace = true
+error-utils.workspace = true
+execution.workspace = true
 futures.workspace = true
 futures-util.workspace = true
-g2p.workspace = true
 getrandom.workspace = true
-hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
-mockall.workspace = true
-ndarray.workspace = true
-num-integer.workspace = true
-num-traits.workspace = true
+networking = { workspace = true, optional = true }
 observability = { workspace = true, optional = true }
-oid-registry.workspace = true
 opentelemetry = { workspace = true, optional = true }
 paste.workspace = true
 peak_alloc = { workspace = true, optional = true }
-prost.workspace = true
 rand.workspace = true
-rayon.workspace = true
 rcgen = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-sha2.workspace = true
-sha3.workspace = true
-statrs.workspace = true
+session-id.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+test-utils = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -63,7 +50,6 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tfhe-csprng.workspace = true
-tfhe-versionable.workspace = true
 tfhe-zk-pok = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
     "sync",
@@ -74,9 +60,10 @@ tokio = { workspace = true, features = [
 tokio-rustls = { workspace = true, optional = true }
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
-tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
+threshold-types.workspace = true
+thread-handles = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["log"] }
 x509-parser = { workspace = true, optional = true }
 zeroize.workspace = true
@@ -88,21 +75,19 @@ tonic-build.workspace = true
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
-async-std.workspace = true
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
 ctor.workspace = true
+execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
-proptest.workspace = true
-rstest.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
+test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 threshold-fhe = { workspace = true, features = ["testing"] }
-tracing-test.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "opentelemetry", "prost"]
+ignored = ["getrandom", "opentelemetry"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
@@ -123,11 +108,6 @@ path = "src/bin/benches/gen-experiment.rs"
 required-features = ["templating"]
 
 [[bin]]
-name = "stairwayctl"
-path = "src/experimental/bin/stairwayctl.rs"
-required-features = ["experimental", "choreographer", "testing"]
-
-[[bin]]
 name = "threshold-gen-tls-certs"
 path = "src/bin/threshold-gen-tls-certs.rs"
 
@@ -139,21 +119,6 @@ path = "src/bin/non-threshold/kat.rs"
 name = "ddec"
 harness = false
 required-features = ["testing", "extension_degree_8"]
-
-[[bench]]
-name = "decoding"
-harness = false
-required-features = ["experimental", "extenson_degree_8"]
-
-[[bench]]
-name = "algebra"
-harness = false
-required-features = ["experimental"]
-
-[[bench]]
-name = "bgv"
-harness = false
-required-features = ["experimental", "testing"]
 
 [[bench]]
 name = "bench_switch_and_squash"
@@ -187,7 +152,6 @@ name = "non-threshold_tfhe-rs_erc20_speed"
 path = "benches/non-threshold/tfhe-rs/speed/erc20.rs"
 harness = false
 
-
 [[bench]]
 name = "non-threshold_tfhe-rs_basic-ops_speed"
 path = "benches/non-threshold/tfhe-rs/speed/basic_ops.rs"
@@ -204,7 +168,6 @@ path = "benches/non-threshold/tfhe-rs/memory/erc20.rs"
 required-features = ["measure_memory"]
 harness = false
 
-
 [[bench]]
 name = "non-threshold_tfhe-rs_basic-ops_memory"
 path = "benches/non-threshold/tfhe-rs/memory/basic_ops.rs"
@@ -218,62 +181,49 @@ required-features = ["measure_memory"]
 harness = false
 
 
-# BGV Benchmarks
-[[bench]]
-name = "non-threshold_bgv_basic-ops_speed"
-path = "benches/non-threshold/bgv/speed/basic_ops.rs"
-required-features = ["experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_keygen_speed"
-path = "benches/non-threshold/bgv/speed/keygen.rs"
-required-features = ["experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_basic-ops_memory"
-path = "benches/non-threshold/bgv/memory/basic_ops.rs"
-required-features = ["measure_memory","experimental"]
-harness = false
-
-[[bench]]
-name = "non-threshold_bgv_keygen_memory"
-path = "benches/non-threshold/bgv/memory/keygen.rs"
-required-features = ["measure_memory","experimental"]
-harness = false
 
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["dep:tokio", "non-wasm"]
-slow_tests = ["testing", "all_extension_degrees"]
-experimental = ["dep:crypto-bigint"]
+testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:test-utils"]
+slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 templating = ["minijinja"]
-choreographer = ["malicious_strategies"]
+choreographer = ["malicious_strategies", "networking/choreographer", "execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
-# put all the dependencies that does not work well with wasm
-# namely libraries that doesn't work on 32-bit architectures
+
+# put all the dependencies that do not work well with wasm
+# namely libraries that don't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
+	"execution/non-wasm",
+	"networking/non-wasm",
+
     "dep:attestation-doc-validation",
+    "dep:backoff",
     "dep:hyper-rustls-ring",
+    "dep:observability",
+    "dep:opentelemetry",
+    "dep:rcgen",
+    "dep:redis",
+    "dep:tfhe-zk-pok",
+    "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
-    "dep:tonic-tls",
-    "dep:backoff",
     "dep:tower",
     "dep:tower-http",
-    "dep:observability",
-    "dep:opentelemetry",
-    "dep:redis",
-    "dep:rcgen",
-    "dep:tfhe-zk-pok",
     "dep:x509-parser",
 ]
+
+extension_degree_3 = ["algebra/extension_degree_3", "execution/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4", "execution/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5", "execution/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6", "execution/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7", "execution/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8", "execution/extension_degree_8"]
+
 all_extension_degrees = [
     "extension_degree_3",
     "extension_degree_4",
@@ -282,9 +232,3 @@ all_extension_degrees = [
     "extension_degree_7",
     "extension_degree_8",
 ]
-extension_degree_8 = []
-extension_degree_7 = []
-extension_degree_6 = []
-extension_degree_5 = []
-extension_degree_4 = []
-extension_degree_3 = []

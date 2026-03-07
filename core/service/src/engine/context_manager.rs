@@ -43,7 +43,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 use tokio::sync::RwLock;
 use tonic::Response;
 

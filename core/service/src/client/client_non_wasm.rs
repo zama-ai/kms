@@ -9,12 +9,12 @@ use crate::vault::storage::{
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use execution::endpoints::decryption::DecryptionMode;
+use execution::tfhe_internals::parameters::DKGParams;
 use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::fmt;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
 /// Client data type
 ///

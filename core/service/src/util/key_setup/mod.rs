@@ -16,12 +16,12 @@ cfg_if::cfg_if! {
         use kms_grpc::identifiers::EpochId;
         use std::sync::Arc;
         use tfhe::Seed;
-        use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-        use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-        use threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set;
-        use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
-        use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
-        use threshold_fhe::session_id::SessionId;
+        use execution::keyset_config::StandardKeySetConfig;
+        use execution::tfhe_internals::parameters::DKGParams;
+        use execution::tfhe_internals::test_feature::gen_key_set;
+        use execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use session_id::SessionId;
     }
 }
 
@@ -678,9 +678,9 @@ where
         panic!("{}", msg);
     }
     let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(parties) => (1..=parties.len())
-            .zip_eq(parties.into_iter())
-            .collect_vec(),
+        ThresholdSigningKeyConfig::AllParties(parties) => {
+            (1..=parties.len()).zip_eq(parties).collect_vec()
+        }
         ThresholdSigningKeyConfig::OneParty(i, subject) => {
             std::iter::once((i, subject)).collect_vec()
         }
@@ -1326,9 +1326,9 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
+    use execution::zk::ceremony::max_num_bits_from_crs;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
-    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
     use crate::{
         consts::DEFAULT_PARAM, cryptography::signatures::gen_sig_keys, dummy_domain,

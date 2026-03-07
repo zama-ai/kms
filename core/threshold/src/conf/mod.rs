@@ -1,5 +1,6 @@
-use crate::execution::runtime::party::{Identity, Role};
 use serde::{Deserialize, Serialize};
+use threshold_types::party::Identity;
+use threshold_types::role::Role;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Party {

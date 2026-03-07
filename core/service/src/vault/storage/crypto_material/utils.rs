@@ -12,6 +12,8 @@ use crate::{
     vault::storage::{read_all_data_versioned, Storage},
 };
 use aes_prng::AesRng;
+use execution::tfhe_internals::parameters::DKGParams;
+use execution::zk::ceremony::max_num_messages;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
@@ -20,8 +22,6 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fmt::Display;
 use tfhe::{named::Named, Unversionize};
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::max_num_messages;
 
 /// Creates a new random number generator instance.
 ///
@@ -279,8 +279,7 @@ pub fn log_storage_success_optional_variant<T: Display, U: Display>(
 /// suboptimal cryptographic parameters.
 pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     // Extract constant to improve readability
-    const DEFAULT_MAX_NUM_BITS: usize =
-        threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
+    const DEFAULT_MAX_NUM_BITS: usize = execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
     const FALLBACK_BITS: usize = 16;
 
     // Cache the params_basics_handle to avoid calling it twice

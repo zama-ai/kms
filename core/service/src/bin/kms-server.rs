@@ -34,8 +34,9 @@ use kms_lib::{
         Vault,
     },
 };
+use networking::tls::AttestedVerifier;
 use std::{net::ToSocketAddrs, sync::Arc, thread};
-use threshold_fhe::{networking::tls::AttestedVerifier, thread_handles::init_rayon_thread_pool};
+use thread_handles::init_rayon_thread_pool;
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
     client::{danger::DangerousClientConfigBuilder, ClientConfig},

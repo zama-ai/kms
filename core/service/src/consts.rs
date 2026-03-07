@@ -1,10 +1,8 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
+use execution::tfhe_internals::parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{identifiers::ContextId, EpochId, RequestId};
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
-};
 
 /// The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;
@@ -47,8 +45,7 @@ pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
 #[cfg(not(feature = "slow_tests"))]
 pub const DEFAULT_THRESHOLD: usize = 1;
 
-/// Maximum byte size allowed during safe deserialization.
-pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
+pub const SAFE_SER_SIZE_LIMIT: u64 = hashing::SAFE_SER_SIZE_LIMIT;
 
 // TODO: Do we want to load this from configuration?
 pub const DURATION_WAITING_ON_RESULT_SECONDS: u64 = 60;

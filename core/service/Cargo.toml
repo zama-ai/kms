@@ -42,6 +42,7 @@ aes.workspace = true
 aes-gcm.workspace = true
 aes-gcm-siv.workspace = true
 aes-prng.workspace = true
+algebra.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true
@@ -66,7 +67,9 @@ ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
+execution = { workspace = true, features = ["extension_degree_4"] }
 futures-util.workspace = true
+hashing.workspace = true
 hex.workspace = true
 http-legacy.workspace = true
 hyper-rustls = { workspace = true, optional = true }
@@ -76,6 +79,7 @@ k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 lazy_static.workspace = true
 ml-kem.workspace = true
+networking = { workspace = true, optional = true }
 nom.workspace = true
 observability = { workspace = true, optional = true }
 ordermap.workspace = true
@@ -91,6 +95,7 @@ rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
+session-id.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
@@ -104,9 +109,11 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 thiserror.workspace = true
+thread-handles = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
+threshold-types.workspace = true
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
@@ -133,6 +140,7 @@ zeroize.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
+execution = { workspace = true, features = ["testing", "malicious_strategies", "extension_degree_4"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
@@ -147,12 +155,15 @@ threshold-fhe = { workspace = true, default-features = false, features = [
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tracing-test.workspace = true
 
+
 [features]
 default = ["non-wasm"]
 testing = ["dep:tempfile"]
 non-wasm = [
-    "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
+    "networking/non-wasm",
+    "threshold-fhe/non-wasm",
+
     "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -166,6 +177,7 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
+    "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
     "dep:tonic",
@@ -176,10 +188,13 @@ non-wasm = [
     "dep:x509-parser",
 ]
 slow_tests = ["testing"]
-wasm_tests = ["testing"]
+wasm_tests = ["testing", "execution/extension_degree_4"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
     "threshold-fhe/testing",
+    "execution/testing",
+    "networking/testing",
+
     "dep:nsm-nitro-enclave-utils"
 ]
