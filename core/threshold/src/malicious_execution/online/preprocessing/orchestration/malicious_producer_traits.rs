@@ -1,5 +1,4 @@
 use crate::{
-    algebra::galois_rings::degree_4::ResiduePolyF4Z128,
     execution::{
         online::preprocessing::orchestration::producer_traits::ProducerFactory,
         runtime::sessions::small_session::SmallSession,
@@ -14,6 +13,7 @@ use crate::{
         },
     },
 };
+use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
 
 pub struct DummyProducerFactory;
 

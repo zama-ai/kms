@@ -28,7 +28,7 @@ cfg_if::cfg_if! {
     use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::Tagged;
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
-    use threshold_fhe::execution::runtime::party::Role;
+    use algebra::role::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
     use tokio::task::JoinSet;
@@ -508,7 +508,7 @@ async fn wait_for_keygen_result(
         }
     }
 
-    finished.sort_by(|(i, _), (j, _)| i.cmp(j));
+    finished.sort_by_key(|a| a.0);
     assert_eq!(finished.len(), kms_clients.len());
 
     let mut out = None;

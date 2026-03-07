@@ -3,18 +3,18 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::small_execution::offline::Preprocessing;
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         online::triple::Triple,
         runtime::sessions::large_session::LargeSessionHandles,
-        sharing::{
-            open::{RobustOpen, SecureRobustOpen},
-            share::Share,
-        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,
 };
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Ring},
+};
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use tonic::async_trait;
 use tracing::{info_span, instrument, Instrument};
@@ -274,11 +274,9 @@ pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSess
 #[allow(clippy::too_many_arguments)]
 mod tests {
     use super::SecureLargePreprocessing;
-    use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert};
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
         malicious_local_double_share::{
@@ -296,10 +294,6 @@ mod tests {
     };
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::Ring,
-        },
         execution::{
             communication::broadcast::{Broadcast, SyncReliableBroadcast},
             large_execution::{
@@ -313,21 +307,23 @@ mod tests {
                 vss::{RealVss, SecureVss, Vss},
             },
             online::triple::Triple,
-            runtime::{
-                party::Role,
-                sessions::large_session::{LargeSession, LargeSessionHandles},
-            },
-            sharing::{
-                open::{RobustOpen, SecureRobustOpen},
-                shamir::ShamirSharings,
-                share::Share,
-            },
+            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
+            sharing::open::{RobustOpen, SecureRobustOpen},
             small_execution::offline::Preprocessing,
         },
         tests::helper::{
             tests::{execute_protocol_large_w_disputes_and_malicious, TestingParameters},
             tests_and_benches::execute_protocol_large,
         },
+    };
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring},
     };
     use rstest::rstest;
     use std::collections::HashSet;

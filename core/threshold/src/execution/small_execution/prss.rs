@@ -4,13 +4,8 @@ use super::{
     },
     prf::{ChiAes, PRSSConversions, PrfKey, PsiAes},
 };
+
 use crate::{
-    algebra::{
-        bivariate::{compute_powers_list, MatrixMul},
-        poly::Poly,
-        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         constants::{PRSS_SIZE_MAX, STATSEC},
@@ -18,18 +13,23 @@ use crate::{
             single_sharing::init_vdm,
             vss::{SecureVss, Vss},
         },
-        runtime::{
-            party::Role,
-            sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
-    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
+use algebra::{
+    bivariate::{compute_powers_list, MatrixMul},
+    poly::Poly,
+    role::Role,
+    structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
 use anyhow::Context;
+use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
+use thread_handles::spawn_compute_bound;
 use tonic::async_trait;
 use tracing::{instrument, Instrument};
 
@@ -1050,13 +1051,11 @@ mod tests {
     use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
-    use crate::hashing::hash_element_w_size;
     use crate::malicious_execution::small_execution::malicious_prss::{
         MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
     };
@@ -1064,22 +1063,16 @@ mod tests {
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::{One, Zero},
-        },
         commitment::KEY_BYTE_LEN,
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
-            runtime::party::Role,
             runtime::{
                 sessions::{
                     session_parameters::GenericParameterHandles, small_session::SmallSession,
                 },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
-            sharing::{shamir::ShamirSharings, share::Share},
             small_execution::agree_random::{
                 AbortSecureAgreeRandom, AgreeRandom, DummyAgreeRandom,
             },
@@ -1088,7 +1081,17 @@ mod tests {
         tests::helper::testing::get_networkless_base_session_for_parties,
     };
     use aes_prng::AesRng;
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{One, Zero},
+    };
     use futures_util::future::{join, join_all};
+    use hashing::hash_element_w_size;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::num::Wrapping;

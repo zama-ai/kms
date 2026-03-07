@@ -1,24 +1,24 @@
 use tonic::async_trait;
 
-use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve},
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        keyset_config::KeySetConfig,
-        online::{
-            gen_bits::{BitGenEven, SecureBitGenEven},
-            preprocessing::{
-                BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds,
-                RandomPreprocessing, TriplePreprocessing,
-            },
-            triple::Triple,
+use crate::execution::{
+    keyset_config::KeySetConfig,
+    online::{
+        gen_bits::{BitGenEven, SecureBitGenEven},
+        preprocessing::{
+            BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds,
+            RandomPreprocessing, TriplePreprocessing,
         },
-        runtime::sessions::base_session::BaseSession,
-        sharing::share::Share,
-        small_execution::prf::PRSSConversions,
-        tfhe_internals::parameters::DKGParams,
+        triple::Triple,
     },
+    runtime::sessions::base_session::BaseSession,
+    small_execution::prf::PRSSConversions,
+    tfhe_internals::parameters::DKGParams,
 };
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Ring, Solve},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{InMemoryBasePreprocessing, InMemoryBitPreprocessing};
 

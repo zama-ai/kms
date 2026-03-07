@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use aes_prng::AesRng;
+use hashing::{hash_element, DomainSep};
 use kms_grpc::{
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
@@ -16,7 +17,6 @@ use kms_lib::{
     },
     cryptography::internal_crypto_types::LegacySerialization,
 };
-use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -119,7 +119,7 @@ pub(crate) async fn do_custodian_recovery_init(
         let cur_inner_rec = cur_rec_req?.into_inner();
         res.push((core_conf, cur_inner_rec.try_into()?));
     }
-    res.sort_by(|a, b| a.0.party_id.cmp(&b.0.party_id));
+    res.sort_by_key(|a| a.0.party_id);
 
     Ok(res.into_iter().map(|(_, v)| v).collect())
 }

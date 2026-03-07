@@ -26,24 +26,11 @@ use tfhe::{
 use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::{Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::{
-            party::Role,
-            sessions::{
-                base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
-            },
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
         },
-        sharing::{
-            input::robust_input,
-            shamir::{InputOp, ShamirSharings},
-            share::Share,
-        },
+        sharing::input::robust_input,
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare, parameters::DkgMode,
@@ -52,6 +39,17 @@ use crate::{
     },
     networking::value::NetworkValue,
 };
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    role::Role,
+    sharing::{
+        shamir::{InputOp, ShamirSharings},
+        share::Share,
+    },
+    structure_traits::{Ring, RingWithExceptionalSequence},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{
     parameters::{DKGParams, DKGParamsBasics},

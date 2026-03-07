@@ -17,12 +17,12 @@ use crate::{
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
+use algebra::role::Role;
 use itertools::Itertools;
 use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
 use std::collections::BTreeMap;
-use threshold_fhe::execution::runtime::party::Role;
 
 #[tracing_test::traced_test]
 #[test]

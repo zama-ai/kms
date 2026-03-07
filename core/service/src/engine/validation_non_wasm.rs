@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use alloy_dyn_abi::Eip712Domain;
+use hashing::DomainSep;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
@@ -32,7 +33,6 @@ use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
-use threshold_fhe::hashing::DomainSep;
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 

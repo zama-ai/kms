@@ -4,15 +4,12 @@ use tfhe::{
 };
 
 use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    execution::{
-        online::preprocessing::BitPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-    },
+use crate::execution::{
+    online::preprocessing::BitPreprocessing, runtime::sessions::base_session::BaseSessionHandles,
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 pub struct SnsCompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usize> {

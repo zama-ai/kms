@@ -34,6 +34,7 @@ use crate::{
         Vault,
     },
 };
+use algebra::role::Role;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
@@ -54,7 +55,6 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 

@@ -14,14 +14,14 @@ use tfhe::{
 };
 
 use super::lwe_ciphertext::{opened_lwe_masks_bodies_to_tfhers_u64, LweCiphertextShare};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::{
-    algebra::structure_traits::{BaseRing, ErrorCorrect},
-    execution::{
-        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-        tfhe_internals::lwe_ciphertext::opened_lwe_bodies_to_seeded_tfhers_u64,
-    },
+use crate::execution::{
+    online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::lwe_ciphertext::opened_lwe_bodies_to_seeded_tfhers_u64,
+};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::{
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 #[derive(Clone)]

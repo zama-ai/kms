@@ -23,6 +23,8 @@
 //! In particular, this means that parties must be aware of both contexts (the old one and the new one) even if
 //! they are not part of one of the two contexts.
 
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::role::TwoSetsRole;
 use alloy_dyn_abi::Eip712Domain;
 use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
 use itertools::Itertools;
@@ -38,17 +40,13 @@ use kms_grpc::{
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
-    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
         online::preprocessing::BasePreprocessing,
-        runtime::{
-            party::TwoSetsRole,
-            sessions::{
-                base_session::{BaseSession, TwoSetsBaseSession},
-                session_parameters::GenericParameterHandles,
-                small_session::SmallSession,
-            },
+        runtime::sessions::{
+            base_session::{BaseSession, TwoSetsBaseSession},
+            session_parameters::GenericParameterHandles,
+            small_session::SmallSession,
         },
         small_execution::{
             offline::{Preprocessing, SecureSmallPreprocessing},

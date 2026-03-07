@@ -1,5 +1,4 @@
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
         communication::p2p::send_to_honest_parties,
         large_execution::share_dispute::{
@@ -7,10 +6,14 @@ use crate::{
             send_and_receive_share_dispute_single, share_secrets, ShareDispute, ShareDisputeOutput,
             ShareDisputeOutputDouble,
         },
-        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
+        runtime::sessions::large_session::LargeSessionHandles,
     },
     networking::value::NetworkValue,
     ProtocolDescription,
+};
+use algebra::{
+    role::Role,
+    structure_traits::{Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;
 use itertools::Itertools;

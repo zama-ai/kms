@@ -42,6 +42,7 @@ aes.workspace = true
 aes-gcm.workspace = true
 aes-gcm-siv.workspace = true
 aes-prng.workspace = true
+algebra.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer.workspace = true
@@ -67,6 +68,7 @@ clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
+hashing.workspace = true
 hex.workspace = true
 http-legacy.workspace = true
 hyper-rustls = { workspace = true, optional = true }
@@ -104,6 +106,7 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 thiserror.workspace = true
+thread-handles = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
@@ -153,6 +156,7 @@ testing = ["dep:tempfile"]
 non-wasm = [
     "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
+    "dep:thread-handles",
     "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",

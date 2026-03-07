@@ -1,4 +1,4 @@
-use crate::algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
+use algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
 
 use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};

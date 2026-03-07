@@ -1,36 +1,31 @@
-use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::{ErrorCorrect, Invert, Syndrome},
+use crate::execution::{
+    config::BatchParams,
+    online::{
+        preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
+        reshare::{
+            Expected, NotExpected, Reshare, SecureSameSetReshare, SecureTwoSetsReshareAsBothSets,
+            SecureTwoSetsReshareAsSet1, SecureTwoSetsReshareAsSet2,
+        },
     },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        config::BatchParams,
-        online::{
-            preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
-            reshare::{
-                Expected, NotExpected, Reshare, SecureSameSetReshare,
-                SecureTwoSetsReshareAsBothSets, SecureTwoSetsReshareAsSet1,
-                SecureTwoSetsReshareAsSet2,
-            },
-        },
-        runtime::{
-            party::TwoSetsRole,
-            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
-        },
-        tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares,
-            glwe_key::GlweSecretKeyShare,
-            lwe_key::LweSecretKeyShare,
-            parameters::{DKGParams, DKGParamsBasics, DkgMode},
-            private_keysets::{
-                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
-                PrivateKeySet,
-            },
+    runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+    tfhe_internals::{
+        compression_decompression_key::CompressionPrivateKeyShares,
+        glwe_key::GlweSecretKeyShare,
+        lwe_key::LweSecretKeyShare,
+        parameters::{DKGParams, DKGParamsBasics, DkgMode},
+        private_keysets::{
+            CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
+            PrivateKeySet,
         },
     },
 };
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    role::TwoSetsRole,
+    structure_traits::{ErrorCorrect, Invert, Syndrome},
+};
+use error_utils::anyhow_error_and_log;
 
 use tfhe::shortint::parameters::CompressionParameters;
 use tracing::instrument;
@@ -689,14 +684,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::{BaseRing, Ring};
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
-    use crate::execution::runtime::party::{Role, TwoSetsThreshold};
     use crate::execution::runtime::sessions::base_session::{BaseSession, GenericBaseSession};
     use crate::execution::runtime::sessions::small_session::SmallSession;
-    use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
-    use crate::execution::sharing::share::Share;
     use crate::execution::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
@@ -707,15 +698,21 @@ mod tests {
     };
     use crate::tests::test_data_setup::tests::TEST_PARAMETERS;
     use crate::{
-        algebra::structure_traits::Sample,
         execution::{
             constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
             runtime::sessions::session_parameters::GenericParameterHandles,
-            sharing::shamir::InputOp,
         },
         file_handling::tests::read_element,
     };
     use aes_prng::AesRng;
+    use algebra::{
+        role::{Role, TwoSetsThreshold},
+        sharing::{
+            shamir::{InputOp, RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{BaseRing, Ring, Sample},
+    };
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fmt::Display;
@@ -960,7 +957,7 @@ mod tests {
         .await;
 
         // we need to sort by identities and then reconstruct
-        results.sort_by(|a, b| a.0.cmp(&(b.0)));
+        results.sort_by_key(|a| a.0);
         let (new_shares, (old_shares, expected_sks)): (Vec<_>, (Vec<_>, Vec<_>)) =
             results.into_iter().map(|(_, b, c, d)| (b, (c, d))).unzip();
         let actual_sk = reconstruct_sk(new_shares.clone(), threshold, 0);
@@ -1131,7 +1128,7 @@ mod tests {
             });
 
         // we need to sort by identities and then reconstruct
-        results_set_2_and_both.sort_by(|a, b| a.0.cmp(&(b.0)));
+        results_set_2_and_both.sort_by_key(|a| a.0);
         let new_shares: Vec<_> = results_set_2_and_both
             .into_iter()
             .map(|(_, b, _)| b)

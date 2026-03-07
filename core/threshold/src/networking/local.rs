@@ -1,4 +1,4 @@
-use crate::error::error_handler::anyhow_error_and_log;
+use error_utils::anyhow_error_and_log;
 
 use super::*;
 use constants::{
@@ -279,12 +279,10 @@ struct LocalTaggedValue {
 mod tests {
 
     use crate::{
-        execution::runtime::{
-            party::{Role, TwoSetsRole},
-            sessions::session_parameters::DeSerializationRunTime,
-        },
+        execution::runtime::sessions::session_parameters::DeSerializationRunTime,
         networking::value::NetworkValue,
     };
+    use algebra::role::{Role, TwoSetsRole};
 
     use super::*;
     use std::num::Wrapping;

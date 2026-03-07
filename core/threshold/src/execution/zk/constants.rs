@@ -1,4 +1,4 @@
-use crate::hashing::DomainSep;
+use hashing::DomainSep;
 
 // We default to the maximum number of bits for the largest
 // type that we support, which is `Euint2048`.

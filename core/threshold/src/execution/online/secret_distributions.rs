@@ -1,13 +1,8 @@
 use tracing::instrument;
 
 use super::preprocessing::BitPreprocessing;
-use crate::{
-    algebra::structure_traits::Ring,
-    execution::{
-        sharing::share::Share,
-        tfhe_internals::parameters::{NoiseInfo, TUniformBound},
-    },
-};
+use crate::execution::tfhe_internals::parameters::{NoiseInfo, TUniformBound};
+use algebra::{sharing::share::Share, structure_traits::Ring};
 
 pub trait SecretDistributions {
     fn from_noise_info<Z, P>(
@@ -123,10 +118,6 @@ impl SecretDistributions for RealSecretDistributions {
 mod tests {
 
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::Ring,
-        },
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
             runtime::sessions::{
@@ -136,6 +127,10 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
+    };
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        structure_traits::Ring,
     };
 
     use super::{RealSecretDistributions, SecretDistributions, TUniformBound};

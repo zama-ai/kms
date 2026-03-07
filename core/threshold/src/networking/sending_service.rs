@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use super::gen::gnetworking_client::GnetworkingClient;
+use super::ggen::gnetworking_client::GnetworkingClient;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
@@ -24,19 +24,20 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
+use crate::networking::ggen::Status;
 use crate::{
-    error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::{Identity, RoleKind, RoleTrait},
-    networking::r#gen::Status,
+    execution::runtime::party::{Identity, RoleAssignment},
+    session_id::SessionId,
 };
-use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
+use algebra::role::{RoleKind, RoleTrait};
+use error_utils::anyhow_error_and_log;
 
-use super::gen::SendValueRequest;
+use super::ggen::SendValueRequest;
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
-use crate::thread_handles::ThreadHandleGroup;
+use thread_handles::ThreadHandleGroup;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -681,17 +682,17 @@ mod tests {
     use tokio::task::JoinSet;
     use tokio::time::Instant;
 
-    use crate::execution::runtime::party::TwoSetsRole;
     use crate::networking::grpc::{
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
     use crate::networking::sending_service::NetworkSession;
     use crate::networking::NetworkMode;
     use crate::{
-        execution::runtime::party::{Identity, Role, RoleAssignment},
+        execution::runtime::party::{Identity, RoleAssignment},
         networking::{grpc::GrpcNetworkingManager, Networking},
         session_id::SessionId,
     };
+    use algebra::role::{Role, TwoSetsRole};
     use std::collections::HashMap;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
