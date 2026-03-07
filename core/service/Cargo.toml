@@ -104,6 +104,8 @@ tfhe = { workspace = true, features = [
 ] }
 tfhe-versionable.workspace = true
 thiserror.workspace = true
+tikv-jemalloc-ctl = { workspace = true, optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
@@ -174,6 +176,11 @@ non-wasm = [
     "dep:tower",
     "dep:tower-http",
     "dep:x509-parser",
+]
+heap-profiling = [
+    "observability?/heap-profiling",
+    "dep:tikv-jemalloc-ctl",
+    "dep:tikv-jemallocator",
 ]
 slow_tests = ["testing"]
 wasm_tests = ["testing"]

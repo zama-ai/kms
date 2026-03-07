@@ -25,6 +25,38 @@ start-compose-threshold-telemetry:
 stop-compose-threshold-telemetry:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-telemetry.yml down --volumes --remove-orphans
 
+build-compose-heap-profiling:
+	docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml -f docker-compose-telemetry.yml build
+
+start-compose-heap-profiling:
+	docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml -f docker-compose-telemetry.yml up -d --wait
+
+stop-compose-heap-profiling:
+	docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml -f docker-compose-telemetry.yml down --volumes --remove-orphans
+
+# Dump heap profiles from all cores and copy them locally for analysis
+dump-heap-profiles:
+	@mkdir -p profiling/heap-dumps
+	@for i in 1 2 3 4; do \
+		echo "Dumping heap profile for dev-kms-core-$$i..."; \
+		docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml \
+			exec dev-kms-core-$$i killall -USR1 kms-server 2>/dev/null || true; \
+	done
+	@sleep 1
+	@for i in 1 2 3 4; do \
+		echo "Copying dumps from dev-kms-core-$$i..."; \
+		docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml \
+			cp dev-kms-core-$$i:/tmp/kms-heap/ ./profiling/heap-dumps/core-$$i/ 2>/dev/null || true; \
+		echo "Capturing /proc/maps for dev-kms-core-$$i..."; \
+		docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml \
+			exec -T dev-kms-core-$$i sh -c 'cat /proc/$$(pidof kms-server)/maps' \
+			> ./profiling/heap-dumps/core-$$i/maps.txt 2>/dev/null || true; \
+	done
+	@echo "Copying kms-server binary for symbol resolution..."
+	@docker compose -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f profiling/docker-compose-heap-profiling.yml \
+		cp dev-kms-core-1:/app/kms/core/service/bin/kms-server ./profiling/heap-dumps/kms-server 2>/dev/null || true
+	@echo "Done. Analyze with: ./profiling/analyze-heap.sh ./profiling/heap-dumps/kms-server ./profiling/heap-dumps/core-1/"
+
 # Test backwards compatibility with LFS files. This will pull the LFS files from git before running the tests.
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored

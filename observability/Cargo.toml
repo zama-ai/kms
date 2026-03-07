@@ -29,6 +29,7 @@ strum.workspace = true
 strum_macros.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
+tikv-jemalloc-ctl = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
@@ -48,3 +49,4 @@ ignored = ["strum"]
 
 [features]
 default = []
+heap-profiling = ["dep:tikv-jemalloc-ctl"]

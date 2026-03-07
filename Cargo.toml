@@ -185,6 +185,8 @@ tfhe-csprng = "=0.8.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zam
 tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.8.0"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
+tikv-jemalloc-ctl = { version = "=0.6.1", features = ["use_std", "stats"] }  # jemalloc runtime control - LOW RISK: TiKV team (PingCAP), bindings to jemalloc
+tikv-jemallocator = { version = "=0.6.1", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }  # jemalloc allocator with heap profiling - LOW RISK: TiKV team (PingCAP), 17M+ downloads
 tokio = { version = "=1.46.1", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.15", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
@@ -241,6 +243,16 @@ lto = "fat"
 # use release profile settings
 inherits = "release"
 # but set LTO to the default (off instead of fat)
+lto = "off"
+
+# profile for heap profiling with jemalloc — keeps line-table debug info
+# so jeprof can resolve addresses to function:line instead of ??:0.
+# Uses debug=1 (line tables only) instead of debug=2 (full DWARF) to
+# dramatically reduce build time while retaining all info jeprof needs.
+[profile.heap-profiling]
+inherits = "release"
+debug = 1
+strip = "none"
 lto = "off"
 
 [patch.crates-io]

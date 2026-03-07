@@ -1,0 +1,63 @@
+# Docker Compose override for heap profiling KMS core nodes.
+#
+# Usage:
+#   # Build with heap profiling enabled
+#   make build-compose-heap-profiling
+#
+#   # Run normally, then at any point dump + copy + analyze:
+#   make dump-heap-profiles
+#   ./profiling/analyze-heap.sh ./profiling/heap-dumps/kms-server ./profiling/heap-dumps/core-1/
+#
+# The key insight: take a dump BEFORE sustained load, and another AFTER.
+# The diff shows only allocations that grew — i.e., your leaks.
+
+x-heap-profiling-build: &heap-profiling-build
+  args:
+    CARGO_EXTRA_FEATURES: heap-profiling
+    LTO_RELEASE: heap-profiling
+    # Frame pointers give jemalloc reliable stack traces for allocation profiling.
+    # Without them, some frames may be missing from heap dump backtraces.
+    RUSTFLAGS: "-C force-frame-pointers=yes"
+
+x-heap-profiling-env: &heap-profiling-env
+  # Enable jemalloc profiling:
+  #   prof:true          — enable profiling
+  #   lg_prof_sample:12  — sample every 4KB of allocation (2^12 bytes)
+  #   prof_gdump:true    — auto-dump on new global memory peak
+  #   prof_final:true    — dump on process exit
+  - MALLOC_CONF=prof:true,lg_prof_sample:12,prof_gdump:true,prof_final:true,prof_prefix:/tmp/kms-heap/auto/prof
+
+services:
+  dev-kms-core-gen-signing-keys-ca-certs:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
+
+  dev-kms-core-1:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
+    environment: *heap-profiling-env
+
+  dev-kms-core-2:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
+    environment: *heap-profiling-env
+
+  dev-kms-core-3:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
+    environment: *heap-profiling-env
+
+  dev-kms-core-4:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
+    environment: *heap-profiling-env
+
+  dev-kms-core-init:
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev-heap-profiling
+    build:
+      <<: *heap-profiling-build
