@@ -111,8 +111,8 @@ done
 DUMP_COUNTER=0
 prepare_dump() {
     local src="$1"
-    local dst="$WORK_DIR/${DUMP_COUNTER}.heap"
-    DUMP_COUNTER=$((DUMP_COUNTER + 1))
+    local idx="$2"
+    local dst="$WORK_DIR/${idx}.heap"
     cp "$src" "$dst"
 
     # Inject MAPPED_LIBRARIES from maps.txt if the dump doesn't have it
@@ -141,7 +141,8 @@ WORK_ALL=()            # all working copies
 MANUAL_ORIGINALS=()    # manual-only originals
 MANUAL_WORK=()         # manual-only working copies
 while IFS= read -r heap; do
-    work="$(prepare_dump "$heap")"
+    work="$(prepare_dump "$heap" "$DUMP_COUNTER")"
+    DUMP_COUNTER=$((DUMP_COUNTER + 1))
     ALL_ORIG+=("$heap")
     WORK_ALL+=("$work")
     if [[ "$heap" != *"/auto/"* ]]; then
