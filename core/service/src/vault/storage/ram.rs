@@ -426,6 +426,24 @@ pub mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn test_mixed_epoch_and_non_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_epoch_ids_and_data_ids_with_mixed_storage(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_epoch_ids_with_only_non_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_epoch_ids_for_data_with_only_non_epoch_data(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_data_ids_with_only_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_data_ids_with_only_epoch_data(&mut storage).await;
+    }
+
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_ram_on_epoch() {

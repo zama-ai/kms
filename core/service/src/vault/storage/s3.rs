@@ -399,11 +399,14 @@ impl StorageReaderExt for S3Storage {
         // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,
         // not as objects in contents()
         for cur_res in result.common_prefixes() {
-            if let Some(prefix) = &cur_res.prefix {
-                let trimmed_prefix = prefix.trim().trim_end_matches('/');
-                // The epoch_id is the last segment of the prefix
-                if let Some(cur_id) = trimmed_prefix.split('/').next_back() {
-                    ids.insert(EpochId::from_str(cur_id)?);
+            if let Some(key) = &cur_res.prefix {
+                let trimmed_key = key.trim();
+                // Ensure we only count "directories" by checking for the trailing "/"
+                if trimmed_key.ends_with('/') {
+                    // Remove the '/' at the end and take the last segment after splitting on "/" to get epoch_id
+                    if let Some(cur_id) = trimmed_key.trim_end_matches('/').split('/').next_back() {
+                        ids.insert(EpochId::from_str(cur_id)?);
+                    }
                 }
             }
         }
@@ -711,9 +714,9 @@ cfg_if::cfg_if! {
 // To setup the testing environment locally with Minio, proceed as follows:
 // 1. Install and run Minio in Docker
 //    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
-// 2. Setup the bucket. With in the `dev-s3-mock-1` container in Docker execute the following commands:
+// 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
 //   a. First open Docker desktop and navitage to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
-//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and ssuming no change to [`AWS_S3_ENDPOINT`])
+//   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
 //   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
 //   d. Run `mc anonymous set public testminio/ci-kms-key-test`
 // 3. Update the environment variables in the shell where you run the tests:
@@ -758,22 +761,17 @@ mod tests {
             test_store_data_does_not_overwrite_existing_data,
         },
     };
-    use aes_prng::AesRng;
-    use rand::distributions::{Alphanumeric, DistString};
-    use rand::SeedableRng;
 
-    async fn create_s3_storage(storage_type: StorageType) -> S3Storage {
+    async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
             .await
             .unwrap();
-        let mut rng = AesRng::seed_from_u64(1946);
-        let prefix = Alphanumeric.sample_string(&mut rng, 10);
         S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
             storage_type,
-            Some(&prefix),
+            Some(prefix),
             None,
         )
         .unwrap()
@@ -781,7 +779,8 @@ mod tests {
 
     #[tokio::test]
     async fn s3_storage_helper_methods() {
-        let mut pub_storage = create_s3_storage(StorageType::PUB).await;
+        let mut pub_storage =
+            create_s3_storage(StorageType::PUB, std::stringify!(s3_storage_helper_methods)).await;
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
     }
@@ -789,13 +788,18 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_epoch_methods_in_s3() {
-        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        let mut priv_storage =
+            create_s3_storage(StorageType::PRIV, std::stringify!(test_epoch_methods_in_s3)).await;
         test_epoch_methods(&mut priv_storage).await;
     }
 
     #[tokio::test]
     async fn test_all_data_ids_from_all_epochs_s3() {
-        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_all_data_ids_from_all_epochs_s3),
+        )
+        .await;
         crate::vault::storage::tests::test_all_data_ids_from_all_epochs(&mut priv_storage).await;
     }
 
@@ -803,7 +807,11 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
-        let mut pub_storage = create_s3_storage(StorageType::PUB).await;
+        let mut pub_storage = create_s3_storage(
+            StorageType::PUB,
+            std::stringify!(test_overwrite_logic_files),
+        )
+        .await;
         test_store_bytes_does_not_overwrite_existing_bytes(&mut pub_storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut pub_storage).await;
         assert!(logs_contain(
@@ -813,14 +821,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_load_bytes_at_epoch_s3() {
-        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_store_load_bytes_at_epoch_s3),
+        )
+        .await;
         crate::vault::storage::tests::test_store_load_bytes_at_epoch(&mut priv_storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_mixed_epoch_and_non_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_mixed_epoch_and_non_epoch_data_s3),
+        )
+        .await;
+        crate::vault::storage::tests::test_all_epoch_ids_and_data_ids_with_mixed_storage(
+            &mut priv_storage,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_epoch_ids_with_only_non_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_epoch_ids_with_only_non_epoch_data_s3),
+        )
+        .await;
+        crate::vault::storage::tests::test_all_epoch_ids_for_data_with_only_non_epoch_data(
+            &mut priv_storage,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_data_ids_with_only_epoch_data_s3() {
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_data_ids_with_only_epoch_data_s3),
+        )
+        .await;
+        crate::vault::storage::tests::test_all_data_ids_with_only_epoch_data(&mut priv_storage)
+            .await;
     }
 
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
-        let mut priv_storage = create_s3_storage(StorageType::PRIV).await;
+        let mut priv_storage = create_s3_storage(
+            StorageType::PRIV,
+            std::stringify!(test_store_bytes_at_epoch_does_not_overwrite_s3),
+        )
+        .await;
         crate::vault::storage::tests::test_store_bytes_at_epoch_does_not_overwrite(
             &mut priv_storage,
         )
