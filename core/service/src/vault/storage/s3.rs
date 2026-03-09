@@ -777,6 +777,21 @@ mod tests {
         },
     };
 
+    async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
+        S3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            storage_type,
+            Some(prefix),
+            None,
+        )
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn s3_storage_helper_methods() {
         let mut pub_storage =
