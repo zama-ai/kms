@@ -30,7 +30,7 @@ threshold_fhe_0_13_10 = { git = "https://github.com/zama-ai/kms.git", package = 
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
 tfhe_versionable_0_7 = { package = "tfhe-versionable", version = "=0.7.0" }
-tfhe_1_5_1 = { package = "tfhe", version = "1.5.1", features = [
+tfhe_1_5_1 = { package = "tfhe", version = "1.5.3", features = [
     "shortint",
 ] }
 alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }
