@@ -143,7 +143,7 @@ required-features = ["testing", "extension_degree_8"]
 [[bench]]
 name = "decoding"
 harness = false
-required-features = ["experimental", "extenson_degree_8"]
+required-features = ["experimental", "extension_degree_8"]
 
 [[bench]]
 name = "algebra"
