@@ -2028,6 +2028,7 @@ async fn real_preproc_and_keygen_compressed_isolated(
                 compressed: true,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
+                use_existing_key_tag: false,
                 context_id: None,
                 epoch_id: None,
             },
