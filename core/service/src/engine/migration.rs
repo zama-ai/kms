@@ -11,13 +11,13 @@ use threshold_fhe::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResidueP
 use threshold_fhe::execution::small_execution::prss::PRSSSetup;
 
 lazy_static::lazy_static! {
-pub static ref LEGACY_DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
+static ref LEGACY_DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
     1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
     4,
 ]);
 
 // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
-pub static ref LEGACY_DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
+static ref LEGACY_DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 ]);
@@ -498,7 +498,7 @@ where
                 .await?;
         } else {
             tracing::error!(
-                "No keys {} under epoch ID {} does not appear to exist",
+                "No key {} under epoch ID {} appears to exist. This implies an inconsistent file system",
                 key_id,
                 new_epoch_id
             );
