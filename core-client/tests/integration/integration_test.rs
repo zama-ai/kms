@@ -1632,6 +1632,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
                 compressed: false,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
+                use_existing_key_tag: false,
             },
             200,
         )
@@ -1843,6 +1844,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             compressed: false,
             existing_keyset_id: None,
             existing_epoch_id: None,
+            use_existing_key_tag: false,
         },
         200,
     )
