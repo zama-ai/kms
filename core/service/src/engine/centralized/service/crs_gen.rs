@@ -416,7 +416,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
                 params: FheParameter::Test.into(),
-                domain: Some(domain),
+                domain: Some(domain.clone()),
                 extra_data: vec![],
                 max_num_bits: Some(123), // invalid
             };

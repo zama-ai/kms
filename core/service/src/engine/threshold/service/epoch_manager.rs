@@ -136,7 +136,6 @@ struct VerifiedKeyInfo {
 struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
-    pub max_num_bits: u32,
     pub eip712_domain: Eip712Domain,
 }
 
@@ -252,7 +251,6 @@ fn verify_epoch_info(
             Ok(VerifiedCrsInfo {
                 crs_id,
                 crs_digest: crs_info.crs_digest,
-                max_num_bits: crs_info.max_num_bits,
                 eip712_domain,
             })
         })
@@ -451,10 +449,10 @@ impl<
             .iter()
             .map(|crs_info| async {
                 let private_storage = self.crypto_storage.get_private_storage();
-                let mut storage = private_storage.lock().await;
+                let storage = private_storage.lock().await;
 
                 CrsGenMetadata::read_from_storage_at_epoch(
-                    &mut *storage,
+                    &*storage,
                     &crs_info.crs_id,
                     &previous_epoch,
                 )
@@ -628,6 +626,7 @@ impl<
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
     async fn store_reshared_keys(
@@ -751,7 +750,7 @@ impl<
             .zip_eq(verified_previous_epoch.crs_info.iter())
         {
             let crs_meta_data = compute_info_crs(
-                &sk,
+                sk,
                 &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
                 &crs,
@@ -1396,7 +1395,7 @@ impl<
                             crs_responses.push(CrsGenResult {
                                 request_id: Some(crs.crs_id.into()),
                                 crs_digest: crs.crs_digest,
-                                max_num_bits: crs.max_num_bits as u32,
+                                max_num_bits: crs.max_num_bits,
                                 external_signature: crs.external_signature,
                             });
                         }
@@ -1812,7 +1811,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1837,7 +1835,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1857,7 +1854,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1877,7 +1873,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1897,7 +1892,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1917,7 +1911,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1937,7 +1930,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1957,7 +1949,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1972,12 +1963,11 @@ pub(crate) mod tests {
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain),
+                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -1997,7 +1987,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };
@@ -2017,7 +2006,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: None,
                 crs_digest: vec![],
-                max_num_bits: 128,
                 domain: Some(domain.clone()),
             }],
         };

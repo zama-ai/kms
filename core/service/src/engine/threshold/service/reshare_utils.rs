@@ -566,7 +566,7 @@ async fn fetch_public_crs_materials_from_peers<
     crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
     crs_id: &RequestId,
     context_id: &ContextId,
-    crs_digests: &Vec<u8>,
+    crs_digests: &[u8],
     ro_storage_getter: &G,
 ) -> anyhow::Result<CompactPkeCrs> {
     // fetch the context info
@@ -643,7 +643,7 @@ pub(crate) async fn get_verified_crs_material<
     request_id: &RequestId,
     crs_id: &RequestId,
     context_id: &ContextId,
-    crs_digest: &Vec<u8>,
+    crs_digest: &[u8],
     ro_storage_getter: &G,
 ) -> Result<CompactPkeCrs, MetricedError> {
     // Load raw bytes from own public storage

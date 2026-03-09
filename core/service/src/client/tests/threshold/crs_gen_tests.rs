@@ -143,7 +143,7 @@ pub async fn run_crs(
     let dkg_param: WrappedDKGParams = parameter.into();
     let domain = dummy_domain();
     let crs_req = internal_client
-        .crs_gen_request(crs_req_id, None, max_bits, Some(parameter), &domain)
+        .crs_gen_request(crs_req_id, None, None, max_bits, Some(parameter), &domain)
         .unwrap();
 
     let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
@@ -275,7 +275,6 @@ pub async fn wait_for_crsgen_result(
         results.push(CrsInfo {
             crs_id: ref_response.request_id,
             crs_digest: ref_response.crs_digest,
-            max_num_bits: ref_response.max_num_bits,
             domain: domain_msg,
         });
 

@@ -4,8 +4,9 @@ use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
-use crate::engine::threshold::service::new_real_threshold_kms;
+use crate::engine::threshold::service::{new_real_threshold_kms, RealThresholdKms};
 use crate::engine::{run_server, Shutdown};
+use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
@@ -38,6 +39,7 @@ use tonic::server::NamedService;
 use tonic::transport::{Channel, Uri};
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
+use tonic_health::server::HealthReporter;
 use tonic_health::ServingStatus;
 
 #[cfg(feature = "slow_tests")]
@@ -377,7 +379,12 @@ pub async fn setup_threshold_with_custom_peers<
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
-            let server = new_real_threshold_kms(
+            // Note: explicit some of the types to avoid clippy complaining
+            let server: anyhow::Result<(
+                RealThresholdKms<PubS, PrivS>,
+                (HealthReporter, _),
+                MetaStoreStatusServiceImpl,
+            )> = new_real_threshold_kms(
                 core_config,
                 cur_pub_storage,
                 cur_priv_storage,

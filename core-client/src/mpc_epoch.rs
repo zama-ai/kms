@@ -73,11 +73,30 @@ impl PreviousEpochParameters {
             })
             .collect::<Vec<_>>();
 
-        PreviousEpochInfo {
+        let crs_info = self
+            .previous_crs
+            .iter()
+            .map(|previous_crs_info| kms_grpc::kms::v1::CrsInfo {
+                crs_id: Some(previous_crs_info.crs_id.into()),
+                crs_digest: hex::decode(previous_crs_info.digest.clone()).unwrap_or_else(|e| {
+                    panic!(
+                        "Unable to decode the provdided crs digest {:?}: {:?}",
+                        previous_crs_info.digest, e
+                    )
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            })
+            .collect::<Vec<_>>();
+
+        let resp = PreviousEpochInfo {
             context_id: Some(self.context_id.into()),
             epoch_id: Some(self.epoch_id.into()),
             keys_info,
-        }
+            crs_info,
+        };
+
+        println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
+        resp
     }
 }
 

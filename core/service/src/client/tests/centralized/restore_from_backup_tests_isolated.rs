@@ -272,7 +272,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         max_num_bits: Some(16),
         domain: Some(domain_msg),
         context_id: None,
-        epoch_id: Some(*DEFAULT_EPOCH_ID.into()),
+        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         extra_data: vec![],
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;

@@ -784,9 +784,6 @@ message CrsInfo {
   // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
   bytes crs_digest = 2;
 
-  // This is the maximum number of bits that can be proven.
-  uint32 max_num_bits = 3;
-
   // The EIP712 domain from the initial CrsGenRequest
   Eip712DomainMsg domain = 4;
 }

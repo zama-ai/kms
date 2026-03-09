@@ -364,6 +364,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
     let req = internal_client.crs_gen_request(
         &req_id_1,
         None,
+        None,
         Some(16),
         Some(FheParameter::Test),
         &domain,
@@ -377,6 +378,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
     let req_id_2 = derive_request_id("test_ratelimiter_isolated_2")?;
     let req_2 = internal_client.crs_gen_request(
         &req_id_2,
+        None,
         None,
         Some(1),
         Some(FheParameter::Test),

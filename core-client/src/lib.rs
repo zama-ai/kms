@@ -622,6 +622,10 @@ pub struct InsecureKeyGenParameters {
 pub struct CrsParameters {
     #[clap(long, short = 'm')]
     pub max_num_bits: u32,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -725,6 +729,13 @@ pub struct PreviousKeyInfo {
     pub key_digest: DigestKeySet,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreviousCrsInfo {
+    pub crs_id: RequestId,
+
+    pub digest: String,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct PreviousEpochParameters {
     #[clap(long)]
@@ -736,6 +747,9 @@ pub struct PreviousEpochParameters {
     /// Information about the keys to reshare in the new epoch.
     #[clap(long)]
     pub previous_keys: Vec<PreviousKeyInfo>,
+
+    #[clap(long)]
+    pub previous_crs: Vec<PreviousCrsInfo>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -910,6 +924,7 @@ impl FromStr for PreviousEpochParameters {
         let mut context_id = None;
         let mut epoch_id = None;
         let mut previous_keys = Vec::new();
+        let mut previous_crs = Vec::new();
 
         let mut string_iterator = s.split(";");
 
@@ -967,6 +982,21 @@ impl FromStr for PreviousEpochParameters {
                         previous_keys,
                     });
                 }
+                "previous_crs" => {
+                    let value = value
+                        .strip_prefix('[')
+                        .and_then(|v| v.strip_suffix(']'))
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_crs value must be enclosed in square brackets: {}",
+                                value
+                            )
+                        })?;
+                    for crs_info_str in value.split(';') {
+                        previous_crs.push(crs_info_str.parse()?);
+                        string_iterator.next(); // Skip the semicolon separator
+                    }
+                }
                 _ => return Err(format!("Unknown field: {}", key)),
             }
         }
@@ -975,7 +1005,39 @@ impl FromStr for PreviousEpochParameters {
             context_id: context_id.ok_or("Missing context_id")?,
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
+            previous_crs,
         })
+    }
+}
+
+impl FromStr for PreviousCrsInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (crs_id_str, digest_str) = s
+            .split_once(',')
+            .ok_or_else(|| format!("Invalid key:value pair: {}", s))?;
+
+        // Parse Id
+        let (key, value) = crs_id_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key:value pair: {}", crs_id_str))?;
+
+        if key != "crs_id" {
+            return Err(format!("Unknown field: {}", key));
+        }
+        let crs_id = value.parse().map_err(|e| format!("Invalid crs_id: {e}"))?;
+
+        // Parse digest
+        let (key, value) = digest_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key:value pair: {}", digest_str))?;
+        if key != "digest" {
+            return Err(format!("Unknown field: {}", key));
+        }
+        let digest = value.to_string();
+
+        Ok(PreviousCrsInfo { crs_id, digest })
     }
 }
 
@@ -1671,7 +1733,11 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "insecure keygen done".to_string())]
         }
-        CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::CrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "CRS generation with parameter {}.",
@@ -1690,11 +1756,17 @@ pub async fn execute_cmd(
                 fhe_params,
                 false,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
         }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::InsecureCrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure CRS generation with parameter {}.",
@@ -1713,6 +1785,8 @@ pub async fn execute_cmd(
                 fhe_params,
                 true,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]

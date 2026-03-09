@@ -6,7 +6,7 @@ use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::CrsgenVerification;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS};
@@ -31,6 +31,8 @@ pub(crate) async fn do_crsgen(
     param: FheParameter,
     insecure: bool,
     destination_prefix: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -41,8 +43,14 @@ pub(crate) async fn do_crsgen(
         cc_conf.num_majority
     };
 
-    let crs_req =
-        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
+    let crs_req = internal_client.crs_gen_request(
+        &req_id,
+        context_id,
+        epoch_id,
+        max_num_bits,
+        Some(param),
+        &dummy_domain(),
+    )?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
