@@ -605,7 +605,7 @@ Required arguments:
  - `--new-epoch-id <EPOCH_ID>`: the ID of the epoch to be created.
  - `--new-context-id <CONTEXT_ID>`: the context ID for which the new epoch is created.
 
-Optional arguments (for resharing from a previous epoch). These must all be provided together or not at all:
+Optional argument `--previous-epoch-params` (for resharing from a previous epoch).
  - `context-id <PREV_CONTEXT_ID>`: the context ID of the previous epoch.
  - `epoch-id <PREV_EPOCH_ID>`: the epoch ID of the previous epoch.
  - `previous_keys`: An array with the information about the keys reshare:
