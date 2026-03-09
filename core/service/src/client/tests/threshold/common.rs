@@ -77,10 +77,17 @@ async fn threshold_handles_w_vaults(
         .unwrap();
     }
 
+    let priv_vaults: Vec<crate::vault::Vault> = priv_storage
+        .into_iter()
+        .map(|s| crate::vault::Vault {
+            storage: crate::vault::storage::StorageProxy::File(s),
+            keychain: None,
+        })
+        .collect();
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
         pub_storage,
-        priv_storage,
+        priv_vaults,
         vaults,
         run_prss,
         rate_limiter_conf,

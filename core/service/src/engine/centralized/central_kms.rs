@@ -859,19 +859,18 @@ impl<
 
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
         CM: ContextManager + Sync + Send + 'static,
         BO: BackupOperator + Sync + Send + 'static,
-    > CentralizedKms<PubS, PrivS, CM, BO>
+    > CentralizedKms<PubS, Vault, CM, BO>
 {
     pub async fn new(
         config: CoreConfig,
         public_storage: PubS,
-        mut private_storage: PrivS,
+        mut private_vault: Vault,
         backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
     ) -> anyhow::Result<(
-        RealCentralizedKms<PubS, PrivS>,
+        RealCentralizedKms<PubS, Vault>,
         (HealthReporter, HealthServer<impl Health>),
     )> {
         // Construct BaseKmsStruct from signing keys in storage
@@ -880,19 +879,19 @@ impl<
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
-        let base_kms = match get_core_signing_keys(&private_storage).await {
+        let base_kms = match get_core_signing_keys(&private_vault).await {
             Ok(sig_keys_map) => {
                 anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
                 if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
                     // Create default centralized context if needed
                     ensure_default_centralized_context_in_storage(
-                        &mut private_storage,
+                        &mut private_vault,
                         &default_sk,
                     )
                     .await?;
                 }
                 let context_map: HashMap<RequestId, ContextInfo> = read_all_data_versioned(
-                    &private_storage,
+                    &private_vault,
                     &PrivDataType::ContextInfo.to_string(),
                 )
                 .await?;
@@ -927,7 +926,7 @@ impl<
 
         let key_info: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
-                &private_storage,
+                &private_vault,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
@@ -946,7 +945,7 @@ impl<
             .map(|((id, _), info)| (id.to_owned(), info.public_key_info.to_owned()))
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
-            read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+            read_all_data_versioned(&private_vault, &PrivDataType::CrsInfo.to_string()).await?;
         // TODO also validate prss material against fhe keys
         // Validate recovery material against all verification keys in the base_kms
         for (cur_req_id, rec_material) in validation_material.iter() {
@@ -977,12 +976,12 @@ impl<
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
-            private_storage,
+            private_vault,
             backup_vault,
             key_info,
         );
 
-        let context_manager: CentralizedContextManager<PubS, PrivS> =
+        let context_manager: CentralizedContextManager<PubS, Vault> =
             CentralizedContextManager::new(
                 base_kms.new_instance().await,
                 crypto_storage.inner.clone(),
@@ -1179,7 +1178,8 @@ pub(crate) mod tests {
         delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
         store_versioned_at_request_id, StorageExt,
     };
-    use crate::vault::storage::{file::FileStorage, ram::RamStorage};
+    use crate::vault::storage::{file::FileStorage, ram::RamStorage, StorageProxy};
+    use crate::vault::Vault;
     use aes_prng::AesRng;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -1545,14 +1545,20 @@ pub(crate) mod tests {
         };
         let config = init_conf("config/default_centralized.toml").unwrap();
         let kms = {
+            let priv_ram =
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
+                    .await
+                    .unwrap();
+            let private_vault = Vault {
+                storage: StorageProxy::Ram(priv_ram),
+                keychain: None,
+            };
             let (inner, _health_service) = RealCentralizedKms::new(
                 config,
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
-                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
-                    .await
-                    .unwrap(),
+                private_vault,
                 None,
                 None,
             )
@@ -1773,14 +1779,20 @@ pub(crate) mod tests {
 
         let kms = {
             let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
-            let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
+            let priv_ram =
+                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
+                    .await
+                    .unwrap();
+            let private_vault = Vault {
+                storage: StorageProxy::Ram(priv_ram),
+                keychain: None,
+            };
+            let (inner, _health_service) = RealCentralizedKms::<RamStorage, Vault>::new(
                 core_config,
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
-                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
-                    .await
-                    .unwrap(),
+                private_vault,
                 None,
                 None,
             )

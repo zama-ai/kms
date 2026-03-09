@@ -77,7 +77,8 @@ use crate::{
             crypto_material::{
                 get_core_signing_keys, get_core_verification_keys, ThresholdCryptoMaterialStorage,
             },
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage,
+            StorageReader,
         },
         Vault,
     },
@@ -340,24 +341,23 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 >;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, F>(
+pub async fn new_real_threshold_kms<PubS, F>(
     config: CoreConfig,
     public_storage: PubS,
-    mut private_storage: PrivS,
-    backup_storage: Option<Vault>,
+    mut private_vault: Vault,
+    backup_vault: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     private_vault_root_key_measurements: Option<Arc<RootKeyMeasurements>>,
     run_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS>,
+    RealThresholdKms<PubS, Vault>,
     (HealthReporter, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
     PubS: Storage + Send + Sync + 'static,
-    PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
@@ -376,13 +376,13 @@ where
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
-    let base_kms = match get_core_signing_keys(&private_storage).await {
+    let base_kms = match get_core_signing_keys(&private_vault).await {
         Ok(sig_keys_map) => {
             anyhow::ensure!(!sig_keys_map.is_empty(), "No signing keys found in storage");
             if let Some(default_sk) = sig_keys_map.get(&DEFAULT_MPC_CONTEXT) {
                 // Create default context if needed
                 overwrite_default_threshold_context_in_storage(
-                    &mut private_storage,
+                    &mut private_vault,
                     threshold_config,
                     &default_sk.verf_key(),
                 )
@@ -390,7 +390,7 @@ where
             }
 
             let context_map: HashMap<RequestId, ContextInfo> =
-                read_all_data_versioned(&private_storage, &PrivDataType::ContextInfo.to_string())
+                read_all_data_versioned(&private_vault, &PrivDataType::ContextInfo.to_string())
                     .await?;
 
             // Validate that contexts exist for each key
@@ -440,7 +440,7 @@ where
     // Build TLS config for MPC communication
     let tls_config = match &threshold_config.tls {
         Some(tls_conf) => {
-            let sig_keys = get_core_signing_keys(&private_storage).await?;
+            let sig_keys = get_core_signing_keys(&private_vault).await?;
             let (first_context_id, first_sk) = sig_keys
                 .into_iter()
                 .next()
@@ -482,7 +482,7 @@ where
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
         read_all_data_from_all_epochs_versioned(
-            &private_storage,
+            &private_vault,
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await?;
@@ -496,16 +496,21 @@ where
         if !cur_rec_material.validate(&verf_key) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
-        // Validate keychain recovery material now that we have the verification key
+    }
+    // Validate keychain recovery material now that we have the verification key
+    for cur_context_id in base_kms.all_context_ids() {
         if let Some(ref keychain) = private_vault.keychain {
-            keychain.validate_recovery_material(&base_kms.get_verf_key(&context_id))?;
+            keychain
+                .validate_recovery_material(base_kms.get_verf_key(&cur_context_id)?.as_ref())?;
         }
         if let Some(ref vault) = backup_vault {
             if let Some(ref keychain) = vault.keychain {
-                keychain.validate_recovery_material(&base_kms.get_verf_key(&))?;
+                keychain
+                    .validate_recovery_material(base_kms.get_verf_key(&cur_context_id)?.as_ref())?;
             }
         }
     }
+
     // Build public_key_info map
     for ((id, _), info) in &key_info_versioned {
         public_key_info.insert(*id, info.meta_data.clone());
@@ -520,7 +525,7 @@ where
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+        read_all_data_versioned(&private_vault, &PrivDataType::CrsInfo.to_string()).await?;
 
     sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
@@ -638,12 +643,12 @@ where
     )));
     let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
 
-    let private_storage_info = private_storage.info();
+    let private_vault_info = private_vault.info();
 
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
-        private_storage,
-        backup_storage,
+        private_vault,
+        backup_vault,
         key_info_versioned,
     );
 
@@ -660,7 +665,7 @@ where
         tonic_health::server::health_reporter();
     // We are only serving after initialization
     core_service_health_reporter
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, Vault>>>()
         .await;
 
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
@@ -705,14 +710,14 @@ where
         if let Err(e) = epoch_manager.init_legacy_prss_from_storage().await {
             tracing::warn!(
                 "Could not read legacy PRSS Setup from private storage {:?}: {}.",
-                private_storage_info,
+                private_vault_info,
                 e
             );
         }
         if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
             tracing::warn!(
                 "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
-                private_storage_info,
+                private_vault_info,
                 e
             );
         }
@@ -723,7 +728,7 @@ where
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-            private_storage_info,
+            private_vault_info,
         );
         epoch_manager
             .init_prss(&default_context_id, &epoch_id_prss)

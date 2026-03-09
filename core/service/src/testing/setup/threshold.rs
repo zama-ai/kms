@@ -391,10 +391,17 @@ impl ThresholdTestEnvBuilder {
             test_material_path: Some(material_dir.path()),
         };
 
+        let priv_vaults: Vec<crate::vault::Vault> = priv_storages
+            .into_iter()
+            .map(|s| crate::vault::Vault {
+                storage: crate::vault::storage::StorageProxy::File(s),
+                keychain: None,
+            })
+            .collect();
         let (servers, clients) = crate::client::test_tools::setup_threshold_isolated(
             threshold,
             pub_storages,
-            priv_storages,
+            priv_vaults,
             vaults,
             config,
         )

@@ -148,13 +148,18 @@ async fn test_largecipher() {
         new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let priv_ram = new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, &epoch_id)
+        .await
+        .unwrap();
+    let priv_vault = crate::vault::Vault {
+        storage: crate::vault::storage::StorageProxy::Ram(priv_ram),
+        keychain: None,
+    };
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
         new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
             .await
             .unwrap(),
-        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, &epoch_id)
-            .await
-            .unwrap(),
+        priv_vault,
         None,
         Some(rate_limiter_conf),
     )

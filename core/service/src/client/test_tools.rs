@@ -7,8 +7,7 @@ use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::{file::FileStorage, Storage, StorageType};
-use crate::vault::storage::{make_storage, StorageExt};
+use crate::vault::storage::{file::FileStorage, make_storage, Storage, StorageProxy, StorageType};
 use crate::vault::Vault;
 use crate::{
     conf::{
@@ -44,11 +43,10 @@ const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
 pub async fn setup_threshold_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -95,11 +93,10 @@ pub async fn setup_threshold_no_client<
     // a vector of sender that will trigger shutdown of core/threshold servers
     let mut mpc_shutdown_txs = Vec::new();
 
-    for (i, (mpc_listener, _mpc_port), cur_vault) in
-        itertools::izip!(1..=num_parties, mpc_listeners.into_iter(), vaults)
+    for (i, (mpc_listener, _mpc_port), cur_vault, cur_priv_storage) in
+        itertools::izip!(1..=num_parties, mpc_listeners.into_iter(), vaults, priv_storage)
     {
         let cur_pub_storage = pub_storage[i - 1].to_owned();
-        let cur_priv_storage = priv_storage[i - 1].to_owned();
         let service_config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
             listen_port: service_ports[i - 1],
@@ -253,11 +250,10 @@ pub async fn setup_threshold_no_client<
 /// ```
 pub async fn setup_threshold_with_custom_peers<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)>, // (my_id, threshold, peers, peer_server_indices)
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -294,11 +290,10 @@ pub async fn setup_threshold_with_custom_peers<
 
     for (
         idx,
-        ((my_id, threshold, peers, peer_server_indices), (mpc_listener, _mpc_port), cur_vault),
-    ) in itertools::izip!(server_configs.iter(), mpc_listeners.into_iter(), vaults).enumerate()
+        ((my_id, threshold, peers, peer_server_indices), (mpc_listener, _mpc_port), cur_vault, cur_priv_storage),
+    ) in itertools::izip!(server_configs.iter(), mpc_listeners.into_iter(), vaults, priv_storage).enumerate()
     {
         let cur_pub_storage = pub_storage[idx].to_owned();
-        let cur_priv_storage = priv_storage[idx].to_owned();
         let service_config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
             listen_port: service_ports[idx],
@@ -607,11 +602,10 @@ pub struct ThresholdTestConfig<'a> {
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_threshold_isolated<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     config: ThresholdTestConfig<'_>,
 ) -> (
@@ -621,7 +615,7 @@ pub async fn setup_threshold_isolated<
     let num_parties = priv_storage.len();
 
     // Setup the threshold scheme
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_threshold_no_client::<PubS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -650,11 +644,10 @@ pub async fn setup_threshold_isolated<
 
 pub async fn setup_threshold<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -665,7 +658,7 @@ pub async fn setup_threshold<
 ) {
     let num_parties = priv_storage.len();
     // Setup the threshold scheme with lazy PRSS generation
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_threshold_no_client::<PubS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -694,10 +687,9 @@ pub async fn setup_threshold<
 /// Setup a client and a server running with non-persistent storage.
 pub async fn setup_centralized_no_client<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
-    priv_storage: PrivS,
+    priv_storage: Vault,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
@@ -750,10 +742,9 @@ pub async fn setup_centralized_no_client<
 
 pub(crate) async fn setup_centralized<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
-    priv_storage: PrivS,
+    priv_storage: Vault,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (
@@ -789,8 +780,12 @@ pub async fn central_handle_w_vault(
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 
+    let priv_vault = Vault {
+        storage: StorageProxy::File(priv_storage),
+        keychain: None,
+    };
     let (kms_server, kms_client) =
-        setup_centralized(pub_storage, priv_storage, backup_vault, rate_limiter_conf).await;
+        setup_centralized(pub_storage, priv_vault, backup_vault, rate_limiter_conf).await;
     let pub_storage = HashMap::from_iter([(
         1,
         FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),

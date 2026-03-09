@@ -148,9 +148,13 @@ impl CentralizedTestEnvBuilder {
             None
         };
 
+        let priv_vault = crate::vault::Vault {
+            storage: crate::vault::storage::StorageProxy::File(priv_storage),
+            keychain: None,
+        };
         let (server, client) = crate::client::test_tools::setup_centralized(
             pub_storage,
-            priv_storage,
+            priv_vault,
             backup_vault,
             self.rate_limiter_conf,
         )
