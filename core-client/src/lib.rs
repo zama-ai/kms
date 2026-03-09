@@ -920,7 +920,6 @@ impl FromStr for PreviousEpochParameters {
 
             match key {
                 "context_id" => {
-                    println!("Parsing context_id: {}", value);
                     context_id = Some(
                         value
                             .parse()
@@ -931,23 +930,48 @@ impl FromStr for PreviousEpochParameters {
                     epoch_id = Some(
                         value
                             .parse()
-                            .map_err(|e| format!("Invalid epoch_id: {e}"))?,
+                            .map_err(|e| format!("Invalid epoch_id: {e}. {value}"))?,
                     )
                 }
                 "previous_keys" => {
-                    let value = value
+                    let mut values = vec![value.to_string()];
+                    for next_value in string_iterator {
+                        values.push(next_value.to_string());
+                        if next_value.ends_with(']') {
+                            break;
+                        }
+                    }
+                    let first_value = values.first_mut().expect("previous_keys value is missing");
+                    *first_value = first_value
                         .strip_prefix('[')
-                        .and_then(|v| v.strip_suffix(']'))
                         .ok_or_else(|| {
                             format!(
                                 "previous_keys value must be enclosed in square brackets: {}",
                                 value
                             )
-                        })?;
-                    for key_info_str in value.split(';') {
+                        })?
+                        .to_string();
+
+                    let last_value = values.last_mut().expect("previous_keys value is missing");
+                    *last_value = last_value
+                        .strip_suffix(']')
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_keys value must be enclosed in square brackets: {}",
+                                value
+                            )
+                        })?
+                        .to_string();
+
+                    for key_info_str in values {
                         previous_keys.push(key_info_str.parse()?);
-                        string_iterator.next(); // Skip the semicolon separator
                     }
+
+                    return Ok(PreviousEpochParameters {
+                        context_id: context_id.ok_or("Missing context_id")?,
+                        epoch_id: epoch_id.ok_or("Missing epoch_id")?,
+                        previous_keys,
+                    });
                 }
                 _ => return Err(format!("Unknown field: {}", key)),
             }
@@ -1023,11 +1047,13 @@ impl FromStr for PreviousKeyInfo {
             }
         }
 
-        assert_eq!(
-            server_key_digest.is_some(),
-            public_key_digest.is_some(),
-            "If server_key_digest or public_key_digest is provided, both must be provided   "
-        );
+        if server_key_digest.is_some() != public_key_digest.is_some() {
+            return Err(
+                "If server_key_digest or public_key_digest is provided, both must be provided   "
+                    .to_owned(),
+            );
+        }
+
         let key_digest = if let Some(xof_digest) = xof_key_digest {
             DigestKeySet::CompressedKeySet(xof_digest)
         } else {
@@ -2183,5 +2209,77 @@ mod tests {
 
         // check that the fhe_params value from the env var ("Default") is read correctly, even if the toml contains "Test"
         assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
+    }
+
+    #[test]
+    fn test_parse_previous_key_info() {
+        let id1 = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id2 = "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id3 = "1112030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id4 = "1111030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id5 = "1111130405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id6 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        // Test the FromStr impl of PreviousEpochParameters
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
+
+        assert_eq!(parsed.context_id.to_string(), id1);
+        assert_eq!(parsed.epoch_id.to_string(), id2);
+        assert_eq!(parsed.previous_keys.len(), 2);
+        for key_info in parsed.previous_keys {
+            match key_info.key_digest {
+                DigestKeySet::CompressedKeySet(compressed) => {
+                    assert_eq!(key_info.key_id.to_string(), id5);
+                    assert_eq!(key_info.preproc_id.to_string(), id6);
+                    assert_eq!(compressed, "abc456")
+                }
+                DigestKeySet::NonCompressedKeySet(serverkey, pubkey) => {
+                    assert_eq!(key_info.key_id.to_string(), id3);
+                    assert_eq!(key_info.preproc_id.to_string(), id4);
+                    assert_eq!(serverkey, "abc123");
+                    assert_eq!(pubkey, "def123");
+                }
+            }
+        }
+
+        // Missing context_id should fail
+        let input_string = format!("epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing epoch_id should fail
+        let input_string = format!("context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing public key digest for non-compressed key set should fail
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing key_id in previous keys should fail
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing preproc_id in previous keys should fail
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Wrong ids test
+        let input_string = format!("context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
     }
 }

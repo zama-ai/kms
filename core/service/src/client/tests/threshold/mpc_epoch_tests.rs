@@ -78,7 +78,7 @@ pub(crate) async fn new_epoch_with_reshare(
     let mut key_ids = Vec::new();
     for key_id in 0..num_keys {
         let preproc_req_id: RequestId = derive_request_id(&format!(
-            "full_dkg_preproc_{amount_parties}_{key_id}_{parameters:?}"
+            "new_epoch_with_reshare_preproc_{amount_parties}_{key_id}_{parameters:?}"
         ))
         .unwrap();
         let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -95,7 +95,7 @@ pub(crate) async fn new_epoch_with_reshare(
         preproc_ids.push(preproc_req_id);
 
         let key_req_id: RequestId = derive_request_id(&format!(
-            "full_dkg_key_{amount_parties}_{key_id}_{parameters:?}"
+            "new_epoch_with_reshare_dkg_{amount_parties}_{key_id}_{parameters:?}"
         ))
         .unwrap();
         purge(
@@ -109,10 +109,11 @@ pub(crate) async fn new_epoch_with_reshare(
         key_ids.push(key_req_id);
     }
 
-    let new_epoch_id: EpochId =
-        derive_request_id(&format!("new_epoch_id__{amount_parties}_{parameters:?}"))
-            .unwrap()
-            .into();
+    let new_epoch_id: EpochId = derive_request_id(&format!(
+        "new_epoch_with_reshare_epoch_{amount_parties}_{parameters:?}"
+    ))
+    .unwrap()
+    .into();
     purge(
         None,
         None,

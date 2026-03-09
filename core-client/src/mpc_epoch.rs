@@ -73,14 +73,11 @@ impl PreviousEpochParameters {
             })
             .collect::<Vec<_>>();
 
-        let resp = PreviousEpochInfo {
+        PreviousEpochInfo {
             context_id: Some(self.context_id.into()),
             epoch_id: Some(self.epoch_id.into()),
             keys_info,
-        };
-
-        println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
-        resp
+        }
     }
 }
 
@@ -214,7 +211,7 @@ pub(crate) async fn do_new_epoch(
                         .expect("No preprocessing ID found in resharing response")
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(resp_preproc_ids, expected_preproc_ids,);
+            assert_eq!(resp_preproc_ids, expected_preproc_ids);
             response_vec.push((core_conf, resp));
         }
         let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
