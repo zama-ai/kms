@@ -67,7 +67,7 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_ext_data, parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
+            parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
             DSEP_USER_DECRYPTION,
         },
     },

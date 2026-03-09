@@ -52,11 +52,15 @@ impl Client {
     /// `min_agree_count` of the parties.
     pub async fn process_distributed_crs_result<S: StorageReader>(
         &self,
-        request_id: &RequestId,
+        crs_gen_req: CrsGenRequest,
         res_storage: Vec<(CrsGenResult, S)>,
         domain: &Eip712Domain,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
+        let request_id: RequestId = parse_optional_grpc_request_id(
+            &crs_gen_req.request_id,
+            RequestIdParsingErr::Other("invalid request ID in CRS generation request".to_string()),
+        )?;
         let mut verifying_pks = std::collections::HashSet::new();
         // counter of digest (digest -> usize)
         let mut hash_counter_map = HashMap::new();
@@ -77,7 +81,7 @@ impl Client {
         );
         for (result, storage) in res_storage {
             let pp: CompactPkeCrs = storage
-                .read_data(request_id, &PubDataType::CRS.to_string())
+                .read_data(&request_id, &PubDataType::CRS.to_string())
                 .await?;
 
             // check the result matches our request ID
@@ -106,8 +110,14 @@ impl Client {
 
             // check the signature
             match self.find_verifying_address(
-                &CrsgenVerification::new(request_id, max_num_bits, actual_digest.clone()),
+                &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
                 domain,
+                &crs_gen_req
+                    .context_id
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("No context id in CRS gen request"))?
+                    .try_into()?,
+                // TODO need extra data or request to find context id
                 &result.external_signature,
             ) {
                 Some(pk) => {
@@ -172,6 +182,7 @@ impl Client {
     // see https://github.com/zama-ai/kms-core/issues/911
     pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
+        crs_gen_req: &CrsGenRequest,
         crs_gen_result: &CrsGenResult,
         domain: &Eip712Domain,
         storage: &R,
@@ -198,6 +209,11 @@ impl Client {
             .verify_external_signature(
                 &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
                 domain,
+                &crs_gen_req
+                    .context_id
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("No context id in CRS gen request"))?
+                    .try_into()?,
                 &crs_gen_result.external_signature,
             )
             .is_err()

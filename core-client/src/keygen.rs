@@ -481,7 +481,9 @@ pub(crate) async fn do_preproc(
         keyset_config,
         &domain,
     )?;
-
+    let base_req = pp_req
+        .base_request
+        .ok_or_else(|| anyhow::anyhow!("Preproc request should be present"))?;
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
@@ -515,10 +517,10 @@ pub(crate) async fn do_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, &base_req, max_iter).await?;
     for response in responses {
         // this part also verifies the signature
-        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+        internal_client.process_preproc_response(&base_req, &domain, &response)?;
     }
 
     Ok(req_id)
@@ -551,6 +553,9 @@ pub(crate) async fn do_partial_preproc(
             store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
         }),
     )?;
+    let base_req = pp_req
+        .base_request
+        .ok_or_else(|| anyhow::anyhow!("Partial preproc request should be present"))?;
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -585,9 +590,9 @@ pub(crate) async fn do_partial_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, &base_req, max_iter).await?;
     for response in responses {
-        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+        internal_client.process_preproc_response(&base_req, &domain, &response)?;
     }
 
     Ok(req_id)
@@ -595,9 +600,15 @@ pub(crate) async fn do_partial_preproc(
 
 pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    request_id: RequestId,
+    preproc_req: &KeyGenPreprocRequest,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
+    let request_id = preproc_req
+        .base_request
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Preproc request should have a base request"))?
+        .request_id
+        .try_into()?;
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, client) in core_endpoints.iter() {
