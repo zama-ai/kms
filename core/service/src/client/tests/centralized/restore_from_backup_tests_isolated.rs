@@ -75,6 +75,7 @@ async fn key_gen_isolated(
         keyset_added_info: None,
         context_id: None,
         epoch_id: None,
+        extra_data: vec![],
     };
 
     let keygen_resp = client.key_gen(tonic::Request::new(keygen_req)).await?;
@@ -269,6 +270,8 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         max_num_bits: Some(16),
         domain: Some(domain_msg),
         context_id: None,
+        epoch_id: None,
+        extra_data: vec![],
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
     assert_eq!(resp.into_inner(), Empty {});

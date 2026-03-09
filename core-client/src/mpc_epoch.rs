@@ -201,6 +201,7 @@ pub(crate) async fn do_new_epoch(
                 &key_id,
                 &response.1.external_signature,
                 &dummy_domain(),
+                vec![],
                 kms_addrs,
             )?;
         }

@@ -187,6 +187,7 @@ impl<
         >,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         metric_tags: Vec<(&'static str, String)>,
     ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
         let keys = fhe_keys;
@@ -381,8 +382,6 @@ impl<
             degree: threshold as u32,
         };
 
-        // NOTE: extra_data is not used in the current implementation
-        let extra_data = vec![];
         let external_signature = compute_external_user_decrypt_signature(
             &signcryption_key.signing_key,
             &payload,
@@ -466,6 +465,7 @@ impl<
             context_id,
             epoch_id,
             domain,
+            extra_data,
         ) = validate_user_decrypt_req(inner.as_ref())?;
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
@@ -548,6 +548,7 @@ impl<
                 fhe_keys_rlock,
                 dec_mode,
                 &domain,
+                extra_data,
                 metric_tags,
             )
             .await;
