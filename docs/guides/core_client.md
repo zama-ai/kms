@@ -608,7 +608,7 @@ Required arguments:
 Optional argument `--previous-epoch-params` (for resharing from a previous epoch).
  - `context-id <PREV_CONTEXT_ID>`: the context ID of the previous epoch.
  - `epoch-id <PREV_EPOCH_ID>`: the epoch ID of the previous epoch.
- - `previous_keys`: An array with the information about the keys reshare:
+ - `previous_keys`: An array (enclosed in square brackets) with the information about the keys to reshare (each key is separated by a semicolon, each information concerning a key is separated by a coma):
     - `key-id <KEY_ID>`: the ID of the key
     - `preproc-id <PREPROC_ID>`: the preprocessing ID used to generate the key.
     - `server-key-digest <DIGEST>`: the hex-encoded server key digest to use for resharing (if the key is not compressed).
