@@ -436,7 +436,6 @@ where
 
     // clone the verifier for later use
     let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
-    let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
@@ -445,7 +444,6 @@ where
             threshold_health_reporter.set_serving::<GrpcServer>().await;
             // await is the same as recv on a oneshot channel
             _ = rx.await;
-            manager_clone.write().await.sending_service.shutdown();
             // Observe that the following is the shut down of the core (which communicates with the other cores)
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
