@@ -437,7 +437,7 @@ pub(crate) fn select_most_common_public_dec(
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
 fn validate_public_decrypt_responses(
-    server_pks: &HashMap<ContextId, HashSet<PublicSigKey>>,
+    server_pks: &HashMap<u32, HashMap<ContextId, PublicSigKey>>,
     agg_resp: &[PublicDecryptionResponse],
     amount_servers: usize,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
@@ -462,33 +462,42 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
-        // Find the correct verf key
-        let cur_verf_key = match server_pks.get(&context_id) {
-            Some(keys) => {
-                // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-                let cur_verf_key: PublicSigKey =
-                    bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
-                if keys.contains(&cur_verf_key) {
-                    cur_verf_key
-                } else {
-                    tracing::warn!("Server verification key {} is not in the set of permissible keys for context ID {}", hex::encode(&cur_payload.verification_key), context_id);
-                    continue;
-                }
-            }
-            None => {
-                tracing::warn!("Context ID {} in public decryption response does not match any known context ID", context_id);
-                continue;
-            }
-        };
 
-        // check the uniqueness of verification key
-        if verification_keys.contains(&cur_verf_key) {
+        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+        let mut found_new_verf_key = false;
+        // Validate the verf key
+        for (cur_id, server_addrs) in server_pks {
+            match server_addrs.get(&context_id) {
+                Some(testing_key) => {
+                    if testing_key == &cur_verf_key {
+                        if !verification_keys.contains(&cur_verf_key) {
+                            tracing::warn!(
+                                "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
+                                hex::encode(&cur_payload.verification_key),
+                                cur_id
+                            );
+                        } else {
+                            found_new_verf_key = true;
+                        }
+                        // We found the key so break the inner loop
+                        break;
+                    }
+                }
+                None => {
+                    tracing::warn!("Context ID {} in public decryption response does not match any known context ID", context_id);
+                }
+            };
+        }
+        if !found_new_verf_key {
             tracing::warn!(
-                "At least two servers gave the same verification key {}",
+                "Verification key {} in public decryption response does not match any, not already validated, verification key for context ID {}",
                 hex::encode(&cur_payload.verification_key),
+                context_id
             );
             continue;
         }
+
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
         if !validate_public_decrypt_meta_data(
@@ -521,7 +530,7 @@ fn validate_public_decrypt_responses(
 /// In addition, if the original request is provided:
 /// - The response matches the original request
 pub(crate) fn validate_public_decrypt_responses_against_request(
-    server_pks: &HashMap<ContextId, HashSet<PublicSigKey>>,
+    server_pks: &HashMap<u32, HashMap<ContextId, PublicSigKey>>,
     request: Option<PublicDecryptionRequest>,
     agg_resp: &[PublicDecryptionResponse],
     amount_servers: usize,
