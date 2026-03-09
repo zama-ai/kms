@@ -2003,7 +2003,7 @@ mod tests {
         async fn test_migrate_threshold_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_migrate_threshold_s3),
             )
             .await;
             test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
@@ -2013,7 +2013,7 @@ mod tests {
         async fn test_migrate_centralized_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_migrate_centralized_s3),
             )
             .await;
             test_migrate_legacy_fhe_keys_centralized(&mut storage).await;
@@ -2023,7 +2023,7 @@ mod tests {
         async fn test_migrate_skips_existing_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_migrate_skips_existing_s3),
             )
             .await;
             test_migrate_legacy_fhe_keys_skips_existing(&mut storage).await;
@@ -2033,7 +2033,7 @@ mod tests {
         async fn test_migrate_no_legacy_data_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_migrate_no_legacy_data_s3),
             )
             .await;
             test_migrate_legacy_fhe_keys_no_legacy_data(&mut storage).await;
@@ -2043,7 +2043,7 @@ mod tests {
         async fn test_migrate_idempotent_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_migrate_idempotent_s3),
             )
             .await;
             test_migrate_legacy_fhe_keys_idempotent(&mut storage).await;
@@ -2053,7 +2053,7 @@ mod tests {
         async fn test_after_0_13_x_threshold_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_after_0_13_x_threshold_s3),
             )
             .await;
             test_migrate_fhe_keys_after_0_13_x_threshold(&mut storage).await;
@@ -2063,7 +2063,7 @@ mod tests {
         async fn test_after_0_13_x_centralized_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_after_0_13_x_centralized_s3),
             )
             .await;
             test_migrate_fhe_keys_after_0_13_x_centralized(&mut storage).await;
@@ -2073,7 +2073,7 @@ mod tests {
         async fn test_after_0_13_x_no_legacy_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_after_0_13_x_no_legacy_s3),
             )
             .await;
             test_migrate_fhe_keys_after_0_13_x_no_legacy(&mut storage).await;
@@ -2083,7 +2083,7 @@ mod tests {
         async fn test_after_0_13_x_idempotent_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_after_0_13_x_idempotent_s3),
             )
             .await;
             test_migrate_fhe_keys_after_0_13_x_idempotent(&mut storage).await;
@@ -2093,7 +2093,7 @@ mod tests {
         async fn test_0_13_x_to_0_13_10_threshold_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_0_13_x_to_0_13_10_threshold_s3),
             )
             .await;
             test_migrate_fhe_keys_0_13_x_to_0_13_10_threshold(&mut storage).await;
@@ -2103,7 +2103,7 @@ mod tests {
         async fn test_0_13_x_to_0_13_10_centralized_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_0_13_x_to_0_13_10_centralized_s3),
             )
             .await;
             test_migrate_fhe_keys_0_13_x_to_0_13_10_centralized(&mut storage).await;
@@ -2113,7 +2113,7 @@ mod tests {
         async fn test_0_13_x_to_0_13_10_no_legacy_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_0_13_x_to_0_13_10_no_legacy_s3),
             )
             .await;
             test_migrate_fhe_keys_0_13_x_to_0_13_10_no_legacy(&mut storage).await;
@@ -2123,7 +2123,7 @@ mod tests {
         async fn test_0_13_x_to_0_13_10_skips_existing_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_0_13_x_to_0_13_10_skips_existing_s3),
             )
             .await;
             test_migrate_fhe_keys_0_13_x_to_0_13_10_skips_existing(&mut storage).await;
@@ -2133,7 +2133,7 @@ mod tests {
         async fn test_0_13_x_to_0_13_10_idempotent_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_0_13_x_to_0_13_10_idempotent_s3),
             )
             .await;
             test_migrate_fhe_keys_0_13_x_to_0_13_10_idempotent(&mut storage).await;
@@ -2143,7 +2143,7 @@ mod tests {
         async fn test_remove_old_keys_threshold_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_remove_old_keys_threshold_s3),
             )
             .await;
             test_remove_old_keys_for_0_13_20_threshold(&mut storage).await;
@@ -2153,7 +2153,7 @@ mod tests {
         async fn test_remove_old_keys_centralized_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_remove_old_keys_centralized_s3),
             )
             .await;
             test_remove_old_keys_for_0_13_20_centralized(&mut storage).await;
@@ -2163,7 +2163,7 @@ mod tests {
         async fn test_remove_old_keys_no_legacy_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_remove_old_keys_no_legacy_s3),
             )
             .await;
             test_remove_old_keys_for_0_13_20_no_legacy(&mut storage).await;
@@ -2173,7 +2173,7 @@ mod tests {
         async fn test_remove_old_keys_skips_without_new_epoch_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_overwrite_logic_files),
+                std::stringify!(test_remove_old_keys_skips_without_new_epoch_s3),
             )
             .await;
             test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
