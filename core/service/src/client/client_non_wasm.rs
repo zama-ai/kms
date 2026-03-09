@@ -1,4 +1,3 @@
-use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
 use crate::cryptography::signatures::{recover_address_from_ext_signature, PublicSigKey};
 use crate::vault::storage::{
@@ -9,11 +8,8 @@ use crate::vault::storage::{
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use attestation_doc_validation::nsm::Hash;
-use futures_util::future::{try_join_all, TryFutureExt};
-use itertools::Itertools;
 use kms_grpc::ContextId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -55,16 +51,10 @@ impl Client {
         params: &DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
-        let mut verf_keys: HashMap<ContextId, HashSet<PublicSigKey>> = HashMap::new();
-        for storage in pub_storages.values() {
+        let mut verf_keys: HashMap<u32, HashMap<ContextId, PublicSigKey>> = HashMap::new();
+        for (id, storage) in pub_storages.iter() {
             let pks = get_core_verification_keys(storage).await?;
-            for (cur_context_id, cur_pk) in pks {
-                if let Some(existing_pks) = verf_keys.get_mut(&cur_context_id) {
-                    existing_pks.insert(cur_pk);
-                } else {
-                    verf_keys.insert(cur_context_id, HashSet::from_iter([cur_pk]));
-                }
-            }
+            verf_keys.insert(*id, pks);
         }
 
         let client_pk = get_client_verification_key(&client_storage).await?;
@@ -84,10 +74,11 @@ impl Client {
         &self,
         data: &T,
         domain: &Eip712Domain,
+        context: &ContextId,
         external_sig: &[u8],
     ) -> anyhow::Result<()> {
         if self
-            .find_verifying_address(data, domain, external_sig)
+            .find_verifying_address(data, domain, context, external_sig)
             .is_some()
         {
             Ok(())
@@ -100,6 +91,7 @@ impl Client {
         &self,
         data: &T,
         domain: &Eip712Domain,
+        context: &ContextId,
         external_sig: &[u8],
     ) -> Option<alloy_primitives::Address> {
         let addr = if let Ok(a) = recover_address_from_ext_signature(data, domain, external_sig) {
@@ -108,9 +100,14 @@ impl Client {
             tracing::error!("Could not recover address from signature");
             return None;
         };
-        // todo depends on context id
-        self.get_server_addrs()
-            .into_values()
-            .find(|&verf_key| verf_key == addr)
+        let mut res = None;
+        for cur_server_adds in self.get_server_addrs().into_values() {
+            if let Some(cur_addr) = cur_server_adds.get(context) {
+                if cur_addr == &addr {
+                    res = Some(addr)
+                }
+            }
+        }
+        res
     }
 }

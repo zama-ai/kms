@@ -1,10 +1,10 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
-use kms_grpc::{ContextId, RequestId};
+use kms_grpc::{ContextId, };
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, };
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::*;
@@ -13,8 +13,8 @@ use wasm_bindgen::prelude::*;
 /// for everything else, we use the Pk variant.
 #[derive(Clone)]
 pub enum ServerIdentities {
-    Pks(HashMap<ContextId, HashSet<PublicSigKey>>),
-    Addrs(HashMap<ContextId, HashSet<alloy_primitives::Address>>),
+    Pks(HashMap<u32, HashMap<ContextId, PublicSigKey>>),
+    Addrs(HashMap<u32, HashMap<ContextId, alloy_primitives::Address>>),
 }
 
 impl ServerIdentities {
@@ -58,7 +58,7 @@ impl Client {
     /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
     /// from a [PublicStorage].
     ///
-    /// * `server_pks` - a map mapping a context ID to the total set of public keys that are acceptable for that context.
+    /// * `server_pks` - a map mapping server IDs to a map of context ID to the public key for that server and context.
     /// * `client_address` - the client wallet address.
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
@@ -69,7 +69,7 @@ impl Client {
     /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall.
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
-        server_pks: HashMap<ContextId, HashSet<PublicSigKey>>,
+        server_pks: HashMap<u32, HashMap<ContextId, PublicSigKey>>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
@@ -105,7 +105,15 @@ impl Client {
         match &self.server_identities {
             ServerIdentities::Pks(pks) => pks
                 .iter()
-                .map(|(i, pk_set)| (*i, pk_set.iter().map(|pk| pk.address()).collect()))
+                .map(|(i, pk_set)| {
+                    (
+                        *i,
+                        pk_set
+                            .iter()
+                            .map(|(context_id, pk)| (*context_id, pk.address()))
+                            .collect(),
+                    )
+                })
                 .collect(),
             ServerIdentities::Addrs(inner) => inner.clone(),
         }
