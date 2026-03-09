@@ -175,6 +175,12 @@ impl InternalKeySetConfig {
         Ok(keyset_id)
     }
 
+    pub fn use_existing_key_tag(&self) -> bool {
+        self.keyset_added_info
+            .as_ref()
+            .is_some_and(|info| info.use_existing_key_tag)
+    }
+
     pub fn get_existing_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
         let added_info = self
             .keyset_added_info

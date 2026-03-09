@@ -48,6 +48,7 @@ pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySet
 pub(crate) fn compressed_from_existing_keygen_config(
     existing_keyset_id: &RequestId,
     existing_epoch_id: &kms_grpc::identifiers::EpochId,
+    use_existing_key_tag: bool,
 ) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
@@ -63,6 +64,7 @@ pub(crate) fn compressed_from_existing_keygen_config(
             to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
             existing_epoch_id: Some((*existing_epoch_id).into()),
+            use_existing_key_tag,
         }),
     )
 }
@@ -83,6 +85,7 @@ pub(crate) fn decompression_keygen_config(
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
             existing_keyset_id: None,
             existing_epoch_id: None,
+            use_existing_key_tag: false,
         }),
     )
 }
