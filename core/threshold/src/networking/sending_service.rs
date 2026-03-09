@@ -336,17 +336,14 @@ impl SendingService for GrpcSendingService {
             ..Default::default()
         };
 
-        // 4. Single spawn with integrated error handling (eliminates double-spawn overhead)
-        tokio::spawn(async move {
-            Self::run_network_task(
-                receiver,
-                network_channel,
-                exponential_backoff,
-                other_role_kind,
-                aborted,
-            )
-            .await;
-        });
+        // 4. Spawns the sender in its own task and discard the handle
+        tokio::spawn(Self::run_network_task(
+            receiver,
+            network_channel,
+            exponential_backoff,
+            other_role_kind,
+            aborted,
+        ));
 
         Ok(sender)
     }
