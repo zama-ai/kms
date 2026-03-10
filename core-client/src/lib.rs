@@ -630,6 +630,8 @@ pub struct NewCustodianContextParameters {
     pub threshold: u32,
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
+    #[clap(long)]
+    pub mpc_context_id: ContextId,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -1780,6 +1782,7 @@ pub async fn execute_cmd(
                 &mut rng,
                 new_custodian_context_parameters.threshold,
                 setup_msgs,
+                new_custodian_context_parameters.mpc_context_id,
             )
             .await?;
             vec![(

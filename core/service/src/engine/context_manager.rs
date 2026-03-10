@@ -155,7 +155,7 @@ where
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
-            custodian_context.context_id,
+            custodian_context.custodian_context_id,
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
