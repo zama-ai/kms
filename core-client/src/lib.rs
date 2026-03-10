@@ -934,34 +934,28 @@ impl FromStr for PreviousEpochParameters {
                     )
                 }
                 "previous_keys" => {
-                    let mut values = vec![value.to_string()];
-                    for next_value in string_iterator {
-                        values.push(next_value.to_string());
-                        if next_value.ends_with(']') {
-                            break;
-                        }
-                    }
-                    let first_value = values.first_mut().expect("previous_keys value is missing");
-                    *first_value = first_value
+                    let mut values = vec![value
                         .strip_prefix('[')
                         .ok_or_else(|| {
                             format!(
-                                "previous_keys value must be enclosed in square brackets: {}",
+                                "previous_keys value must be enclosed in square brackets {}",
                                 value
                             )
                         })?
-                        .to_string();
-
-                    let last_value = values.last_mut().expect("previous_keys value is missing");
-                    *last_value = last_value
-                        .strip_suffix(']')
-                        .ok_or_else(|| {
-                            format!(
-                                "previous_keys value must be enclosed in square brackets: {}",
-                                value
-                            )
-                        })?
-                        .to_string();
+                        .to_string()];
+                    for next_value in string_iterator {
+                        if next_value.ends_with(']') {
+                            values.push(
+                                next_value
+                                    .to_string()
+                                    .strip_suffix(']')
+                                    .expect("we just checked the suffix is ]")
+                                    .to_string(),
+                            );
+                            break;
+                        }
+                        values.push(next_value.to_string());
+                    }
 
                     for key_info_str in values {
                         previous_keys.push(key_info_str.parse()?);
