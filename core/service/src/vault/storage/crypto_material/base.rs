@@ -159,8 +159,8 @@ where
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-        pub_data_type: &str,
-        priv_data_type: &str,
+        pub_data_type: &[String],
+        priv_data_type: &[String],
     ) -> anyhow::Result<bool> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
@@ -203,12 +203,16 @@ where
         key_id: &RequestId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<bool> {
+        let priv_types = vec![PrivDataType::FhePrivateKey.to_string()];
         let standard = self
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
-                &PubDataType::PublicKey.to_string(),
-                &PrivDataType::FhePrivateKey.to_string(),
+                &[
+                    PubDataType::PublicKey.to_string(),
+                    PubDataType::ServerKey.to_string(),
+                ],
+                &priv_types,
             )
             .await?;
         if standard {
@@ -218,8 +222,8 @@ where
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-            &PrivDataType::FhePrivateKey.to_string(),
+            &[PubDataType::CompressedXofKeySet.to_string()],
+            &priv_types,
         )
         .await
     }

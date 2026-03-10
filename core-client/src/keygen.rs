@@ -85,6 +85,7 @@ pub(crate) async fn do_keygen(
             .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
                 existing_keyset_id: Some(id.into()),
                 existing_epoch_id: shared_config.existing_epoch_id.map(Into::into),
+                use_existing_key_tag: shared_config.use_existing_key_tag,
                 ..Default::default()
             });
     let dkg_req = internal_client.key_gen_request(

@@ -10,9 +10,9 @@ cfg_if::cfg_if! {
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_keys,
+            calculate_max_num_bits, check_data_exists,  get_core_signing_keys,
         };
-        use crate::vault::storage::{store_versioned_at_request_and_epoch_id, StorageExt};
+        use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
         use std::sync::Arc;
@@ -472,32 +472,50 @@ where
     PubS: Storage,
     PrivS: StorageExt,
 {
-    // Check if data already exists in both storages
-    match check_data_exists_at_epoch(
-        pub_storage,
+    // Check if PUBLIC data already exists. If so, skip regeneration entirely.
+    //
+    // Server key generation uses the thread-local ShortintEngine CSPRNG
+    // (not the deterministic seed) in tfhe-rs, making it non-deterministic
+    // across calls. If PUB keys exist but PRIV was purged (e.g., for backup
+    // recovery tests), regenerating would create keys with different digests
+    // that don't match the existing PUB data (since store_data doesn't overwrite).
+    // The missing PRIV data will be restored from backup.
+    let pub_types = vec![
+        PubDataType::PublicKey.to_string(),
+        PubDataType::ServerKey.to_string(),
+    ];
+    let pub_complete = {
+        let mut all = true;
+        for t in &pub_types {
+            all &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
+            all &= data_exists(pub_storage, other_key_id, t)
+                .await
+                .unwrap_or(false);
+        }
+        all
+    };
+    if pub_complete {
+        log_data_exists(
+            priv_storage.info(),
+            Some(pub_storage.info()),
+            key_id,
+            "FHE keys",
+        );
+        return false;
+    }
+
+    // PUB data is incomplete — purge any leftover fragments and regenerate everything.
+    for t in &pub_types {
+        let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        let _ = delete_at_request_id(pub_storage, other_key_id, t).await;
+    }
+    let _ = delete_at_request_and_epoch_id(
         priv_storage,
         key_id,
         epoch_id,
-        &PubDataType::PublicKey.to_string(),
         &PrivDataType::FhePrivateKey.to_string(),
     )
-    .await
-    {
-        Ok(true) => {
-            log_data_exists(
-                priv_storage.info(),
-                Some(pub_storage.info()),
-                key_id,
-                "FHE keys",
-            );
-            return false;
-        }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            tracing::warn!("Error checking if FHE keys exist: {}", e);
-            // Continue with generation, assuming data doesn't exist
-        }
-    }
+    .await;
 
     // Get signing key with proper error handling
     let sks = match get_core_signing_keys(priv_storage).await {
@@ -1011,37 +1029,38 @@ where
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
 
+    // Check if PUBLIC data already exists for all parties. If so, skip entirely.
+    // See comment in ensure_central_keys_exist for why we only check PUB.
+    let pub_types = vec![
+        PubDataType::PublicKey.to_string(),
+        PubDataType::ServerKey.to_string(),
+    ];
     let mut all_data_exists = true;
-    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists_at_epoch(
-            pub_storage,
-            priv_storage,
-            key_id,
-            epoch_id,
-            &PubDataType::PublicKey.to_string(),
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-        {
-            Ok(true) => {
-                continue; // Data exists for this party, check next
-            }
-            Ok(false) => {
-                all_data_exists = false;
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-                // Continue with generation, assuming data doesn't exist
-                all_data_exists = false;
-                break;
-            }
+    for pub_storage in pub_storages.iter() {
+        for t in &pub_types {
+            all_data_exists &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
         }
     }
     if all_data_exists {
         tracing::info!("Threshold FHE keys exists, skipping generation");
         return false;
     }
+    // Purge obsolete data
+    for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
+        use crate::vault::storage::delete_at_request_and_epoch_id;
+
+        for t in &pub_types {
+            let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        }
+        let _ = delete_at_request_and_epoch_id(
+            priv_storage,
+            key_id,
+            epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await;
+    }
+
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling

@@ -41,14 +41,12 @@ use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
-pub async fn setup_threshold_no_client<
-    PubS: Storage + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_no_client<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
     priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
@@ -93,9 +91,12 @@ pub async fn setup_threshold_no_client<
     // a vector of sender that will trigger shutdown of core/threshold servers
     let mut mpc_shutdown_txs = Vec::new();
 
-    for (i, (mpc_listener, _mpc_port), cur_vault, cur_priv_storage) in
-        itertools::izip!(1..=num_parties, mpc_listeners.into_iter(), vaults, priv_storage)
-    {
+    for (i, (mpc_listener, _mpc_port), cur_vault, cur_priv_storage) in itertools::izip!(
+        1..=num_parties,
+        mpc_listeners.into_iter(),
+        vaults,
+        priv_storage
+    ) {
         let cur_pub_storage = pub_storage[i - 1].to_owned();
         let service_config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
@@ -146,7 +147,7 @@ pub async fn setup_threshold_no_client<
                 None,
                 mpc_listener,
                 None,
-                run_prss,
+                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -228,7 +229,7 @@ pub async fn setup_threshold_no_client<
 /// * `pub_storage` - Public storage for each server
 /// * `priv_storage` - Private storage for each server
 /// * `vaults` - Optional backup vaults for each server
-/// * `run_prss` - Whether to run PRSS initialization
+/// * `ensure_default_prss` - Whether to run PRSS initialization for the default epoch if no PRSS info is found in storage
 /// * `rate_limiter_conf` - Optional rate limiter configuration
 /// * `decryption_mode` - Optional decryption mode
 ///
@@ -248,14 +249,12 @@ pub async fn setup_threshold_no_client<
 ///     (2, 1, peers_ctx2.clone(), vec![4, 5, 2, 3]),  // Server 5: party 2
 /// ];
 /// ```
-pub async fn setup_threshold_with_custom_peers<
-    PubS: Storage + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_with_custom_peers<PubS: Storage + Clone + Sync + Send + 'static>(
     server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)>, // (my_id, threshold, peers, peer_server_indices)
     pub_storage: Vec<PubS>,
     priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
@@ -290,8 +289,19 @@ pub async fn setup_threshold_with_custom_peers<
 
     for (
         idx,
-        ((my_id, threshold, peers, peer_server_indices), (mpc_listener, _mpc_port), cur_vault, cur_priv_storage),
-    ) in itertools::izip!(server_configs.iter(), mpc_listeners.into_iter(), vaults, priv_storage).enumerate()
+        (
+            (my_id, threshold, peers, peer_server_indices),
+            (mpc_listener, _mpc_port),
+            cur_vault,
+            cur_priv_storage,
+        ),
+    ) in itertools::izip!(
+        server_configs.iter(),
+        mpc_listeners.into_iter(),
+        vaults,
+        priv_storage
+    )
+    .enumerate()
     {
         let cur_pub_storage = pub_storage[idx].to_owned();
         let service_config = ServiceEndpoint {
@@ -367,7 +377,7 @@ pub async fn setup_threshold_with_custom_peers<
                 None,
                 mpc_listener,
                 None,
-                run_prss,
+                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -590,7 +600,7 @@ impl ServerHandle {
 ///
 /// Used by `setup_threshold_isolated` to configure the threshold test environment.
 pub struct ThresholdTestConfig<'a> {
-    pub run_prss: bool,
+    pub ensure_default_prss: bool,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
@@ -600,9 +610,7 @@ pub struct ThresholdTestConfig<'a> {
 /// Note: The test_material_path in config is kept for API compatibility but not used.
 /// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]
-pub async fn setup_threshold_isolated<
-    PubS: Storage + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_isolated<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
     priv_storage: Vec<Vault>,
@@ -620,7 +628,7 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        config.run_prss,
+        config.ensure_default_prss,
         config.rate_limiter_conf,
         config.decryption_mode,
     )
@@ -642,14 +650,12 @@ pub async fn setup_threshold_isolated<
     (server_handles, client_handles)
 }
 
-pub async fn setup_threshold<
-    PubS: Storage + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
     priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -663,7 +669,7 @@ pub async fn setup_threshold<
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
+        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
@@ -685,9 +691,7 @@ pub async fn setup_threshold<
 }
 
 /// Setup a client and a server running with non-persistent storage.
-pub async fn setup_centralized_no_client<
-    PubS: Storage + Sync + Send + 'static,
->(
+pub async fn setup_centralized_no_client<PubS: Storage + Sync + Send + 'static>(
     pub_storage: PubS,
     priv_storage: Vault,
     backup_vault: Option<Vault>,
@@ -740,9 +744,7 @@ pub async fn setup_centralized_no_client<
     ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
 }
 
-pub(crate) async fn setup_centralized<
-    PubS: Storage + Sync + Send + 'static,
->(
+pub(crate) async fn setup_centralized<PubS: Storage + Sync + Send + 'static>(
     pub_storage: PubS,
     priv_storage: Vault,
     backup_vault: Option<Vault>,
