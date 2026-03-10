@@ -105,7 +105,7 @@ pub async fn crs_gen_impl<
 
     let rng = service.base_kms.new_rng().await;
 
-    let handle = service.tracker.spawn(
+    service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -124,7 +124,6 @@ pub async fn crs_gen_impl<
         }
         .instrument(tracing::Span::current()),
     );
-    service.thread_handles.write().await.add(handle);
     Ok(Response::new(Empty {}))
 }
 
