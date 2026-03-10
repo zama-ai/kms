@@ -129,8 +129,6 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
-    let mut handles = service.thread_handles.write().await;
-
     let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -140,7 +138,7 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
-    let handle = tokio::spawn(
+    tokio::spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -192,7 +190,6 @@ pub async fn user_decrypt_impl<
         .instrument(tracing::Span::current()),
     );
 
-    handles.add(handle);
     Ok(Response::new(Empty {}))
 }
 

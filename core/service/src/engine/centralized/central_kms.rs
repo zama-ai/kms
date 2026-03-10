@@ -85,8 +85,6 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
-#[cfg(feature = "non-wasm")]
-use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 #[cfg(feature = "non-wasm")]
@@ -400,7 +398,6 @@ pub struct CentralizedKms<
     pub(crate) health_reporter: Arc<RwLock<HealthReporter>>,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
-    pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 #[cfg(feature = "non-wasm")]
 pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
@@ -926,7 +923,6 @@ impl<
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
                 health_reporter: Arc::new(RwLock::new(health_reporter)),
                 tracker: Arc::clone(&tracker),
-                thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             },
             health_service,
         ))
@@ -1000,12 +996,6 @@ impl<
     > Drop for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn drop(&mut self) {
-        if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
-            let handles = std::mem::take(handles.get_mut());
-            if let Err(e) = handles.join_all_blocking() {
-                tracing::error!("Error joining threads on drop: {}", e);
-            }
-        }
         // Let the shutdown run in the background
         let _ = self.shutdown();
     }

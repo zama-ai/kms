@@ -153,7 +153,7 @@ pub async fn key_gen_impl<
     })?;
 
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
-    let handle = service.tracker.spawn(
+    service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -187,7 +187,6 @@ pub async fn key_gen_impl<
         }
         .instrument(tracing::Span::current()),
     );
-    service.thread_handles.write().await.add(handle);
 
     Ok(Response::new(Empty {}))
 }
