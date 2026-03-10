@@ -1,94 +1,11 @@
 //! Utilities for managing OS threads and Tokio tasks.
 
 use anyhow::anyhow;
-use futures::FutureExt;
 use rayon::ThreadPoolBuilder;
-use std::time::Duration;
-use tokio::{sync::OnceCell, task::JoinHandle};
+use tokio::sync::OnceCell;
 use tracing::error;
 
 use crate::error::error_handler::anyhow_error_and_log;
-
-#[derive(Debug, Default)]
-pub struct ThreadHandleGroup {
-    handles: Vec<JoinHandle<()>>,
-}
-
-impl ThreadHandleGroup {
-    /// Create a new empty group of thread handles
-    pub fn new() -> Self {
-        Self {
-            handles: Vec::new(),
-        }
-    }
-
-    /// Add a new handle to the group
-    pub fn add(&mut self, handle: JoinHandle<()>) {
-        self.handles.push(handle);
-    }
-
-    /// Join all handles in the group, returning an error if any thread panicked
-    pub async fn join_all(self) -> anyhow::Result<()> {
-        for handle in self.handles {
-            if let Err(e) = handle.await {
-                if e.is_panic() {
-                    // Get panic message if available
-                    let panic_msg = e.into_panic();
-                    if let Some(msg) = panic_msg.downcast_ref::<String>() {
-                        error!("Task panicked: {}", msg);
-                    } else {
-                        error!("Task panicked with unknown message");
-                    }
-                    return Err(anyhow!("Task panicked"));
-                }
-                return Err(anyhow!("Task failed: {}", e));
-            }
-        }
-        Ok(())
-    }
-
-    /// Join all handles in the group in a blocking manner
-    /// This is useful when async context is not available, like in Drop implementations
-    pub fn join_all_blocking(self) -> anyhow::Result<()> {
-        // Simple blocking join with timeout using thread::sleep
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(20);
-
-        'handle_loop: for handle in self.handles {
-            while !handle.is_finished() {
-                if start.elapsed() > timeout {
-                    error!("Cleanup timed out, aborting the stalling task.");
-                    handle.abort();
-                    std::thread::sleep(Duration::from_secs(1));
-                    continue 'handle_loop;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-
-            // Handle is finished, we can safely wait on it
-            match handle.now_or_never() {
-                Some(Ok(_)) => (),
-                Some(Err(e)) => {
-                    if e.is_panic() {
-                        error!("Task panicked during cleanup");
-                        return Err(anyhow!("Task panicked during cleanup"));
-                    }
-                    if !e.is_cancelled() {
-                        // Ignore cancellation errors from our abort
-                        error!("Task failed during cleanup: {}", e);
-                        return Err(anyhow!("Task failed during cleanup: {}", e));
-                    }
-                }
-                None => {
-                    error!("Task unexpectedly not finished after timeout check");
-                    return Err(anyhow!("Task cleanup failed"));
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct OsThreadGroup<T> {
