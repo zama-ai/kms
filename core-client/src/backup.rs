@@ -64,7 +64,7 @@ pub(crate) async fn do_new_custodian_context(
     threshold: u32,
     custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
 ) -> anyhow::Result<RequestId> {
-    let context_id = RequestId::new_random(rng);
+    let custodian_context_id = RequestId::new_random(rng);
     let mut req_tasks = JoinSet::new();
     let mut custodian_nodes = Vec::new();
     for cur_setup in custodian_setup_msg {
@@ -72,7 +72,7 @@ pub(crate) async fn do_new_custodian_context(
     }
     let new_context = CustodianContext {
         custodian_nodes,
-        context_id: Some(context_id.into()),
+        context_id: Some(custodian_context_id.into()),
         threshold,
     };
     for (_party_id, ce) in core_endpoints.iter() {
@@ -81,7 +81,8 @@ pub(crate) async fn do_new_custodian_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    new_context: Some(new_context_cloned),
+                    new_custodian_context: Some(new_context_cloned),
+                    mpc_context_id: 
                 }))
                 .await
         });
@@ -90,7 +91,7 @@ pub(crate) async fn do_new_custodian_context(
         let _ = inner??;
     }
 
-    Ok(context_id)
+    Ok(custodian_context_id)
 }
 
 pub(crate) async fn do_custodian_recovery_init(

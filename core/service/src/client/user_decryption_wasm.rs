@@ -134,15 +134,17 @@ impl Client {
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&payload.verification_key)?;
 
         // NOTE: ID starts at 1
-        let expected_server_addr =
-            if let Some(server_addr) = stored_server_addrs.get(&request.context_id) {
-                if !server_addr.contains(&cur_verf_key.address()) {
-                    return Err(anyhow_error_and_log("server address is not consistent"));
-                }
-                cur_verf_key.address()
-            } else {
-                return Err(anyhow_error_and_log("missing server address at ID 1"));
-            };
+        let expected_server_addr = if let Some(server_addr) = stored_server_addrs
+            .get(&1)
+            .and_then(|m| m.get(&request.context_id))
+        {
+            if server_addr != &cur_verf_key.address() {
+                return Err(anyhow_error_and_log("server address is not consistent"));
+            }
+            cur_verf_key.address()
+        } else {
+            return Err(anyhow_error_and_log("missing server address at ID 1"));
+        };
 
         // prefer the normal ECDSA verification over the EIP712 one
         if resp.signature.is_empty() {
@@ -764,6 +766,10 @@ impl ParsedUserDecryptionRequest {
     pub fn enc_key(&self) -> &[u8] {
         &self.enc_key
     }
+
+    pub fn context_id(&self) -> &ContextId {
+        &self.context_id
+    }
 }
 
 pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
@@ -889,7 +895,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             context_id: ContextId::try_from(value.context_id.clone())
-                .map_err(|e| JsError::new(&e.to_string()))?,
+                .map_err(|e| anyhow::anyhow!("Failed to convert context_id: {}", e))?,
         };
         Ok(out)
     }

@@ -2,7 +2,6 @@
 //!
 //! This module provides a builder pattern for setting up isolated centralized KMS
 //! test environments with automatic cleanup.
-use crate::consts::SIGNING_KEY_ID;
 use crate::testing::helpers::{create_test_material_manager, regenerate_central_keys};
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
@@ -106,7 +105,7 @@ impl CentralizedTestEnvBuilder {
         regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
 
         // Ensure client signing/verification keys exist
-        ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_dir.path()), true).await;
 
         // Setup KMS server with optional backup vault
         let backup_vault = if self.with_backup_vault {

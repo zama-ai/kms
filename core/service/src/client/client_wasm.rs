@@ -100,7 +100,7 @@ impl Client {
             }
         }
     }
-    //todo should be updated
+
     pub fn get_server_addrs(&self) -> HashMap<u32, HashMap<ContextId, alloy_primitives::Address>> {
         match &self.server_identities {
             ServerIdentities::Pks(pks) => pks

@@ -10,7 +10,7 @@ cfg_if::cfg_if! {
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists,  get_core_signing_keys,
+            calculate_max_num_bits, check_data_exists,  get_core_signing_keys,data_exists
         };
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
