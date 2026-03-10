@@ -707,6 +707,22 @@ cfg_if::cfg_if! {
     }
 }
 
+#[cfg(all(feature = "s3_tests", any(test, feature = "testing")))]
+pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
+    let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+        .await
+        .unwrap();
+    S3Storage::new(
+        s3_client,
+        BUCKET_NAME.to_string(),
+        storage_type,
+        Some(prefix),
+        None,
+    )
+    .unwrap()
+}
+
 // Observe that certain tests require an S3 instance setup.
 // There are run with the extra argument `-F s3_tests`.
 // Note that we pay for each of these tests, in the order of single digit cents per tests.
@@ -752,7 +768,6 @@ cfg_if::cfg_if! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{AWS_S3_ENDPOINT, BUCKET_NAME};
     use crate::{
         engine::threshold::service::reshare_utils::find_region_from_s3_url,
         vault::storage::tests::{
