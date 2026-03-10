@@ -6,7 +6,7 @@ use crate::{
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
+use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::KeygenVerification;
@@ -604,12 +604,9 @@ pub(crate) async fn get_preproc_keygen_responses(
     preproc_req: &KeyGenPreprocRequest,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
-    let request_id = preproc_req
-        .base_request
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Preproc request should have a base request"))?
+    let request_id = &preproc_req
         .request_id
-        .try_into()?;
+        .ok_or_else(|| anyhow::anyhow!("Preproc request should have a request id"))?;
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, client) in core_endpoints.iter() {
@@ -627,7 +624,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                 request_id, core_conf.party_id
             );
             let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
+                .get_key_gen_preproc_result(tonic::Request::new(*request_id))
                 .await;
             let mut ctr = 0_usize;
             while response.is_err()
@@ -650,7 +647,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                     request_id, core_conf.party_id, ctr, max_iter
                 );
                 response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
+                    .get_key_gen_preproc_result(tonic::Request::new(*request_id))
                     .await;
             }
 

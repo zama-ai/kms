@@ -103,7 +103,7 @@ pub(crate) async fn fetch_kms_verification_keys(
             .unwrap();
             cur_context_map.insert(*cur_context_id, vk);
         }
-        keys_map.insert(cur_core.party_id, cur_context_map);
+        keys_map.insert(cur_core.party_id as u32, cur_context_map);
     }
 
     Ok(keys_map)
