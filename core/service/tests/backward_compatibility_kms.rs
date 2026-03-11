@@ -206,7 +206,8 @@ fn test_key_gen_metadata(
         &key_id,
         server_key_digest.clone(),
         pub_key_digest.clone(),
-        vec![],
+        // TODO: reenable for RFC005
+        // vec![],
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
@@ -272,7 +273,11 @@ fn test_crs_gen_metadata(
     let crs_id: RequestId = RequestId::new_random(&mut rng);
     let digest = [12u8; 32].to_vec();
     let max_num_bits = test.max_num_bits;
-    let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone(), vec![]);
+    let sol_type = CrsgenVerification::new(
+        &crs_id,
+        max_num_bits as usize,
+        digest.clone(), /* TODO: reenable for RFC005 vec![] */
+    );
     let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
         .map_err(|e| {
             test.failure(

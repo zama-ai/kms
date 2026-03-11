@@ -188,7 +188,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        extra_data: Vec<u8>,
+        _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
         let (server_key, public_key) = match tokio::try_join!(
@@ -273,7 +273,8 @@ impl Client {
             key_id,
             server_key_digest,
             public_key_digest,
-            extra_data,
+            // TODO: reenable for RFC005
+            // extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
@@ -290,7 +291,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        extra_data: Vec<u8>,
+        _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
@@ -357,7 +358,8 @@ impl Client {
             preproc_id,
             key_id,
             compressed_keyset_digest,
-            extra_data,
+            // TODO: reenable for RFC005
+            // extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;

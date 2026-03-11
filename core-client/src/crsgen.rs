@@ -300,13 +300,17 @@ fn check_crsgen_ext_signature(
     crs_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
-    extra_data: Vec<u8>,
+    _extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, extra_data);
+    let sol_type = CrsgenVerification::new(
+        crs_id,
+        max_num_bits,
+        crs_digest, /* TODO: reenable for RFC005 extra_data */
+    );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -387,7 +391,11 @@ mod tests {
         let max_num_bits = max_num_bits_from_crs(&crs);
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
             .expect("serialization should succeed");
-        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, vec![]);
+        let crs_sol_struct = CrsgenVerification::new(
+            crs_id,
+            max_num_bits,
+            crs_digest, /* TODO: reenable for RFC005 vec![] */
+        );
 
         // sign with EIP712
         let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain)
