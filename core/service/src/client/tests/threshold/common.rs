@@ -2,8 +2,8 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, MAX_TRIES,
+    PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::file_backup_vault;
@@ -18,14 +18,20 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
 use crate::vault::storage::delete_at_request_id;
 use crate::vault::storage::{StorageType, file::FileStorage};
+use kms_grpc::RequestId;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
 use std::path::Path;
+use std::pin::Pin;
 use tfhe::core_crypto::commons::utils::ZipChecked;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
+use tonic::{Request, Response, Status};
+
+/// RequestIds as they are represented in the current version of the ProtoBuf API.
+pub(crate) type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
 #[allow(clippy::too_many_arguments)]
 async fn threshold_handles_w_vaults(
@@ -431,4 +437,37 @@ pub async fn threshold_key_gen_secure_isolated(
     }
 
     Ok(responses)
+}
+
+/// Helper to  retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
+pub async fn poll_with_retries<R: Send>(
+    mut client: CoreServiceEndpointClient<Channel>,
+    server_id: u32,
+    req_id: ProtoRequestId,
+    poll_fn: impl for<'a> Fn(
+        &'a mut CoreServiceEndpointClient<Channel>,
+        Request<ProtoRequestId>,
+    )
+        -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
+) -> (u32, ProtoRequestId, R) {
+    for count in 0..MAX_TRIES {
+        // By default our gRPC calls do not time out. Here we're giving it 2sec per poll attempt to reply.
+        tokio::select! {
+            result = poll_fn(&mut client, Request::new(req_id.clone())) => {
+                match result {
+                    Ok(resp) => return (server_id, req_id, resp.into_inner()),
+                    Err(e) => {
+                        let id_str = RequestId::try_from(req_id.clone()).unwrap().to_string();
+                        tracing::trace!("Attempt {count} for server {server_id}, req {id_str}: {e:?}");
+                    }
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                tracing::trace!("Attempt {count} for server {server_id} timed out");
+            }
+        }
+        // Back-off a little bit before re-trying
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    panic!("no response for server {server_id} after {MAX_TRIES} tries");
 }
