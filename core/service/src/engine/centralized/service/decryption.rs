@@ -102,7 +102,7 @@ pub async fn user_decrypt_impl<
         &request_id,
         OP_USER_DECRYPT_REQUEST,
     )?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.get_sig_key(&context_id).map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
@@ -161,7 +161,8 @@ pub async fn user_decrypt_impl<
                 extra_data.clone(),
             )
             .await;
-            let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
+            let res_with_extra_data =
+                res.map(|(payload, sig)| (payload, sig, context_id, extra_data));
             let _ = update_req_in_meta_store(
                 &mut meta_store.write().await,
                 &request_id,
@@ -197,7 +198,7 @@ pub async fn get_user_decryption_result_impl<
             },
         )?;
 
-    let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+    let (payload, external_signature, context_id, extra_data) = retrieve_from_meta_store(
         service.user_dec_meta_store.read().await,
         &request_id,
         OP_USER_DECRYPT_RESULT,
@@ -215,7 +216,7 @@ pub async fn get_user_decryption_result_impl<
     })?;
 
     let sig = service
-        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .sign(&context_id, &DSEP_USER_DECRYPTION, &sig_payload_vec)
         .map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_RESULT,
@@ -318,7 +319,7 @@ pub async fn public_decrypt_impl<
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.get_sig_key(&context_id).map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
@@ -378,7 +379,7 @@ pub async fn public_decrypt_impl<
                     extra_data.clone(),
                     eip712_domain,
                 ) {
-                    Ok(sig) => Ok((request_id, pts, sig, extra_data)),
+                    Ok(sig) => Ok((request_id, pts, sig, context_id, extra_data)),
                     Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
                 }
             }
@@ -425,12 +426,13 @@ pub async fn get_public_decryption_result_impl<
     })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) = retrieve_from_meta_store(
-        service.pub_dec_meta_store.read().await,
-        &request_id,
-        OP_PUBLIC_DECRYPT_RESULT,
-    )
-    .await?;
+    let (retrieved_req_id, plaintexts, external_signature, context_id, extra_data) =
+        retrieve_from_meta_store(
+            service.pub_dec_meta_store.read().await,
+            &request_id,
+            OP_PUBLIC_DECRYPT_RESULT,
+        )
+        .await?;
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(
@@ -448,14 +450,26 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_RESULT,
-            Some(request_id),
-            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
-            tonic::Code::Internal,
-        )
-    })?;
+    let server_verf_key = service
+        .base_kms
+        .get_verf_key(&context_id)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Could not get verification key for context {context_id}"),
+                tonic::Code::Internal,
+            )
+        })?
+        .to_legacy_bytes()
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
+                tonic::Code::Internal,
+            )
+        })?;
 
     // the payload to be signed for verification inside the KMS
     let kms_sig_payload = PublicDecryptionResponsePayload {
@@ -476,7 +490,7 @@ pub async fn get_public_decryption_result_impl<
     // sign the decryption result with the central KMS key
     let sig = service
         .base_kms
-        .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
+        .sign(&context_id, &DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
         .map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,

@@ -21,7 +21,8 @@ use crate::engine::validation::{
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_context_at_id, delete_custodian_context_at_id, store_context_at_id, StorageExt,
+    delete_context_at_id, delete_custodian_context_at_id, read_context_at_id, store_context_at_id,
+    StorageExt,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -123,7 +124,27 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
-        let inner = request.into_inner().new_context.ok_or_else(|| {
+        let inner = request.into_inner();
+        let mpc_context_id = inner
+            .mpc_context_id
+            .ok_or_else(|| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("mpc_context_id is required in NewCustodianContextRequest"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?
+            .try_into()
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("Failed to parse mpc_context_id: {}", e),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
             MetricedError::new(
                 OP_NEW_CUSTODIAN_CONTEXT,
                 None,
@@ -132,13 +153,14 @@ where
             )
         })?;
         tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
-            inner.context_id,
-            inner.threshold,
-            inner.custodian_nodes.len()
+            "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
+            mpc_context_id,
+            custodian_context.custodian_context_id,
+            custodian_context.threshold,
+            custodian_context.custodian_nodes.len()
         );
 
-        self.inner_new_custodian_context(inner.clone())
+        self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
@@ -221,7 +243,11 @@ where
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
-    async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
+    async fn inner_new_custodian_context(
+        &self,
+        context: CustodianContext,
+        mpc_context_id: ContextId,
+    ) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
@@ -235,9 +261,10 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.sig_key()?.as_ref(),
+            self.base_kms.get_sig_key(&mpc_context_id)?.as_ref(),
             backup_dec_key,
             &inner_context,
+            mpc_context_id,
         )
         .await?;
 
@@ -358,12 +385,19 @@ where
     }
 }
 
-pub async fn create_default_centralized_context_in_storage<
+pub async fn ensure_default_centralized_context_in_storage<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
     sk: &PrivateSigKey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ContextInfo> {
+    if let Ok(context) = read_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT).await {
+        tracing::info!(
+            "Default centralized context with ID {} already exists in storage, skipping creation",
+            *DEFAULT_MPC_CONTEXT
+        );
+        return Ok(context);
+    }
     // Create and store the default context for centralized mode testing
     let verification_key = PublicSigKey::from_sk(sk);
     let context_info = ContextInfo {
@@ -386,7 +420,7 @@ pub async fn create_default_centralized_context_in_storage<
         .await
         .expect("Could not store default context");
 
-    Ok(())
+    Ok(context_info)
 }
 
 /// Create and store the default MPC context for threshold mode from peer configuration.
@@ -395,22 +429,23 @@ pub async fn create_default_centralized_context_in_storage<
 /// in private storage under `DEFAULT_MPC_CONTEXT`. If a context already exists at that ID,
 /// it is deleted first to ensure consistency with the latest peer list.
 ///
-/// Returns `Ok(())` if peers are present and context was created, or if no peers are configured.
+/// Returns `Ok()` if peers are present and context was created, or if no peers are configured.
 ///
 /// # Arguments
 /// * `priv_storage` - The private storage to write the context to
 /// * `threshold_config` - The threshold party configuration containing peers, threshold, etc.
 /// * `verf_key` - The verification key of this party
-pub async fn ensure_default_threshold_context_in_storage<
+pub async fn overwrite_default_threshold_context_in_storage<
+    // TODO do we actually want to overwrite
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
     threshold_config: &ThresholdPartyConf,
     verf_key: &PublicSigKey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ContextInfo> {
     let peers = match &threshold_config.peers {
         Some(peers) => peers,
-        None => return Ok(()), // No peers configured, nothing to do
+        None => anyhow::bail!("No peer configuration. Cannot make threshold context"), // No peers configured, nothing to do
     };
 
     let context_id = *DEFAULT_MPC_CONTEXT;
@@ -495,7 +530,7 @@ pub async fn ensure_default_threshold_context_in_storage<
 
     store_context_at_id(priv_storage, &context_id, &context_info).await?;
 
-    Ok(())
+    Ok(context_info)
 }
 
 pub struct CentralizedContextManager<
@@ -923,6 +958,7 @@ async fn gen_recovery_validation(
     sig_key: &PrivateSigKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
+    mpc_context_id: ContextId,
 ) -> anyhow::Result<RecoveryValidationMaterial> {
     let operator = Operator::new_for_sharing(
         custodian_context
@@ -951,6 +987,7 @@ async fn gen_recovery_validation(
         commitments,
         custodian_context.to_owned(),
         sig_key,
+        mpc_context_id,
     )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
@@ -979,7 +1016,7 @@ mod tests {
         vault::{
             keychain::secretsharing,
             storage::{
-                crypto_material::get_core_signing_key,
+                crypto_material::get_core_signing_keys,
                 ram::{self, RamStorage},
                 read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
                 StorageProxy,
@@ -1044,7 +1081,11 @@ mod tests {
             .unwrap();
 
             // check that the signing key exists
-            let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
+            let keys = get_core_signing_keys(&*guarded_priv_storage).await.unwrap();
+            assert!(
+                !keys.is_empty(),
+                "expected at least one signing key in storage"
+            );
         }
 
         (pk, sk, crypto_storage)

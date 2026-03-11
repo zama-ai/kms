@@ -245,7 +245,7 @@ impl InternalCustodianContext {
             }
         }
         let context_id: RequestId = parse_optional_grpc_request_id(
-            &custodian_context.context_id,
+            &custodian_context.custodian_context_id,
             RequestIdParsingErr::CustodianContext,
         )?;
         Ok(InternalCustodianContext {

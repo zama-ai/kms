@@ -137,23 +137,40 @@ impl Client {
 
     pub fn process_preproc_response(
         &self,
-        preproc_id: &RequestId,
+        preproc_gen_req: &KeyGenPreprocRequest,
         domain: &Eip712Domain,
         resp: &KeyGenPreprocResult,
     ) -> anyhow::Result<()> {
-        let sol_type = PrepKeygenVerification::new(preproc_id);
+        let preproc_id = parse_optional_grpc_request_id(
+            &preproc_gen_req.request_id,
+            RequestIdParsingErr::Other(
+                "invalid request ID in preprocessing generation request".to_string(),
+            ),
+        )?;
+        let sol_type = PrepKeygenVerification::new(&preproc_id);
         let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
         )?;
-        if *preproc_id != req_id_from_resp {
+        if preproc_id != req_id_from_resp {
             return Err(anyhow_error_and_log(format!(
                 "Preprocessing ID in preprocessing result {} does not match the provided preprocessing ID {}",
                 req_id_from_resp, preproc_id
             )));
         }
 
-        self.verify_external_signature(&sol_type, domain, &resp.external_signature)
+        self.verify_external_signature(
+            &sol_type,
+            domain,
+            &preproc_gen_req
+                .context_id
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No context id in preprocessing generation request")
+                })?
+                .try_into()?,
+            &resp.external_signature,
+        )
     }
 
     /// Retrieve a server key based on the result from storage.
@@ -183,12 +200,23 @@ impl Client {
     // we should fix it so that it does a proper verification
     pub async fn retrieve_server_key_and_public_key<R: StorageReader>(
         &self,
-        preproc_id: &RequestId,
-        key_id: &RequestId,
+        key_gen_req: &KeyGenRequest,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
         storage: &R,
     ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
+        let key_id = parse_optional_grpc_request_id(
+            &key_gen_req.request_id,
+            RequestIdParsingErr::Other(
+                "invalid key request ID in retrieval of keys during key gen".to_string(),
+            ),
+        )?;
+        let preproc_id = parse_optional_grpc_request_id(
+            &key_gen_req.preproc_id,
+            RequestIdParsingErr::Other(
+                "invalid preprocessing ID in retrieval fo keys during key gen".to_string(),
+            ),
+        )?;
         let (server_key, public_key) = match tokio::try_join!(
             self.retrieve_server_key_no_verification(key_gen_result, storage),
             self.retrieve_public_key_no_verification(key_gen_result, storage)
@@ -256,24 +284,33 @@ impl Client {
         )?
         .try_into()?;
 
-        if *preproc_id != actual_preproc_id {
+        if preproc_id != actual_preproc_id {
             return Err(anyhow::anyhow!("Preprocessing ID in key generation result does not match the provided preprocessing ID"));
         }
 
-        if *key_id != actual_key_id {
+        if key_id != actual_key_id {
             return Err(anyhow::anyhow!(
                 "Key ID in key generation result does not match the provided key ID"
             ));
         }
 
         let sol_type = KeygenVerification::new_standard(
-            preproc_id,
-            key_id,
+            &preproc_id,
+            &key_id,
             server_key_digest,
             public_key_digest,
         );
 
-        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+        self.verify_external_signature(
+            &sol_type,
+            domain,
+            &key_gen_req
+                .context_id
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No context id in CRS gen request"))?
+                .try_into()?,
+            &key_gen_result.external_signature,
+        )?;
 
         Ok(Some((server_key, public_key)))
     }
@@ -283,12 +320,23 @@ impl Client {
     /// the one in `key_gen_result.key_digests`, and verifies the EIP712 signature.
     pub async fn retrieve_compressed_keyset<R: StorageReader>(
         &self,
-        preproc_id: &RequestId,
-        key_id: &RequestId,
+        key_gen_req: &KeyGenRequest,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
         storage: &R,
     ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
+        let key_id = parse_optional_grpc_request_id(
+            &key_gen_req.request_id,
+            RequestIdParsingErr::Other(
+                "invalid key request ID in retrieval of keys during key gen".to_string(),
+            ),
+        )?;
+        let preproc_id = parse_optional_grpc_request_id(
+            &key_gen_req.preproc_id,
+            RequestIdParsingErr::Other(
+                "invalid preprocessing ID in retrieval fo keys during key gen".to_string(),
+            ),
+        )?;
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
             .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
             .await?
@@ -337,22 +385,31 @@ impl Client {
         )?
         .try_into()?;
 
-        if *preproc_id != actual_preproc_id {
+        if preproc_id != actual_preproc_id {
             return Err(anyhow::anyhow!(
                 "Preprocessing ID in key generation result does not match the provided preprocessing ID"
             ));
         }
 
-        if *key_id != actual_key_id {
+        if key_id != actual_key_id {
             return Err(anyhow::anyhow!(
                 "Key ID in key generation result does not match the provided key ID"
             ));
         }
 
         let sol_type =
-            KeygenVerification::new_compressed(preproc_id, key_id, compressed_keyset_digest);
+            KeygenVerification::new_compressed(&preproc_id, &key_id, compressed_keyset_digest);
 
-        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+        self.verify_external_signature(
+            &sol_type,
+            domain,
+            &key_gen_req
+                .context_id
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No context id in CRS gen request"))?
+                .try_into()?,
+            &key_gen_result.external_signature,
+        )?;
 
         Ok(Some(compressed_keyset))
     }

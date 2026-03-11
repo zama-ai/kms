@@ -18,6 +18,7 @@ use super::base::KmsFheKeyHandles;
 pub trait BaseKms {
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
+        context_id: &ContextId,
         dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<Signature>;

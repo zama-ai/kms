@@ -591,7 +591,7 @@ message CustodianContext {
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
-  RequestId context_id = 2;
+  RequestId custodian_context_id = 2;
 
   // The corruption threshold for this context.
   // It does not need to match the KMS context threshold
@@ -615,7 +615,9 @@ message DestroyMpcContextRequest {
 
 message NewCustodianContextRequest {
   // The new custodian context to create.
-  CustodianContext new_context = 1;
+  CustodianContext new_custodian_context = 1;
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId mpc_context_id = 2;
 }
 
 message DestroyCustodianContextRequest {
@@ -777,7 +779,7 @@ message NewMpcEpochRequest {
   // the shares of the private key at the end of the reshare execution
   RequestId context_id = 1;
   // The epoch number placeholder (zama-ai/kms-internal#2743).
-  // This is the epochId we reshare the shares from.
+  // This is the epochId we reshare the shares to.
   // Note: currently unused but reserved for future use.
   RequestId epoch_id = 2;
   // Information about the previous epoch, used to perform resharing.

@@ -35,7 +35,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
+use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
@@ -630,6 +630,8 @@ pub struct NewCustodianContextParameters {
     pub threshold: u32,
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
+    #[clap(long)]
+    pub mpc_context_id: ContextId,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -1135,7 +1137,7 @@ pub async fn execute_cmd(
     let mut rng = AesRng::from_entropy();
     let num_parties = cc_conf.cores.len();
 
-    ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
+    ensure_client_keys_exist(Some(destination_prefix), true).await;
 
     let mut pub_storage: HashMap<u32, FileStorage> = HashMap::with_capacity(num_parties);
     let client_storage: FileStorage =
@@ -1780,6 +1782,7 @@ pub async fn execute_cmd(
                 &mut rng,
                 new_custodian_context_parameters.threshold,
                 setup_msgs,
+                new_custodian_context_parameters.mpc_context_id,
             )
             .await?;
             vec![(

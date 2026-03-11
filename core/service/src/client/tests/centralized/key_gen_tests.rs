@@ -263,13 +263,7 @@ pub async fn run_key_gen_centralized(
 
         let (server_key, public_key) = if compressed {
             let compressed_keyset = internal_client
-                .retrieve_compressed_keyset(
-                    &preproc_id,
-                    key_req_id,
-                    &inner_resp,
-                    &domain,
-                    &pub_storage,
-                )
+                .retrieve_compressed_keyset(&gen_req, &inner_resp, &domain, &pub_storage)
                 .await
                 .unwrap()
                 .unwrap();
@@ -277,13 +271,7 @@ pub async fn run_key_gen_centralized(
             (server_key, public_key)
         } else {
             let (server_key, public_key) = internal_client
-                .retrieve_server_key_and_public_key(
-                    &preproc_id,
-                    key_req_id,
-                    resp,
-                    &domain_clone,
-                    &pub_storage,
-                )
+                .retrieve_server_key_and_public_key(&gen_req, resp, &domain_clone, &pub_storage)
                 .await
                 .unwrap()
                 .unwrap();

@@ -60,8 +60,8 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, validate_public_decrypt_req, RequestIdParsingErr,
-            DSEP_PUBLIC_DECRYPTION,
+            parse_extra_data, parse_grpc_request_id, validate_public_decrypt_req,
+            RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION,
         },
     },
     util::{
@@ -337,7 +337,7 @@ impl<
             .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
+        let sigkey = self.base_kms.get_sig_key(&context_id).map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(req_id),
@@ -601,7 +601,7 @@ impl<
                 .await
             };
             let res = match external_sig {
-                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
+                Ok(Ok(sig)) => Ok((req_id, pts, sig, context_id, extra_data)),
                 Err(e) | Ok(Err(e)) => Err(format!(
                     "Failed to compute external signature for decryption request {req_id}: {e:?}"
                 )),
@@ -641,7 +641,7 @@ impl<
             )
         })?;
 
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
+        let (retrieved_req_id, plaintexts, external_signature, context_id, extra_data) =
             retrieve_from_meta_store(
                 self.pub_dec_meta_store.read().await,
                 &request_id,
@@ -659,15 +659,28 @@ impl<
                 tonic::Code::Internal,
             ));
         }
-
-        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Failed to serialize server verification key: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
+        let server_verf_key = self
+            .base_kms
+            .get_verf_key(&context_id)
+            .map_err(|_e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_RESULT,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                    ),
+                    tonic::Code::Internal,
+                )
+            })?
+            .to_legacy_bytes()
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_RESULT,
+                    Some(request_id),
+                    anyhow!("Failed to serialize server verification key: {e:?}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
@@ -682,10 +695,17 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-
+        let (_, context_id, _) = parse_extra_data(&extra_data).map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Could not parse extra data of original request: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
         let sig = self
             .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
+            .sign(&context_id, &DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
             .map_err(|e| {
                 MetricedError::new(
                     OP_PUBLIC_DECRYPT_RESULT,

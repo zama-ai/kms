@@ -30,7 +30,10 @@ mod tests {
     use crate::{
         cryptography::signatures::{gen_sig_keys, PublicSigKey},
         engine::centralized::central_kms::RealCentralizedKms,
-        vault::storage::ram::RamStorage,
+        vault::{
+            storage::{ram::RamStorage, StorageProxy},
+            Vault,
+        },
     };
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
@@ -39,7 +42,7 @@ mod tests {
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
         rng: &mut AesRng,
-    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+    ) -> (RealCentralizedKms<RamStorage, Vault>, PublicSigKey) {
         let (verf_key, sig_key) = gen_sig_keys(rng);
         let public_storage = RamStorage::new();
         let mut private_storage = RamStorage::new();
@@ -54,16 +57,14 @@ mod tests {
         .await
         .unwrap();
         let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
-        let (kms, _health_service) = RealCentralizedKms::new(
-            core_config,
-            public_storage,
-            private_storage,
-            None,
-            None,
-            sig_key,
-        )
-        .await
-        .expect("Could not create KMS");
+        let private_vault = Vault {
+            storage: StorageProxy::Ram(private_storage),
+            keychain: None,
+        };
+        let (kms, _health_service) =
+            RealCentralizedKms::new(core_config, public_storage, private_vault, None, None)
+                .await
+                .expect("Could not create KMS");
 
         let kms_node = NodeInfo {
             mpc_identity: "test_node".to_string(),

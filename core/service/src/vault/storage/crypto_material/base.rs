@@ -238,12 +238,6 @@ where
         .await
     }
 
-    /// Get signing key from private storage
-    pub async fn get_signing_key(&self) -> anyhow::Result<PrivateSigKey> {
-        let priv_storage = self.private_storage.lock().await;
-        super::utils::get_core_signing_key(&*priv_storage).await
-    }
-
     /// Write the key materials (result of a compressed keygen) to storage and cache.
     /// The [meta_store] is updated to "Done" if the procedure is successful.
     ///

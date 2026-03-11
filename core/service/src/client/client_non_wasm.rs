@@ -1,16 +1,14 @@
-use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::cryptography::signatures::recover_address_from_ext_signature;
+use crate::cryptography::signatures::{recover_address_from_ext_signature, PublicSigKey};
 use crate::vault::storage::{
     crypto_material::{
-        get_client_signing_key, get_client_verification_key, get_core_verification_key,
+        get_client_signing_key, get_client_verification_key, get_core_verification_keys,
     },
     Storage, StorageReader,
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use futures_util::future::{try_join_all, TryFutureExt};
-use itertools::Itertools;
+use kms_grpc::ContextId;
 use std::collections::HashMap;
 use std::fmt;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
@@ -53,31 +51,21 @@ impl Client {
         params: &DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
-        let pks = try_join_all(pub_storages.iter().map(|(party_id, cur_storage)| {
-            get_core_verification_key(cur_storage).map_ok(|pk| (*party_id, pk))
-        }))
-        .await?
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-
-        let pks_unique_count = pks.values().unique().count();
-
-        if pks_unique_count != pks.len() {
-            return Err(anyhow_error_and_log(format!(
-                "Duplicate public keys present in map: {} unique, {} total",
-                pks_unique_count,
-                pks.len()
-            )));
+        let mut verf_keys: HashMap<u32, HashMap<ContextId, PublicSigKey>> = HashMap::new();
+        for (id, storage) in pub_storages.iter() {
+            let pks = get_core_verification_keys(storage).await?;
+            verf_keys.insert(*id, pks);
         }
 
         let client_pk = get_client_verification_key(&client_storage).await?;
         let client_sk = get_client_signing_key(&client_storage).await?;
 
         Ok(Client::new(
-            pks,
+            verf_keys,
             client_pk.address(),
             Some(client_sk),
             *params,
+            pub_storages.len(),
             decryption_mode,
         ))
     }
@@ -86,10 +74,11 @@ impl Client {
         &self,
         data: &T,
         domain: &Eip712Domain,
+        context: &ContextId,
         external_sig: &[u8],
     ) -> anyhow::Result<()> {
         if self
-            .find_verifying_address(data, domain, external_sig)
+            .find_verifying_address(data, domain, context, external_sig)
             .is_some()
         {
             Ok(())
@@ -102,6 +91,7 @@ impl Client {
         &self,
         data: &T,
         domain: &Eip712Domain,
+        context: &ContextId,
         external_sig: &[u8],
     ) -> Option<alloy_primitives::Address> {
         let addr = if let Ok(a) = recover_address_from_ext_signature(data, domain, external_sig) {
@@ -110,9 +100,14 @@ impl Client {
             tracing::error!("Could not recover address from signature");
             return None;
         };
-
-        self.get_server_addrs()
-            .into_values()
-            .find(|&verf_key| verf_key == addr)
+        let mut res = None;
+        for cur_server_adds in self.get_server_addrs().into_values() {
+            if let Some(cur_addr) = cur_server_adds.get(context) {
+                if cur_addr == &addr {
+                    res = Some(addr)
+                }
+            }
+        }
+        res
     }
 }

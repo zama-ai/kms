@@ -577,7 +577,7 @@ impl<
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.get_sig_key(&new_context_id).map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
@@ -656,7 +656,7 @@ impl<
             .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.get_sig_key(&new_context_id).map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
@@ -1086,11 +1086,14 @@ pub(crate) mod tests {
         },
         cryptography::signatures::gen_sig_keys,
         engine::base::{derive_request_id, BaseKmsStruct},
-        util::rate_limiter::RateLimiterConfig,
-        vault::storage::{
-            file::FileStorage,
-            ram::{self, RamStorage},
-            StorageType,
+        util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
+        vault::{
+            storage::{
+                file::FileStorage,
+                ram::{self, RamStorage},
+                StorageProxy, StorageType,
+            },
+            Vault,
         },
     };
     use aes_prng::AesRng;
@@ -1201,10 +1204,17 @@ pub(crate) mod tests {
         }
 
         // create parties and run PrssSetup
+        let priv_vaults: Vec<Vault> = priv_storage
+            .iter()
+            .map(|s| Vault {
+                storage: StorageProxy::File(s.clone()),
+                keychain: None,
+            })
+            .collect();
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
-            priv_storage.clone(),
+            priv_vaults,
             vaults,
             true,
             None,
@@ -1225,10 +1235,17 @@ pub(crate) mod tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // create parties again without running PrssSetup this time (it should now be read from storage)
+        let priv_vaults: Vec<Vault> = priv_storage
+            .iter()
+            .map(|s| Vault {
+                storage: StorageProxy::File(s.clone()),
+                keychain: None,
+            })
+            .collect();
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage,
-            priv_storage,
+            priv_vaults,
             vaults2,
             false,
             None,

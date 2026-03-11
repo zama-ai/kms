@@ -1,18 +1,13 @@
 use crate::client::client_wasm::Client;
 use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
-use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::{
-    crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
-};
-use crate::vault::storage::{make_storage, StorageExt};
+use crate::vault::storage::{file::FileStorage, make_storage, Storage, StorageProxy, StorageType};
 use crate::vault::Vault;
 use crate::{
     conf::{
@@ -25,7 +20,6 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -47,13 +41,10 @@ use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
-pub async fn setup_threshold_no_client<
-    PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_no_client<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -100,11 +91,13 @@ pub async fn setup_threshold_no_client<
     // a vector of sender that will trigger shutdown of core/threshold servers
     let mut mpc_shutdown_txs = Vec::new();
 
-    for (i, (mpc_listener, _mpc_port), cur_vault) in
-        itertools::izip!(1..=num_parties, mpc_listeners.into_iter(), vaults)
-    {
+    for (i, (mpc_listener, _mpc_port), cur_vault, cur_priv_storage) in itertools::izip!(
+        1..=num_parties,
+        mpc_listeners.into_iter(),
+        vaults,
+        priv_storage
+    ) {
         let cur_pub_storage = pub_storage[i - 1].to_owned();
-        let cur_priv_storage = priv_storage[i - 1].to_owned();
         let service_config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
             listen_port: service_ports[i - 1],
@@ -145,9 +138,6 @@ pub async fn setup_threshold_no_client<
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
                 core_config,
@@ -156,9 +146,7 @@ pub async fn setup_threshold_no_client<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
@@ -261,13 +249,10 @@ pub async fn setup_threshold_no_client<
 ///     (2, 1, peers_ctx2.clone(), vec![4, 5, 2, 3]),  // Server 5: party 2
 /// ];
 /// ```
-pub async fn setup_threshold_with_custom_peers<
-    PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_with_custom_peers<PubS: Storage + Clone + Sync + Send + 'static>(
     server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)>, // (my_id, threshold, peers, peer_server_indices)
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -304,11 +289,21 @@ pub async fn setup_threshold_with_custom_peers<
 
     for (
         idx,
-        ((my_id, threshold, peers, peer_server_indices), (mpc_listener, _mpc_port), cur_vault),
-    ) in itertools::izip!(server_configs.iter(), mpc_listeners.into_iter(), vaults).enumerate()
+        (
+            (my_id, threshold, peers, peer_server_indices),
+            (mpc_listener, _mpc_port),
+            cur_vault,
+            cur_priv_storage,
+        ),
+    ) in itertools::izip!(
+        server_configs.iter(),
+        mpc_listeners.into_iter(),
+        vaults,
+        priv_storage
+    )
+    .enumerate()
     {
         let cur_pub_storage = pub_storage[idx].to_owned();
-        let cur_priv_storage = priv_storage[idx].to_owned();
         let service_config = ServiceEndpoint {
             listen_address: ip_addr.to_string(),
             listen_port: service_ports[idx],
@@ -374,9 +369,6 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-
             let server = new_real_threshold_kms(
                 core_config,
                 cur_pub_storage,
@@ -384,9 +376,7 @@ pub async fn setup_threshold_with_custom_peers<
                 cur_vault,
                 None,
                 mpc_listener,
-                base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
@@ -620,13 +610,10 @@ pub struct ThresholdTestConfig<'a> {
 /// Note: The test_material_path in config is kept for API compatibility but not used.
 /// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]
-pub async fn setup_threshold_isolated<
-    PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold_isolated<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     config: ThresholdTestConfig<'_>,
 ) -> (
@@ -636,7 +623,7 @@ pub async fn setup_threshold_isolated<
     let num_parties = priv_storage.len();
 
     // Setup the threshold scheme
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_threshold_no_client::<PubS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -663,13 +650,10 @@ pub async fn setup_threshold_isolated<
     (server_handles, client_handles)
 }
 
-pub async fn setup_threshold<
-    PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: StorageExt + Clone + Sync + Send + 'static,
->(
+pub async fn setup_threshold<PubS: Storage + Clone + Sync + Send + 'static>(
     threshold: u8,
     pub_storage: Vec<PubS>,
-    priv_storage: Vec<PrivS>,
+    priv_storage: Vec<Vault>,
     vaults: Vec<Option<Vault>>,
     ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -680,7 +664,7 @@ pub async fn setup_threshold<
 ) {
     let num_parties = priv_storage.len();
     // Setup the threshold scheme with lazy PRSS generation
-    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+    let server_handles = setup_threshold_no_client::<PubS>(
         threshold,
         pub_storage,
         priv_storage,
@@ -707,12 +691,9 @@ pub async fn setup_threshold<
 }
 
 /// Setup a client and a server running with non-persistent storage.
-pub async fn setup_centralized_no_client<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
->(
+pub async fn setup_centralized_no_client<PubS: Storage + Sync + Send + 'static>(
     pub_storage: PubS,
-    mut priv_storage: PrivS,
+    priv_storage: Vault,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
@@ -725,24 +706,13 @@ pub async fn setup_centralized_no_client<
         .pop()
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let sk = get_core_signing_key(&priv_storage).await.unwrap();
-
-    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
-        .await
-        .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));
     let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
     core_config.rate_limiter_conf = rate_limiter_conf;
-    let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
-        core_config,
-        pub_storage,
-        priv_storage,
-        backup_vault,
-        None,
-        sk,
-    )
-    .await
-    .expect("Could not create KMS");
+    let (kms, (health_reporter, health_service)) =
+        RealCentralizedKms::new(core_config, pub_storage, priv_storage, backup_vault, None)
+            .await
+            .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
     tokio::spawn(async move {
@@ -774,12 +744,9 @@ pub async fn setup_centralized_no_client<
     ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
 }
 
-pub(crate) async fn setup_centralized<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
->(
+pub(crate) async fn setup_centralized<PubS: Storage + Sync + Send + 'static>(
     pub_storage: PubS,
-    priv_storage: PrivS,
+    priv_storage: Vault,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (
@@ -815,8 +782,12 @@ pub async fn central_handle_w_vault(
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 
+    let priv_vault = Vault {
+        storage: StorageProxy::File(priv_storage),
+        keychain: None,
+    };
     let (kms_server, kms_client) =
-        setup_centralized(pub_storage, priv_storage, backup_vault, rate_limiter_conf).await;
+        setup_centralized(pub_storage, priv_vault, backup_vault, rate_limiter_conf).await;
     let pub_storage = HashMap::from_iter([(
         1,
         FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),

@@ -173,11 +173,18 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
         test_material_path: Some(material_dir.path()),
     };
 
+    let priv_vaults: Vec<crate::vault::Vault> = priv_storages
+        .into_iter()
+        .map(|s| crate::vault::Vault {
+            storage: crate::vault::storage::StorageProxy::File(s),
+            keychain: None,
+        })
+        .collect();
     let (mut restarted_servers, mut restarted_clients) =
         crate::client::test_tools::setup_threshold_isolated(
             1, // threshold
             pub_storages,
-            priv_storages,
+            priv_vaults,
             vaults,
             config,
         )

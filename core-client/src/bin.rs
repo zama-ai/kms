@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     }
 
     let keys_folder: &Path = Path::new("keys");
+    ensure_client_keys_exist(Some(keys_folder), true).await;
     let res = execute_cmd(&config, keys_folder).await;
 
     match res {

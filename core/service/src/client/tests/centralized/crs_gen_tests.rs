@@ -217,7 +217,7 @@ pub(crate) async fn run_crs_centralized(
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
-        .process_get_crs_resp(&inner_resp, &domain, &pub_storage)
+        .process_get_crs_resp(&gen_req, &inner_resp, &domain, &pub_storage)
         .await
         .unwrap()
         .unwrap();

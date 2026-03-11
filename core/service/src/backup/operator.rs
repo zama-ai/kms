@@ -5,12 +5,15 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
+    client::mpc_context,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
-    cryptography::signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
-        Unsigncrypt,
+    cryptography::{
+        encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+        signatures::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::{
+            Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+            Unsigncrypt,
+        },
     },
     engine::{base::safe_serialize_hash_element_versioned, validation::RequestIdParsingErr},
 };
@@ -24,7 +27,7 @@ use crate::{
 };
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
-    RequestId,
+    ContextId, RequestId,
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -285,6 +288,7 @@ impl RecoveryValidationMaterial {
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
+        mpc_context: ContextId,
     ) -> anyhow::Result<Self> {
         if custodian_context.custodian_nodes.len() != cts.len() {
             return Err(anyhow::anyhow!(
@@ -306,6 +310,7 @@ impl RecoveryValidationMaterial {
             cts,
             commitments,
             custodian_context,
+            mpc_context,
         };
         let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
@@ -389,6 +394,8 @@ pub struct RecoveryValidationMaterialPayload {
     pub commitments: BTreeMap<Role, Vec<u8>>,
     /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
+    /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
+    pub mpc_context: ContextId,
 }
 impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";

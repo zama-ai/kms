@@ -603,6 +603,7 @@ pub(crate) async fn get_public_decrypt_responses(
     internal_client.process_decryption_resp(
         dec_req,
         &resp_response_vec,
+        core_endpoints.len(),
         num_expected_responses as u32,
     )?;
 

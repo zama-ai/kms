@@ -2,8 +2,8 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::file_backup_vault;
@@ -95,14 +95,12 @@ async fn threshold_handles_w_vaults(
         #[cfg(feature = "slow_tests")]
         ensure_default_material_exists().await;
     } else {
-        // Only ensure that the signing key is there s.t. the KMS can start
-        // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
+        // Only ensure that the signing keys and contexts are there s.t. the KMS can start
         ensure_dir_exist(test_data_path).await;
-        ensure_client_keys_exist(test_data_path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(test_data_path, true).await;
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
@@ -113,10 +111,17 @@ async fn threshold_handles_w_vaults(
         .unwrap();
     }
 
+    let priv_vaults: Vec<crate::vault::Vault> = priv_storage
+        .into_iter()
+        .map(|s| crate::vault::Vault {
+            storage: crate::vault::storage::StorageProxy::File(s),
+            keychain: None,
+        })
+        .collect();
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
         pub_storage,
-        priv_storage,
+        priv_vaults,
         vaults,
         ensure_default_prss,
         rate_limiter_conf,

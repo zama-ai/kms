@@ -7,10 +7,12 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::engine::context::ContextInfo;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::Address;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
@@ -29,6 +31,7 @@ use kms_grpc::solidity_types::{
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
+use kms_grpc::ContextId;
 use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -612,56 +615,123 @@ pub(crate) fn compute_external_pt_signature(
 
 pub struct BaseKmsStruct {
     kms_type: KMSType,
-    sig_key: Option<Arc<PrivateSigKey>>,
-    verf_key: Arc<PublicSigKey>,
+    my_id: u32,
+    sig_keys: HashMap<ContextId, Arc<PrivateSigKey>>,
+    verf_keys: HashMap<ContextId, Arc<PublicSigKey>>,
     rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+    // todo
+    // pub fn new_centralized( sig_keys: Vec<PrivateSigKey>, contexts: Vec<ContextInfo>) -> anyhow::Result<Self> {
+    //     Err("new_centralized is not implemented yet".into())
+    // }
+    pub fn new(
+        kms_type: KMSType,
+        my_id: u32,
+        sig_keys: Vec<PrivateSigKey>,
+        contexts: Vec<ContextInfo>,
+    ) -> anyhow::Result<Self> {
+        let addresses: HashMap<Address, PrivateSigKey> = sig_keys
+            .iter()
+            .map(|cur_sk| (cur_sk.verf_key().address(), cur_sk.clone()))
+            .collect();
+
+        let mut sig_keys_map = HashMap::new();
+        let mut verf_keys_map = HashMap::new();
+        for cur_context in contexts.iter() {
+            let context_id = cur_context.context_id();
+            let my_node = cur_context
+                .my_node(my_id)?
+                .ok_or_else(|| anyhow::anyhow!("My node not found in context {}", context_id))?;
+            if let Some(address) = my_node.verification_key.map(|verf| verf.address()) {
+                tracing::info!(
+                    "Found signing key for context {}: address {}",
+                    context_id,
+                    address
+                );
+                let cur_sig_key = addresses.get(&address).ok_or_else(|| anyhow::anyhow!("Not signing key matches address. This likely means a storage issue or bad context"))?;
+                let cur_verf_key = cur_sig_key.verf_key();
+                sig_keys_map.insert(*context_id, Arc::new(cur_sig_key.clone()));
+                verf_keys_map.insert(*context_id, Arc::new(cur_verf_key));
+            } else {
+                anyhow::bail!(
+                    "No verification key associated with my node, {}, in context {}",
+                    my_id,
+                    context_id
+                );
+            }
+        }
         Ok(BaseKmsStruct {
             kms_type,
-            verf_key: Arc::new(sig_key.verf_key()),
-            sig_key: Some(Arc::new(sig_key)),
+            my_id,
+            verf_keys: verf_keys_map,
+            sig_keys: sig_keys_map,
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })
     }
 
-    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+    pub fn new_no_signing_keys(
+        kms_type: KMSType,
+        my_id: u32,
+        verf_keys: HashMap<ContextId, PublicSigKey>,
+    ) -> anyhow::Result<Self> {
         tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
-        BaseKmsStruct {
+        let addresses: HashMap<Address, PublicSigKey> = verf_keys
+            .values()
+            .map(|cur_pk| (cur_pk.address(), cur_pk.clone()))
+            .collect();
+
+        Ok(BaseKmsStruct {
             kms_type,
-            sig_key: None,
-            verf_key: Arc::new(verf_key),
+            my_id,
+            verf_keys: verf_keys
+                .into_iter()
+                .map(|(c, k): (ContextId, PublicSigKey)| (c, Arc::new(k)))
+                .collect(),
+            sig_keys: HashMap::new(),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
-        }
+        })
     }
 
     pub fn kms_type(&self) -> KMSType {
         self.kms_type
     }
 
-    pub fn sig_key(&self) -> anyhow::Result<Arc<PrivateSigKey>> {
-        match &self.sig_key {
-            Some(sk) => Ok(Arc::clone(sk)),
-            None => anyhow::bail!("No signing key available"),
-        }
+    pub fn all_context_ids(&self) -> Vec<ContextId> {
+        self.verf_keys.keys().cloned().collect()
     }
 
-    pub fn verf_key(&self) -> Arc<PublicSigKey> {
-        Arc::clone(&self.verf_key)
+    pub fn get_sig_key(&self, context: &ContextId) -> anyhow::Result<Arc<PrivateSigKey>> {
+        self.sig_keys
+            .get(context)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Signing key not found for context {}", context))
+    }
+
+    pub fn get_verf_key(&self, context: &ContextId) -> anyhow::Result<Arc<PublicSigKey>> {
+        self.verf_keys
+            .get(context)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Verification key not found for context {}", context))
+    }
+
+    pub fn add_context(&mut self, context: ContextInfo) -> anyhow::Result<()> {
+        // TODO
+        anyhow::bail!("Not implemented")
+    }
+
+    pub fn remove_context(&mut self, context_id: &ContextId) -> anyhow::Result<()> {
+        anyhow::bail!("Not implemented")
     }
 
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
     pub async fn new_instance(&self) -> Self {
-        let sig_key = match &self.sig_key {
-            Some(sk) => Some(Arc::clone(sk)),
-            None => None,
-        };
         Self {
             kms_type: self.kms_type,
-            verf_key: Arc::clone(&self.verf_key),
-            sig_key,
+            my_id: self.my_id,
+            verf_keys: self.verf_keys.clone(),
+            sig_keys: self.sig_keys.clone(),
             rng: Arc::new(Mutex::new(self.new_rng().await)),
         }
     }
@@ -679,14 +749,17 @@ impl BaseKmsStruct {
 
 impl BaseKms for BaseKmsStruct {
     /// sign `msg` using the KMS' private signing key
-    fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
+    fn sign<T>(
+        &self,
+        context_id: &ContextId,
+        dsep: &DomainSep,
+        msg: &T,
+    ) -> anyhow::Result<Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
-        match self.sig_key.as_ref() {
-            None => anyhow::bail!("KMS has no signing key"),
-            Some(sk) => internal_sign(dsep, msg, sk),
-        }
+        let sk = self.get_sig_key(&context_id)?;
+        internal_sign(dsep, msg, sk.as_ref())
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
@@ -1002,12 +1075,12 @@ impl Named for CrsGenMetadata {
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
 // an external signature on the batch and any extra data.
 #[cfg(feature = "non-wasm")]
-pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
+pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, ContextId, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
 #[cfg(feature = "non-wasm")]
-pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
+pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, ContextId, Vec<u8>);
 
 #[cfg(test)]
 pub(crate) mod tests {

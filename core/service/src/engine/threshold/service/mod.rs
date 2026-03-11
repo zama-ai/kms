@@ -23,4 +23,5 @@ mod preprocessor;
 mod public_decryptor;
 pub(crate) mod reshare_utils;
 pub mod session;
+pub mod tls_setup;
 mod user_decryptor;

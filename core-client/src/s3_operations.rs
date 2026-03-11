@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 use std::{collections::HashSet, path::Path};
 
+use crate::{CoreClientConfig, CoreConf};
 use bytes::Bytes;
+#[cfg(feature = "testing")]
+use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::ContextId;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
-use kms_lib::{
-    consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID},
-    cryptography::signatures::PublicSigKey,
-};
-
-use crate::{CoreClientConfig, CoreConf};
+use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 
 /// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
@@ -79,28 +78,32 @@ pub async fn fetch_public_elements(
 /// This fetches the KMS public verification keys from S3 for all the cores.
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
-) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
+    contexts: &[ContextId],
+) -> anyhow::Result<HashMap<u32, HashMap<ContextId, PublicSigKey>>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core.object_folder,
-                &PubDataType::VerfKey.to_string()
-            ),
-            key_id,
-        )
-        .await?;
+        let mut cur_context_map = HashMap::new();
+        for cur_context_id in contexts {
+            let content = generic_fetch_element(
+                &cur_core.s3_endpoint.clone(),
+                &format!(
+                    "{}/{}",
+                    cur_core.object_folder,
+                    &PubDataType::VerfKey.to_string()
+                ),
+                &cur_context_id.as_str(),
+            )
+            .await?;
 
-        let vk = tfhe::safe_serialization::safe_deserialize(
-            std::io::Cursor::new(&content),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-        keys_map.insert(cur_core.party_id, vk);
+            let vk = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&content),
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+            cur_context_map.insert(*cur_context_id, vk);
+        }
+        keys_map.insert(cur_core.party_id as u32, cur_context_map);
     }
 
     Ok(keys_map)
@@ -110,36 +113,38 @@ pub(crate) async fn fetch_kms_verification_keys(
 #[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_signing_keys(
     sim_conf: &CoreClientConfig,
-) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
+    contexts: &[ContextId],
+) -> anyhow::Result<HashMap<usize, HashMap<ContextId, PrivateSigKey>>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        use kms_grpc::rpc_types::PrivDataType;
+        let mut cur_context_map = HashMap::new();
+        for cur_context_id in contexts {
+            let content = generic_fetch_element(
+                &cur_core.s3_endpoint.clone(),
+                &format!(
+                    "{}/{}",
+                    cur_core
+                        .private_object_folder
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Private object folder not set for core {}",
+                            cur_core.party_id
+                        ))?,
+                    &PrivDataType::SigningKey.to_string()
+                ),
+                key_id,
+            )
+            .await?;
 
-        let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core
-                    .private_object_folder
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "Private object folder not set for core {}",
-                        cur_core.party_id
-                    ))?,
-                &PrivDataType::SigningKey.to_string()
-            ),
-            key_id,
-        )
-        .await?;
-
-        let signing_key: PrivateSigKey = tfhe::safe_serialization::safe_deserialize(
-            std::io::Cursor::new(&content),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-        keys_map.insert(cur_core.party_id, signing_key);
+            let signing_key: PrivateSigKey = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&content),
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+            cur_context_map.insert(*cur_context_id, signing_key);
+        }
+        keys_map.insert(cur_core.party_id, cur_context_map);
     }
 
     Ok(keys_map)
