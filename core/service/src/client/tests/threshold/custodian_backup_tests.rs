@@ -27,6 +27,7 @@ cfg_if::cfg_if! {
         use threshold_types::role::Role;
         use tokio::task::JoinSet;
         use tonic::transport::Channel;
+        use tracing::{info_span, Instrument};
     }
 }
 use crate::backup::BackupCiphertext;
@@ -46,6 +47,8 @@ use crate::{
 };
 #[cfg(feature = "insecure")]
 use alloy_primitives::Address;
+#[cfg(feature = "insecure")]
+use futures_util::future::join_all;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use serial_test::serial;
 
@@ -137,18 +140,20 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[case(3, 1)]
 #[serial]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+    let timing = test_utils::setup_test_tracing();
     backup_after_crs(custodians, threshold).await;
+    timing.print_summary();
 }
 
 #[cfg(feature = "insecure")]
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let req_new_cus: RequestId = derive_request_id(&format!(
             "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
         ))
         .unwrap();
-
     let test_path = None;
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_crs_{amount_parties}_{amount_custodians}_{threshold}"
@@ -156,24 +161,27 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     .unwrap();
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
     // Purge IDs so repeated test runs find a fresh plate.
-    purge(
-        None,
-        None,
-        &crs_req,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    purge(
-        None,
-        None,
-        &req_new_cus,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    purge_backup(test_path, backup_storage_prefixes).await;
+    tokio::join!(
+        purge(
+            None,
+            None,
+            &crs_req,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .instrument(info_span!("Purge crs request")),
+        purge(
+            None,
+            None,
+            &req_new_cus,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .instrument(info_span!("Purge new custodian req")),
+        purge_backup(test_path, backup_storage_prefixes).instrument(info_span!("Purge backup")),
+    );
 
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -188,6 +196,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         None,
         test_path,
     )
+    .instrument(info_span!("Create servers/clients"))
     .await;
     let _mnemnonics = run_new_cus_context(
         &kms_clients,
@@ -196,6 +205,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         amount_custodians,
         threshold,
     )
+    .instrument(info_span!("Run new custodian context"))
     .await;
 
     // Generate a new crs
@@ -207,6 +217,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         &crs_req,
         Some(16),
     )
+    .instrument(info_span!("Run CRS"))
     .await;
 
     // Check that the new CRS was backed up
@@ -217,6 +228,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         &PrivDataType::CrsInfo.to_string(),
         backup_storage_prefixes,
     )
+    .instrument(info_span!("Read custodian backup files"))
     .await;
 
     // Validate each backup
@@ -229,16 +241,20 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     }
     assert!(crss[crss.len() - 1].priv_data_type == PrivDataType::CrsInfo);
 
-    println!("Shutting down servers");
     // Shut down the servers
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
-    }
+    let shutdown_futs = kms_servers
+        .into_iter()
+        .map(|(idx, s)| {
+            s.assert_shutdown()
+                .instrument(info_span!("Shut down ", server = idx))
+        })
+        .collect::<Vec<_>>();
+    join_all(shutdown_futs).await;
+
     drop(kms_clients);
     drop(internal_client);
 
     // Check that the backup is still there an unmodified
-    println!("Starting new servers");
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
@@ -248,6 +264,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         None,
         test_path,
     )
+    .instrument(info_span!("Start new servers"))
     .await;
     let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files(
         test_path,
@@ -256,6 +273,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         &PrivDataType::CrsInfo.to_string(),
         backup_storage_prefixes,
     )
+    .instrument(info_span!("Re-read custodian backup files"))
     .await;
     assert_eq!(crss.len(), amount_parties);
     for i in 0..amount_parties {
