@@ -202,6 +202,7 @@ pub async fn wait_for_crsgen_result(
     internal_client: &Client,
     param: &DKGParams,
 ) {
+    use futures_util::future::join_all;
     use itertools::Itertools;
     use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 
@@ -220,7 +221,7 @@ pub async fn wait_for_crsgen_result(
             }
         }
     }
-    let joined_responses = futures::future::join_all(futs).await;
+    let joined_responses = join_all(futs).await;
 
     // first check the happy path
     // the public parameter is checked in ddec tests, so we don't specifically check _pp
