@@ -294,7 +294,7 @@ where
                     }
                     #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
-                        tracing::info!(
+                        tracing::debug!(
                             "Skipping deprecated PRSS setup type during custodian context creation"
                         );
                     }

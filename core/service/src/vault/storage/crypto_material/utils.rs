@@ -192,7 +192,7 @@ pub fn log_data_exists<T: Display, U: Display, V: Display>(
             "{} with ID {} already exist for private storage \"{}\" and public storage \"{}\", skipping generation",
             data_type, id, storage_info, pub_info
         ),
-        None => tracing::info!(
+        None => tracing::warn!(
             "{} with ID {} already exist, skipping generation",
             data_type, id
         ),

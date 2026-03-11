@@ -351,7 +351,7 @@ pub async fn delete_at_request_id<S: Storage>(
                 ))
             })
     } else {
-        tracing::info!(
+        tracing::debug!(
             "Tried to delete data with ID {} and type {}, but did not exist",
             request_id,
             data_type
@@ -383,7 +383,7 @@ pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
                 ))
             })
     } else {
-        tracing::info!(
+        tracing::debug!(
             "Tried to delete data with ID {} and epoch {} and type {}, but did not exist",
             request_id,
             epoch_id,

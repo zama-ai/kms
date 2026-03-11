@@ -773,7 +773,7 @@ where
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                tracing::info!("Skipping deprecated PRSS setup type during restore");
+                tracing::debug!("Skipping deprecated PRSS setup type during restore");
             }
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
@@ -972,7 +972,7 @@ where
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            tracing::info!(
+                            tracing::debug!(
                                 "Skipping deprecated PRSS setup type during backup vault update"
                             );
                         }
