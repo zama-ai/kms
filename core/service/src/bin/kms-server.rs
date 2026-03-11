@@ -9,8 +9,9 @@ use kms_lib::{
     },
     cryptography::attestation::make_security_module,
     engine::{
-        centralized::central_kms::RealCentralizedKms, context::SoftwareVersion,
-        migration::migrate_to_0_13_1, run_server, threshold::service::new_real_threshold_kms,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
+        migration::migrate_to_0_13_10, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -287,7 +288,7 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_to_0_13_1(&mut private_storage, kms_type)
+    migrate_to_0_13_10(&mut private_storage, kms_type)
         .await
         .expect("Could not complete migration: {e}");
 
