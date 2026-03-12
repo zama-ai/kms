@@ -976,10 +976,12 @@ impl FromStr for PreviousEpochParameters {
                         previous_keys.push(key_info_str.parse()?);
                     }
 
+                    //TODO: Fix, we can't stop here anymore since we have also crs to deal with
                     return Ok(PreviousEpochParameters {
                         context_id: context_id.ok_or("Missing context_id")?,
                         epoch_id: epoch_id.ok_or("Missing epoch_id")?,
                         previous_keys,
+                        previous_crs,
                     });
                 }
                 "previous_crs" => {

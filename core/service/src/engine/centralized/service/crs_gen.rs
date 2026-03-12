@@ -266,7 +266,6 @@ mod tests {
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
-            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain.clone()),
             extra_data: vec![],
@@ -291,7 +290,6 @@ mod tests {
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
-            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain.clone()),
             extra_data: vec![],
@@ -320,7 +318,6 @@ mod tests {
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                epoch_id: None,
                 params: 123, // invalid params
                 domain: Some(domain.clone()),
                 extra_data: vec![],
@@ -338,7 +335,6 @@ mod tests {
                 request_id: None, // missing
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
@@ -358,7 +354,6 @@ mod tests {
                 }),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
@@ -376,7 +371,6 @@ mod tests {
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: None, // missing
                 extra_data: vec![],
@@ -396,7 +390,6 @@ mod tests {
                 context_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_context_id".to_string(),
                 }),
-                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
@@ -414,7 +407,6 @@ mod tests {
                 request_id: Some(req_id.into()),
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
@@ -436,6 +428,7 @@ mod tests {
                 context_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -452,6 +445,7 @@ mod tests {
                 context_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -484,7 +478,6 @@ mod tests {
             request_id: Some(req_id.into()),
             epoch_id: Some(epoch_id.into()),
             context_id: None,
-            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain),
             extra_data: vec![],

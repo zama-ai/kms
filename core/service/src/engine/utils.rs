@@ -1,6 +1,4 @@
-use crate::engine::base::{
-    CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
-};
+use crate::engine::base::{CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};

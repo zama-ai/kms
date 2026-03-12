@@ -137,6 +137,7 @@ struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
     pub eip712_domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -252,6 +253,7 @@ fn verify_epoch_info(
                 crs_id,
                 crs_digest: crs_info.crs_digest,
                 eip712_domain,
+                extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
         .try_collect()?;
@@ -755,6 +757,7 @@ impl<
                 &crs_info.crs_id,
                 &crs,
                 &crs_info.eip712_domain,
+                crs_info.extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
             let meta_store = Arc::clone(&meta_store);

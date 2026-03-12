@@ -7,7 +7,7 @@ use crate::{
         context::ContextInfo,
         threshold::service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
         utils::{
-            verifiy_crs_digest_from_bytes, verify_compressed_key_digest_from_bytes,
+            verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
             verify_key_digest_from_bytes, MetricedError, ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH,
             ERR_SERVER_KEY_DIGEST_MISMATCH,
         },
@@ -595,7 +595,7 @@ async fn fetch_public_crs_materials_from_peers<
             .load_bytes(crs_id, &PubDataType::CRS.to_string())
             .await;
         match crs_bytes {
-            Ok(crs_bytes) => match verifiy_crs_digest_from_bytes(&crs_bytes, crs_digests) {
+            Ok(crs_bytes) => match verify_crs_digest_from_bytes(&crs_bytes, crs_digests) {
                 Ok(()) => {
                     // Assumes that if the digest match deserialize will either succeed or fail for all peers,
                     // so it's ok to error out if this fails
@@ -657,7 +657,7 @@ pub(crate) async fn get_verified_crs_material<
 
     match crs_bytes_res {
         Ok(crs_bytes) => {
-            verifiy_crs_digest_from_bytes(&crs_bytes, crs_digest).map_err(|e| {
+            verify_crs_digest_from_bytes(&crs_bytes, crs_digest).map_err(|e| {
                 MetricedError::new(
                     OP_NEW_EPOCH,
                     Some(*request_id),
