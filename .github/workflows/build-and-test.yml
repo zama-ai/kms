@@ -30,6 +30,11 @@ jobs:
   ############################################################################
   docker-build:
     name: build-and-test/docker-build
+    if: >-
+      github.event_name == 'pull_request' &&
+      !(github.event.action == 'labeled' &&
+        github.event.label.name == 'cla-signed' &&
+        github.event.sender.login == 'cla-bot')
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
@@ -54,7 +59,12 @@ jobs:
   kind-testing:
     name: build-and-test/kind-testing
     needs: [docker-build]
-    if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+      !(github.event.action == 'labeled' &&
+        github.event.label.name == 'cla-signed' &&
+        github.event.sender.login == 'cla-bot')
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required for nested docker-build job (even if it doesn't run)
@@ -84,6 +94,11 @@ jobs:
   check-pr-preview-labels:
     name: build-and-test/check-labels
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      !(github.event.action == 'labeled' &&
+        github.event.label.name == 'cla-signed' &&
+        github.event.sender.login == 'cla-bot')
     outputs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
       deployment_type: ${{ steps.check.outputs.deployment_type }}
@@ -114,7 +129,11 @@ jobs:
   pr-preview:
     name: build-and-test/pr-preview
     needs: [docker-build, check-pr-preview-labels]
-    if: needs.check-pr-preview-labels.outputs.should_deploy == 'true'
+    if: >-
+      needs.check-pr-preview-labels.outputs.should_deploy == 'true' &&
+      !(github.event.action == 'labeled' &&
+        github.event.label.name == 'cla-signed' &&
+        github.event.sender.login == 'cla-bot')
     permissions:
       pull-requests: write # Required to update pull requests information
     uses: ./.github/workflows/pr-preview-deploy.yml
