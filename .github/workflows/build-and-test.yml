@@ -33,8 +33,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       !(github.event.action == 'labeled' &&
-        github.event.label.name == 'cla-signed' &&
-        github.event.sender.login == 'cla-bot')
+        github.event.label.name == 'cla-signed')
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
@@ -63,8 +62,7 @@ jobs:
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened') &&
       !(github.event.action == 'labeled' &&
-        github.event.label.name == 'cla-signed' &&
-        github.event.sender.login == 'cla-bot')
+        github.event.label.name == 'cla-signed')
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required for nested docker-build job (even if it doesn't run)
@@ -97,8 +95,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       !(github.event.action == 'labeled' &&
-        github.event.label.name == 'cla-signed' &&
-        github.event.sender.login == 'cla-bot')
+        github.event.label.name == 'cla-signed')
     outputs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
       deployment_type: ${{ steps.check.outputs.deployment_type }}
@@ -132,8 +129,7 @@ jobs:
     if: >-
       needs.check-pr-preview-labels.outputs.should_deploy == 'true' &&
       !(github.event.action == 'labeled' &&
-        github.event.label.name == 'cla-signed' &&
-        github.event.sender.login == 'cla-bot')
+        github.event.label.name == 'cla-signed')
     permissions:
       pull-requests: write # Required to update pull requests information
     uses: ./.github/workflows/pr-preview-deploy.yml
