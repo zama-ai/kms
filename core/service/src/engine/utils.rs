@@ -813,9 +813,16 @@ mod tests {
         let domain = crate::dummy_domain();
         let max_num_bits = 64u32;
 
-        let (crs, metadata) =
-            gen_centralized_crs(&sk, &params, Some(max_num_bits), &domain, crs_id, &mut rng)
-                .unwrap();
+        let (crs, metadata) = gen_centralized_crs(
+            &sk,
+            &params,
+            Some(max_num_bits),
+            &domain,
+            vec![],
+            crs_id,
+            &mut rng,
+        )
+        .unwrap();
 
         let digest = match &metadata {
             CrsGenMetadata::Current(inner) => inner.crs_digest.clone(),

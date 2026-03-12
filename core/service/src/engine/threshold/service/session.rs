@@ -4,9 +4,13 @@ use std::{
     sync::Arc,
 };
 
-use aes_prng::AesRng;
+use crate::{
+    engine::{context::ContextInfo, utils::MetricedError},
+    vault::storage::{crypto_material::CryptoMaterialStorage, Storage, StorageExt},
+};
+
 // === External Crates ===
-use crate::engine::{context::ContextInfo, utils::MetricedError};
+use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use execution::{
     runtime::sessions::{
@@ -82,7 +86,31 @@ pub(crate) struct SessionMaker {
 }
 
 impl SessionMaker {
-    pub(crate) fn new(
+    pub(crate) async fn new_initialized<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    >(
+        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
+        verifier: Option<Arc<AttestedVerifier>>,
+        rng: AesRng,
+    ) -> anyhow::Result<Self> {
+        let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
+        let all_prss = crypto_storage.read_all_prss_info().await?;
+        if all_prss.is_empty() {
+            tracing::warn!("No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server");
+        }
+        for (epoch_id, prss) in all_prss {
+            session_maker.add_epoch(epoch_id.into(), prss).await;
+            tracing::info!(
+                "Loaded PRSS Setup from storage for request ID {}.",
+                epoch_id
+            );
+        }
+        Ok(session_maker)
+    }
+
+    pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
@@ -673,6 +701,7 @@ impl SessionMaker {
         Ok(context_info.threshold)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn num_parties(&self, context_id: &ContextId) -> anyhow::Result<usize> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard

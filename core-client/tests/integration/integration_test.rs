@@ -1632,6 +1632,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
                 compressed: false,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
+                use_existing_key_tag: false,
             },
             200,
         )
@@ -1777,10 +1778,11 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,
-            key_id: key_id.into(),
-            preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-            server_key_digest,
-            public_key_digest,
+            previous_keys: vec![PreviousKeyInfo {
+                key_id: key_id.into(),
+                preproc_id: RequestId::from_str(&preproc_id).unwrap(),
+                key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
+            }],
         }),
     });
 
@@ -1842,6 +1844,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             compressed: false,
             existing_keyset_id: None,
             existing_epoch_id: None,
+            use_existing_key_tag: false,
         },
         200,
     )

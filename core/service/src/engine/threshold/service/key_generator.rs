@@ -37,6 +37,7 @@ use observability::{
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -73,7 +74,10 @@ use crate::{
         },
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{
+        crypto_material::{CryptoMaterialReader, ThresholdCryptoMaterialStorage},
+        Storage, StorageExt,
+    },
 };
 
 // === Current Module Imports ===
@@ -81,6 +85,7 @@ use super::BucketMetaStore;
 
 const DKG_Z64_SESSION_COUNTER: u64 = 1;
 const DKG_Z128_SESSION_COUNTER: u64 = 2;
+const ERR_FAILED_TO_READ_EXISTING_TAG: &str = "Failed to read existing tag";
 
 struct DkgSessions {
     session_z64: SmallSession<ResiduePolyF4Z64>,
@@ -247,6 +252,7 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         context_id: ContextId,
         epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
@@ -338,6 +344,14 @@ impl<
         // we must validate the parameter before passing it into the background process
         internal_keyset_config.validate()?;
 
+        // Read existing key tag from public storage if needed
+        let existing_key_tag: Option<tfhe::Tag> = if internal_keyset_config.use_existing_key_tag() {
+            let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()?;
+            Some(Self::read_existing_key_tag(&crypto_storage, &existing_keyset_id).await?)
+        } else {
+            None
+        };
+
         let keygen_background = async move {
             // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
             match &preproc_handle_w_mode {
@@ -362,6 +376,7 @@ impl<
                     // Nothing to remove
                 }
             }
+
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
@@ -376,8 +391,10 @@ impl<
                         inner_config.to_owned(),
                         &internal_keyset_config,
                         eip712_domain_copy,
+                        extra_data,
                         permit,
                         op_tag,
+                        existing_key_tag,
                     )
                     .await
                 }
@@ -394,6 +411,7 @@ impl<
                         internal_keyset_config
                             .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
                         eip712_domain_copy,
+                        extra_data,
                         permit,
                     )
                     .await
@@ -454,6 +472,7 @@ impl<
             _dkg_params,
             internal_keyset_config,
             eip712_domain,
+            extra_data,
         ) = validate_key_gen_request(inner, op_tag)?;
         let my_role = validate_context_and_epoch(
             op_tag,
@@ -500,6 +519,7 @@ impl<
             preproc_handle,
             req_id,
             &eip712_domain,
+            extra_data,
             context_id,
             epoch_id,
             permit,
@@ -897,6 +917,7 @@ impl<
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -974,6 +995,7 @@ impl<
             req_id,
             &decompression_key,
             &eip712_domain,
+            extra_data,
         ) {
             Ok(info) => info,
             Err(e) => {
@@ -1001,13 +1023,13 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn compressed_key_gen_from_existing_private_keyset<P>(
-        req_id: &RequestId,
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         existing_epoch_id: EpochId,
         preprocessing: &mut P,
+        tag: tfhe::Tag,
     ) -> anyhow::Result<(
         CompressedXofKeySet,
         PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1036,7 +1058,7 @@ impl<
             &mut dkg_sessions.session_z128,
             preprocessing,
             params,
-            req_id.into(),
+            tag,
             &existing_private_keys,
         )
         .await?;
@@ -1045,13 +1067,13 @@ impl<
 
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_from_existing_private_keyset<P>(
-        req_id: &RequestId,
         dkg_sessions: &mut DkgSessions,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
         existing_epoch_id: EpochId,
         preprocessing: &mut P,
+        tag: tfhe::Tag,
     ) -> anyhow::Result<(
         FhePubKeySet,
         PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
@@ -1080,7 +1102,7 @@ impl<
             &mut dkg_sessions.session_z128,
             preprocessing,
             params,
-            req_id.into(),
+            tag,
             &existing_private_keys,
         )
         .await?;
@@ -1100,8 +1122,10 @@ impl<
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         internal_keyset_config: &InternalKeySetConfig,
         eip712_domain: alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
+        existing_key_tag: Option<tfhe::Tag>,
     ) {
         let _permit = permit;
         let start = Instant::now();
@@ -1205,14 +1229,15 @@ impl<
                                 .get_existing_epoch_id()
                                 .expect("validated")
                                 .unwrap_or(*epoch_id);
+                            let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::key_gen_from_existing_private_keyset(
-                                req_id,
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
                                 existing_epoch_id,
                                 preproc_handle.as_mut(),
+                                tag,
                             )
                             .await
                             .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk))
@@ -1229,14 +1254,15 @@ impl<
                                 .get_existing_epoch_id()
                                 .expect("validated")
                                 .unwrap_or(*epoch_id);
+                            let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::compressed_key_gen_from_existing_private_keyset(
-                                req_id,
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
                                 existing_epoch_id,
                                 preproc_handle.as_mut(),
+                                tag,
                             )
                             .await
                             .map(|(compressed_keyset, sk)| {
@@ -1273,6 +1299,7 @@ impl<
                     req_id,
                     &pub_key_set,
                     &eip712_domain,
+                    extra_data,
                 ) {
                     Ok(info) => info,
                     Err(e) => {
@@ -1337,6 +1364,7 @@ impl<
                     req_id,
                     &compressed_keyset,
                     &eip712_domain,
+                    extra_data,
                 ) {
                     Ok(info) => info,
                     Err(e) => {
@@ -1387,6 +1415,36 @@ impl<
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+    }
+
+    /// Reads the tag from an existing keyset in public storage.
+    /// Tries CompressedXofKeySet first, then falls back to ServerKey.
+    async fn read_existing_key_tag(
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        existing_keyset_id: &RequestId,
+    ) -> anyhow::Result<tfhe::Tag> {
+        let pub_storage = crypto_storage.inner.public_storage.lock().await;
+
+        let res = if let Ok(compressed_keyset) =
+            <CompressedXofKeySet as CryptoMaterialReader>::read_from_storage(
+                &*pub_storage,
+                existing_keyset_id,
+            )
+            .await
+        {
+            Ok(compressed_keyset
+                .clone()
+                .into_raw_parts()
+                .1
+                .into_raw_parts()
+                .1)
+        } else {
+            CryptoMaterialReader::read_from_storage(&*pub_storage, existing_keyset_id)
+                .await
+                .map(|server_key: tfhe::ServerKey| server_key.tag().clone())
+        };
+
+        res.map_err(|e| anyhow::anyhow!("{}: {e}", ERR_FAILED_TO_READ_EXISTING_TAG))
     }
 }
 
@@ -1573,6 +1631,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1602,6 +1661,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1627,6 +1687,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1659,6 +1720,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         assert_eq!(
@@ -1688,6 +1750,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1728,6 +1791,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1764,6 +1828,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1779,6 +1844,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1793,6 +1859,55 @@ mod tests {
     async fn aborted() {
         // TODO this is not easy to test since it requires meta store to fail
         // we don't have a trait for meta store
+    }
+
+    #[tokio::test]
+    async fn use_existing_key_tag_with_wrong_keyset_id() {
+        // When use_existing_key_tag is true but existing_keyset_id points to a
+        // non-existent key in storage, launch_dkg should fail with Internal
+        // because read_existing_key_tag cannot find any key material.
+        let (prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
+        let key_id = RequestId::new_random(&mut OsRng);
+        let wrong_keyset_id = RequestId::new_random(&mut OsRng);
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let keyset_config = KeySetConfig {
+            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32,
+                compressed_key_config: 0,
+            }),
+        };
+        let keyset_added_info = KeySetAddedInfo {
+            existing_keyset_id: Some(wrong_keyset_id.into()),
+            use_existing_key_tag: true,
+            ..Default::default()
+        };
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(prep_id.into()),
+            domain: Some(domain),
+            keyset_config: Some(keyset_config),
+            keyset_added_info: Some(keyset_added_info),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
+            extra_data: vec![],
+        });
+
+        let res = kg.key_gen(request).await.unwrap_err();
+        assert_eq!(res.code(), tonic::Code::Internal);
+
+        assert!(res
+            .internal_err()
+            .to_string()
+            .contains(ERR_FAILED_TO_READ_EXISTING_TAG));
     }
 
     #[tokio::test]
@@ -1817,6 +1932,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         kg.key_gen(tonic_req).await.unwrap();

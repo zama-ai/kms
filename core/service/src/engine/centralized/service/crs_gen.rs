@@ -55,7 +55,7 @@ pub async fn crs_gen_impl<
         .start();
     let inner = request.into_inner();
     let max_bits = inner.max_num_bits;
-    let (req_id, context_id, _witness_dimension, params, eip712_domain) =
+    let (req_id, context_id, _witness_dimension, params, eip712_domain, extra_data) =
         validate_crs_gen_request(inner, op_tag)?;
     let metric_tags = vec![
         (TAG_CRS_ID, req_id.to_string()),
@@ -97,7 +97,7 @@ pub async fn crs_gen_impl<
 
     let rng = service.base_kms.new_rng().await;
 
-    let handle = service.tracker.spawn(
+    service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -109,6 +109,7 @@ pub async fn crs_gen_impl<
                 sk,
                 params,
                 eip712_domain,
+                extra_data,
                 max_bits,
                 op_tag,
             )
@@ -116,7 +117,6 @@ pub async fn crs_gen_impl<
         }
         .instrument(tracing::Span::current()),
     );
-    service.thread_handles.write().await.add(handle);
     Ok(Response::new(Empty {}))
 }
 
@@ -201,24 +201,34 @@ pub(crate) async fn crs_gen_background<
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
     eip712_domain: Eip712Domain,
+    extra_data: Vec<u8>,
     max_number_bits: Option<u32>,
     op_tag: &'static str,
 ) {
     let start = tokio::time::Instant::now();
 
-    let (pp, crs_info) =
-        match async_generate_crs(&sk, params, max_number_bits, eip712_domain, req_id, rng).await {
-            Ok((pp, crs_info)) => (pp, crs_info),
-            Err(e) => {
-                let _ = update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    req_id,
-                    e.to_string(),
-                    op_tag,
-                );
-                return;
-            }
-        };
+    let (pp, crs_info) = match async_generate_crs(
+        &sk,
+        params,
+        max_number_bits,
+        eip712_domain,
+        extra_data,
+        req_id,
+        rng,
+    )
+    .await
+    {
+        Ok((pp, crs_info)) => (pp, crs_info),
+        Err(e) => {
+            let _ = update_err_req_in_meta_store(
+                &mut meta_store.write().await,
+                req_id,
+                e.to_string(),
+                op_tag,
+            );
+            return;
+        }
+    };
 
     crypto_storage
         .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_tag)
@@ -252,8 +262,10 @@ mod tests {
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
             context_id: None,
+            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain.clone()),
+            extra_data: vec![],
             max_num_bits: Some(2048),
         };
         let _res = crs_gen_impl(&kms, Request::new(request), true)
@@ -273,8 +285,10 @@ mod tests {
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
             context_id: None,
+            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain.clone()),
+            extra_data: vec![],
             max_num_bits: Some(2048),
         };
         let _res = crs_gen_impl(&kms, Request::new(request.clone()), false)
@@ -298,8 +312,10 @@ mod tests {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
                 context_id: None,
+                epoch_id: None,
                 params: 123, // invalid params
                 domain: Some(domain.clone()),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -313,8 +329,10 @@ mod tests {
             let request = CrsGenRequest {
                 request_id: None, // missing
                 context_id: None,
+                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -330,8 +348,10 @@ mod tests {
                     request_id: "not_a_valid_request_id".to_string(),
                 }),
                 context_id: None,
+                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -345,8 +365,10 @@ mod tests {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
                 context_id: None,
+                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: None, // missing
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -362,8 +384,10 @@ mod tests {
                 context_id: Some(kms_grpc::kms::v1::RequestId {
                     request_id: "not_a_valid_context_id".to_string(),
                 }),
+                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
                 max_num_bits: None,
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -377,8 +401,10 @@ mod tests {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
                 context_id: None,
+                epoch_id: None,
                 params: FheParameter::Test.into(),
                 domain: Some(domain),
+                extra_data: vec![],
                 max_num_bits: Some(123), // invalid
             };
             let err = crs_gen_impl(&kms, Request::new(request), false)
@@ -409,8 +435,10 @@ mod tests {
         let request = CrsGenRequest {
             request_id: Some(req_id.into()),
             context_id: None,
+            epoch_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain),
+            extra_data: vec![],
             max_num_bits: None,
         };
         let err = crs_gen_impl(&kms, Request::new(request), false)

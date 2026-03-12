@@ -3,77 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use thread_handles::{spawn_compute_bound, OsThreadGroup, ThreadHandleGroup};
-
-mod thread_handle_group {
-    use super::*;
-
-    #[tokio::test]
-    async fn thread_handle_group_join_all_succeeds() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut group = ThreadHandleGroup::new();
-
-        for _ in 0..5 {
-            let c = counter.clone();
-            group.add(tokio::spawn(async move {
-                c.fetch_add(1, Ordering::Relaxed);
-            }));
-        }
-
-        group.join_all().await.unwrap();
-        assert_eq!(counter.load(Ordering::Relaxed), 5);
-    }
-
-    #[tokio::test]
-    async fn thread_handle_group_join_all_reports_panic() {
-        let mut group = ThreadHandleGroup::new();
-        group.add(tokio::spawn(async {
-            panic!("oh noes");
-        }));
-
-        let err = group.join_all().await.unwrap_err();
-        assert!(
-            err.to_string().contains("panic"),
-            "expected panic mention, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn thread_handle_group_blocking_join_succeeds() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        let mut group = ThreadHandleGroup::new();
-
-        for _ in 0..3 {
-            let c = counter.clone();
-            group.add(tokio::spawn(async move {
-                c.fetch_add(1, Ordering::Relaxed);
-            }));
-        }
-
-        // Give the tasks a moment to finish so the blocking join doesn't have to
-        // spin for long.
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-
-        group.join_all_blocking().unwrap();
-        assert_eq!(counter.load(Ordering::Relaxed), 3);
-    }
-
-    #[tokio::test]
-    async fn thread_handle_group_blocking_join_reports_panic() {
-        let mut group = ThreadHandleGroup::new();
-        group.add(tokio::spawn(async {
-            panic!("blocking panic");
-        }));
-
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-
-        let err = group.join_all_blocking().unwrap_err();
-        assert!(
-            err.to_string().contains("blocking panic"),
-            "expected panic mention, got: {err}"
-        );
-    }
-}
+use thread_handles::{spawn_compute_bound, OsThreadGroup};
 
 mod os_thread_group {
     use super::*;
