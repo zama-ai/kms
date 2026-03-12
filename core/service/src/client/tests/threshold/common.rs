@@ -283,6 +283,7 @@ pub async fn threshold_insecure_key_gen_isolated(
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         keygen_tasks.spawn(async move {
             cur_client
@@ -403,6 +404,7 @@ pub async fn threshold_key_gen_secure_isolated(
             keyset_added_info: keyset_added_info.clone(),
             context_id: context_id.clone(),
             epoch_id: epoch_id.clone(),
+            extra_data: vec![],
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });

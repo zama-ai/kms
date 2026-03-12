@@ -278,6 +278,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
@@ -388,6 +389,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
@@ -740,6 +742,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
             }),
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });

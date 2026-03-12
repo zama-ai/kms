@@ -389,6 +389,7 @@ where
         &dkg_params,
         max_num_bits_u32,
         &domain,
+        vec![],
         crs_id,
         &mut rng,
     ) {
@@ -527,6 +528,7 @@ where
         &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
+        vec![],
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -543,6 +545,7 @@ where
         &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
+        vec![],
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -1086,6 +1089,7 @@ where
             key_id,
             &keyset.public_keys,
             &domain,
+            vec![],
         ) {
             Ok(result) => result,
             Err(e) => {
@@ -1292,7 +1296,7 @@ where
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
 
-        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
+        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain, vec![])
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");
             });
@@ -1367,6 +1371,7 @@ mod tests {
                 params,
                 Some(max_num_bits),
                 &eip712_domain,
+                vec![],
                 &req_id,
                 &mut rng,
             )

@@ -123,7 +123,9 @@ struct VerifiedKeyInfo {
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
     pub eip712_domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
 }
+
 #[derive(Debug)]
 struct VerifiedPreviousEpochInfo {
     /// The KMS context of the parties that will reshare
@@ -207,6 +209,7 @@ fn verify_epoch_info(
                 key_parameters,
                 key_digests,
                 eip712_domain,
+                extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
         .try_collect()?;
@@ -580,6 +583,7 @@ impl<
                         &key_info.key_id,
                         &fhe_pubkeys,
                         &key_info.eip712_domain,
+                        key_info.extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -621,6 +625,7 @@ impl<
                         &key_info.key_id,
                         &compressed_keyset,
                         &key_info.eip712_domain,
+                        key_info.extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {

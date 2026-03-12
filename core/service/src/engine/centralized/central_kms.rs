@@ -82,6 +82,7 @@ pub(crate) enum CentralizedKeyGenResult {
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -90,6 +91,7 @@ pub(crate) async fn async_generate_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<CentralizedKeyGenResult> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
@@ -115,6 +117,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 &preproc_id_copy,
                 seed,
                 &eip712_domain,
+                extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
             CompressedKeyConfig::All => generate_compressed_fhe_keys(
@@ -125,6 +128,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 &preproc_id_copy,
                 seed,
                 &eip712_domain,
+                extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Compressed(keyset, handles)),
         };
@@ -190,6 +194,7 @@ pub(crate) async fn async_generate_crs(
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
     req_id: &RequestId,
     rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
@@ -203,6 +208,7 @@ pub(crate) async fn async_generate_crs(
             &params,
             max_num_bits,
             &eip712_domain,
+            extra_data,
             &req_id_copy,
             rng,
         );
@@ -220,6 +226,7 @@ fn generate_compressed_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
     match keyset_config {
         KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
@@ -273,11 +280,13 @@ fn generate_compressed_fhe_keys(
         &compressed_keyset,
         decompression_key,
         eip712_domain,
+        extra_data,
     )?;
 
     Ok((compressed_keyset, handles))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -286,6 +295,7 @@ pub fn generate_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let tag = key_id.into();
@@ -322,6 +332,7 @@ pub fn generate_fhe_keys(
             &pks,
             decompression_key,
             eip712_domain,
+            extra_data.clone(),
         )?;
         Ok((pks, handles))
     };
@@ -351,6 +362,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
     req_id: &RequestId,
     mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
@@ -373,6 +385,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         req_id,
         &pp,
         eip712_domain,
+        extra_data,
     )?;
     Ok((pp, crs_info))
 }
@@ -1275,6 +1288,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         )
         .unwrap();
         assert!(pub_fhe_keys.server_key.noise_squashing_key().is_some());
@@ -1289,6 +1303,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         )
         .unwrap();
         assert!(other_pub_fhe_keys
@@ -1341,6 +1356,7 @@ pub(crate) mod tests {
             &preproc_id,
             None,
             &domain,
+            vec![]
         )
         .is_ok());
     }
@@ -1366,6 +1382,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         );
 
         assert!(result.is_ok(), "Compressed key generation should succeed");

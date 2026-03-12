@@ -1824,6 +1824,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.compressed,
@@ -1856,6 +1857,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
                 result_parameters.compressed,
@@ -1910,6 +1912,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -1941,6 +1944,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
             )

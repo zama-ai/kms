@@ -190,6 +190,9 @@ message KeyGenRequest {
   // The epoch ID for the key generation, i.e., the shares produced
   // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
+
+  // Extra data from the gateway.
+  bytes extra_data = 9;
 }
 
 message KeyDigest {
@@ -267,6 +270,12 @@ message CrsGenRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
+
+  // Epoch ID palaceholder
+  RequestId epoch_id = 6;
+
+  // Extra data from the gateway.
+  bytes extra_data = 7;
 }
 
 message CrsGenResult {
