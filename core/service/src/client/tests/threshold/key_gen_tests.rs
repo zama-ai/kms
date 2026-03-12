@@ -1400,6 +1400,7 @@ pub(crate) async fn verify_keygen_responses(
                     req_get_keygen,
                     &kg_res,
                     domain,
+                    vec![],
                     &storage,
                 )
                 .await

@@ -2,9 +2,10 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
@@ -14,11 +15,13 @@ use crate::util::key_setup::{
     ThresholdSigningKeyConfig,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
+use crate::vault::storage::delete_at_request_id;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
 use execution::endpoints::decryption::DecryptionMode;
 use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::commons::utils::ZipChecked;
@@ -28,7 +31,7 @@ use tonic::transport::Channel;
 async fn threshold_handles_w_vaults(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -52,9 +55,40 @@ async fn threshold_handles_w_vaults(
         pub_storage.push(
             FileStorage::new(test_data_path, StorageType::PUB, pub_prefix.as_deref()).unwrap(),
         );
-        priv_storage.push(
-            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap(),
-        );
+        let mut cur_priv_storage =
+            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
+        if ensure_default_prss {
+            // Note that migration will move legacy prss (whose ID depends on amount of parties) to the new type, which does not
+            // this means that when mixing tests of different amount of parties using the same storage, we need to redo PRSS
+            // Since migation is only done for the 13/4 configuration this is the only legacy PRSS we need to clear
+            let req_z64 =
+                derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID)).unwrap();
+            let req_z128 =
+                derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))
+                    .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &req_z64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &req_z128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &(*DEFAULT_EPOCH_ID).into(),
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+        priv_storage.push(cur_priv_storage);
     }
     if generate_test_material {
         ensure_testing_material_exists(test_data_path).await;
@@ -84,7 +118,7 @@ async fn threshold_handles_w_vaults(
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
+        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
@@ -113,7 +147,7 @@ async fn threshold_handles_w_vaults(
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -141,7 +175,7 @@ pub(crate) async fn threshold_handles(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         true,
         rate_limiter_conf,
         decryption_mode,
@@ -157,7 +191,7 @@ pub(crate) async fn threshold_handles(
 pub(crate) async fn threshold_handles_custodian_backup(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -187,7 +221,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         generate_test_material,
         rate_limiter_conf,
         decryption_mode,
@@ -249,6 +283,7 @@ pub async fn threshold_insecure_key_gen_isolated(
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         keygen_tasks.spawn(async move {
             cur_client
@@ -369,6 +404,7 @@ pub async fn threshold_key_gen_secure_isolated(
             keyset_added_info: keyset_added_info.clone(),
             context_id: context_id.clone(),
             epoch_id: epoch_id.clone(),
+            extra_data: vec![],
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });

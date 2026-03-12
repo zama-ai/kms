@@ -178,6 +178,7 @@ pub(crate) fn validate_user_decrypt_req(
         ContextId,
         EpochId,
         alloy_sol_types::Eip712Domain,
+        Vec<u8>,
     ),
     MetricedError,
 > {
@@ -205,6 +206,7 @@ fn unpack_user_decrypt_req(
         ContextId,
         EpochId,
         alloy_sol_types::Eip712Domain,
+        Vec<u8>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -259,6 +261,7 @@ fn unpack_user_decrypt_req(
         context_id,
         epoch_id,
         domain,
+        req.extra_data.clone(),
     ))
 }
 
@@ -277,6 +280,7 @@ pub(crate) fn validate_public_decrypt_req(
         ContextId,
         EpochId,
         Eip712Domain,
+        Vec<u8>,
     ),
     MetricedError,
 > {
@@ -301,6 +305,7 @@ fn unpack_public_decrypt_req(
         ContextId,
         EpochId,
         Eip712Domain,
+        Vec<u8>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -337,6 +342,7 @@ fn unpack_public_decrypt_req(
         context_id,
         epoch_id,
         eip712_domain,
+        req.extra_data.clone(),
     ))
 }
 
@@ -507,6 +513,7 @@ fn validate_public_decrypt_responses(
 ///
 /// In addition, if the original request is provided:
 /// - The response matches the original request
+/// -
 pub(crate) fn validate_public_decrypt_responses_against_request(
     server_pks: &HashMap<u32, PublicSigKey>,
     request: Option<PublicDecryptionRequest>,
@@ -650,6 +657,7 @@ pub(crate) fn validate_key_gen_request(
         DKGParams,
         InternalKeySetConfig,
         Eip712Domain,
+        Vec<u8>,
     ),
     MetricedError,
 > {
@@ -663,6 +671,7 @@ pub(crate) fn validate_key_gen_request(
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn unpack_key_gen_request(
     req: KeyGenRequest,
 ) -> anyhow::Result<(
@@ -673,6 +682,7 @@ fn unpack_key_gen_request(
     DKGParams,
     InternalKeySetConfig,
     Eip712Domain,
+    Vec<u8>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -714,6 +724,7 @@ fn unpack_key_gen_request(
         dkg_params,
         internal_keyset_config,
         eip712_domain,
+        req.extra_data.clone(),
     ))
 }
 
@@ -721,7 +732,17 @@ fn unpack_key_gen_request(
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
     op_tag: &'static str,
-) -> Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain), MetricedError> {
+) -> Result<
+    (
+        RequestId,
+        ContextId,
+        usize,
+        DKGParams,
+        Eip712Domain,
+        Vec<u8>,
+    ),
+    MetricedError,
+> {
     unpack_crs_gen_request(req).map_err(|e| {
         MetricedError::new(
             op_tag,
@@ -735,7 +756,14 @@ pub(crate) fn validate_crs_gen_request(
 #[allow(clippy::type_complexity)]
 fn unpack_crs_gen_request(
     req: CrsGenRequest,
-) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
+) -> anyhow::Result<(
+    RequestId,
+    ContextId,
+    usize,
+    DKGParams,
+    Eip712Domain,
+    Vec<u8>,
+)> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
@@ -768,7 +796,14 @@ fn unpack_crs_gen_request(
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, context_id, witness_dim, params, eip712_domain))
+    Ok((
+        req_id,
+        context_id,
+        witness_dim,
+        params,
+        eip712_domain,
+        req.extra_data.clone(),
+    ))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
@@ -830,8 +865,9 @@ mod tests {
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{gen_sig_keys, internal_sign},
         },
+        dummy_domain,
         engine::{
-            base::derive_request_id,
+            base::{compute_external_pt_signature, derive_request_id},
             validation::{parse_grpc_request_id, RequestIdParsingErr},
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
@@ -852,12 +888,7 @@ mod tests {
     #[test]
     fn test_validate_public_decrypt_req() {
         // setup data we're going to use in this test
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
+        let alloy_domain = dummy_domain();
         let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
         let request_id = derive_request_id("request_id").unwrap();
         let key_id = derive_request_id("key_id").unwrap();
@@ -952,7 +983,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _, _, _domain) = unpack_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain, _) = unpack_public_decrypt_req(&req).unwrap();
         }
     }
 
@@ -960,12 +991,7 @@ mod tests {
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
+        let alloy_domain = dummy_domain();
         let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
         let request_id = derive_request_id("request_id").unwrap();
         let key_id = derive_request_id("key_id").unwrap();
@@ -1173,12 +1199,7 @@ mod tests {
             ciphertext_format: 0,
             external_handle: vec![123],
         };
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
+        let domain = dummy_domain();
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
         let inner_key = match &enc_pk {
@@ -1553,63 +1574,91 @@ mod tests {
         );
 
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
+        let ciphertexts = vec![TypedCiphertext {
+            ciphertext: vec![1, 2, 3, 4],
+            fhe_type: 2,
+            external_handle: vec![1, 2, 3, 4],
+            ciphertext_format: 1,
+        }];
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
+        let domain = dummy_domain();
         let request = PublicDecryptionRequest {
             request_id: request_id.clone(),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: vec![1, 2, 3, 4],
-                fhe_type: 1,
-                external_handle: vec![1, 2, 3, 4],
-                ciphertext_format: 1,
-            }],
+            ciphertexts,
             key_id: Some(
                 derive_request_id("PublicDecryptionRequest key_id")
                     .unwrap()
                     .into(),
             ),
-            domain: None,
-            extra_data: vec![],
+            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+            extra_data: vec![1, 2, 3],
             context_id: None,
             epoch_id: None,
         };
 
         let resp0 = {
+            let plaintexts = vec![TypedPlaintext {
+                bytes: vec![1],
+                fhe_type: 2,
+            }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: 1,
-                }],
+                plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
+            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
+            let external_signature = compute_external_pt_signature(
+                &sk0,
+                ext_handles_bytes.clone(),
+                &plaintexts,
+                extra_data.clone(),
+                domain.clone(),
+            )
+            .unwrap();
+
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: vec![],
-                extra_data: vec![1, 2, 3], // some extra data, independent of resp1
+                external_signature,
+                extra_data,
             }
         };
         let resp1 = {
+            let plaintexts = vec![TypedPlaintext {
+                bytes: vec![1],
+                fhe_type: 2,
+            }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: 1,
-                }],
+                plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
+            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
+            let external_signature = compute_external_pt_signature(
+                &sk0,
+                ext_handles_bytes,
+                &plaintexts,
+                extra_data.clone(),
+                domain,
+            )
+            .unwrap();
+
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: vec![],
-                extra_data: vec![],
+                external_signature,
+                extra_data,
             }
         };
 
@@ -1689,7 +1738,7 @@ mod tests {
                 request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
-                    fhe_type: 2, // we change the fhe_type so it's the wrong request
+                    fhe_type: 3, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
@@ -1726,7 +1775,7 @@ mod tests {
                 ),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
-                    fhe_type: 1,
+                    fhe_type: 2,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],

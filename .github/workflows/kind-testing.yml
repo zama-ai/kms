@@ -453,7 +453,8 @@ jobs:
     name: kind-testing/clean-up-build
     if: |
       always() &&
-      github.event_name != 'schedule'
+      github.event_name != 'schedule' &&
+      !contains(github.event.pull_request.labels.*.name, 'docker')
     needs:
       - docker-build
       - kind-testing
