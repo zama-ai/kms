@@ -121,6 +121,7 @@ struct VerifiedPreviousEpochInfo {
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
     pub eip712_domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
 }
 
 /// Parses the [`PreviousEpochInfo`] proto message and verifies its contents.
@@ -196,6 +197,7 @@ fn verify_epoch_info(
         key_parameters,
         key_digests,
         eip712_domain,
+        extra_data: vec![],
     })
 }
 
@@ -486,6 +488,7 @@ impl<
                     &verified_previous_epoch.key_id,
                     &fhe_pubkeys,
                     &verified_previous_epoch.eip712_domain,
+                    verified_previous_epoch.extra_data.clone(),
                 ) {
                     Ok(info) => info,
                     Err(e) => {
@@ -524,6 +527,7 @@ impl<
                     &verified_previous_epoch.key_id,
                     &compressed_keyset,
                     &verified_previous_epoch.eip712_domain,
+                    verified_previous_epoch.extra_data.clone(),
                 ) {
                     Ok(info) => info,
                     Err(e) => {

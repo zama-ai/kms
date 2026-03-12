@@ -162,6 +162,7 @@ pub(crate) async fn do_keygen(
         destination_prefix,
         req_id,
         domain,
+        vec![],
         resp_response_vec,
         cmd_conf.download_all,
         shared_config.compressed,
@@ -179,6 +180,7 @@ pub(crate) async fn fetch_and_check_keygen(
     destination_prefix: &Path,
     request_id: RequestId,
     domain: Eip712Domain,
+    extra_data: Vec<u8>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
     compressed: bool,
@@ -249,6 +251,7 @@ pub(crate) async fn fetch_and_check_keygen(
                 &request_id,
                 &external_signature,
                 &domain,
+                extra_data.clone(),
                 kms_addrs,
             )
             .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
@@ -292,6 +295,7 @@ pub(crate) async fn fetch_and_check_keygen(
                 &request_id,
                 &external_signature,
                 &domain,
+                extra_data.clone(),
                 kms_addrs,
             )
             .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
@@ -405,6 +409,7 @@ pub(crate) async fn get_keygen_responses(
 }
 
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
@@ -412,13 +417,20 @@ pub(crate) fn check_standard_keyset_ext_signature(
     key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
+    _extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    let sol_type =
-        KeygenVerification::new_standard(prep_id, key_id, server_key_digest, public_key_digest);
+    let sol_type = KeygenVerification::new_standard(
+        prep_id,
+        key_id,
+        server_key_digest,
+        public_key_digest,
+        // TODO: reenable for RFC005
+        // extra_data,
+    );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -438,12 +450,17 @@ pub(crate) fn check_compressed_keyset_ext_signature(
     key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
+    _extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let keyset_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
 
-    let sol_type = KeygenVerification::new_compressed(prep_id, key_id, keyset_digest);
+    let sol_type = KeygenVerification::new_compressed(
+        prep_id,
+        key_id,
+        keyset_digest, /* TODO: reenable for RFC005 extra_data */
+    );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses

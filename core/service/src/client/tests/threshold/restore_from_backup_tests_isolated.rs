@@ -343,7 +343,9 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),
             domain: Some(domain_msg.clone()),
+            extra_data: vec![],
             context_id: None,
+            epoch_id: None,
         };
         crs_tasks.spawn(async move { cur_client.crs_gen(tonic::Request::new(req)).await });
     }

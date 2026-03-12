@@ -103,7 +103,7 @@ impl<
 
         let inner = request.into_inner();
         let max_bits = inner.max_num_bits;
-        let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
+        let (req_id, context_id, witness_dim, dkg_params, eip712_domain, extra_data) =
             validate_crs_gen_request(inner, op_tag)?;
         // Find the role of the current server and validate the context exists
         let my_role = self
@@ -146,6 +146,7 @@ impl<
             max_bits,
             dkg_params,
             &eip712_domain,
+            extra_data,
             permit,
             context_id,
             sigkey,
@@ -165,6 +166,7 @@ impl<
         max_num_bits: Option<u32>,
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
         context_id: ContextId,
         sk: Arc<PrivateSigKey>,
@@ -206,7 +208,7 @@ impl<
                 let _inner_timer = timer;
                 let _inner_permit = permit;
                 tokio::select! {
-                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, insecure) => {
+                    ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, extra_data, insecure) => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -299,6 +301,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         insecure: bool,
     ) {
         tracing::info!(
@@ -329,8 +332,16 @@ impl<
                 let input_party_id = 1;
                 let domain = eip712_domain.clone();
                 if my_role.one_based() == input_party_id {
-                    let crs_res =
-                        async_generate_crs(&sk, params, max_num_bits, domain, req_id, rng).await;
+                    let crs_res = async_generate_crs(
+                        &sk,
+                        params,
+                        max_num_bits,
+                        domain,
+                        extra_data.clone(),
+                        req_id,
+                        rng,
+                    )
+                    .await;
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
@@ -364,8 +375,15 @@ impl<
         };
 
         let res_info_pp = pp.and_then(|pp| {
-            compute_info_crs(&sk, &DSEP_PUBDATA_CRS, req_id, &pp, &eip712_domain)
-                .map(|pub_info| (pp, pub_info))
+            compute_info_crs(
+                &sk,
+                &DSEP_PUBDATA_CRS,
+                req_id,
+                &pp,
+                &eip712_domain,
+                extra_data,
+            )
+            .map(|pub_info| (pp, pub_info))
         });
 
         let (pp, crs_info) = match res_info_pp {
@@ -627,7 +645,9 @@ mod tests {
                 max_num_bits: None,
                 request_id: None,
                 domain: Some(domain),
+                extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             };
 
             let request = Request::new(req);
@@ -657,7 +677,9 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             };
 
             let request = Request::new(req);
@@ -674,7 +696,9 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: None,
+                extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             };
 
             let request = Request::new(req);
@@ -694,7 +718,9 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             };
 
             let request = Request::new(req);
@@ -736,7 +762,9 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         let request = Request::new(req);
@@ -759,7 +787,9 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -790,7 +820,9 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         let request = Request::new(req);
@@ -817,7 +849,9 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
@@ -842,7 +876,9 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         let request = Request::new(req);

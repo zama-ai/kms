@@ -268,6 +268,7 @@ pub async fn run_key_gen_centralized(
                     key_req_id,
                     &inner_resp,
                     &domain,
+                    vec![],
                     &pub_storage,
                 )
                 .await
@@ -282,6 +283,7 @@ pub async fn run_key_gen_centralized(
                     key_req_id,
                     resp,
                     &domain_clone,
+                    vec![],
                     &pub_storage,
                 )
                 .await
