@@ -103,7 +103,7 @@ impl DockerComposeCmd {
             | KMSMode::ThresholdCustodianTestParameter => {
                 &[50100, 50200, 50300, 50400, 50001, 50002, 50003, 50004]
             }
-            KMSMode::Centralized | KMSMode::CentralizedCustodian => &[50100],
+            KMSMode::Centralized | KMSMode::CentralizedCustodian => &[50051],
         }
     }
 
@@ -111,7 +111,7 @@ impl DockerComposeCmd {
         self.down(); // Make sure that no container is running
                      // Wait for the OS to release ports before starting new containers.
                      // Without this, Docker Compose retries fail with "address already in use".
-        wait_for_ports_free(Self::ports_for_mode(self.mode), Duration::from_secs(30));
+        wait_for_ports_free(Self::ports_for_mode(self.mode), Duration::from_secs(120));
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
 
         // set the FHE params based on mode
@@ -172,7 +172,7 @@ impl DockerComposeCmd {
             build.arg("--build");
         }
 
-        build.arg("--wait");
+        build.arg("--wait").arg("--wait-timeout").arg("120");
         println!("{build:?}");
 
         match build.spawn() {
@@ -257,7 +257,9 @@ impl DockerComposeCmd {
             docker_down
                 .arg("down")
                 .arg("--volumes")
-                .arg("--remove-orphans");
+                .arg("--remove-orphans")
+                .arg("--timeout")
+                .arg("30");
 
             let docker_down_output = docker_down
                 .output()
