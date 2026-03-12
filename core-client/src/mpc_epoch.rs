@@ -30,31 +30,27 @@ impl PreviousEpochParameters {
                         vec![
                             KeyDigest {
                                 key_type: PubDataType::ServerKey.to_string(),
-                                digest: hex::decode(server_key_digest.clone()).unwrap_or_else(
-                                    |e| {
-                                        panic!(
+                                digest: hex::decode(server_key_digest).unwrap_or_else(|e| {
+                                    panic!(
                                     "Unable to decode the provided server key digest {:?}: {:?}",
                                     server_key_digest, e
                                 )
-                                    },
-                                ),
+                                }),
                             },
                             KeyDigest {
                                 key_type: PubDataType::PublicKey.to_string(),
-                                digest: hex::decode(public_key_digest.clone()).unwrap_or_else(
-                                    |e| {
-                                        panic!(
+                                digest: hex::decode(public_key_digest).unwrap_or_else(|e| {
+                                    panic!(
                                     "Unable to decode the provided public key digest {:?}: {:?}",
                                     public_key_digest, e
                                 )
-                                    },
-                                ),
+                                }),
                             },
                         ]
                     }
                     DigestKeySet::CompressedKeySet(xof_key_digest) => vec![KeyDigest {
                         key_type: PubDataType::CompressedXofKeySet.to_string(),
-                        digest: hex::decode(xof_key_digest.clone()).unwrap_or_else(|e| {
+                        digest: hex::decode(xof_key_digest).unwrap_or_else(|e| {
                             panic!(
                                 "Unable to decode the provided xof key digest {:?}: {:?}",
                                 xof_key_digest, e
@@ -78,7 +74,7 @@ impl PreviousEpochParameters {
             .iter()
             .map(|previous_crs_info| kms_grpc::kms::v1::CrsInfo {
                 crs_id: Some(previous_crs_info.crs_id.into()),
-                crs_digest: hex::decode(previous_crs_info.digest.clone()).unwrap_or_else(|e| {
+                crs_digest: hex::decode(&previous_crs_info.digest).unwrap_or_else(|e| {
                     panic!(
                         "Unable to decode the provdided crs digest {:?}: {:?}",
                         previous_crs_info.digest, e
@@ -210,27 +206,31 @@ pub(crate) async fn do_new_epoch(
             let response = response?;
             let resp = response.into_inner();
 
-            let resp_key_ids = resp
+            let (resp_key_ids, resp_preproc_ids): (Vec<_>, Vec<_>) = resp
                 .reshare_responses
                 .iter()
                 .map(|k| {
-                    k.request_id
-                        .clone()
-                        .expect("No key ID found in resharing response")
+                    (
+                        k.request_id
+                            .as_ref()
+                            .expect("Key ID must be set in resharing response here.")
+                            .clone(),
+                        k.preprocessing_id
+                            .as_ref()
+                            .expect("Preprocessing ID must be set in resharing response.")
+                            .clone(),
+                    )
                 })
-                .collect::<Vec<_>>();
-            assert_eq!(resp_key_ids, expected_key_ids);
+                .unzip();
 
-            let resp_preproc_ids = resp
-                .reshare_responses
-                .iter()
-                .map(|k| {
-                    k.preprocessing_id
-                        .clone()
-                        .expect("No preprocessing ID found in resharing response")
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(resp_preproc_ids, expected_preproc_ids);
+            assert_eq!(
+                resp_key_ids, expected_key_ids,
+                "Resharing response did not contain the expected key IDs!"
+            );
+            assert_eq!(
+                resp_preproc_ids, expected_preproc_ids,
+                "Resharing response did not contain the expected preprocessing IDs!"
+            );
             response_vec.push((core_conf, resp));
         }
         let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
@@ -240,9 +240,11 @@ pub(crate) async fn do_new_epoch(
             .zip(expected_preproc_ids.into_iter())
         {
             // We try to download all because all parties needed to respond for a successful resharing
-            let key_id: RequestId = key_id.try_into().unwrap();
+            let key_id: RequestId = key_id
+                .try_into()
+                .expect("Well formed grpc RequestId should convert to internal RequestId");
 
-            let party_confs = fetch_public_elements(
+            let party_confs_successful = fetch_public_elements(
                 &key_id.to_string(),
                 &key_types,
                 cc_conf,
@@ -252,32 +254,30 @@ pub(crate) async fn do_new_epoch(
             .await?;
 
             assert_eq!(
-                party_confs.len(),
+                party_confs_successful.len(),
                 num_parties,
                 "Did not fetch keys from all parties after resharing!"
             );
 
-            let storage_prefix = Some(
-                cc_conf
-                    .cores
-                    .iter()
-                    .find(|c| c == &&party_confs[0])
-                    .expect("party ID not found in config")
-                    .object_folder
-                    .as_str(),
-            );
+            // We just check we even have num_parties of them
+            let first_party_id = party_confs_successful.first().unwrap().party_id as usize;
+            let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
             let public_key =
-                load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
+                load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix)
+                    .await;
             let server_key: ServerKey = load_material_from_pub_storage(
                 Some(destination_prefix),
                 &key_id,
                 PubDataType::ServerKey,
-                storage_prefix,
+                pub_storage_prefix,
             )
             .await;
 
-            let preproc_id: RequestId = preproc_id.try_into().unwrap();
+            let preproc_id: RequestId = preproc_id
+                .try_into()
+                .expect("Well formed grpc RequestId should convert to internal RequestId");
+
             for (_, response) in response_vec.iter() {
                 let signature = response
                     .reshare_responses
@@ -286,7 +286,9 @@ pub(crate) async fn do_new_epoch(
                         r.request_id.as_ref().unwrap() == &key_id.into()
                             && r.preprocessing_id.as_ref().unwrap() == &preproc_id.into()
                     })
-                    .expect("No resharing response found for the key and preprocessing ID")
+                    .expect(
+                        "There should be a resharing response found for all the key and preprocessing IDs from the previous epoch parameters!",
+                    )
                     .external_signature
                     .clone();
 

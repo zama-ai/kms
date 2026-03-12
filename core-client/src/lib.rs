@@ -722,17 +722,21 @@ pub struct PreviousKeyInfo {
     /// Key id of the key to reshare
     pub key_id: KeyId,
 
-    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing done for the key specified by `key_id`.
+    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing used to generate the key specified by `key_id`.
     pub preproc_id: RequestId,
 
-    /// The hex-encoded server key digest to use for resharing for the key to reshare.
+    /// The hex-encoded digest(s) of the public part(s) of the key being reshared.
+    /// For compressed keysets, this is a single digest of the compressed keyset.
+    /// For non-compressed keysets, this includes the digest of the server key and the digest of the public key.
     pub key_digest: DigestKeySet,
 }
 
 #[derive(Debug, Clone)]
 pub struct PreviousCrsInfo {
+    /// Id of the CRS to re-sign
     pub crs_id: RequestId,
 
+    /// The hex-encoded digest of the CRS to re-sign
     pub digest: String,
 }
 
@@ -748,6 +752,7 @@ pub struct PreviousEpochParameters {
     #[clap(long)]
     pub previous_keys: Vec<PreviousKeyInfo>,
 
+    /// Information about the CRSes to re-sign in the new epoch.
     #[clap(long)]
     pub previous_crs: Vec<PreviousCrsInfo>,
 }
@@ -766,10 +771,10 @@ pub struct NewEpochParameters {
     /// Format is:
     ///
     /// For compressed keyset
-    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...]`
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,crs_digest=<crs_digest>;...]`
     ///
     /// For non-compressed keyset
-    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...]`
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,crs_digest=<crs_digest>;...]`
     #[clap(long)]
     pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
