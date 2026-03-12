@@ -142,12 +142,12 @@ pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
 /// * `pub_storage` - Storage backend for public data
 /// * `priv_storage` - Storage backend for private data
 /// * `req_id` - The request ID used to compute storage URLs
-/// * `epoch_id` - The epoch ID used to compute storage URLs
-/// * `pub_data_type` - Type of the public data
-/// * `priv_data_type` - Type of the private data
+/// * `epoch_id` - The epoch ID used to compute storage URLs for the private data
+/// * `pub_data_type` - Types of the public data to check
+/// * `priv_data_type` - Types of the private data to check
 ///
 /// # Returns
-/// `Ok(true)` if both public and private data exist, `Ok(false)` if either is missing,
+/// `Ok(true)` all the public and private data exist, `Ok(false)` if anything is missing,
 /// or an error if any check fails.
 ///
 /// # Note
@@ -158,17 +158,22 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     priv_storage: &PrivS,
     req_id: &RequestId,
     epoch_id: &EpochId,
-    pub_data_type: &str,
-    priv_data_type: &str,
+    pub_data_type: &[String],
+    priv_data_type: &[String],
 ) -> anyhow::Result<bool> {
-    // No need to use epoch for public data existence check
-    let pub_exists = data_exists(pub_storage, req_id, pub_data_type).await?;
-
+    let mut pub_exists = true;
+    for pub_type in pub_data_type {
+        // No need to use epoch for public data existence check
+        pub_exists &= data_exists(pub_storage, req_id, pub_type).await?;
+    }
     if !pub_exists {
         return Ok(false);
     }
-
-    data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_data_type).await
+    let mut priv_exists = true;
+    for priv_type in priv_data_type {
+        priv_exists &= data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_type).await?;
+    }
+    Ok(priv_exists)
 }
 
 /// Logs a message indicating that data already exists and generation is being skipped.

@@ -68,7 +68,7 @@ use tfhe::{
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
 };
 use tfhe::{FheTypes, ServerKey};
-use thread_handles::ThreadHandleGroup;
+
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
@@ -83,6 +83,7 @@ pub(crate) enum CentralizedKeyGenResult {
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -91,6 +92,7 @@ pub(crate) async fn async_generate_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<CentralizedKeyGenResult> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
@@ -116,6 +118,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 &preproc_id_copy,
                 seed,
                 &eip712_domain,
+                extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
             CompressedKeyConfig::All => generate_compressed_fhe_keys(
@@ -126,6 +129,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 &preproc_id_copy,
                 seed,
                 &eip712_domain,
+                extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Compressed(keyset, handles)),
         };
@@ -191,6 +195,7 @@ pub(crate) async fn async_generate_crs(
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
     req_id: &RequestId,
     rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
@@ -204,6 +209,7 @@ pub(crate) async fn async_generate_crs(
             &params,
             max_num_bits,
             &eip712_domain,
+            extra_data,
             &req_id_copy,
             rng,
         );
@@ -221,6 +227,7 @@ fn generate_compressed_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
     match keyset_config {
         KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
@@ -274,11 +281,13 @@ fn generate_compressed_fhe_keys(
         &compressed_keyset,
         decompression_key,
         eip712_domain,
+        extra_data,
     )?;
 
     Ok((compressed_keyset, handles))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -287,6 +296,7 @@ pub fn generate_fhe_keys(
     preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let tag = key_id.into();
@@ -323,6 +333,7 @@ pub fn generate_fhe_keys(
             &pks,
             decompression_key,
             eip712_domain,
+            extra_data.clone(),
         )?;
         Ok((pks, handles))
     };
@@ -352,6 +363,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
     req_id: &RequestId,
     mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
@@ -374,6 +386,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         req_id,
         &pp,
         eip712_domain,
+        extra_data,
     )?;
     Ok((pp, crs_info))
 }
@@ -438,7 +451,6 @@ pub struct CentralizedKms<
     pub(crate) health_reporter: HealthReporter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub(crate) tracker: Arc<TaskTracker>,
-    pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
     PubS,
@@ -970,7 +982,6 @@ impl<
                 rate_limiter,
                 health_reporter: health_reporter.clone(),
                 tracker: Arc::clone(&tracker),
-                thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             },
             (health_reporter, health_service),
         ))
@@ -1040,12 +1051,6 @@ impl<
     > Drop for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn drop(&mut self) {
-        if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
-            let handles = std::mem::take(handles.get_mut());
-            if let Err(e) = handles.join_all_blocking() {
-                tracing::error!("Error joining threads on drop: {}", e);
-            }
-        }
         // Let the shutdown run in the background
         let _ = self.shutdown();
     }
@@ -1124,6 +1129,7 @@ pub(crate) mod tests {
     use std::collections::HashMap;
     use std::path::Path;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use tokio::sync::OnceCell;
@@ -1188,13 +1194,41 @@ pub(crate) mod tests {
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
-            store_versioned_at_request_id(
-                &mut ram_storage,
-                cur_req_id,
-                &cur_keys.public_key,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
+            for cur_type in PubDataType::iter() {
+                match cur_type {
+                    PubDataType::PublicKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.public_key,
+                            &PubDataType::PublicKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    PubDataType::ServerKey => {
+                        store_versioned_at_request_id(
+                            &mut ram_storage,
+                            cur_req_id,
+                            &cur_keys.server_key,
+                            &PubDataType::ServerKey.to_string(),
+                        )
+                        .await?;
+                    }
+                    // Ensure that the compiler will alert us if we introduce a new public data type that we don't handle here
+                    // that way we won't forget to update the code here appropriately
+                    #[allow(deprecated)]
+                    PubDataType::PublicKeyMetadata
+                    | PubDataType::CRS
+                    | PubDataType::VerfKey
+                    | PubDataType::VerfAddress
+                    | PubDataType::DecompressionKey
+                    | PubDataType::CACert
+                    | PubDataType::RecoveryMaterial
+                    | PubDataType::CompressedXofKeySet => {
+                        // Skip
+                    }
+                }
+            }
         }
         Ok(ram_storage)
     }
@@ -1252,6 +1286,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         )
         .unwrap();
         assert!(pub_fhe_keys.server_key.noise_squashing_key().is_some());
@@ -1266,6 +1301,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         )
         .unwrap();
         assert!(other_pub_fhe_keys
@@ -1318,6 +1354,7 @@ pub(crate) mod tests {
             &preproc_id,
             None,
             &domain,
+            vec![]
         )
         .is_ok());
     }
@@ -1343,6 +1380,7 @@ pub(crate) mod tests {
             &preproc_id,
             seed,
             &domain,
+            vec![],
         );
 
         assert!(result.is_ok(), "Compressed key generation should succeed");

@@ -36,7 +36,7 @@
 //! - CLI commands unchanged (testing actual CLI functionality)
 //!
 //! **Feature Flags:**
-//! - `threshold_tests`: Enables threshold PRSS tests and their setup helpers (`run_prss=true`).
+//! - `threshold_tests`: Enables threshold PRSS tests and their setup helpers (`ensure_default_prss=true`).
 //!   Implies `testing`. Does NOT enable Kind/Kubernetes tests.
 //! - `kind_tests`: Enables Kind/Kubernetes cluster tests under `tests/kind-testing/`.
 //! - `testing`: Base test helpers (required for compilation of all test targets).
@@ -475,7 +475,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
-/// This helper enables `run_prss=true` during server startup. The test material copy
+/// This helper enables `ensure_default_prss=true` during server startup. The test material copy
 /// includes pre-generated PRSS (from `test-material`). At startup, the server checks
 /// whether the loaded PRSS profile matches the context shape; if it does, live MPC
 /// PRSS init is skipped entirely.
@@ -568,7 +568,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 /// * `PathBuf` - Path to generated CLI config file (for --config flag)
 ///
 /// # Note
-/// Uses Default FHE parameters (production-like, slower than Test params) with `run_prss=false`.
+/// Uses Default FHE parameters (production-like, slower than Test params) with `ensure_default_prss=false`.
 /// Internally uses `TestMaterialSpec::threshold_default_no_prss` — PRSS is excluded from
 /// required material and is not used at all (no pre-generated PRSS needed).
 ///
@@ -598,7 +598,7 @@ async fn setup_isolated_threshold_cli_test_default(
 
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters and PRSS enabled
 ///
-/// Uses `run_prss=true` with `FheParameter::Default`.
+/// Uses `ensure_default_prss=true` with `FheParameter::Default`.
 ///
 /// Requires pre-generated Default PRSS material in `test-material/default`
 /// (for example via `make generate-test-material-default`), otherwise setup fails fast.
@@ -766,7 +766,7 @@ config_path = "{}"
 async fn setup_isolated_threshold_cli_test_impl(
     test_name: &str,
     party_count: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
@@ -778,7 +778,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
-        run_prss,
+        ensure_default_prss,
         with_backup_vault,
         with_custodian_keychain,
         fhe_params,
@@ -791,7 +791,7 @@ async fn setup_isolated_threshold_cli_test_impl(
 async fn setup_isolated_threshold_cli_test_impl_with_spec(
     test_name: &str,
     party_count: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
@@ -806,7 +806,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
         .with_test_name(test_name)
         .with_party_count(party_count);
 
-    let default_material_spec = match (fhe_params, run_prss) {
+    let default_material_spec = match (fhe_params, ensure_default_prss) {
         (FheParameter::Default, true) => {
             kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
         }
@@ -817,7 +817,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
     };
     builder = builder.with_material_spec(material_spec.unwrap_or(default_material_spec));
 
-    if run_prss {
+    if ensure_default_prss {
         builder = builder.with_prss();
     }
 
@@ -1020,7 +1020,7 @@ async fn setup_party_resharing_servers(
         pub_storages,
         priv_storages,
         vaults,
-        false, // run_prss - we'll do this per-context
+        false, // ensure_default_prss - we'll do this per-context
         None,  // rate_limiter_conf
         None,  // decryption_mode
     )
@@ -2349,13 +2349,10 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
 async fn reshare_isolated(
     config_path: &Path,
     test_path: &Path,
-    key_id: RequestId,
-    preproc_id: RequestId,
     from_context_id: Option<ContextId>,
     from_epoch_id: Option<EpochId>,
     new_epoch_id: EpochId,
-    server_key_digest: String,
-    public_key_digest: String,
+    previous_key_infos: Vec<PreviousKeyInfo>,
 ) -> Result<Vec<(Option<RequestId>, String)>> {
     let ctx_id = from_context_id.expect("context_id required for reshare");
     let ep_id = from_epoch_id.expect("epoch_id required for reshare");
@@ -2367,10 +2364,7 @@ async fn reshare_isolated(
             previous_epoch_params: Some(PreviousEpochParameters {
                 context_id: ctx_id,
                 epoch_id: ep_id,
-                key_id: key_id.into(),
-                preproc_id,
-                server_key_digest,
-                public_key_digest,
+                previous_keys: previous_key_infos,
             }),
         }),
         logs: true,
@@ -3166,7 +3160,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 ///
 /// Requires pre-generated material in the test-material/default directory
 /// (produced by `generate-test-material --features slow_tests -- default`):
-/// - **PRSS**: loaded at server startup (`run_prss=true`); fast to generate but must exist before the test runs.
+/// - **PRSS**: loaded at server startup (`ensure_default_prss=true`); fast to generate but must exist before the test runs.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///
 /// Uses partial preprocessing to keep this test comfortably below CI timeout
@@ -3516,16 +3510,18 @@ async fn test_threshold_reshare() -> Result<()> {
     let new_epoch_id =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")?;
     let preproc_id = RequestId::from_str(&preproc_id_str)?;
+    let previous_key_info = PreviousKeyInfo {
+        key_id: key_id.into(),
+        preproc_id,
+        key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
+    };
     let resharing_result = reshare_isolated(
         &config_path,
         test_path,
-        key_id,
-        preproc_id,
         Some(context_id),
         Some(epoch_id),
         new_epoch_id,
-        server_key_digest,
-        public_key_digest,
+        vec![previous_key_info],
     )
     .await?;
 

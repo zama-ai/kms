@@ -252,6 +252,7 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         context_id: ContextId,
         epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
@@ -390,6 +391,7 @@ impl<
                         inner_config.to_owned(),
                         &internal_keyset_config,
                         eip712_domain_copy,
+                        extra_data,
                         permit,
                         op_tag,
                         existing_key_tag,
@@ -409,6 +411,7 @@ impl<
                         internal_keyset_config
                             .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
                         eip712_domain_copy,
+                        extra_data,
                         permit,
                     )
                     .await
@@ -469,6 +472,7 @@ impl<
             _dkg_params,
             internal_keyset_config,
             eip712_domain,
+            extra_data,
         ) = validate_key_gen_request(inner, op_tag)?;
         let my_role = validate_context_and_epoch(
             op_tag,
@@ -515,6 +519,7 @@ impl<
             preproc_handle,
             req_id,
             &eip712_domain,
+            extra_data,
             context_id,
             epoch_id,
             permit,
@@ -912,6 +917,7 @@ impl<
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -989,6 +995,7 @@ impl<
             req_id,
             &decompression_key,
             &eip712_domain,
+            extra_data,
         ) {
             Ok(info) => info,
             Err(e) => {
@@ -1115,6 +1122,7 @@ impl<
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         internal_keyset_config: &InternalKeySetConfig,
         eip712_domain: alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
         existing_key_tag: Option<tfhe::Tag>,
@@ -1291,6 +1299,7 @@ impl<
                     req_id,
                     &pub_key_set,
                     &eip712_domain,
+                    extra_data,
                 ) {
                     Ok(info) => info,
                     Err(e) => {
@@ -1355,6 +1364,7 @@ impl<
                     req_id,
                     &compressed_keyset,
                     &eip712_domain,
+                    extra_data,
                 ) {
                     Ok(info) => info,
                     Err(e) => {
@@ -1621,6 +1631,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1650,6 +1661,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1675,6 +1687,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1707,6 +1720,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         assert_eq!(
@@ -1736,6 +1750,7 @@ mod tests {
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 epoch_id: None,
+                extra_data: vec![],
             });
 
             assert_eq!(
@@ -1776,6 +1791,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1812,6 +1828,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1827,6 +1844,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1880,6 +1898,7 @@ mod tests {
             keyset_added_info: Some(keyset_added_info),
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         let res = kg.key_gen(request).await.unwrap_err();
@@ -1913,6 +1932,7 @@ mod tests {
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
+            extra_data: vec![],
         });
 
         kg.key_gen(tonic_req).await.unwrap();
