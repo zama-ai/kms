@@ -190,6 +190,9 @@ message KeyGenRequest {
   // The epoch ID for the key generation, i.e., the shares produced
   // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
+
+  // Extra data from the gateway.
+  bytes extra_data = 9;
 }
 
 message KeyDigest {
@@ -267,6 +270,12 @@ message CrsGenRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
+
+  // Epoch ID palaceholder
+  RequestId epoch_id = 6;
+
+  // Extra data from the gateway.
+  bytes extra_data = 7;
 }
 
 message CrsGenResult {
@@ -749,27 +758,32 @@ message HealthStatusResponse {
 
 }
 
+message KeyInfo {
+  // keyID of the key to be reshared.
+  RequestId key_id = 1;
+  // Preprocessing ID that was used to generate the key initially
+  // required for the EIP struct
+  RequestId preproc_id = 2;
+  // Parameters of the key to be reshard
+  FheParameter key_parameters = 3;
+  // Digest of the key to be reshared
+  // Mapping of key type string to digest
+  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
+  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
+  // If there are no key_digests, the digest verification is skipped.
+  repeated KeyDigest key_digests = 4;
+  Eip712DomainMsg domain = 5;
+
+}
+
 message PreviousEpochInfo {
   // The KMS context of the parties that will reshare
   // the shares of the private key
   RequestId context_id = 1;
   // epochId we reshare the shares from.
   RequestId epoch_id = 2;
-  // keyID of the key to be reshared.
-  RequestId key_id = 3;
-  // Preprocessing ID that was used to generate the key initially
-  // required for the EIP struct
-  RequestId preproc_id = 4;
-  // Parameters of the key to be reshard
-  FheParameter key_parameters = 5;
-  // Digest of the key to be reshared
-  // Mapping of key type string to digest
-  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
-  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  // If there are no key_digests, the digest verification is skipped.
-  repeated KeyDigest key_digests = 6;
-  Eip712DomainMsg domain = 7;
-
+  // Info about all the keys to be reshared (if any)
+  repeated KeyInfo keys_info = 3;
 }
 
 message NewMpcEpochRequest {
@@ -786,38 +800,7 @@ message NewMpcEpochRequest {
 }
 
 message EpochResultResponse {
-  // Key ID of the reshared key
-  RequestId key_id = 2;
-
-  // Preprocessing ID used for keygen the resharing refers to
-  RequestId preprocessing_id = 3;
-
-  // Mapping of key type string to digest
-  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
-  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  repeated KeyDigest key_digests = 4;
-
-  // EIP-712 signature on the key generation result.
-  // The structure signed has the following fields:
-  // struct KeygenVerification {
-  //     /// @notice The ID of the preprocessing keygen request.
-  //     uint256 prepKeygenId;
-  //     /// @notice The ID of the generated key.
-  //     uint256 keyId;
-  //     /// @notice The generated digests of keys.
-  //     KeyDigest[] keyDigests;
-  // }
-  // enum KeyType {
-  //     SERVER,
-  //     PUBLIC
-  // }
-  // struct KeyDigest {
-  //     /// @notice The type of the generated key.
-  //     KeyType keyType;
-  //     /// @notice The digest of the generated key.
-  //     bytes digest;
-  // }
-  bytes external_signature = 5;
+  repeated KeyGenResult reshare_responses = 1;
 }
 
 message DestroyMpcEpochRequest {

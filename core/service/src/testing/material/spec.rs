@@ -144,7 +144,7 @@ impl TestMaterialSpec {
     ///
     /// Uses production-like key sizes (MaterialType::Default) while excluding PRSS material.
     /// This is intended for tests that run with Default parameters but do not initialize PRSS
-    /// at server startup (`run_prss=false`).
+    /// at server startup (`ensure_default_prss=false`).
     pub fn threshold_default_no_prss(party_count: usize) -> Self {
         let mut spec = Self::threshold_default(party_count);
         spec.required_keys.remove(&KeyType::PrssSetup);

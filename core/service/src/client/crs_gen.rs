@@ -39,6 +39,8 @@ impl Client {
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
             context_id: None,
+            epoch_id: None,
+            extra_data: vec![],
         })
     }
 
@@ -55,6 +57,7 @@ impl Client {
         request_id: &RequestId,
         res_storage: Vec<(CrsGenResult, S)>,
         domain: &Eip712Domain,
+        _extra_data: Vec<u8>,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
@@ -106,7 +109,13 @@ impl Client {
 
             // check the signature
             match self.find_verifying_address(
-                &CrsgenVerification::new(request_id, max_num_bits, actual_digest.clone()),
+                &CrsgenVerification::new(
+                    request_id,
+                    max_num_bits,
+                    actual_digest.clone(),
+                    // TODO: reenable for RFC005
+                    // extra_data.clone(),
+                ),
                 domain,
                 &result.external_signature,
             ) {
@@ -174,6 +183,7 @@ impl Client {
         &self,
         crs_gen_result: &CrsGenResult,
         domain: &Eip712Domain,
+        _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<CompactPkeCrs>> {
         let request_id = parse_optional_grpc_request_id(
@@ -196,7 +206,13 @@ impl Client {
         let max_num_bits = max_num_bits_from_crs(&pp);
         if self
             .verify_external_signature(
-                &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
+                &CrsgenVerification::new(
+                    &request_id,
+                    max_num_bits,
+                    actual_digest.clone(),
+                    // TODO: reenable for RFC005
+                    // extra_data.clone(),
+                ),
                 domain,
                 &crs_gen_result.external_signature,
             )
@@ -337,6 +353,7 @@ pub(crate) mod tests {
                 &request_id,
                 res_storage,
                 &domain,
+                vec![],
                 1, // min_agree_count
             )
             .await;

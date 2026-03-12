@@ -54,6 +54,7 @@ pub async fn user_decrypt_impl<
         context_id,
         epoch_id,
         domain,
+        extra_data,
     ) = validate_user_decrypt_req(&inner)?;
     if !service
         .context_manager
@@ -111,8 +112,6 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
-    let mut handles = service.thread_handles.write().await;
-
     let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -122,7 +121,7 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
-    let handle = tokio::spawn(
+    tokio::spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -147,8 +146,6 @@ pub async fn user_decrypt_impl<
                 &key_id,
                 &request_id
             );
-            // NOTE: extra_data is not used in the current implementation
-            let extra_data = vec![];
             let res = async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
@@ -174,7 +171,6 @@ pub async fn user_decrypt_impl<
         .instrument(tracing::Span::current()),
     );
 
-    handles.add(handle);
     Ok(Response::new(Empty {}))
 }
 
@@ -253,7 +249,7 @@ pub async fn public_decrypt_impl<
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
-    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
+    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
         validate_public_decrypt_req(&inner)?;
 
     if !service
@@ -370,7 +366,6 @@ pub async fn public_decrypt_impl<
         });
         let decryptions = recv.await;
 
-        let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
         let res = match decryptions {
             Ok(Ok(pts)) => {
                 // sign the plaintexts and handles for external verification (in fhevm)

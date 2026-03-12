@@ -55,9 +55,10 @@ async fn write_crs() {
     let crs_id = RequestId::new_random(&mut rng);
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, &crs_id, rng)
-        .await
-        .unwrap();
+    let (pp, crs_info) =
+        async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, vec![], &crs_id, rng)
+            .await
+            .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
