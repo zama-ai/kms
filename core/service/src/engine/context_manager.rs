@@ -6,7 +6,8 @@ use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::backup_operator::{
-    update_specific_backup_vault, update_specific_backup_vault_for_all_epochs,
+    update_legacy_prss_13_4, update_specific_backup_vault,
+    update_specific_backup_vault_for_all_epochs,
 };
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
@@ -294,9 +295,12 @@ where
                     }
                     #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
-                        tracing::info!(
-                            "Skipping deprecated PRSS setup type during custodian context creation"
-                        );
+                        update_legacy_prss_13_4::<PrivS>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            true, // We MUST overwrite existing data in the backup vault
+                        )
+                        .await?;
                     }
                     PrivDataType::SigningKey => {
                         // TODO(#2862) will eventually be epoched

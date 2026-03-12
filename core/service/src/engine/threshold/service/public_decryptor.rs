@@ -290,7 +290,7 @@ impl<
         tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) =
+        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
             validate_public_decrypt_req(&inner)?;
         let my_role = validate_context_and_epoch(
             OP_PUBLIC_DECRYPT_REQUEST,
@@ -581,9 +581,6 @@ impl<
                 .sorted()
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
-
-            // NOTE: extra data is not used at the moment
-            let extra_data = vec![];
 
             // Compute expensive signature OUTSIDE the lock
             let external_sig = {

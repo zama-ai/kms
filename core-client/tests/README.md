@@ -21,7 +21,7 @@
 - `threshold_tests`
   - Implies `testing`.
   - Enables threshold preprocessing and keygen tests in `tests/integration/integration_test_isolated.rs`.
-  - Compiles setup helpers that run threshold servers with `run_prss=true`
+  - Compiles setup helpers that run threshold servers with `ensure_default_prss=true`
     (`setup_isolated_threshold_cli_test_with_prss*`).
   - Enables preprocessing-heavy flows/tests (preproc+keygen, MPC context init/switch,
     reshare, full-gen default preproc).
@@ -34,7 +34,7 @@
 
 ### `threshold_tests` and pre-generated material
 
-- `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `run_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
+- `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `ensure_default_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
 - Some tests generate PRSS live during the test (via `new_prss_isolated`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
 - Generate all required Default material with `make generate-test-material-default` (or `make generate-test-material-all`).
@@ -107,11 +107,11 @@ async fn test_my_feature() -> Result<()> {
 **Threshold setup variants** (all take `party_count: usize`):
 - `setup_isolated_threshold_cli_test` — basic threshold test
 - `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
-- `setup_isolated_threshold_cli_test_with_prss` — PRSS-enabled setup (`run_prss=true`) for preprocessing/keygen flows (requires `threshold_tests`)
+- `setup_isolated_threshold_cli_test_with_prss` — PRSS-enabled setup (`ensure_default_prss=true`) for preprocessing/keygen flows (requires `threshold_tests`)
 - `setup_isolated_threshold_cli_test_with_backup` — with backup vault
 - `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
-- `setup_isolated_threshold_cli_test_default` — Default FHE params, no PRSS (`run_prss=false`)
-- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (`run_prss=true`; requires `threshold_tests` and pre-generated Default PRSS)
+- `setup_isolated_threshold_cli_test_default` — Default FHE params, no PRSS (`ensure_default_prss=false`)
+- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (`ensure_default_prss=true`; requires `threshold_tests` and pre-generated Default PRSS)
 
 ---
 

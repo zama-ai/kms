@@ -167,7 +167,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     }
 
     let config = crate::testing::types::ThresholdTestConfig {
-        run_prss: true, // PRSS required for threshold decryption
+        ensure_default_prss: true, // PRSS required for threshold decryption
         rate_limiter_conf: None,
         decryption_mode: None,
         test_material_path: Some(material_dir.path()),
@@ -343,7 +343,9 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),
             domain: Some(domain_msg.clone()),
+            extra_data: vec![],
             context_id: None,
+            epoch_id: None,
         };
         crs_tasks.spawn(async move { cur_client.crs_gen(tonic::Request::new(req)).await });
     }

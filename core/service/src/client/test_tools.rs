@@ -33,7 +33,7 @@ use std::sync::Arc;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::networking::grpc::GrpcServer;
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tonic::server::NamedService;
 use tonic::transport::{Channel, Uri};
 use tonic_health::pb::health_client::HealthClient;
@@ -55,7 +55,7 @@ pub async fn setup_threshold_no_client<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
@@ -159,7 +159,7 @@ pub async fn setup_threshold_no_client<
                 base_kms,
                 None,
                 false,
-                run_prss,
+                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -188,7 +188,7 @@ pub async fn setup_threshold_no_client<
     ) in servers
         .into_iter()
         .zip_eq(mpc_shutdown_txs)
-        .zip_eq(service_listeners.into_iter())
+        .zip_eq(service_listeners)
     {
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
@@ -241,7 +241,7 @@ pub async fn setup_threshold_no_client<
 /// * `pub_storage` - Public storage for each server
 /// * `priv_storage` - Private storage for each server
 /// * `vaults` - Optional backup vaults for each server
-/// * `run_prss` - Whether to run PRSS initialization
+/// * `ensure_default_prss` - Whether to run PRSS initialization for the default epoch if no PRSS info is found in storage
 /// * `rate_limiter_conf` - Optional rate limiter configuration
 /// * `decryption_mode` - Optional decryption mode
 ///
@@ -269,11 +269,11 @@ pub async fn setup_threshold_with_custom_peers<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
-    let mut handles = Vec::new();
+    let mut handles: Vec<JoinHandle<_>> = Vec::new();
     tracing::info!("Spawning servers with custom peer configs...");
     let num_servers = server_configs.len();
     let ip_addr = DEFAULT_URL.parse().unwrap();
@@ -387,7 +387,7 @@ pub async fn setup_threshold_with_custom_peers<
                 base_kms,
                 None,
                 false,
-                run_prss,
+                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -426,7 +426,7 @@ pub async fn setup_threshold_with_custom_peers<
     ) in servers
         .into_iter()
         .zip_eq(mpc_shutdown_txs)
-        .zip_eq(service_listeners.into_iter())
+        .zip_eq(service_listeners)
     {
         let cur_arc_server = Arc::new(cur_server);
         let arc_server_clone = Arc::clone(&cur_arc_server);
@@ -610,7 +610,7 @@ impl ServerHandle {
 ///
 /// Used by `setup_threshold_isolated` to configure the threshold test environment.
 pub struct ThresholdTestConfig<'a> {
-    pub run_prss: bool,
+    pub ensure_default_prss: bool,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
@@ -641,7 +641,7 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        config.run_prss,
+        config.ensure_default_prss,
         config.rate_limiter_conf,
         config.decryption_mode,
     )
@@ -671,7 +671,7 @@ pub async fn setup_threshold<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -685,7 +685,7 @@ pub async fn setup_threshold<
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
+        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )

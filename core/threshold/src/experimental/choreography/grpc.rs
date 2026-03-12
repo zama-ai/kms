@@ -182,10 +182,10 @@ impl ExperimentalGrpcChoreography {
             .pop()
             .map_or_else(
                 || {
-                    Err(tonic::Status::new(
+                    Err(Box::new(tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to create session for {request_sid:?}"),
-                    ))
+                    )))
                 },
                 Ok,
             )?)

@@ -37,7 +37,6 @@ use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
-use thread_handles::ThreadHandleGroup;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -95,8 +94,6 @@ pub struct GrpcSendingService {
     peer_tcp_proxy: bool,
     /// Keep in memory channels we already have available
     channel_map: Arc<RwLock<ChannelMap>>,
-    /// Network task threads
-    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 impl GrpcSendingService {
@@ -299,25 +296,6 @@ impl GrpcSendingService {
             );
         }
     }
-
-    /// Shut down the sending service.
-    pub fn shutdown(&mut self) {
-        match Arc::get_mut(&mut self.thread_handles) {
-            Some(lock) => {
-                let handles = std::mem::take(RwLock::get_mut(lock));
-                match handles.join_all_blocking() {
-                    Ok(_) => tracing::info!(
-                        "Successfully cleaned up all handles in grpc sending service"
-                    ),
-                    Err(e) => tracing::error!("Error joining threads on drop: {}", e),
-                }
-            }
-            None => {
-                tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
-            }
-        }
-        tracing::info!("dropped grpc sending service");
-    }
 }
 
 #[async_trait]
@@ -333,7 +311,6 @@ impl SendingService for GrpcSendingService {
             config,
             tls_config,
             peer_tcp_proxy,
-            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -360,22 +337,14 @@ impl SendingService for GrpcSendingService {
             ..Default::default()
         };
 
-        // 4. Single spawn with integrated error handling (eliminates double-spawn overhead)
-        let handle = tokio::spawn(async move {
-            // Run the actual network task (already logs completion status)
-            Self::run_network_task(
-                receiver,
-                network_channel,
-                exponential_backoff,
-                other_role_kind,
-                aborted,
-            )
-            .await;
-        });
-
-        // 5. Minimize lock scope - acquire write lock last and release immediately
-        let mut handles = self.thread_handles.write().await;
-        handles.add(handle);
+        // 4. Spawns the sender in its own task and discard the handle
+        tokio::spawn(Self::run_network_task(
+            receiver,
+            network_channel,
+            exponential_backoff,
+            other_role_kind,
+            aborted,
+        ));
 
         Ok(sender)
     }
@@ -412,12 +381,6 @@ impl SendingService for GrpcSendingService {
             }
         }
         Ok((result, aborted))
-    }
-}
-
-impl Drop for GrpcSendingService {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }
 

@@ -260,9 +260,7 @@ where
                     continue;
                 }
                 // No need for zip_eq as we just checked the length
-                for (cur_collect_share, cur_value) in
-                    collected_shares.iter_mut().zip(cur_values.into_iter())
-                {
+                for (cur_collect_share, cur_value) in collected_shares.iter_mut().zip(cur_values) {
                     cur_collect_share.push(Share::new(cur_role, cur_value));
                 }
             }

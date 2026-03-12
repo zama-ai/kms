@@ -159,8 +159,8 @@ where
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-        pub_data_type: &str,
-        priv_data_type: &str,
+        pub_data_type: &[String],
+        priv_data_type: &[String],
     ) -> anyhow::Result<bool> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
@@ -203,12 +203,16 @@ where
         key_id: &RequestId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<bool> {
+        let priv_types = vec![PrivDataType::FhePrivateKey.to_string()];
         let standard = self
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
-                &PubDataType::PublicKey.to_string(),
-                &PrivDataType::FhePrivateKey.to_string(),
+                &[
+                    PubDataType::PublicKey.to_string(),
+                    PubDataType::ServerKey.to_string(),
+                ],
+                &priv_types,
             )
             .await?;
         if standard {
@@ -218,8 +222,8 @@ where
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-            &PrivDataType::FhePrivateKey.to_string(),
+            &[PubDataType::CompressedXofKeySet.to_string()],
+            &priv_types,
         )
         .await
     }
@@ -404,7 +408,7 @@ where
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
-    pub async fn purge_key_material<T: From<KeyGenMetadata> + Clone>(
+    pub async fn purge_key_material<T: Clone>(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
@@ -509,7 +513,7 @@ where
             tracing::info!("Deleted all key material for request {}", req_id);
         }
         let meta_update_result =
-            guarded_meta_store.update(req_id, Err("DKG failed during storage".to_string()));
+            guarded_meta_store.update(req_id, Err("Failed to store key material".to_string()));
         if meta_update_result.is_err() {
             tracing::error!(
                 "Failed to remove key data from  meta store for request {} while purging key material",

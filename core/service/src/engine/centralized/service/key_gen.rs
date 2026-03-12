@@ -70,6 +70,7 @@ pub async fn key_gen_impl<
         dkg_params,
         internal_keyset_config,
         eip712_domain,
+        extra_data,
     ) = validate_key_gen_request(inner, op_tag)?;
     let metric_tags = vec![
         (TAG_KEY_ID, req_id.to_string()),
@@ -142,7 +143,7 @@ pub async fn key_gen_impl<
     })?;
 
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
-    let handle = service.tracker.spawn(
+    service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -170,13 +171,13 @@ pub async fn key_gen_impl<
                 params,
                 internal_keyset_config,
                 eip712_domain,
+                extra_data,
                 op_tag,
             )
             .await;
         }
         .instrument(tracing::Span::current()),
     );
-    service.thread_handles.write().await.add(handle);
 
     Ok(Response::new(Empty {}))
 }
@@ -273,6 +274,7 @@ pub(crate) async fn key_gen_background<
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Eip712Domain,
+    extra_data: Vec<u8>,
     op_tag: &'static str,
 ) {
     let start = tokio::time::Instant::now();
@@ -302,6 +304,7 @@ pub(crate) async fn key_gen_background<
                 preproc_id,
                 None,
                 eip712_domain,
+                extra_data,
             )
             .await
             {
@@ -383,6 +386,7 @@ pub(crate) async fn key_gen_background<
                 req_id,
                 &decompression_key,
                 &eip712_domain,
+                extra_data,
             ) {
                 Ok(info) => info,
                 Err(e) => {
@@ -475,6 +479,7 @@ pub(crate) mod tests {
             preproc_id: Some((*preproc_id).into()),
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             epoch_id: None,
+            extra_data: vec![],
         };
         let _ = key_gen_impl(kms, tonic::Request::new(request), insecure)
             .await
@@ -512,6 +517,7 @@ pub(crate) mod tests {
             preproc_id: Some(preproc_id.into()),
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             epoch_id: None,
+            extra_data: vec![],
         };
         let err = key_gen_impl(
             &kms,
@@ -546,6 +552,7 @@ pub(crate) mod tests {
                 preproc_id: None,
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -569,6 +576,7 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -594,6 +602,7 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -619,6 +628,7 @@ pub(crate) mod tests {
                 }),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -642,6 +652,7 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 domain: None, // missing
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -667,6 +678,7 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let err = key_gen_impl(
                 &kms,
@@ -699,6 +711,7 @@ pub(crate) mod tests {
             preproc_id: Some(preproc_id.into()),
             domain: Some(domain.clone()),
             epoch_id: None,
+            extra_data: vec![],
         };
         let _ = key_gen_impl(
             &kms,
@@ -747,6 +760,7 @@ pub(crate) mod tests {
                 preproc_id: Some((preproc_id).into()), // same preproc ID
                 domain: Some(domain),
                 epoch_id: None,
+                extra_data: vec![],
             };
             // this time it should fail
             let err = key_gen_impl(&kms, tonic::Request::new(request), false)
