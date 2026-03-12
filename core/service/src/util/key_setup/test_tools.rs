@@ -558,9 +558,7 @@ pub async fn read_custodian_backup_files_with_epoch(
                 VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
                     .to_string(),
             )
-            .join(
-                epoch_id.to_string()
-            )
+            .join(epoch_id.to_string())
             .join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
