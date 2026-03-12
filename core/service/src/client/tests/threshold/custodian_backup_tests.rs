@@ -31,6 +31,8 @@ cfg_if::cfg_if! {
 }
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
+#[cfg(feature = "insecure")]
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
@@ -38,7 +40,9 @@ use crate::consts::{
 use crate::testing::utils::purge;
 
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
+use crate::util::key_setup::test_tools::{
+    purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
+};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     client::tests::threshold::common::threshold_handles_custodian_backup,
@@ -149,6 +153,8 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         ))
         .unwrap();
 
+    println!("req_new_cus: {req_new_cus}");
+
     let test_path = None;
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_crs_{amount_parties}_{amount_custodians}_{threshold}"
@@ -210,10 +216,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Check that the new CRS was backed up
-    let crss: Vec<BackupCiphertext> = read_custodian_backup_files(
+    let crss: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         backup_storage_prefixes,
     )
@@ -237,6 +244,9 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     drop(kms_clients);
     drop(internal_client);
 
+    //Qu: Shouldn't rather we be trying to read from the Parties' private storage
+    // to make sure they've correctly recovered ? Not sure what reading from backup brings us here ?
+
     // Check that the backup is still there an unmodified
     println!("Starting new servers");
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
@@ -249,10 +259,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files(
+    let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         backup_storage_prefixes,
     )

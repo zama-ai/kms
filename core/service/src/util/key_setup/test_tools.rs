@@ -14,7 +14,7 @@ use crate::vault::storage::{
 use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_grpc::RequestId;
+use kms_grpc::{EpochId, RequestId};
 use serde::de::DeserializeOwned;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
@@ -530,6 +530,36 @@ pub async fn read_custodian_backup_files(
             .join(
                 VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
                     .to_string(),
+            )
+            .join(file_req.to_string());
+        // Attempt to read the file
+        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+            files.push(file);
+        }
+    }
+    files
+}
+
+pub async fn read_custodian_backup_files_with_epoch(
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    epoch_id: EpochId,
+    data_type: &str,
+    storage_prefixes: &[Option<String>],
+) -> Vec<BackupCiphertext> {
+    let mut files = Vec::new();
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(test_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
+        let coerced_path = storage
+            .root_dir()
+            .join(
+                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                    .to_string(),
+            )
+            .join(
+                epoch_id.to_string()
             )
             .join(file_req.to_string());
         // Attempt to read the file
