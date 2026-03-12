@@ -66,6 +66,9 @@ pub struct DecryptParams {
     /// Public verification key of the operator who requested the recovery
     #[clap(long, short = 'v', required = true)]
     pub operator_verf_key: PathBuf,
+    /// The MPC context ID for which the recovery is being done.
+    #[clap(long, short = 'm', required = true)]
+    pub mpc_context_id: String,
     /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
     pub recovery_request_path: PathBuf,
@@ -158,11 +161,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let mpc_context_id_str = params
-                .operator_verf_key
-                .file_name()
-                .map(|s| s.to_string_lossy().trim().to_lowercase())
-                .expect("Invalid operator verification key path");
+            let mpc_context_id_str = params.mpc_context_id;
             let mpc_context_id = ContextId::try_from(&mpc_context_id_str).expect(
                     format!(
                         "Invalid operator verification key file name: {}. Expected a hex string representing the MPC context ID.",
