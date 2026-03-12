@@ -1619,7 +1619,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter).await?;
+            let _ = get_preproc_keygen_responses(&core_endpoints_req, &req_id, max_iter).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {

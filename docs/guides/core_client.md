@@ -305,7 +305,9 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 
   http://localhost:9000/kms/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
 
-  Download these and copy them into `core-client/tests/data/keys`. Then execute the following command in root of the KMS project, replacing the seed_phrases with the appropriate ones learned from step 1:
+  Download these and copy them into `core-client/tests/data/keys`. 
+  IMPORTANT: DO NOT CHANGE THE NAME OF THE VERIFICATION KEY! THAT IS, THE KEY FILE MUST KEEP THE NAME WHEN FETCHING IT FROM THE OPERATOR!
+  Then execute the following command in root of the KMS project, replacing the seed_phrases with the appropriate ones learned from step 1:
   ```{bash}
   cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/1 --operator-verf-key core-client/tests/data/keys/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-1-1
   cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/2 --operator-verf-key core-client/tests/data/keys/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-2-1

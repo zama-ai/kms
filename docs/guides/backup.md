@@ -58,6 +58,7 @@ Run the CLI tool with the `decrypt` command in order decrypt a backup, and then 
 ```{bash}
 $ cargo run --bin kms-custodian decrypt--seed-phrase <the seed phrased used for generation> --randomness <random string of chars> --custodian-role <1-indexed role of the custodian> --recovery-request-path <path to the recovery information given by the operator from custodian-recovery-init> --operator-verf-key <the path to the verification key of the KMS operator> --output-path <path to store the custodian's output to the specific operator whose recovery info was given>
 ```
+IMPORTANT: THE NAME OF THE `operator-verf-key` MUST BE THE CONTEXT ID ASSOCIATED WITH THAT SIGNING KEY. THAT IS, THE KEY FILE MUST KEEP THE NAME WHEN FETCHING IT FROM THE S3 BUCKET OF THE OPERATOR!
 Observe that the `randomness` supplied is used along with entropy of the current system to do re-encryption, and thus the command is *not* idempotent. 
 
 For example:

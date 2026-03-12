@@ -1,5 +1,6 @@
 use aes_prng::AesRng;
 use clap::Parser;
+use kms_grpc::ContextId;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::{
@@ -157,6 +158,18 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
+            let mpc_context_id_str = params
+                .operator_verf_key
+                .file_name()
+                .map(|s| s.to_string_lossy().trim().to_lowercase())
+                .expect("Invalid operator verification key path");
+            let mpc_context_id = ContextId::try_from(&mpc_context_id_str).expect(
+                    format!(
+                        "Invalid operator verification key file name: {}. Expected a hex string representing the MPC context ID.",
+                        mpc_context_id_str
+                    )
+                    .as_str(),
+                );
             let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
@@ -181,6 +194,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
+                mpc_context_id.into(),
                 &operator_verf_key,
                 recovery_request.backup_enc_key(),
                 recovery_request.backup_id(),

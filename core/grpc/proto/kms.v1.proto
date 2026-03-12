@@ -644,6 +644,7 @@ message CustodianRecoveryOutput {
   // The 1-indexed role of the custodian
   uint64 custodian_role = 2;
   bytes operator_verification_key = 3;
+  RequestId mpc_context_id = 4;
 }
 
 // The recovery request which contains the needed recovery data from all the custodians,

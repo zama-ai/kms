@@ -6,7 +6,7 @@ use crate::{
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenResult};
+use kms_grpc::kms::v1::{self, FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::KeygenVerification;
@@ -482,9 +482,6 @@ pub(crate) async fn do_preproc(
         keyset_config,
         &domain,
     )?;
-    let base_req = pp_req
-        .base_request
-        .ok_or_else(|| anyhow::anyhow!("Preproc request should be present"))?;
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
@@ -518,10 +515,10 @@ pub(crate) async fn do_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, &base_req, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, &req_id, max_iter).await?;
     for response in responses {
         // this part also verifies the signature
-        internal_client.process_preproc_response(&base_req, &domain, &response)?;
+        internal_client.process_preproc_response(&pp_req, &domain, &response)?;
     }
 
     Ok(req_id)
@@ -556,6 +553,7 @@ pub(crate) async fn do_partial_preproc(
     )?;
     let base_req = pp_req
         .base_request
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("Partial preproc request should be present"))?;
 
     // make parallel requests by calling insecure keygen in a thread
@@ -591,7 +589,7 @@ pub(crate) async fn do_partial_preproc(
         );
     }
 
-    let responses = get_preproc_keygen_responses(core_endpoints, &base_req, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, &req_id, max_iter).await?;
     for response in responses {
         internal_client.process_preproc_response(&base_req, &domain, &response)?;
     }
@@ -601,17 +599,16 @@ pub(crate) async fn do_partial_preproc(
 
 pub(crate) async fn get_preproc_keygen_responses(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    preproc_req: &KeyGenPreprocRequest,
+    request_id: &RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
-    let request_id = &preproc_req
-        .request_id
-        .ok_or_else(|| anyhow::anyhow!("Preproc request should have a request id"))?;
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
         let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block
+        let request_id_clone: v1::RequestId = (*request_id).into();
+        let request_id_owned = *request_id;
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -621,10 +618,10 @@ pub(crate) async fn get_preproc_keygen_responses(
 
             tracing::info!(
                 "Polling preproc result for request {} from party {}",
-                request_id, core_conf.party_id
+                request_id_owned, core_conf.party_id
             );
             let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(*request_id))
+                .get_key_gen_preproc_result(tonic::Request::new(request_id_clone.clone()))
                 .await;
             let mut ctr = 0_usize;
             while response.is_err()
@@ -644,23 +641,23 @@ pub(crate) async fn get_preproc_keygen_responses(
                 ctr += 1;
                 tracing::info!(
                     "Preproc result not ready yet for request {} from party {} (retry {}/{})",
-                    request_id, core_conf.party_id, ctr, max_iter
+                    request_id_owned, core_conf.party_id, ctr, max_iter
                 );
                 response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(*request_id))
+                    .get_key_gen_preproc_result(tonic::Request::new(request_id_clone.clone()))
                     .await;
             }
 
             let resp = response.map_err(|e| {
                 anyhow::anyhow!("preprocessing response from party {:?} failed: {e}", core_conf.party_id)
             })?;
-            Ok((core_conf, request_id, resp.into_inner()))
+            Ok((core_conf, resp.into_inner()))
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
         match resp {
-            Ok(Ok((core_conf, _request_id, inner))) => {
+            Ok(Ok((core_conf, inner))) => {
                 resp_response_vec.push((core_conf, inner));
             }
             Ok(Err(e)) => {
