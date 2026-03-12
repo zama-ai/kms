@@ -46,12 +46,13 @@ pub(crate) fn check_ext_user_decryption_signature(
     request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
         anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
     })?;
-    let message = compute_user_decrypt_message(payload, &unified_pk, vec![])?;
+    let message = compute_user_decrypt_message(payload, &unified_pk, extra_data)?;
     tracing::debug!(
         "Verifying external user decryption signature for UserDecryptResponseVerification"
     );
@@ -63,6 +64,7 @@ pub(crate) fn check_ext_user_decryption_signature(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_user_decrypt_meta_data_and_signature(
     server_addreses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
@@ -71,6 +73,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     signature: &[u8],
     external_signature: &[u8],
     eip712_domain: &Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
     let pivot_type = pivot_resp.fhe_types()?;
     let check_type = other_resp.fhe_types()?;
@@ -134,6 +137,7 @@ fn validate_user_decrypt_meta_data_and_signature(
             client_request,
             eip712_domain,
             expected_addr,
+            extra_data,
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
@@ -307,6 +311,7 @@ fn validate_user_decrypt_responses(
             &cur_resp.signature,
             &cur_resp.external_signature,
             eip712_domain,
+            cur_resp.extra_data.clone(),
         ) {
             tracing::warn!(
                 "User decryption validation failed for party {} with error: {e:?}",
@@ -508,12 +513,13 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
+        let extra_data = vec![1, 2, 3, 4];
         let external_sig = compute_external_user_decrypt_signature(
             &sk0,
             &payload,
             &domain,
             &eph_client_pk,
-            vec![],
+            extra_data.clone(),
         )
         .unwrap();
 
@@ -525,6 +531,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
+                extra_data.clone(),
             )
             .unwrap_err()
             .to_string()
@@ -548,6 +555,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
+                extra_data.clone()
             )
             .is_err());
         }
@@ -566,6 +574,7 @@ mod tests {
                 &request,
                 &bad_domain,
                 &kms_addrs[&1],
+                extra_data.clone()
             )
             .is_err());
         }
@@ -580,6 +589,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -594,6 +604,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
+                extra_data,
             )
             .unwrap();
         }
@@ -652,12 +663,13 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
+        let extra_data = vec![1, 2, 3, 4];
         let external_signature = compute_external_user_decrypt_signature(
             &sk0,
             &pivot_resp,
             &dummy_domain,
             &eph_client_pk,
-            vec![],
+            extra_data.clone(),
         )
         .unwrap();
 
@@ -678,6 +690,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone(),
             )
             .unwrap_err()
             .to_string()
@@ -706,6 +719,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -734,6 +748,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -750,6 +765,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &[],
                 &dummy_domain,
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -768,6 +784,7 @@ mod tests {
                 &[],
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -786,6 +803,7 @@ mod tests {
                 &[],
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone()
             )
             .unwrap_err()
             .to_string()
@@ -804,6 +822,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
+                extra_data.clone(),
             )
             .unwrap();
         }
@@ -821,6 +840,7 @@ mod tests {
                 &signature_buf,
                 &[],
                 &dummy_domain,
+                extra_data,
             )
             .unwrap();
         }

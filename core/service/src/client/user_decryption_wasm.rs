@@ -158,6 +158,7 @@ impl Client {
                 request,
                 eip712_domain,
                 expected_server_addr,
+                vec![],
             )
             .inspect_err(|e| {
                 tracing::warn!("signature on received response is not valid ({})", e)
