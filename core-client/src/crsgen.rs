@@ -336,7 +336,7 @@ mod tests {
     use super::*;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
-        consts::{SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
+        consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
         cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
@@ -366,6 +366,7 @@ mod tests {
             &mut priv_storage,
             TEST_PARAM,
             crs_id,
+            &DEFAULT_EPOCH_ID,
             true,
         )
         .await;

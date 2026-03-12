@@ -264,6 +264,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let mut client = env.client;
 
     let req_id = derive_request_id("isolated-crs-backup")?;
+    let epoch_id = *DEFAULT_EPOCH_ID;
 
     let domain_msg = domain_to_msg(&dummy_domain());
     let req = CrsGenRequest {
@@ -272,7 +273,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         max_num_bits: Some(16),
         domain: Some(domain_msg),
         context_id: None,
-        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        epoch_id: Some(epoch_id.into()),
         extra_data: vec![],
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
@@ -296,7 +297,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
 
     assert!(
         !priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 
@@ -307,13 +308,13 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
     assert!(
         backup_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 
     assert!(
         priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 

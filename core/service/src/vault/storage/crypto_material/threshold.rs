@@ -105,9 +105,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await
     }
 
-    /// Check if the CRS under [req_id] exists in the storage.
-    pub async fn crs_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
-        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
+    /// Check if the CRS under [req_id, epoch_id] exists in the storage.
+    pub async fn crs_exists(&self, req_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
+        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id, epoch_id).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -556,10 +556,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         self.inner
-            .purge_crs_material(req_id, guarded_meta_store)
+            .purge_crs_material(req_id, epoch_id, guarded_meta_store)
             .await
     }
 

@@ -230,11 +230,12 @@ where
     }
 
     /// Check if CRS exists
-    pub async fn crs_exists(&self, crs_handle: &RequestId) -> anyhow::Result<bool> {
-        self.data_exists(
-            crs_handle,
-            &PubDataType::CRS.to_string(),
-            &PrivDataType::CrsInfo.to_string(),
+    pub async fn crs_exists(&self, crs_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
+        self.data_exists_at_epoch(
+            crs_id,
+            epoch_id,
+            &[PubDataType::CRS.to_string()],
+            &[PrivDataType::CrsInfo.to_string()],
         )
         .await
     }
@@ -617,7 +618,8 @@ where
             // be because the data did not get created
             // In any case, we can't do much.
             let guarded_meta_store = meta_store.write().await;
-            self.purge_crs_material(crs_id, guarded_meta_store).await;
+            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
+                .await;
         }
     }
 
@@ -650,6 +652,7 @@ where
     pub async fn purge_crs_material<T: Clone>(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         // Enforce locking order for internal types
@@ -674,9 +677,10 @@ where
             result.is_err()
         };
         let f2 = async {
-            let priv_result = delete_at_request_id(
+            let priv_result = delete_at_request_and_epoch_id(
                 &mut (*priv_storage),
                 req_id,
+                epoch_id,
                 &PrivDataType::CrsInfo.to_string(),
             )
             .await;
@@ -693,9 +697,10 @@ where
         let f3 = async {
             match back_vault {
                 Some(mut back_vault) => {
-                    let vault_result = delete_at_request_id(
+                    let vault_result = delete_at_request_and_epoch_id(
                         &mut (*back_vault),
                         req_id,
+                        epoch_id,
                         &PrivDataType::CrsInfo.to_string(),
                     )
                     .await;

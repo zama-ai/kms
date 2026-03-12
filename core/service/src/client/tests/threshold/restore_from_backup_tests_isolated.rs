@@ -332,6 +332,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     let clients = env.clients;
 
     let req_id = derive_request_id("isolated-threshold-crs-backup")?;
+    let epoch_id = *DEFAULT_EPOCH_ID;
 
     // Generate CRS on all parties
     let domain_msg = domain_to_msg(&dummy_domain());
@@ -345,7 +346,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             domain: Some(domain_msg.clone()),
             extra_data: vec![],
             context_id: None,
-            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            epoch_id: Some(epoch_id.into()),
         };
         crs_tasks.spawn(async move { cur_client.crs_gen(tonic::Request::new(req)).await });
     }
@@ -412,7 +413,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
         )?;
         assert!(
             backup_storage
-                .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
                 .await?
         );
 
@@ -423,7 +424,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
         )?;
         assert!(
             priv_storage
-                .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
                 .await?
         );
     }

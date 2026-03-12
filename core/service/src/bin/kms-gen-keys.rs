@@ -514,6 +514,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 args.priv_storage,
                 params,
                 &DEFAULT_CENTRAL_CRS_ID,
+                &epoch_id,
                 args.deterministic,
             )
             .await
@@ -635,6 +636,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 args.priv_storages,
                 params,
                 &DEFAULT_THRESHOLD_CRS_ID_4P,
+                &epoch_id,
                 args.deterministic,
             )
             .await

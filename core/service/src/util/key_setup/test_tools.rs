@@ -393,7 +393,11 @@ pub async fn purge(
             .unwrap();
 
         // Also delete epoch-specific data types that delete_all_at_request_id skips
-        for data_type in [PrivDataType::FhePrivateKey, PrivDataType::FheKeyInfo] {
+        for data_type in [
+            PrivDataType::FhePrivateKey,
+            PrivDataType::FheKeyInfo,
+            PrivDataType::CrsInfo,
+        ] {
             let data_type_str = data_type.to_string();
             if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
                 for epoch_id in epoch_ids {
@@ -722,6 +726,7 @@ pub(crate) mod setup {
             &mut central_priv_storage,
             params.to_owned(),
             crs_id,
+            epoch_id,
             true,
         )
         .await;
@@ -778,6 +783,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             params.to_owned(),
             crs_id,
+            epoch_id,
             true,
         )
         .await;

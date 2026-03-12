@@ -119,14 +119,17 @@ impl<
         timer.tags(metric_tags.clone());
 
         // Validate the request ID before proceeding
-        self.crypto_storage.crs_exists(&req_id).await.map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                None,
-                format!("Could not check crs existance in storage: {e}"),
-                tonic::Code::AlreadyExists,
-            )
-        })?;
+        self.crypto_storage
+            .crs_exists(&req_id, &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    op_tag,
+                    None,
+                    format!("Could not check crs existance in storage: {e}"),
+                    tonic::Code::AlreadyExists,
+                )
+            })?;
 
         add_req_to_meta_store(&mut self.crs_meta_store.write().await, &req_id, op_tag)?;
         let sigkey = self.base_kms.sig_key().map_err(|e| {
@@ -223,7 +226,7 @@ impl<
                         );
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store= meta_store_cancelled.write().await;
-                        crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
+                        crypto_storage_cancelled.purge_crs_material(&req_id, &epoch_id, guarded_meta_store).await;
                     },
                 }
             }.instrument(tracing::Span::current()));

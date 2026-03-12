@@ -1306,6 +1306,9 @@ impl<
             )?;
 
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
+
+        // Note to reviewer: Wondering about the logic here; why is this only called for FheKeyInfo ?
+        // I guess it should also now be called for CRS info (which is now stored based on epoch info )
         Self::destroy_epoch(
             &epoch_id,
             PrivDataType::FheKeyInfo,
