@@ -513,7 +513,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
     migrate_to_0_13_10(&mut private_storage, kms_type)
         .await
-        .expect("Could not complete migration: {e}");
+        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     let attest_private_vault_root_key_policy = core_config
         .threshold
