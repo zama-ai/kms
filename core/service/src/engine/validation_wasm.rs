@@ -46,7 +46,7 @@ pub(crate) fn check_ext_user_decryption_signature(
     request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
@@ -73,7 +73,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     signature: &[u8],
     external_signature: &[u8],
     eip712_domain: &Eip712Domain,
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     let pivot_type = pivot_resp.fhe_types()?;
     let check_type = other_resp.fhe_types()?;
@@ -311,7 +311,7 @@ fn validate_user_decrypt_responses(
             &cur_resp.signature,
             &cur_resp.external_signature,
             eip712_domain,
-            cur_resp.extra_data.clone(),
+            &cur_resp.extra_data,
         ) {
             tracing::warn!(
                 "User decryption validation failed for party {} with error: {e:?}",
@@ -519,7 +519,7 @@ mod tests {
             &payload,
             &domain,
             &eph_client_pk,
-            extra_data.clone(),
+            &extra_data,
         )
         .unwrap();
 
@@ -531,7 +531,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                extra_data.clone(),
+                &extra_data,
             )
             .unwrap_err()
             .to_string()
@@ -546,7 +546,7 @@ mod tests {
                 &payload,
                 &domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             assert!(check_ext_user_decryption_signature(
@@ -555,7 +555,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                extra_data.clone()
+                &extra_data
             )
             .is_err());
         }
@@ -574,7 +574,7 @@ mod tests {
                 &request,
                 &bad_domain,
                 &kms_addrs[&1],
-                extra_data.clone()
+                &extra_data
             )
             .is_err());
         }
@@ -589,7 +589,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -604,7 +604,7 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                extra_data,
+                &extra_data,
             )
             .unwrap();
         }
@@ -669,7 +669,7 @@ mod tests {
             &pivot_resp,
             &dummy_domain,
             &eph_client_pk,
-            extra_data.clone(),
+            &extra_data,
         )
         .unwrap();
 
@@ -690,7 +690,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone(),
+                &extra_data,
             )
             .unwrap_err()
             .to_string()
@@ -719,7 +719,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -748,7 +748,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -765,7 +765,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &[],
                 &dummy_domain,
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -784,7 +784,7 @@ mod tests {
                 &[],
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -803,7 +803,7 @@ mod tests {
                 &[],
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone()
+                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -822,7 +822,7 @@ mod tests {
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &external_signature,
                 &dummy_domain,
-                extra_data.clone(),
+                &extra_data,
             )
             .unwrap();
         }
@@ -840,7 +840,7 @@ mod tests {
                 &signature_buf,
                 &[],
                 &dummy_domain,
-                extra_data,
+                &extra_data,
             )
             .unwrap();
         }
@@ -905,7 +905,7 @@ mod tests {
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
@@ -934,7 +934,7 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
@@ -963,7 +963,7 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
@@ -992,7 +992,7 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
@@ -1136,7 +1136,7 @@ mod tests {
                     &payload,
                     &dummy_domain,
                     &eph_client_pk,
-                    vec![],
+                    &[],
                 )
                 .unwrap();
                 UserDecryptionResponse {
@@ -1279,7 +1279,7 @@ mod tests {
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
@@ -1308,7 +1308,7 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk,
-                vec![],
+                &[],
             )
             .unwrap();
             UserDecryptionResponse {
