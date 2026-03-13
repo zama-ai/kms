@@ -15,7 +15,6 @@ use kms_lib::{
     util::key_setup::test_tools::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
 use std::{collections::HashMap, path::Path};
-use tfhe::ServerKey;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -264,15 +263,15 @@ pub(crate) async fn do_new_epoch(
             let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
             let public_key =
-                load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix)
-                    .await;
-            let server_key: ServerKey = load_material_from_pub_storage(
+                load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix);
+            let server_key = load_material_from_pub_storage(
                 Some(destination_prefix),
                 &key_id,
                 PubDataType::ServerKey,
                 pub_storage_prefix,
-            )
-            .await;
+            );
+
+            let (public_key, server_key) = tokio::join!(public_key, server_key);
 
             let preproc_id: RequestId = preproc_id
                 .try_into()
