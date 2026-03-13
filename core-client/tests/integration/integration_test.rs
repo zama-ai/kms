@@ -291,16 +291,8 @@ async fn crs_gen<T: DockerComposeManager>(
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let command = match insecure_crs_gen {
-        true => CCCommand::InsecureCrsGen(CrsParameters {
-            max_num_bits: 2048,
-            epoch_id: None,
-            context_id: None,
-        }),
-        false => CCCommand::CrsGen(CrsParameters {
-            max_num_bits: 2048,
-            epoch_id: None,
-            context_id: None,
-        }),
+        true => CCCommand::InsecureCrsGen(CrsParameters::default()),
+        false => CCCommand::CrsGen(CrsParameters::default()),
     };
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
@@ -330,17 +322,15 @@ async fn crs_gen_with_custom_conf(
     epoch_id: EpochId,
     context_id: ContextId,
 ) -> String {
+    let params = CrsParameters {
+        max_num_bits: 2048,
+        epoch_id: Some(epoch_id),
+        context_id: Some(context_id),
+    };
+
     let command = match insecure_crs_gen {
-        true => CCCommand::InsecureCrsGen(CrsParameters {
-            max_num_bits: 2048,
-            epoch_id: Some(epoch_id),
-            context_id: Some(context_id),
-        }),
-        false => CCCommand::CrsGen(CrsParameters {
-            max_num_bits: 2048,
-            epoch_id: Some(epoch_id),
-            context_id: Some(context_id),
-        }),
+        true => CCCommand::InsecureCrsGen(params),
+        false => CCCommand::CrsGen(params),
     };
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),

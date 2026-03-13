@@ -628,6 +628,16 @@ pub struct CrsParameters {
     pub context_id: Option<ContextId>,
 }
 
+impl Default foor CrsParameters {
+    fn default() -> Self {
+        Self {
+            max_num_bits: 2048,
+            epoch_id: None,
+            context_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct NewCustodianContextParameters {
     #[clap(long, short = 't')]
