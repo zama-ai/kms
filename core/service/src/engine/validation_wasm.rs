@@ -66,7 +66,7 @@ pub(crate) fn check_ext_user_decryption_signature(
 
 #[allow(clippy::too_many_arguments)]
 fn validate_user_decrypt_meta_data_and_signature(
-    server_addreses: &HashMap<u32, Address>,
+    server_addresses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
@@ -113,7 +113,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
 
-    let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
+    let expected_addr = if let Some(expected_addr) = server_addresses.get(&(other_resp.party_id)) {
         if *expected_addr != resp_verf_key.address() {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }
