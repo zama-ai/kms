@@ -1160,7 +1160,7 @@ pub async fn execute_cmd(
     // Vector of KMS ethereum addresses
     let mut addr_vec = Vec::new();
 
-    if let CCCommand::Encrypt(params) = command {
+    if let CCCommand::Encrypt(_) = command {
         //Don't need to fetch or connect if we just do an encrypt
     } else if let CCCommand::DoNothing(_) = command {
         // Don't need to fetch or connect if we just do nothing

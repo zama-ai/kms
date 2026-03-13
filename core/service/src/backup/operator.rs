@@ -5,7 +5,6 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
-    client::mpc_context,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
