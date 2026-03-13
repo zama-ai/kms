@@ -964,7 +964,8 @@ impl FromStr for PreviousEpochParameters {
                     )
                 }
                 "previous_keys" => {
-                    let mut values = vec![value
+                    let mut values = Vec::new();
+                    let value = value
                         .strip_prefix('[')
                         .ok_or_else(|| {
                             format!(
@@ -972,19 +973,21 @@ impl FromStr for PreviousEpochParameters {
                                 value
                             )
                         })?
-                        .to_string()];
+                        .to_string();
 
-                    if values[0].ends_with(']') {
-                        values[0] = values[0]
-                            .strip_suffix(']')
-                            .ok_or_else(|| {
-                                format!(
-                                    "previous_keys value must be enclosed in square brackets {}",
-                                    values[0]
-                                )
-                            })?
-                            .to_string();
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
+                                        "previous_keys value must be enclosed in square brackets {}",
+                                        value
+                                    )
+                                })?
+                                .to_string());
                     } else {
+                        values.push(value);
                         for next_value in string_iterator.by_ref() {
                             if next_value.ends_with(']') {
                                 values.push(
@@ -1005,7 +1008,8 @@ impl FromStr for PreviousEpochParameters {
                     }
                 }
                 "previous_crs" => {
-                    let mut values = vec![value
+                    let mut values = Vec::new();
+                    let value = value
                         .strip_prefix('[')
                         .ok_or_else(|| {
                             format!(
@@ -1013,18 +1017,21 @@ impl FromStr for PreviousEpochParameters {
                                 value
                             )
                         })?
-                        .to_string()];
-                    if values[0].ends_with(']') {
-                        values[0] = values[0]
-                            .strip_suffix(']')
-                            .ok_or_else(|| {
-                                format!(
+                        .to_string();
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
                                     "previous_crs value must be enclosed in square brackets: {}",
                                     values[0]
                                 )
-                            })?
-                            .to_string();
+                                })?
+                                .to_string(),
+                        );
                     } else {
+                        values.push(value);
                         for next_value in string_iterator.by_ref() {
                             if next_value.ends_with(']') {
                                 values.push(
