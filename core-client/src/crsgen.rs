@@ -313,6 +313,12 @@ fn check_crsgen_ext_signature(
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
+    tracing::info!(
+        "Checking external signature on CRS gen result. crs_id={},digest={}",
+        crs_id,
+        hex::encode(&crs_digest),
+    );
+
     let max_num_bits = max_num_bits_from_crs(crs);
     let sol_type = CrsgenVerification::new(
         crs_id,

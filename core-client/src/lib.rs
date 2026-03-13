@@ -963,57 +963,90 @@ impl FromStr for PreviousEpochParameters {
                             )
                         })?
                         .to_string()];
-                    for next_value in string_iterator {
-                        if next_value.ends_with(']') {
-                            values.push(
-                                next_value
-                                    .to_string()
-                                    .strip_suffix(']')
-                                    .expect("we just checked the suffix is ]")
-                                    .to_string(),
-                            );
-                            break;
+
+                    if values[0].ends_with(']') {
+                        values[0] = values[0]
+                            .strip_suffix(']')
+                            .ok_or_else(|| {
+                                format!(
+                                    "previous_keys value must be enclosed in square brackets {}",
+                                    values[0]
+                                )
+                            })?
+                            .to_string();
+                    } else {
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
                         }
-                        values.push(next_value.to_string());
                     }
 
+                    println!("Parsing previous keys: {values:#?}");
                     for key_info_str in values {
                         previous_keys.push(key_info_str.parse()?);
                     }
-
-                    //TODO: Fix, we can't stop here anymore since we have also crs to deal with
-                    return Ok(PreviousEpochParameters {
-                        context_id: context_id.ok_or("Missing context_id")?,
-                        epoch_id: epoch_id.ok_or("Missing epoch_id")?,
-                        previous_keys,
-                        previous_crs,
-                    });
                 }
                 "previous_crs" => {
-                    let value = value
+                    let mut values = vec![value
                         .strip_prefix('[')
-                        .and_then(|v| v.strip_suffix(']'))
                         .ok_or_else(|| {
                             format!(
                                 "previous_crs value must be enclosed in square brackets: {}",
                                 value
                             )
-                        })?;
-                    for crs_info_str in value.split(';') {
+                        })?
+                        .to_string()];
+                    if values[0].ends_with(']') {
+                        values[0] = values[0]
+                            .strip_suffix(']')
+                            .ok_or_else(|| {
+                                format!(
+                                    "previous_crs value must be enclosed in square brackets: {}",
+                                    values[0]
+                                )
+                            })?
+                            .to_string();
+                    } else {
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
+                        }
+                    }
+
+                    for crs_info_str in values {
                         previous_crs.push(crs_info_str.parse()?);
-                        string_iterator.next(); // Skip the semicolon separator
                     }
                 }
-                _ => return Err(format!("Unknown field: {}", key)),
+                _ => return Err(format!("[PreviousEpochParameters] Unknown field: {}", key)),
             }
         }
 
-        Ok(PreviousEpochParameters {
+        let ans = PreviousEpochParameters {
             context_id: context_id.ok_or("Missing context_id")?,
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
             previous_crs,
-        })
+        };
+        println!("Parsed previous epoch parameters: {ans:#?}");
+        Ok(ans)
     }
 }
 
@@ -1021,26 +1054,29 @@ impl FromStr for PreviousCrsInfo {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (crs_id_str, digest_str) = s
-            .split_once(',')
-            .ok_or_else(|| format!("Invalid key:value pair: {}", s))?;
+        let (crs_id_str, digest_str) = s.split_once(',').ok_or_else(|| {
+            format!(
+                "Invalid crs info layout expect [crs_id=<id>,digest=<digest>]: {}",
+                s
+            )
+        })?;
 
         // Parse Id
         let (key, value) = crs_id_str
             .split_once('=')
-            .ok_or_else(|| format!("Invalid key:value pair: {}", crs_id_str))?;
+            .ok_or_else(|| format!("Invalid key=value pair: {}", crs_id_str))?;
 
         if key != "crs_id" {
-            return Err(format!("Unknown field: {}", key));
+            return Err(format!("[PreviousCrsInfo] Unknown field: {}", key));
         }
         let crs_id = value.parse().map_err(|e| format!("Invalid crs_id: {e}"))?;
 
         // Parse digest
         let (key, value) = digest_str
             .split_once('=')
-            .ok_or_else(|| format!("Invalid key:value pair: {}", digest_str))?;
+            .ok_or_else(|| format!("Invalid key=value pair: {}", digest_str))?;
         if key != "digest" {
-            return Err(format!("Unknown field: {}", key));
+            return Err(format!("[PreviousCrsInfo] Unknown field: {}", key));
         }
         let digest = value.to_string();
 
@@ -1061,7 +1097,7 @@ impl FromStr for PreviousKeyInfo {
         for pair in s.split(',') {
             let (key, value) = pair
                 .split_once('=')
-                .ok_or_else(|| format!("Invalid key:value pair: {}", pair))?;
+                .ok_or_else(|| format!("Invalid key=value pair: {}", pair))?;
 
             match key {
                 "key_id" => {
@@ -1106,7 +1142,7 @@ impl FromStr for PreviousKeyInfo {
                     );
                     public_key_digest = Some(value.to_string());
                 }
-                _ => return Err(format!("Unknown field: {}", key)),
+                _ => return Err(format!("[PreviousKeyInfo] Unknown field: {}", key)),
             }
         }
 
