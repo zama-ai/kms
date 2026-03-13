@@ -628,7 +628,7 @@ pub struct CrsParameters {
     pub context_id: Option<ContextId>,
 }
 
-impl Default foor CrsParameters {
+impl Default for CrsParameters {
     fn default() -> Self {
         Self {
             max_num_bits: 2048,
