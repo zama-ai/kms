@@ -10,6 +10,7 @@ pub mod mpc_context;
 mod mpc_epoch;
 mod s3_operations;
 
+use crate::s3_operations::fetch_and_store_kms_verification_keys;
 // reexport fetch_public_elements for integration test
 pub use crate::s3_operations::fetch_public_elements;
 
@@ -1156,17 +1157,14 @@ pub async fn execute_cmd(
     // Vector of KMS ethereum addresses
     let mut addr_vec = Vec::new();
 
-    if let CCCommand::Encrypt(_) = command {
+    if let CCCommand::Encrypt(params) = command {
         //Don't need to fetch or connect if we just do an encrypt
     } else if let CCCommand::DoNothing(_) = command {
         // Don't need to fetch or connect if we just do nothing
     } else {
         // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
         tracing::info!("Fetching verification keys. ({command:?})");
-        let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-        let _ = fetch_public_elements(
-            &SIGNING_KEY_ID.to_string(),
-            &public_verf_types,
+        fetch_and_store_kms_verification_keys(
             &cc_conf,
             destination_prefix,
             true, // we always need to download all verification keys

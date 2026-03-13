@@ -169,6 +169,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     )
                     .as_str(),
                 );
+            // TODO is this actually correct? I think we use bc2wrap for publicSigKey type? Not sure how it even compiles since PublicSigKey does not implement Unversionize
             let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "testing")]
+use kms_grpc::RequestId;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
@@ -28,8 +30,9 @@ pub async fn create_test_context_info_from_core_config(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<ContextInfo> {
     // first download the verification and signing keys from all parties
-    let verification_keys = fetch_kms_verification_keys(sim_conf).await?;
-    let signing_keys = fetch_kms_signing_keys(sim_conf).await?;
+    let verification_keys =
+        fetch_kms_verification_keys(sim_conf, &context_id).await?;
+    let signing_keys = fetch_kms_signing_keys(sim_conf, &context_id, &server_verf_id_map).await?;
 
     // load the compose_x.toml files, because we need the MPC identities and dummy pcr values
     let mut pcr_values = HashMap::new();
@@ -81,15 +84,25 @@ pub async fn create_test_context_info_from_core_config(
             }
         }
 
-        let verification_key = verification_keys.get(&role.one_based()).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No verification key found for party ID {}",
-                role.one_based()
-            )
-        })?;
-        let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
-            anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
-        })?;
+        let verification_key = verification_keys
+            .get(&role.one_based())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No verification key found for party ID {}",
+                    role.one_based()
+                )
+            })?
+            .get(&context_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("No verification key present for context id {context_id}")
+            })?;
+        let sk = signing_keys
+            .get(&role.one_based())
+            .ok_or_else(|| {
+                anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
+            })?
+            .get(&context_id)
+            .ok_or_else(|| anyhow::anyhow!("No signing key present for context id {context_id}"))?;
 
         let mpc_identity = identity.mpc_identity();
         let (_ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(

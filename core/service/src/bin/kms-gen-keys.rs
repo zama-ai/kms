@@ -457,7 +457,6 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
             process_signing_key_cmds(
                 args.pub_storage,
                 args.priv_storage,
-                &SIGNING_KEY_ID,
                 args.show_existing,
                 args.overwrite,
             )
@@ -552,7 +551,6 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 process_signing_key_cmds(
                     pub_storage,
                     priv_storage,
-                    &SIGNING_KEY_ID,
                     args.show_existing,
                     args.overwrite,
                 )
@@ -656,7 +654,7 @@ async fn process_crs_cmds<PubS: Storage, PrivS: Storage>(
     process_cmd(
         pub_storage,
         vec![&PubDataType::CRS],
-        req_id,
+        Some(*req_id),
         show_existing,
         overwrite,
     )
@@ -664,7 +662,7 @@ async fn process_crs_cmds<PubS: Storage, PrivS: Storage>(
     process_cmd(
         priv_storage,
         vec![&PrivDataType::CrsInfo],
-        req_id,
+        Some(*req_id),
         show_existing,
         overwrite,
     )
@@ -681,7 +679,7 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
     process_cmd(
         pub_storage,
         vec![&PubDataType::PublicKey, &PubDataType::ServerKey],
-        req_id,
+        Some(*req_id),
         show_existing,
         overwrite,
     )
@@ -689,7 +687,7 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
     process_cmd(
         priv_storage,
         vec![&PrivDataType::FheKeyInfo, &PrivDataType::SigningKey],
-        req_id,
+        Some(*req_id),
         show_existing,
         overwrite,
     )
@@ -699,7 +697,6 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
 async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
-    req_id: &RequestId,
     show_existing: bool,
     overwrite: bool,
 ) {
@@ -710,7 +707,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
             &PubDataType::VerfAddress,
             &PubDataType::CACert,
         ],
-        req_id,
+        None,
         show_existing,
         overwrite,
     )
@@ -718,7 +715,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     process_cmd(
         priv_storage,
         vec![&PrivDataType::SigningKey],
-        req_id,
+        None,
         show_existing,
         overwrite,
     )
@@ -728,7 +725,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
 async fn process_cmd<S: Storage, D: fmt::Display>(
     storage: &mut S,
     data_types: Vec<D>,
-    req_id: &RequestId,
+    req_id: Option<RequestId>,
     show_existing: bool,
     overwrite: bool,
 ) {
@@ -742,11 +739,16 @@ async fn process_cmd<S: Storage, D: fmt::Display>(
             tracing::info!(
                 "Deleting {} under request ID {:} from storage \"{}\"...",
                 data_type,
-                &req_id.to_string(),
+                &req_id
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "N/A".to_string()),
                 storage.info()
             );
             // Ignore an error as it is likely because the data does not exist
-            let _ = delete_at_request_id(storage, req_id, data_type).await;
+            if let Some(id) = req_id {
+                let _ = delete_at_request_id(storage, &id, data_type).await;
+            }
         }
     }
 }

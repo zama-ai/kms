@@ -227,7 +227,8 @@ pub enum PubDataType {
     )]
     PublicKeyMetadata,
     CRS,
-    VerfKey,     // Type for the servers public verification keys
+    VerfKey, // Type for the servers public verification keys
+    // TODO verf addrss is obsolete as the name of the verf key is the address now
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723

@@ -608,7 +608,6 @@ pub(crate) async fn get_preproc_keygen_responses(
         let mut client = client.clone();
         let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block
         let request_id_clone: v1::RequestId = (*request_id).into();
-        let request_id_owned = *request_id;
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -618,7 +617,7 @@ pub(crate) async fn get_preproc_keygen_responses(
 
             tracing::info!(
                 "Polling preproc result for request {} from party {}",
-                request_id_owned, core_conf.party_id
+                request_id_clone, core_conf.party_id
             );
             let mut response = client
                 .get_key_gen_preproc_result(tonic::Request::new(request_id_clone.clone()))
@@ -641,7 +640,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                 ctr += 1;
                 tracing::info!(
                     "Preproc result not ready yet for request {} from party {} (retry {}/{})",
-                    request_id_owned, core_conf.party_id, ctr, max_iter
+                    request_id_clone, core_conf.party_id, ctr, max_iter
                 );
                 response = client
                     .get_key_gen_preproc_result(tonic::Request::new(request_id_clone.clone()))

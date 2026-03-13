@@ -16,8 +16,8 @@ use crate::{
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id,
         s3::{
-            build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
-            RealReadOnlyS3StorageGetter,
+            build_anonymous_s3_client, find_region_from_s3_url, ReadOnlyS3Storage,
+            ReadOnlyS3StorageGetter, RealReadOnlyS3StorageGetter,
         },
         Storage, StorageExt, StorageReader, StorageType,
     },
@@ -86,37 +86,6 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
         Ok("kms".to_owned())
     } else {
         Ok(domain_parts[0].to_owned())
-    }
-}
-
-/// Find the AWS region from an S3 bucket URL.
-/// For example:
-/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
-pub(crate) fn find_region_from_s3_url(s3_bucket_url: &String) -> anyhow::Result<String> {
-    let parsed_url = url::Url::parse(s3_bucket_url.as_str())?;
-    let domain = parsed_url
-        .domain()
-        .ok_or(anyhow::anyhow!("Cannot parse domain from URL"))?;
-    let domain_parts: Vec<&str> = domain.split('.').collect();
-    if domain_parts.len() < 4 {
-        tracing::warn!(
-            "Cannot deduce the region from url {:?}. Using default us-east-1",
-            s3_bucket_url
-        );
-        return Ok("us-east-1".to_owned()); // default region
-    }
-    let dot_com_pos = domain_parts.len() - 1;
-    let expected_s3_pos = dot_com_pos - 3;
-    let expected_region_pos = dot_com_pos - 2;
-    // e.g s3.eu-west-1.amazonaws.com
-    if domain_parts[expected_s3_pos] == "s3" {
-        Ok(domain_parts[expected_region_pos].to_owned())
-    } else {
-        tracing::warn!(
-            "Cannot deduce the region from url {:?}. Using default us-east-1",
-            s3_bucket_url
-        );
-        Ok("us-east-1".to_owned()) // default region
     }
 }
 
@@ -192,7 +161,7 @@ async fn fetch_public_materials_from_peers<
         let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(url::Url::parse(&url)?, region).await?;
+        let s3_client = build_anonymous_s3_client(&url, region).await?;
         let pub_storage = ro_storage_getter.get_storage(
             s3_client,
             bucket,
@@ -918,25 +887,6 @@ mod tests {
             // we should've used the public storage directly, so the counter here should be 0
             assert_eq!(*ro_storage_getter.counter.borrow(), 0);
         }
-    }
-
-    #[test]
-    fn test_find_region() {
-        let url = "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string();
-        let region = super::find_region_from_s3_url(&url).unwrap();
-        assert_eq!(region.as_str(), "eu-west-1");
-
-        let url = "https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
-        let region = super::find_region_from_s3_url(&url).unwrap();
-        assert_eq!(region.as_str(), "us-west-1");
-
-        let url = "https://s3.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
-        let region = super::find_region_from_s3_url(&url).unwrap();
-        assert_eq!(region.as_str(), "us-east-1");
-
-        let url = "http://dev-s3-mock:9000".to_string();
-        let region = super::find_region_from_s3_url(&url).unwrap();
-        assert_eq!(region.as_str(), "us-east-1");
     }
 
     // ==================== Compressed Key Tests ====================

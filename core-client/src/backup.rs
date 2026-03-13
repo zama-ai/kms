@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 use aes_prng::AesRng;
 use kms_grpc::{
-    ContextId, RequestId, kms::v1::{
+    kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
         CustodianRecoveryRequest, Empty, NewCustodianContextRequest, OperatorBackupOutput,
-    }, kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient
+    },
+    kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
+    ContextId, RequestId,
 };
 use kms_lib::{
     backup::{
@@ -142,18 +144,17 @@ pub(crate) async fn do_custodian_backup_recovery(
         anyhow::bail!("All custodian recovery outputs must have the same MPC context ID");
     }
     let mut req_tasks = JoinSet::new();
-    // TODO(zama-ai/kms-internal#2837)
     // we should change the key in the [core_endpoints] hashmap to be the verification key
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
-        // fetch the public keys of operators
-        let verf_keys =
-            fetch_kms_verification_keys(sim_conf, &[pivot_mpc_context_id.into()]).await?;
         for cur_recover in custodian_recovery_outputs.iter() {
+            // fetch the public keys of operators
+            let verf_keys =
+                fetch_kms_verification_keys(sim_conf, &pivot_mpc_context_id.into()).await?;
             // Find the recoveries designated for the correct server
-            let verf_key = &verf_keys[&(core_conf.party_id as u32)][&pivot_mpc_context_id.into()];
+            let verf_key = &verf_keys[&core_conf.party_id][&pivot_mpc_context_id.into()];
 
             if &cur_recover.operator_verification_key == verf_key {
                 cur_recoveries.push(CustodianRecoveryOutput {
