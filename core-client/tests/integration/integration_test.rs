@@ -17,6 +17,7 @@ use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
+use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
@@ -1784,11 +1785,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     let party_confs = fetch_public_elements(
         &key_id,
-        &[
-            PubDataType::ServerKey,
-            PubDataType::PublicKey,
-            PubDataType::CRS,
-        ],
+        &[PubDataType::ServerKey, PubDataType::PublicKey],
         &cc_conf,
         test_path,
         false,
@@ -1814,7 +1811,11 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let public_key_digest =
         hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
 
+    let _ = fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false)
+        .await
+        .unwrap();
     let crs_id = RequestId::from_str(&crs_id).unwrap();
+
     let crs: CompactPkeCrs = load_material_from_pub_storage(
         Some(test_path),
         &crs_id,
@@ -1823,7 +1824,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     )
     .await;
     let crs_digest =
-        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &crs).unwrap());
+        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap());
 
     // create and store second mpc context
     // create and store mpc context

@@ -3564,11 +3564,7 @@ async fn test_threshold_reshare() -> Result<()> {
 
     let ids = fetch_public_elements(
         &key_id_str,
-        &[
-            PubDataType::ServerKey,
-            PubDataType::PublicKey,
-            PubDataType::CRS,
-        ],
+        &[PubDataType::ServerKey, PubDataType::PublicKey],
         &cc_conf,
         test_path,
         false,
@@ -3597,6 +3593,9 @@ async fn test_threshold_reshare() -> Result<()> {
         &DSEP_PUBDATA_KEY,
         &public_key,
     )?);
+
+    let _ids =
+        fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
 
     let crs_id = RequestId::from_str(&crs_id)?;
     let crs: CompactPkeCrs = load_material_from_pub_storage(
