@@ -990,7 +990,6 @@ impl FromStr for PreviousEpochParameters {
                         }
                     }
 
-                    println!("Parsing previous keys: {values:#?}");
                     for key_info_str in values {
                         previous_keys.push(key_info_str.parse()?);
                     }
@@ -1039,14 +1038,12 @@ impl FromStr for PreviousEpochParameters {
             }
         }
 
-        let ans = PreviousEpochParameters {
+        Ok(PreviousEpochParameters {
             context_id: context_id.ok_or("Missing context_id")?,
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
             previous_crs,
-        };
-        println!("Parsed previous epoch parameters: {ans:#?}");
-        Ok(ans)
+        })
     }
 }
 
