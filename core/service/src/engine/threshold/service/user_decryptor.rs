@@ -387,7 +387,7 @@ impl<
             &payload,
             domain,
             &signcryption_key.receiver_enc_key,
-            extra_data.clone(),
+            &extra_data,
         )?;
         Ok((payload, external_signature, extra_data))
     }
