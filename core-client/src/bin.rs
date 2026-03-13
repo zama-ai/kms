@@ -1,6 +1,6 @@
 use clap::Parser;
 use kms_core_client::{execute_cmd, setup_logging, CmdConfig};
-use kms_lib::engine::context::SoftwareVersion;
+use kms_lib::{engine::context::SoftwareVersion, util::key_setup::ensure_client_keys_exist};
 use std::path::Path;
 use validator::Validate;
 

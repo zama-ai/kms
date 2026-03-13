@@ -117,6 +117,7 @@ pub struct NodeInfo {
 
     /// This is optional for legacy reasons because typically MPC parties
     /// do not know the public verification keys of other parties when it first starts.
+    /// TODO during context creation it should be sanity checked that this is indeed on disk
     pub verification_key: Option<PublicSigKey>,
 
     /// Must be a valid URL.

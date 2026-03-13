@@ -45,7 +45,7 @@ use kms_lib::util::key_setup::{
     test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext},
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
+use kms_lib::vault::storage::{make_storage, read_text_at_request_id, StorageReader};
 use kms_lib::vault::Vault;
 use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
@@ -1052,6 +1052,8 @@ pub fn setup_logging() {
 async fn read_kms_addresses_local(
     path: &Path,
     sim_conf: &CoreClientConfig,
+    // TODO should actually be HashMap<ContextId, alloy_primitives::Address> but we do not have a way to learn this map without the smart contracts
+    // so for simplicity we skip this such that we do not validate the context
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
@@ -1069,14 +1071,15 @@ async fn read_kms_addresses_local(
                 keychain: None,
             }
         };
-
-        let content = read_text_at_request_id(
-            &vault,
-            &SIGNING_KEY_ID,
-            &PubDataType::VerfAddress.to_string(),
-        )
-        .await?;
-        addr_strings.push(content);
+        let all_addr = vault
+            .all_data_ids(&PubDataType::VerfAddress.to_string())
+            .await?;
+        for cur_add in all_addr {
+            let content =
+                read_text_at_request_id(&vault, &cur_add, &PubDataType::VerfAddress.to_string())
+                    .await?;
+            addr_strings.push(content);
+        }
     }
 
     // turn the read bytes into Address type

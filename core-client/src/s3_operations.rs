@@ -95,10 +95,10 @@ pub(crate) async fn fetch_and_store_kms_verification_keys(
     for cur_core in &sim_conf.cores {
         let mut all_elements = true;
         let verf_folder = destination_prefix
-            .join(cur_core.object_folder)
+            .join(&cur_core.object_folder)
             .join(&PubDataType::VerfKey.to_string());
         let addr_folder = destination_prefix
-            .join(cur_core.object_folder)
+            .join(&cur_core.object_folder)
             .join(&PubDataType::VerfAddress.to_string());
         let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
         let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
@@ -122,7 +122,6 @@ pub(crate) async fn fetch_and_store_kms_verification_keys(
                 continue;
             }
         };
-        let mut cur_context_map = HashMap::new();
         for cur_key_id in key_ids {
             let cur_key: PublicSigKey = match s3_storage
                 .read_data(&cur_key_id, &PubDataType::VerfKey.to_string())
@@ -137,9 +136,10 @@ pub(crate) async fn fetch_and_store_kms_verification_keys(
             };
 
             let mut cur_key_bytes: Vec<_> = Vec::new();
-            safe_serialize(&cur_key, &mut cur_key_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
+            safe_serialize(&cur_key, &mut cur_key_bytes, SAFE_SER_SIZE_LIMIT)?;
             write_bytes_to_file(&verf_folder, &cur_key_id.as_str(), cur_key_bytes.as_ref()).await?;
-            let addr_bytes = cur_key.address().to_string().as_bytes();
+            let addr_string = cur_key.address().to_string();
+            let addr_bytes = addr_string.as_bytes();
             write_bytes_to_file(&addr_folder, &cur_key_id.as_str(), addr_bytes).await?;
         }
         // if we were able to retrieve all elements, add the core id to the set of successful nodes
