@@ -13,8 +13,6 @@ region = "us-east-1"
 s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault]
-storage_cache_size = 1000
-
 [public_vault.storage.s3]
 bucket = "kms"
 prefix = "PUB-p3"
