@@ -32,8 +32,7 @@ pub(crate) fn verify_key_digest_from_bytes(
     let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
 
     if actual_server_key_digest != expected_server_key_digest {
-        anyhow::bail!("ERR_SERVER_KEY_DIGEST_MISMATCH da fuk 1");
-        // anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
+        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
     }
     if actual_public_key_digest != expected_public_key_digest {
         anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
@@ -553,9 +552,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.to_string()
-                .contains("ERR_SERVER_KEY_DIGEST_MISMATCH da fuk 2"),
-            // err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
+            err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
             "expected server key digest mismatch, got: {err}"
         );
     }
