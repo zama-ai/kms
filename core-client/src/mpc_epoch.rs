@@ -216,10 +216,7 @@ pub(crate) async fn do_new_epoch(
         }
         let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-        for (key_id, preproc_id) in expected_key_ids
-            .into_iter()
-            .zip(expected_preproc_ids.into_iter())
-        {
+        for (key_id, preproc_id) in expected_key_ids.into_iter().zip(expected_preproc_ids) {
             // We try to download all because all parties needed to respond for a successful resharing
             let key_id: RequestId = key_id.try_into().unwrap();
 
