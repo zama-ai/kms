@@ -325,7 +325,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })),
             },
             StorageType::PUB,
-            None,
             s3_client.clone(),
         )
         .unwrap();
@@ -372,7 +371,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })),
                 },
                 StorageType::PRIV,
-                None,
                 s3_client.clone(),
             )
             .unwrap(),

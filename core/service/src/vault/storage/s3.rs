@@ -1,4 +1,4 @@
-use super::{Storage, StorageCache, StorageReader, StorageType};
+use super::{Storage, StorageReader, StorageType};
 use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
@@ -18,7 +18,6 @@ use kms_grpc::{identifiers::EpochId, RequestId};
 use serde::{de::DeserializeOwned, Serialize};
 #[cfg(test)]
 use std::cell::RefCell;
-use std::sync::Arc;
 use std::{collections::HashSet, str::FromStr};
 use tfhe::{
     named::Named,
@@ -26,7 +25,6 @@ use tfhe::{
     Unversionize, Versionize,
 };
 use tokio::io::AsyncReadExt;
-use tokio::sync::Mutex;
 use url::Url;
 
 const PREALLOCATED_BLOB_SIZE: usize = 32768;
@@ -36,7 +34,6 @@ pub struct S3Storage {
     pub s3_client: S3Client,
     pub bucket: String,
     pub prefix: String,
-    cache: Option<Arc<Mutex<StorageCache>>>,
 }
 
 /// Read-only S3 storage wrapper, should not implement Storage trait.
@@ -50,10 +47,9 @@ impl ReadOnlyS3Storage {
         bucket: String,
         storage_type: StorageType,
         storage_prefix: Option<&str>,
-        cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            inner: S3Storage::new(s3_client, bucket, storage_type, storage_prefix, cache)?,
+            inner: S3Storage::new(s3_client, bucket, storage_type, storage_prefix)?,
         })
     }
 }
@@ -90,7 +86,6 @@ impl S3Storage {
         bucket: String,
         storage_type: StorageType,
         storage_prefix: Option<&str>,
-        cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
         let prefix = match storage_prefix {
             Some(prefix) => {
@@ -103,7 +98,6 @@ impl S3Storage {
             s3_client,
             bucket,
             prefix,
-            cache: cache.map(|x| Arc::new(Mutex::new(x))),
         })
     }
 
@@ -118,80 +112,6 @@ impl S3Storage {
         data_type: &str,
     ) -> String {
         format!("{}/{}/{}/{}", self.prefix, data_type, epoch_id, data_id)
-    }
-
-    /// Helper to update cache after successful S3 operation
-    async fn update_cache(&self, key: &str, data: &[u8]) {
-        if let Some(cache) = &self.cache {
-            let cache = Arc::clone(cache);
-            let mut guarded_cache = cache.lock().await;
-            match guarded_cache.insert(&self.bucket, key, data) {
-                Some(old_data) => {
-                    let size_changed = old_data.len() != data.len();
-                    let data_changed = old_data != data;
-                    tracing::debug!("Updated cache entry for bucket={}, key={}, size_changed={}, data_changed={}, size={}",
-                        &self.bucket, key, size_changed, data_changed, data.len());
-                }
-                None => {
-                    tracing::debug!(
-                        "Added new cache entry for bucket={}, key={}, size={}",
-                        &self.bucket,
-                        key,
-                        data.len()
-                    );
-                }
-            }
-        }
-    }
-
-    /// Helper to delete cache entry (remove from cache)
-    async fn delete_cache(&self, key: &str) {
-        if let Some(cache) = &self.cache {
-            let cache = Arc::clone(cache);
-            let mut guarded_cache = cache.lock().await;
-            match guarded_cache.remove(&self.bucket, key) {
-                Some(_) => {
-                    tracing::debug!(
-                        "Removed cache entry for bucket={}, key={}",
-                        &self.bucket,
-                        key
-                    );
-                }
-                None => {
-                    tracing::warn!(
-                        "Attempted to remove non-existent cache entry for bucket={}, key={}",
-                        &self.bucket,
-                        key
-                    );
-                }
-            }
-        }
-    }
-
-    /// Helper to get data from cache or S3 with cache population
-    async fn get_with_cache(&self, key: &str) -> anyhow::Result<Vec<u8>> {
-        match &self.cache {
-            Some(cache) => {
-                let cache = Arc::clone(cache);
-                let mut guarded_cache = cache.lock().await;
-                match guarded_cache.get(&self.bucket, key) {
-                    Some(buf) => {
-                        tracing::info!(
-                            "found bucket={}, path={} in storage cache",
-                            &self.bucket,
-                            key
-                        );
-                        Ok(buf.clone())
-                    }
-                    None => {
-                        let data = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
-                        guarded_cache.insert(&self.bucket, key, &data);
-                        Ok(data)
-                    }
-                }
-            }
-            None => s3_get_blob(&self.s3_client, &self.bucket, key).await,
-        }
     }
 
     async fn data_exists_at_key(&self, key: &str) -> anyhow::Result<bool> {
@@ -229,11 +149,7 @@ impl S3Storage {
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
-        // Store in S3 FIRST - only update cache if S3 operation succeeds
         s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
-
-        // Update cache ONLY after successful S3 storage
-        self.update_cache(key, &buf).await;
 
         Ok(())
     }
@@ -244,9 +160,6 @@ impl S3Storage {
             &self.bucket,
             key
         );
-
-        // Remove from cache BEFORE deleting from S3 to prevent stale cache reads
-        self.delete_cache(key).await;
 
         // Attempt S3 deletion but don't fail on errors
         if let Err(e) = self
@@ -283,7 +196,7 @@ impl StorageReader for S3Storage {
             key
         );
 
-        let buf = self.get_with_cache(key).await?;
+        let buf = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
         safe_deserialize(&mut std::io::Cursor::new(buf), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -297,8 +210,7 @@ impl StorageReader for S3Storage {
             key
         );
 
-        // Check cache first, then S3 if not found
-        self.get_with_cache(key).await
+        s3_get_blob(&self.s3_client, &self.bucket, key).await
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
@@ -354,7 +266,7 @@ impl StorageReaderExt for S3Storage {
             key
         );
 
-        let buf = self.get_with_cache(key).await?;
+        let buf = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
         safe_deserialize(&mut std::io::Cursor::new(buf), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -434,7 +346,7 @@ impl StorageReaderExt for S3Storage {
             key
         );
 
-        self.get_with_cache(key).await
+        s3_get_blob(&self.s3_client, &self.bucket, key).await
     }
 }
 
@@ -478,11 +390,7 @@ impl Storage for S3Storage {
 
         tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
 
-        // Store in S3 FIRST - only update cache if S3 operation succeeds
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
-
-        // Update cache ONLY after successful S3 storage
-        self.update_cache(key, bytes).await;
 
         Ok(())
     }
@@ -540,11 +448,7 @@ impl StorageExt for S3Storage {
 
         tracing::info!("Storing bytes in bucket {} under key {}", &self.bucket, key);
 
-        // Store in S3 FIRST - only update cache if S3 operation succeeds
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
-
-        // Update cache ONLY after successful S3 storage
-        self.update_cache(key, bytes).await;
 
         Ok(())
     }
@@ -718,7 +622,6 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
         BUCKET_NAME.to_string(),
         storage_type,
         Some(prefix),
-        None,
     )
     .unwrap()
 }
@@ -731,7 +634,7 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 // 1. Install and run Minio in Docker
 //    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
 // 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
-//   a. First open Docker desktop and navitage to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
+//   a. First open Docker desktop and navigate to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
 //   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
 //   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
 //   d. Run `mc anonymous set public testminio/ci-kms-key-test`
@@ -750,7 +653,7 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 //
 // 1. Creating access keys:
 //    a. Log into aws.amazon.com
-//    b. In the top right corner of the page there'll be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
+//    b. In the top right corner of the page there will be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
 //    c. Select “Create access keys”
 //    d. Make sure to locally store the AWS access key ID and secret access key.
 // 2. Create S3 bucket
@@ -787,7 +690,6 @@ mod tests {
             BUCKET_NAME.to_string(),
             storage_type,
             Some(prefix),
-            None,
         )
         .unwrap()
     }
@@ -911,7 +813,6 @@ mod tests {
             "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
             StorageType::PUB,
             Some("PUB-p1"),
-            None,
         )
         .unwrap();
 
@@ -933,7 +834,6 @@ pub(crate) trait ReadOnlyS3StorageGetter<R> {
         bucket: String,
         storage_type: StorageType,
         storage_prefix: Option<&str>,
-        cache: Option<StorageCache>,
     ) -> anyhow::Result<R>;
 }
 
@@ -946,9 +846,8 @@ impl ReadOnlyS3StorageGetter<ReadOnlyS3Storage> for RealReadOnlyS3StorageGetter 
         bucket: String,
         storage_type: StorageType,
         storage_prefix: Option<&str>,
-        cache: Option<StorageCache>,
     ) -> anyhow::Result<ReadOnlyS3Storage> {
-        ReadOnlyS3Storage::new(s3_client, bucket, storage_type, storage_prefix, cache)
+        ReadOnlyS3Storage::new(s3_client, bucket, storage_type, storage_prefix)
     }
 }
 
@@ -976,7 +875,6 @@ impl ReadOnlyS3StorageGetter<DummyReadOnlyS3Storage> for DummyReadOnlyS3StorageG
         _bucket: String,
         _storage_type: StorageType,
         _prefix: Option<&str>,
-        _cache: Option<StorageCache>,
     ) -> anyhow::Result<DummyReadOnlyS3Storage> {
         let val = { *self.counter.borrow() };
         let out = DummyReadOnlyS3Storage {

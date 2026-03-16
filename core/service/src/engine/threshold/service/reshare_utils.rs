@@ -198,7 +198,6 @@ async fn fetch_public_materials_from_peers<
             bucket,
             StorageType::PUB,
             node.public_storage_prefix.as_deref(),
-            None,
         )?;
 
         if is_compressed {
