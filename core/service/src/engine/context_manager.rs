@@ -737,18 +737,35 @@ where
             .await
             .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
 
-        for context in contexts {
-            let my_role = self.inner.extract_my_role_from_context(&context).await?;
-            self.session_maker
-                .add_context_info(my_role, &context)
-                .await
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Failed to add context {} into session maker: {}",
+        let mut loaded_count = 0;
+        for context in &contexts {
+            let my_role = match self.inner.extract_my_role_from_context(context).await {
+                Ok(role) => role,
+                Err(e) => {
+                    tracing::warn!(
+                        "Skipping context {} during startup: failed to verify context: {}",
                         context.context_id(),
                         e
-                    )
-                })?;
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = self.session_maker.add_context_info(my_role, context).await {
+                tracing::warn!(
+                    "Failed to add context {} during startup: {}",
+                    context.context_id(),
+                    e
+                );
+                continue;
+            }
+            loaded_count += 1;
+        }
+        if loaded_count < contexts.len() {
+            tracing::warn!(
+                "Loaded only {}/{} MPC contexts. Server may be in recovery mode.",
+                loaded_count,
+                contexts.len()
+            );
         }
         Ok(())
     }
