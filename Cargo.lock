@@ -4295,7 +4295,6 @@ dependencies = [
  "nom 8.0.0",
  "nsm-nitro-enclave-utils",
  "observability",
- "ordermap",
  "p384",
  "proptest",
  "rand 0.8.5",
@@ -5216,15 +5215,6 @@ checksum = "49203cdcae0030493bad186b28da2fa25645fa276a51b6fec8010d281e02ef79"
 dependencies = [
  "dlv-list",
  "hashbrown 0.14.5",
-]
-
-[[package]]
-name = "ordermap"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d31b8b7a99f71bdff4235faf9ce9eada0ad3562c8fbeb7d607d9f41a6ec569d"
-dependencies = [
- "indexmap 2.12.0",
 ]
 
 [[package]]

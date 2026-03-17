@@ -224,7 +224,7 @@ pub(crate) async fn new_epoch_with_reshare(
     for (
         (reshared_keyset, reshared_all_private_keys),
         (key_req_id, client_key, public_key, server_key, all_private_keys),
-    ) in new_epoch_outputs.into_iter().zip_eq(keysets.into_iter())
+    ) in new_epoch_outputs.into_iter().zip_eq(keysets)
     {
         // Assert that the two keysets are identical (since this is only the public material here)
         let (reshared_client_key, reshared_public_key, reshared_server_key) =
@@ -424,7 +424,7 @@ async fn run_new_epoch(
         for (key_info, responses) in previous_epoch
             .keys_info
             .into_iter()
-            .zip_eq(responses_as_dkg.into_iter())
+            .zip_eq(responses_as_dkg)
         {
             let KeyInfo {
                 key_id,
