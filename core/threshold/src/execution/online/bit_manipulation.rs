@@ -324,7 +324,7 @@ where
             .ok_or_else(|| anyhow_error_and_log("Failed to unarc recomposed_decryption"))?;
         let res: Vec<Share<Z>> = prods
             .into_iter()
-            .zip_eq(recomposed_decryptions.into_iter())
+            .zip_eq(recomposed_decryptions)
             .map(|(prod, recomposed_decryption)| recomposed_decryption - prod)
             .collect();
 

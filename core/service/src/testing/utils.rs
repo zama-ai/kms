@@ -392,9 +392,9 @@ pub async fn file_backup_vault(
     let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
     let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
 
-    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None, None).unwrap();
+    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None).unwrap();
     let backup_proxy_storage =
-        make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
+        make_storage(backup_storage_conf, StorageType::BACKUP, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
             make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)

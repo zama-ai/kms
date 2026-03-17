@@ -778,7 +778,7 @@ impl<
         }
 
         // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
-        join_all(storage_tasks.into_iter()).await;
+        join_all(storage_tasks).await;
         meta_store.write().await.update(
             &new_epoch_id.into(),
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
@@ -943,10 +943,8 @@ impl<
             let mut new_private_keysets = Vec::new();
             let sessions_online = &mut (two_sets_session, session_online);
 
-            for (key_info, (private_keys, _)) in verified_previous_epoch
-                .keys_info
-                .iter()
-                .zip_eq(keys.into_iter())
+            for (key_info, (private_keys, _)) in
+                verified_previous_epoch.keys_info.iter().zip_eq(keys)
             {
                 // Lift to expected domain
                 let mut private_keys = match key_info

@@ -12,7 +12,6 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
     RequestId,
 };
-use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
@@ -594,7 +593,6 @@ pub enum StorageProxy {
 pub fn make_storage(
     storage_conf: Option<StorageConf>,
     storage_type: StorageType,
-    storage_cache: Option<StorageCache>,
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
     let storage = match storage_conf {
@@ -606,7 +604,6 @@ pub fn make_storage(
                     bucket,
                     storage_type,
                     prefix.as_deref(),
-                    storage_cache,
                 )?)
             }
             StorageConf::File(FileStorage { path, prefix }) => StorageProxy::from(
@@ -617,46 +614,6 @@ pub fn make_storage(
         None => StorageProxy::from(file::FileStorage::new(None, storage_type, None)?),
     };
     Ok(storage)
-}
-
-#[derive(Debug, Clone)]
-pub struct StorageCache {
-    cache: OrderMap<(String, String), Vec<u8>>,
-    max_cache_size: usize,
-}
-
-impl StorageCache {
-    pub fn new(max_cache_size: usize) -> anyhow::Result<Self> {
-        if max_cache_size != 0 {
-            Ok(Self {
-                cache: OrderMap::new(),
-                max_cache_size,
-            })
-        } else {
-            anyhow::bail!("storage cache size should not be zero");
-        }
-    }
-
-    pub(crate) fn insert(&mut self, key: &str, subkey: &str, data: &[u8]) -> Option<Vec<u8>> {
-        let out = self
-            .cache
-            .insert((key.to_string(), subkey.to_string()), data.to_vec());
-
-        if self.cache.len() > self.max_cache_size {
-            _ = self.cache.remove_index(0);
-        }
-
-        out
-    }
-
-    pub(crate) fn get(&self, key: &str, subkey: &str) -> Option<&Vec<u8>> {
-        // do we have to use to_string()?
-        self.cache.get(&(key.to_string(), subkey.to_string()))
-    }
-
-    pub(crate) fn remove(&mut self, key: &str, subkey: &str) -> Option<Vec<u8>> {
-        self.cache.remove(&(key.to_string(), subkey.to_string()))
-    }
 }
 
 #[cfg(test)]
@@ -1366,35 +1323,5 @@ pub mod tests {
             .delete_data_at_epoch(&key_id2, &epoch1, &data_type)
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn ordered_map() {
-        let mut om = StorageCache::new(2).unwrap();
-        let bucket = "abc".to_string();
-        let key = "efg".to_string();
-        let data = vec![1, 2, 3];
-        om.insert(&bucket, &key, &data);
-        assert_eq!(om.cache.len(), 1);
-        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
-
-        // insert the same thing preserves the length
-        om.insert(&bucket, &key, &data);
-        assert_eq!(om.cache.len(), 1);
-
-        // insert a new item
-        let key2 = "key2".to_string();
-        om.insert(&bucket, &key2, &data);
-        assert_eq!(om.cache.len(), 2);
-        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
-        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
-
-        // insert a third item causes the first item to be lost
-        let key3 = "key3".to_string();
-        om.insert(&bucket, &key3, &data);
-        assert_eq!(om.cache.len(), 2);
-        assert_eq!(om.get(&bucket, &key), None);
-        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
-        assert_eq!(*om.get(&bucket, &key3).as_ref().unwrap(), &data);
     }
 }

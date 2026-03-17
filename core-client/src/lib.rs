@@ -1365,7 +1365,7 @@ async fn read_kms_addresses_local(
                 path: path.to_path_buf(),
                 prefix: storage_prefix,
             }));
-            let storage = make_storage(store_path, StorageType::PUB, None, None)?;
+            let storage = make_storage(store_path, StorageType::PUB, None)?;
             Vault {
                 storage,
                 keychain: None,
