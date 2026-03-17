@@ -261,7 +261,9 @@ pub(crate) async fn do_new_epoch(
             );
 
             // We just check we even have num_parties of them
-            let first_party_id = party_confs_successful.first().unwrap().party_id as usize;
+            let first_party_id = party_confs_successful.first()
+                .expect("unexpected error because we have previously checked that the array has length of num_parties")
+                .party_id as usize;
             let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
             let public_key =
