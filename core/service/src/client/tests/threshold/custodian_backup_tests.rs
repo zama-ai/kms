@@ -37,11 +37,9 @@ use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
-use crate::testing::utils::purge;
-
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{
-    purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
+    purge, purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
