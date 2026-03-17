@@ -393,11 +393,8 @@ pub async fn purge(
             .unwrap();
 
         // Also delete epoch-specific data types that delete_all_at_request_id skips
-        for data_type in [
-            PrivDataType::FhePrivateKey,
-            PrivDataType::FheKeyInfo,
-            PrivDataType::CrsInfo,
-        ] {
+        use PrivDataType::*;
+        for data_type in [FhePrivateKey, FheKeyInfo, CrsInfo] {
             let data_type_str = data_type.to_string();
             if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
                 for epoch_id in epoch_ids {
@@ -521,23 +518,15 @@ pub async fn read_custodian_backup_files(
     data_type: &str,
     storage_prefixes: &[Option<String>],
 ) -> Vec<BackupCiphertext> {
-    let mut files = Vec::new();
-    for storage_prefix in storage_prefixes.iter() {
-        let storage =
-            FileStorage::new(test_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
-        let coerced_path = storage
-            .root_dir()
-            .join(
-                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
-                    .to_string(),
-            )
-            .join(file_req.to_string());
-        // Attempt to read the file
-        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
-            files.push(file);
-        }
-    }
-    files
+    read_custodian_backup_files_impl(
+        test_path,
+        backup_id,
+        file_req,
+        None,
+        data_type,
+        storage_prefixes,
+    )
+    .await
 }
 
 pub async fn read_custodian_backup_files_with_epoch(
@@ -548,18 +537,37 @@ pub async fn read_custodian_backup_files_with_epoch(
     data_type: &str,
     storage_prefixes: &[Option<String>],
 ) -> Vec<BackupCiphertext> {
+    read_custodian_backup_files_impl(
+        test_path,
+        backup_id,
+        file_req,
+        Some(epoch_id),
+        data_type,
+        storage_prefixes,
+    )
+    .await
+}
+
+async fn read_custodian_backup_files_impl(
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    epoch_id: Option<EpochId>,
+    data_type: &str,
+    storage_prefixes: &[Option<String>],
+) -> Vec<BackupCiphertext> {
     let mut files = Vec::new();
     for storage_prefix in storage_prefixes.iter() {
         let storage =
             FileStorage::new(test_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
-        let coerced_path = storage
-            .root_dir()
-            .join(
-                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
-                    .to_string(),
-            )
-            .join(epoch_id.to_string())
-            .join(file_req.to_string());
+        let mut coerced_path = storage.root_dir().join(
+            VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                .to_string(),
+        );
+        if let Some(epoch_id) = epoch_id {
+            coerced_path = coerced_path.join(epoch_id.to_string());
+        }
+        coerced_path = coerced_path.join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
             files.push(file);

@@ -624,7 +624,7 @@ where
     }
 
     /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
+    /// and update the [`MetaStore`] to "Done" if the procedure is successful.
     ///
     /// When calling this function more than once, the same [meta_store]
     /// must be used, otherwise the storage state may become inconsistent.
