@@ -3,7 +3,7 @@ use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    make_storage, read_versioned_at_request_id, StorageReader, StorageReaderExt, StorageType,
+    make_storage, read_versioned_at_request_id, StorageReader, StorageType,
 };
 use crate::vault::Vault;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
@@ -713,7 +713,7 @@ async fn test_purge() {
         .await
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
-    purge(
+    crate::util::key_setup::test_tools::purge(
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),

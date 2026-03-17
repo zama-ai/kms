@@ -746,7 +746,7 @@ impl<
             }
         }
 
-        let mut crs_metadatas = Vec::new();
+        let mut crs_metadatas = Vec::with_capacity(crs_info.len());
         for (crs, crs_info) in crs_info
             .into_iter()
             .zip_eq(verified_previous_epoch.crs_info.iter())
@@ -1110,28 +1110,20 @@ impl<
         let verified_previous_epoch = verify_epoch_info(&(*new_epoch_id).into(), previous_epoch)?;
 
         // Fetch CRS (also parties from set 1 even if they don't actually need it, but they should fetch it from their storage anyway so no big deal)
-        let crs_info = join_all(
-            verified_previous_epoch
-                .crs_info
-                .iter()
-                .map(|crs_info| async {
-                    let new_epoch_id = (*new_epoch_id).into();
-                    get_verified_crs_material(
-                        &self.crypto_storage,
-                        &new_epoch_id,
-                        &crs_info.crs_id,
-                        &verified_previous_epoch.context_id,
-                        &crs_info.crs_digest,
-                        &RealReadOnlyS3StorageGetter {},
-                    )
-                    .await
-                }),
-        )
+        let new_epoch_id_as_request_id = (*new_epoch_id).into();
+        let crs_info = join_all(verified_previous_epoch.crs_info.iter().map(|crs_info| {
+            get_verified_crs_material(
+                &self.crypto_storage,
+                &new_epoch_id_as_request_id,
+                &crs_info.crs_id,
+                &verified_previous_epoch.context_id,
+                &crs_info.crs_digest,
+                &RealReadOnlyS3StorageGetter {},
+            )
+        }))
         .await
         .into_iter()
         .collect::<Result<Vec<_>, MetricedError>>()?;
-
-        let epoch_id_as_request_id = (*new_epoch_id).into();
 
         let session_maker_immutable = self.session_maker.make_immutable();
 
@@ -1150,7 +1142,7 @@ impl<
         .map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
+                Some(new_epoch_id_as_request_id),
                 e,
                 tonic::Code::InvalidArgument,
             )
@@ -1351,7 +1343,7 @@ impl<
             }
             EpochOutput::Reshare((reshares, crs_list)) => {
                 let mut reshare_responses = Vec::new();
-                let mut crs_responses = Vec::new();
+                let mut crs_responses = Vec::with_capacity(crs_list.len());
                 for reshare in reshares {
                     match reshare {
                         KeyGenMetadata::Current(res) => {

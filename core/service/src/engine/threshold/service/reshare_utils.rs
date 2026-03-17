@@ -587,7 +587,6 @@ async fn fetch_public_crs_materials_from_peers<
             bucket,
             StorageType::PUB,
             node.public_storage_prefix.as_deref(),
-            None,
         )?;
 
         let crs_bytes = pub_storage
@@ -618,7 +617,7 @@ async fn fetch_public_crs_materials_from_peers<
                     "{} from peer {}: {e:?}",
                     ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
                 );
-                tracing::warn!(msg);
+                tracing::error!(msg);
                 errors.push(msg);
             }
         }

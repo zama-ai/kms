@@ -151,7 +151,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         ))
         .unwrap();
 
-    println!("req_new_cus: {req_new_cus}");
+    tracing::debug!("req_new_cus: {req_new_cus}");
 
     let test_path = None;
     let crs_req: RequestId = derive_request_id(&format!(
