@@ -21,7 +21,13 @@ permissions: {}
 # - Groups runs by PR head ref
 # - Cancels in-progress runs when new commits are pushed
 concurrency:
-  group: build-and-test-${{ github.head_ref || github.run_id }}
+  group: >-
+    build-and-test-${{ github.head_ref || github.run_id }}-${{
+      github.event.action == 'labeled' &&
+      startsWith(github.event.label.name, 'pr-preview-') &&
+      'label-pr-preview' ||
+      'main'
+    }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +36,14 @@ jobs:
   ############################################################################
   docker-build:
     name: build-and-test/docker-build
+    if: >-
+      github.event_name == 'pull_request' &&
+      (
+        github.event.action == 'opened' ||
+        github.event.action == 'synchronize' ||
+        github.event.action == 'reopened' ||
+        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-'))
+      )
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
@@ -54,7 +68,9 @@ jobs:
   kind-testing:
     name: build-and-test/kind-testing
     needs: [docker-build]
-    if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required for nested docker-build job (even if it doesn't run)
@@ -84,6 +100,14 @@ jobs:
   check-pr-preview-labels:
     name: build-and-test/check-labels
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      (
+        github.event.action == 'opened' ||
+        github.event.action == 'synchronize' ||
+        github.event.action == 'reopened' ||
+        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-'))
+      )
     outputs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
       deployment_type: ${{ steps.check.outputs.deployment_type }}

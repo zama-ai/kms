@@ -157,7 +157,7 @@ pub async fn user_decrypt_impl<
                 server_verf_key,
                 &domain,
                 metric_tags,
-                extra_data.clone(),
+                &extra_data,
             )
             .await;
             let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
