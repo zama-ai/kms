@@ -610,9 +610,9 @@ where
             tokio::join!(f1, f2, f3)
         };
 
-        if r1 && r2 && r3 {
-            // everything is ok, there's no cache to update
-        } else {
+        if !(r1 && r2 && r3) {
+            // Some store op failed, we need to purge any potentially
+            // dangling data and update the meta store accordingly.
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might
             // be because the data did not get created

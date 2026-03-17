@@ -224,11 +224,13 @@ pub(crate) async fn do_new_epoch(
 
             assert_eq!(
                 resp_key_ids, expected_key_ids,
-                "Resharing response did not contain the expected key IDs!"
+                "Resharing response did not contain the expected key IDs! Got {:?}, but expected {:?}",
+                resp_key_ids, expected_key_ids
             );
             assert_eq!(
                 resp_preproc_ids, expected_preproc_ids,
-                "Resharing response did not contain the expected preprocessing IDs!"
+                "Resharing response did not contain the expected preprocessing IDs! Got {:?}, but expected {:?}",
+                resp_preproc_ids, expected_preproc_ids
             );
             response_vec.push((core_conf, resp));
         }

@@ -1081,7 +1081,10 @@ impl FromStr for PreviousCrsInfo {
             .ok_or_else(|| format!("Invalid key=value pair: {}", crs_id_str))?;
 
         if key != "crs_id" {
-            return Err(format!("[PreviousCrsInfo] Unknown field: {}", key));
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"crs_id\"",
+                key
+            ));
         }
         let crs_id = value.parse().map_err(|e| format!("Invalid crs_id: {e}"))?;
 
@@ -1090,7 +1093,10 @@ impl FromStr for PreviousCrsInfo {
             .split_once('=')
             .ok_or_else(|| format!("Invalid key=value pair: {}", digest_str))?;
         if key != "digest" {
-            return Err(format!("[PreviousCrsInfo] Unknown field: {}", key));
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"digest\"",
+                key
+            ));
         }
         let digest = value.to_string();
 
