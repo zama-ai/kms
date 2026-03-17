@@ -634,7 +634,7 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 // 1. Install and run Minio in Docker
 //    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
 // 2. Setup the bucket. Within the `dev-s3-mock-1` container in Docker execute the following commands:
-//   a. First open Docker desktop and navigate to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
+//   a. First open Docker desktop and navigate to `Volumes` and find `zama-core-threshold_minio_secrets` and copy the content of `access_key` and the content of `secret_key`.
 //   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and assuming no change to [`AWS_S3_ENDPOINT`])
 //   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
 //   d. Run `mc anonymous set public testminio/ci-kms-key-test`
