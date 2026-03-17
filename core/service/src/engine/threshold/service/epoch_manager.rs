@@ -1002,11 +1002,12 @@ impl<
         Ok(task)
     }
 
-    /// Destroys an epoch by removing all private data stored under the given epoch and data type,
-    /// then removing the PRSS setup data, and finally removing the epoch from the session maker.
+    /// Destroys an epoch by removing all private data stored under the given epoch for each of the
+    /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
+    /// session maker.
     pub(crate) async fn destroy_epoch(
         epoch_id: &EpochId,
-        priv_data_type: PrivDataType,
+        priv_data_types: &[PrivDataType],
         priv_storage: &tokio::sync::Mutex<PrivS>,
         session_maker: &SessionMaker,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1021,39 +1022,45 @@ impl<
 
         let mut priv_storage_guard = priv_storage.lock().await;
 
-        // Delete all data stored under this epoch for the given private data type
-        // first find all data IDs
-        let data_ids = priv_storage_guard
-            .all_data_ids_at_epoch(epoch_id, &priv_data_type.to_string())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_DESTROY_EPOCH,
-                    Some((*epoch_id).into()),
-                    e,
-                    tonic::Code::Internal,
-                )
-            })?;
-
         // At this point we're committed to deleting the epoch, so do not return if there's an error,
         // but track the first error to report back to the caller.
         let mut first_error: Option<anyhow::Error> = None;
 
-        for data_id in &data_ids {
-            if let Err(e) = delete_at_request_and_epoch_id(
-                &mut (*priv_storage_guard),
-                data_id,
-                epoch_id,
-                &priv_data_type.to_string(),
-            )
-            .await
+        for priv_data_type in priv_data_types {
+            // Delete all data stored under this epoch for the given private data type
+            // first find all data IDs
+            let data_ids = match priv_storage_guard
+                .all_data_ids_at_epoch(epoch_id, &priv_data_type.to_string())
+                .await
             {
-                tracing::error!(
-                    "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
-                    &priv_data_type
-                );
-                if first_error.is_none() {
-                    first_error = Some(e);
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::error!(
+                        "Error listing data IDs for type {priv_data_type} at epoch ID {epoch_id}: {e:?}"
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                    continue;
+                }
+            };
+
+            for data_id in &data_ids {
+                if let Err(e) = delete_at_request_and_epoch_id(
+                    &mut (*priv_storage_guard),
+                    data_id,
+                    epoch_id,
+                    &priv_data_type.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
+                        &priv_data_type
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
                 }
             }
         }
@@ -1307,11 +1314,9 @@ impl<
 
         let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
 
-        // Note to reviewer: Wondering about the logic here; why is this only called for FheKeyInfo ?
-        // I guess it should also now be called for CRS info (which is now stored based on epoch info )
         Self::destroy_epoch(
             &epoch_id,
-            PrivDataType::FheKeyInfo,
+            &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo],
             &priv_storage,
             &self.session_maker,
         )
@@ -2092,7 +2097,7 @@ pub(crate) mod tests {
             SecureReshareSecretKeys,
         >::destroy_epoch(
             &epoch_id,
-            PrivDataType::FheKeyInfo,
+            &[PrivDataType::FheKeyInfo],
             &priv_storage,
             &epoch_manager.session_maker,
         )
@@ -2128,7 +2133,7 @@ pub(crate) mod tests {
             SecureReshareSecretKeys,
         >::destroy_epoch(
             &nonexistent_epoch_id,
-            PrivDataType::FheKeyInfo,
+            &[PrivDataType::FheKeyInfo],
             &priv_storage,
             &epoch_manager.session_maker,
         )
