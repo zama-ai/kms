@@ -1242,6 +1242,92 @@ mod tests {
         }
     }
 
+    /// Test that `load_mpc_context_from_storage` succeeds when no signing key is present
+    /// (recovery mode). Contexts exist in storage but cannot be verified, so they should
+    /// be skipped with warnings rather than causing a startup failure.
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_load_mpc_context_without_signing_key() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let context_id = ContextId::from_bytes([5u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_verification_keys: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+
+        // Store a context using a fully-initialized context manager
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                session_maker,
+            );
+            let request = Request::new(NewMpcContextRequest {
+                new_context: Some(new_context.try_into().unwrap()),
+            });
+            context_manager.new_mpc_context(request).await.unwrap();
+            assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+
+        // Delete the signing key from storage to simulate recovery mode
+        {
+            let mut guarded_priv_storage = crypto_storage.private_storage.lock().await;
+            let req_id = RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID);
+            guarded_priv_storage
+                .delete_data(&req_id, &PrivDataType::SigningKey.to_string())
+                .await
+                .unwrap();
+            // Confirm the signing key is gone
+            assert!(get_core_signing_key(&*guarded_priv_storage).await.is_err());
+        }
+
+        // Create a new context manager without a signing key (recovery mode)
+        // and attempt to load contexts from storage
+        {
+            let base_kms = BaseKmsStruct::new_no_signing_key(KMSType::Threshold, verification_key);
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                session_maker,
+            );
+
+            // load_mpc_context_from_storage should succeed (not panic or error)
+            context_manager
+                .load_mpc_context_from_storage()
+                .await
+                .unwrap();
+
+            // But no contexts should be loaded since verification failed
+            assert_eq!(0, context_manager.session_maker.context_count().await);
+
+            // Verify warnings were logged about skipped contexts
+            assert!(logs_contain("Skipping context"));
+            assert!(logs_contain("failed to verify context"));
+        }
+    }
+
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_custodian_context() {
