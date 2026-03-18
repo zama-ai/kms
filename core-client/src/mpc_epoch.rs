@@ -124,8 +124,17 @@ pub(crate) async fn do_new_epoch(
         .as_ref()
         .map(|previous_epoch| previous_epoch.convert_to_grpc(fhe_params))
         .transpose()?;
-    let request =
-        internal_client.new_epoch_request(&new_context_id, &new_epoch_id, previous_epoch_grpc)?;
+    let domain = if new_epoch_params.previous_epoch_params.is_some() {
+        Some(dummy_domain())
+    } else {
+        None
+    };
+    let request = internal_client.new_epoch_request(
+        &new_context_id,
+        &new_epoch_id,
+        previous_epoch_grpc,
+        domain.as_ref(),
+    )?;
 
     // Send the request
     let mut req_tasks = JoinSet::new();

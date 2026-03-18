@@ -810,9 +810,21 @@ fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     }
 }
 
+pub(crate) struct ResharingParams {
+    pub previous_epoch: PreviousEpochInfo,
+    /// The EIP-712 domain used to sign the reshared key results.
+    pub signing_domain: Eip712Domain,
+}
+
+pub(crate) struct VerifiedNewMpcEpochRequest {
+    pub context_id: ContextId,
+    pub epoch_id: EpochId,
+    pub resharing: Option<ResharingParams>,
+}
+
 pub(crate) async fn validate_new_mpc_epoch_request(
     req: NewMpcEpochRequest,
-) -> Result<(ContextId, EpochId, Option<PreviousEpochInfo>), MetricedError> {
+) -> Result<VerifiedNewMpcEpochRequest, MetricedError> {
     unpack_new_mpc_epoch_req(req).map_err(|e| {
         MetricedError::new(
             OP_NEW_EPOCH,
@@ -823,16 +835,28 @@ pub(crate) async fn validate_new_mpc_epoch_request(
     })
 }
 
-fn unpack_new_mpc_epoch_req(
-    req: NewMpcEpochRequest,
-) -> anyhow::Result<(ContextId, EpochId, Option<PreviousEpochInfo>)> {
+fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedNewMpcEpochRequest> {
     let context_id = match req.context_id {
         Some(context_id) => parse_grpc_request_id(&context_id, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
-    Ok((context_id, epoch_id, req.previous_epoch))
+    let resharing = match req.previous_epoch {
+        Some(previous_epoch) => {
+            let signing_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+            Some(ResharingParams {
+                previous_epoch,
+                signing_domain,
+            })
+        }
+        None => None,
+    };
+    Ok(VerifiedNewMpcEpochRequest {
+        context_id,
+        epoch_id,
+        resharing,
+    })
 }
 
 #[cfg(test)]

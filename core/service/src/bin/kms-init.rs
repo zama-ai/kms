@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 epoch_id: Some(req_id.clone()),
                 context_id: None,
                 previous_epoch: None,
+                domain: None,
             };
             let _ = kms_client.new_mpc_epoch(request).await.unwrap();
 

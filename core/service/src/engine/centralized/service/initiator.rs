@@ -43,17 +43,16 @@ pub async fn init_impl<
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
-    let (context_id, epoch_id, _previous_epoch_info) =
-        validate_new_mpc_epoch_request(inner).await?;
+    let verified_request = validate_new_mpc_epoch_request(inner).await?;
 
     if !service
         .context_manager
-        .mpc_context_exists_and_consistent(&context_id)
+        .mpc_context_exists_and_consistent(&verified_request.context_id)
         .await
         .map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
-                Some(context_id.into()),
+                Some(verified_request.context_id.into()),
                 e,
                 tonic::Code::Internal,
             )
@@ -62,8 +61,8 @@ pub async fn init_impl<
     {
         return Err(MetricedError::new(
             OP_NEW_EPOCH,
-            Some(context_id.into()),
-            format!("Context {context_id} not found"),
+            Some(verified_request.context_id.into()),
+            format!("Context {} not found", verified_request.context_id),
             tonic::Code::NotFound,
         ));
     }
@@ -79,7 +78,7 @@ pub async fn init_impl<
         {
             return Err(MetricedError::new(
                 OP_NEW_EPOCH,
-                Some(context_id.into()),
+                Some(verified_request.context_id.into()),
                 "Initialization already complete".to_string(),
                 tonic::Code::AlreadyExists,
             ));
@@ -87,18 +86,18 @@ pub async fn init_impl<
     }
     add_req_to_meta_store(
         &mut service.epoch_ids.write().await,
-        &epoch_id.into(),
+        &verified_request.epoch_id.into(),
         OP_NEW_EPOCH,
     )?;
     update_req_in_meta_store::<(), anyhow::Error>(
         &mut service.epoch_ids.write().await,
-        &epoch_id.into(),
+        &verified_request.epoch_id.into(),
         Ok(()),
         OP_NEW_EPOCH,
     );
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
-        epoch_id
+        verified_request.epoch_id
     );
     Ok(Response::new(Empty {}))
 }
@@ -123,6 +122,7 @@ mod tests {
             context_id: None,
             epoch_id: Some(req_id.into()),
             previous_epoch: None,
+            domain: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -139,6 +139,7 @@ mod tests {
             context_id: None,
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
+            domain: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
@@ -148,6 +149,7 @@ mod tests {
             context_id: None,
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
+            domain: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -162,6 +164,7 @@ mod tests {
             context_id: None,
             epoch_id: None,
             previous_epoch: None,
+            domain: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();
