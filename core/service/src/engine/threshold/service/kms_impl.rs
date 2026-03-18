@@ -1,6 +1,7 @@
 // === Standard Library ===
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
+use anyhow::bail;
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
@@ -360,8 +361,8 @@ where
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
 
-    // 1. Start core-to-core networking ASAP
-    // ======================================
+    // Start core-to-core networking ASAP
+    // ===================================
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
@@ -446,27 +447,39 @@ where
         );
         Ok(())
     });
-    // Give the runtime a chance to poll the server task so other cores can talk to us.
-    // TODO(dp): Ask reviewers about this – worthwhile?
-    tokio::task::yield_now().await;
 
-    let public_key_info = HashMap::new();
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
-
-    // Validate the recovery material against the provided verification key
-    for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
-        }
-    }
-
-    // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-    sanity_check_crs_materials(&public_storage, &crs_info).await?;
+    // Validate that the data on disk is good
+    // ======================================
+    let (validation_material, crs_info): (
+        HashMap<RequestId, RecoveryValidationMaterial>,
+        HashMap<RequestId, CrsGenMetadata>,
+    ) = tokio::try_join![
+        // Load recovery material from storage and validate it
+        async {
+            let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+                read_all_data_versioned(
+                    &public_storage,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await?;
+            let vkey = base_kms.verf_key();
+            // Validate the recovery material against the provided verification key
+            for (req_id, material) in &validation_material {
+                if !(material.validate(&vkey)) {
+                    bail!("Validation material for context {req_id} failed to validate against the verification key");
+                }
+            }
+            Ok(validation_material)
+        },
+        // Load crs_info (roughly hashes of CRS) from storage and validate it.
+        async {
+            let crs_info: HashMap<RequestId, CrsGenMetadata> =
+                read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string())
+                    .await?;
+            sanity_check_crs_materials(&public_storage, &crs_info).await?;
+            Ok(crs_info)
+        },
+    ]?;
 
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &threshold_config.preproc_redis {
@@ -485,7 +498,7 @@ where
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
+    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new())));
     let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
@@ -507,7 +520,6 @@ where
     .await?;
 
     let private_storage_info = private_storage.info();
-
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -586,8 +598,6 @@ where
         }
     }
 
-    let slow_events = Arc::new(Mutex::new(HashMap::new()));
-
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
@@ -610,6 +620,7 @@ where
         _dec: PhantomData,
     };
 
+    let slow_events = Arc::new(Mutex::new(HashMap::new()));
     let keygenerator = RealKeyGenerator {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
