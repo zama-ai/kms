@@ -537,7 +537,7 @@ where
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
-        crs_info: &CrsGenMetadata,
+        crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
         let (r1, r2, r3) = {
@@ -554,7 +554,7 @@ where
                     &mut (*priv_storage),
                     crs_id,
                     epoch_id,
-                    crs_info,
+                    &crs_info,
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await;
@@ -591,7 +591,7 @@ where
                             &mut (*guarded_backup_vault),
                             crs_id,
                             epoch_id,
-                            crs_info,
+                            &crs_info,
                             &PrivDataType::CrsInfo.to_string(),
                         )
                         .await;
@@ -638,7 +638,7 @@ where
         op_metric_tag: &'static str,
     ) {
         let info = crs_info.clone();
-        self.inner_write_crs(crs_id, epoch_id, pp, &crs_info, Arc::clone(&meta_store))
+        self.inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
             .await;
 
         // Not much we can do if this fails

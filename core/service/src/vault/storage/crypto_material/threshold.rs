@@ -78,7 +78,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
-        crs_info: &CrsGenMetadata,
+        crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
         self.inner

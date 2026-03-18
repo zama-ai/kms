@@ -768,7 +768,7 @@ impl<
                             &crs_info.crs_id,
                             &new_epoch_id,
                             crs.clone(),
-                            &crs_meta_data,
+                            crs_meta_data,
                             meta_store,
                         )
                         .await
