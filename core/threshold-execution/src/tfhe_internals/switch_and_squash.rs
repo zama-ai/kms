@@ -47,6 +47,7 @@ mod tests {
 
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
+        tests::ensure_test_data_setup,
         tfhe_internals::{
             parameters::{AugmentedCiphertextParameters, DKGParams, PARAMS_TEST_BK_SNS},
             switch_and_squash::from_expanded_msg,
@@ -77,6 +78,7 @@ mod tests {
 
     #[test]
     fn sunshine_domain_switching() {
+        ensure_test_data_setup();
         let message = 255_u8;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         tfhe::set_server_key(keyset.public_keys.server_key);
@@ -93,6 +95,7 @@ mod tests {
 
     #[test]
     fn sunshine_domain_switching_large() {
+        ensure_test_data_setup();
         let msg1 = {
             let mut tmp = [u64::MAX; 32];
             tmp[0] = 1;
@@ -120,6 +123,7 @@ mod tests {
 
     #[test]
     fn sunshine_enc_dec() {
+        ensure_test_data_setup();
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         set_server_key(keys.public_keys.server_key);
         let mut compact_list_builder = CompactCiphertextList::builder(&keys.public_keys.public_key);
