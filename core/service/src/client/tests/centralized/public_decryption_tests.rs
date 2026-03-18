@@ -12,13 +12,13 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
+use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::path::Path;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 

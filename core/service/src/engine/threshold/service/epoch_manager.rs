@@ -21,7 +21,25 @@
 //! In particular, this means that parties must be aware of both contexts (the old one and the new one) even if
 //! they are not part of one of the two contexts.
 
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use alloy_dyn_abi::Eip712Domain;
+use execution::{
+    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
+    online::preprocessing::BasePreprocessing,
+    runtime::sessions::{
+        base_session::{BaseSession, TwoSetsBaseSession},
+        session_parameters::GenericParameterHandles,
+        small_session::SmallSession,
+    },
+    small_execution::{
+        offline::{Preprocessing, SecureSmallPreprocessing},
+        prss::{PRSSInit, PRSSSetup},
+    },
+    tfhe_internals::{
+        parameters::{DKGParams, DkgMode},
+        private_keysets::PrivateKeySet,
+    },
+};
 use futures_util::{
     future::{join_all, BoxFuture},
     FutureExt, TryFutureExt,
@@ -38,30 +56,8 @@ use kms_grpc::{
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
-use threshold_fhe::{
-    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    execution::{
-        endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
-        online::preprocessing::BasePreprocessing,
-        runtime::{
-            party::TwoSetsRole,
-            sessions::{
-                base_session::{BaseSession, TwoSetsBaseSession},
-                session_parameters::GenericParameterHandles,
-                small_session::SmallSession,
-            },
-        },
-        small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
-            prss::{PRSSInit, PRSSSetup},
-        },
-        tfhe_internals::{
-            parameters::{DKGParams, DkgMode},
-            private_keysets::PrivateKeySet,
-        },
-    },
-    networking::NetworkMode,
-};
+use threshold_types::network::NetworkMode;
+use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
@@ -1270,15 +1266,15 @@ pub(crate) mod tests {
         },
     };
     use aes_prng::AesRng;
+    use execution::{
+        endpoints::reshare_sk::SecureReshareSecretKeys,
+        malicious_execution::small_execution::malicious_prss::EmptyPrss,
+    };
     use kms_grpc::{
         kms::v1::{FheParameter, KeyInfo, NewMpcEpochRequest},
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::endpoints::reshare_sk::SecureReshareSecretKeys,
-        malicious_execution::small_execution::malicious_prss::EmptyPrss,
-    };
 
     impl<
             Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>

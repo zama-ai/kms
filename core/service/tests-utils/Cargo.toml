@@ -13,6 +13,5 @@ proc-macro = true
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
-proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true

@@ -10,7 +10,7 @@ use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true)], 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]

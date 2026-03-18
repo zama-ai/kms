@@ -81,14 +81,14 @@ use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use bc2wrap::deserialize_safe;
+use execution::endpoints::decryption::DecryptionMode;
+use execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 use wasm_bindgen::{prelude::wasm_bindgen, JsError, JsValue};
 
 // Since wasm_bindgen is limited, namely it says

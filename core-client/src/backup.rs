@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use aes_prng::AesRng;
+use hashing::{hash_element, DomainSep};
 use kms_grpc::{
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
@@ -16,7 +17,6 @@ use kms_lib::{
     },
     cryptography::internal_crypto_types::LegacySerialization,
 };
-use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 

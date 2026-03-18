@@ -27,6 +27,7 @@ use iam_rs::{
     ConditionValue, IAMAction, IAMEffect, IAMOperator, IAMPolicy, IAMResource, IAMStatement,
     IAMVersion,
 };
+use networking::tls::ReleasePCRValues;
 use rand::{CryptoRng, Rng};
 use rasn::{
     ber::de::{Decoder, DecoderOptions},
@@ -46,7 +47,6 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::networking::tls::ReleasePCRValues;
 use url::Url;
 
 // recipient enclave RSA keypair size

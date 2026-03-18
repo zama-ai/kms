@@ -12,8 +12,18 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
+use algebra::{
+    base_ring::{Z128, Z64},
+    error_correction::MemoizedExceptionals,
+    galois_rings::degree_4::ResiduePolyF4,
+    sharing::shamir::{fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings},
+    structure_traits::{BaseRing, ErrorCorrect, Ring},
+};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use execution::endpoints::decryption::DecryptionMode;
+use execution::endpoints::reconstruct::{combine_decryptions, reconstruct_packed_message};
+use execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
@@ -23,19 +33,7 @@ use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
-use threshold_fhe::algebra::base_ring::{Z128, Z64};
-use threshold_fhe::algebra::error_correction::MemoizedExceptionals;
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::algebra::structure_traits::{BaseRing, ErrorCorrect, Ring};
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::endpoints::reconstruct::{
-    combine_decryptions, reconstruct_packed_message,
-};
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::sharing::shamir::{
-    fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
-};
-use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 
@@ -703,7 +701,7 @@ pub struct TestingUserDecryptionTranscript {
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
-    pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+    pub(crate) params: execution::tfhe_internals::parameters::DKGParams,
     // example pt and ct
     pub(crate) fhe_types: Vec<i32>,
     pub(crate) pts: Vec<Vec<u8>>,

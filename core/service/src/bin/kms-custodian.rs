@@ -1,5 +1,6 @@
 use aes_prng::AesRng;
 use clap::Parser;
+use hashing::{hash_element, DomainSep};
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::{
@@ -15,10 +16,7 @@ use kms_lib::{
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng};
 use std::path::PathBuf;
-use threshold_fhe::{
-    execution::runtime::party::Role,
-    hashing::{hash_element, DomainSep},
-};
+use threshold_types::role::Role;
 
 const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 

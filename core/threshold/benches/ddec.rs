@@ -1,26 +1,24 @@
 use aes_prng::AesRng;
+use algebra::{
+    galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    structure_traits::Ring,
+};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use execution::{
+    constants::REAL_KEY_PATH,
+    endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
+    runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+    tfhe_internals::{
+        test_feature::{keygen_all_party_shares_from_keyset, KeySet},
+        utils::expanded_encrypt,
+    },
+};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
+use test_utils::read_element;
 use tfhe::{set_server_key, FheUint8};
-use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
-        structure_traits::Ring,
-    },
-    execution::{
-        constants::REAL_KEY_PATH,
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::{
-            test_feature::{keygen_all_party_shares_from_keyset, KeySet},
-            utils::expanded_encrypt,
-        },
-    },
-    file_handling::tests::read_element,
-    networking::NetworkMode,
-};
+use threshold_types::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

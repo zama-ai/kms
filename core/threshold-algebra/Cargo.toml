@@ -1,0 +1,49 @@
+[package]
+name = "threshold-algebra"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+
+[dependencies]
+anyhow.workspace = true
+hashing.workspace = true
+threshold-types.workspace = true
+g2p.workspace = true
+error-utils.workspace   = true
+itertools.workspace   = true
+lazy_static.workspace   = true # TODO: get rid of this, see https://github.com/zama-ai/kms-internal/issues/2907
+ndarray.workspace   = true
+rand.workspace   = true
+serde.workspace   = true
+sha3.workspace   = true
+statrs.workspace = true
+strum = { workspace = true, features = ["derive"] }
+tracing.workspace   = true
+zeroize.workspace   = true
+tfhe-versionable.workspace = true
+
+[dev-dependencies]
+aes-prng.workspace = true
+bc2wrap.workspace = true
+num-traits.workspace = true
+paste.workspace = true
+proptest.workspace = true
+rstest.workspace = true
+
+[features]
+default = ["extension_degree_4"]
+extension_degree_3 =[]
+extension_degree_4 =[]
+extension_degree_5 =[]
+extension_degree_6 =[]
+extension_degree_7 =[]
+extension_degree_8 =[]
+
+all_extension_degrees = [
+	"extension_degree_3",
+	"extension_degree_4",
+	"extension_degree_5",
+	"extension_degree_6",
+	"extension_degree_7",
+	"extension_degree_8",
+]

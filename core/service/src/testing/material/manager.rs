@@ -17,7 +17,7 @@ use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
 use tempfile::TempDir;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 use tokio::fs;
 
 /// Helper function to compute storage path like FileStorage does

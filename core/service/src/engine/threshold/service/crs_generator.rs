@@ -3,7 +3,13 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
+use algebra::base_ring::Z64;
 use anyhow::anyhow;
+use execution::{
+    runtime::sessions::{base_session::BaseSession, session_parameters::GenericParameterHandles},
+    tfhe_internals::parameters::DKGParams,
+    zk::ceremony::Ceremony,
+};
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
@@ -16,17 +22,7 @@ use observability::{
         TAG_CRS_ID, TAG_PARTY_ID,
     },
 };
-use threshold_fhe::{
-    algebra::base_ring::Z64,
-    execution::{
-        runtime::sessions::{
-            base_session::BaseSession, session_parameters::GenericParameterHandles,
-        },
-        tfhe_internals::parameters::DKGParams,
-        zk::ceremony::Ceremony,
-    },
-    networking::NetworkMode,
-};
+use threshold_types::network::NetworkMode;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
@@ -52,14 +48,14 @@ use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_me
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
-        use threshold_fhe::execution::{tfhe_internals::test_feature::transfer_crs};
+        use execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
 
 cfg_if::cfg_if! {
     if #[cfg(test)] {
         use crate::vault::storage::ram;
-        use threshold_fhe::malicious_execution::zk::ceremony::InsecureCeremony;
+        use execution::malicious_execution::zk::ceremony::InsecureCeremony;
     }
 }
 
@@ -505,18 +501,16 @@ impl<
 mod tests {
     use std::time::Duration;
 
+    use algebra::structure_traits::Ring;
+    use execution::{
+        runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+        zk::ceremony::FinalizedInternalPublicParameter,
+    };
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        algebra::structure_traits::Ring,
-        execution::{
-            runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
-            zk::ceremony::FinalizedInternalPublicParameter,
-        },
-    };
 
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DURATION_WAITING_ON_RESULT_SECONDS},

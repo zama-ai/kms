@@ -7,6 +7,11 @@ mod common;
 use common::load_and_unversionize;
 
 use aes_prng::AesRng;
+use algebra::{
+    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Ring},
+};
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -14,28 +19,21 @@ use backward_compatibility::{
     PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
     TestMetadataDD, TestType, Testcase,
 };
+use execution::{
+    small_execution::{
+        prf::{PRSSConversions, PrfKey},
+        prss::{PRSSSetup, PrssSet, PrssSetV0},
+    },
+    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
+    tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
+};
 use kms_lib::engine::context::SoftwareVersion;
+use networking::tls::ReleasePCRValues;
 use rand::{RngCore, SeedableRng};
 use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
-use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        structure_traits::{ErrorCorrect, Invert, Ring},
-    },
-    execution::{
-        runtime::party::Role,
-        sharing::share::Share,
-        small_execution::{
-            prf::{PRSSConversions, PrfKey},
-            prss::{PRSSSetup, PrssSet, PrssSetV0},
-        },
-        tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
-    },
-    networking::tls::ReleasePCRValues,
-    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
-};
+use threshold_types::role::Role;
 
 use crate::common::load_and_unversionize_auxiliary;
 
