@@ -54,6 +54,7 @@ fn check_external_decryption_signature(
     external_handles: &[Vec<u8>],
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for response in responses {
@@ -67,7 +68,7 @@ fn check_external_decryption_signature(
             external_handles.to_owned(),
             domain.clone(),
             kms_addrs,
-            &[],
+            extra_data,
         )?;
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {
@@ -576,7 +577,8 @@ pub(crate) async fn get_public_decrypt_responses(
             .clone(),
     };
 
-    let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
+    let (domain, external_handles, extra_data) = if let Some(decryption_request) = dec_req.as_ref()
+    {
         let domain_msg = decryption_request.domain.as_ref().unwrap();
         let domain = protobuf_to_alloy_domain(domain_msg)?;
         // retrieve external handles from request
@@ -585,7 +587,8 @@ pub(crate) async fn get_public_decrypt_responses(
             .iter()
             .map(|ct| ct.external_handle.clone())
             .collect();
-        (domain, external_handles)
+        let extra_data = decryption_request.extra_data.clone();
+        (domain, external_handles, extra_data)
     } else {
         //If the decryption request isn't provided we assume it was dummy domains and handles
         let num_handles = resp_response_vec
@@ -596,7 +599,7 @@ pub(crate) async fn get_public_decrypt_responses(
             .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
             .plaintexts
             .len();
-        (dummy_domain(), vec![dummy_handle(); num_handles])
+        (dummy_domain(), vec![dummy_handle(); num_handles], vec![])
     };
 
     // check the internal signatures
@@ -613,6 +616,7 @@ pub(crate) async fn get_public_decrypt_responses(
         &external_handles,
         &domain,
         kms_addrs,
+        &extra_data,
     )?;
 
     tracing::info!(
