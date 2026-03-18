@@ -26,13 +26,13 @@ fn check_ext_pt_signature(
     external_handles: Vec<Vec<u8>>,
     domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     tracing::debug!(
         "Checking signature for PTs: {:?}, ext. handles: {:?}, extra_data: {}, ext. sig {}",
         plaintexts,
         external_handles,
-        hex::encode(&extra_data),
+        hex::encode(extra_data),
         hex::encode(external_sig)
     );
     let message = compute_public_decryption_message(external_handles, plaintexts, extra_data)?;
@@ -67,7 +67,7 @@ fn check_external_decryption_signature(
             external_handles.to_owned(),
             domain.clone(),
             kms_addrs,
-            vec![],
+            &[],
         )?;
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {

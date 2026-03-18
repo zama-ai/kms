@@ -1618,7 +1618,7 @@ mod tests {
                 &sk0,
                 ext_handles_bytes.clone(),
                 &plaintexts,
-                extra_data.clone(),
+                &extra_data,
                 domain.clone(),
             )
             .unwrap();
@@ -1649,7 +1649,7 @@ mod tests {
                 &sk0,
                 ext_handles_bytes,
                 &plaintexts,
-                extra_data.clone(),
+                &extra_data,
                 domain,
             )
             .unwrap();
