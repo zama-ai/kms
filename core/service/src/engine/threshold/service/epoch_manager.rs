@@ -1806,7 +1806,10 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                // Empty vec below shouldn't fail verification, although in practice it's an issue
+                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
+                // which may cause inconsistencies down the line.
+                key_digests: vec![],
                 domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
@@ -1830,7 +1833,10 @@ pub(crate) mod tests {
                 key_id: Some(key_id.into()),
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
-                key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+                // Empty vec below shouldn't fail verification, although in practice it's an issue
+                // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
+                // which may cause inconsistencies down the line.
+                key_digests: vec![],
                 domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {

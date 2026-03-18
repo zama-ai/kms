@@ -728,25 +728,20 @@ fn unpack_key_gen_request(
     ))
 }
 
-// Note to reviewer: My proposition of having a dedicated
-// struct e.g. VerifiedCrsGenRequest instead of this big tuple still stands :)
-// (akin to the Verified struct I use in epoch_manager)
-#[allow(clippy::type_complexity)]
+pub(crate) struct VerifiedCrsGenRequest {
+    pub req_id: RequestId,
+    pub epoch_id: EpochId,
+    pub context_id: ContextId,
+    pub witness_dim: usize,
+    pub params: DKGParams,
+    pub eip712_domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
+}
+
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
     op_tag: &'static str,
-) -> Result<
-    (
-        RequestId,
-        EpochId,
-        ContextId,
-        usize,
-        DKGParams,
-        Eip712Domain,
-        Vec<u8>,
-    ),
-    MetricedError,
-> {
+) -> Result<VerifiedCrsGenRequest, MetricedError> {
     unpack_crs_gen_request(req).map_err(|e| {
         MetricedError::new(
             op_tag,
@@ -757,18 +752,7 @@ pub(crate) fn validate_crs_gen_request(
     })
 }
 
-#[allow(clippy::type_complexity)]
-fn unpack_crs_gen_request(
-    req: CrsGenRequest,
-) -> anyhow::Result<(
-    RequestId,
-    EpochId,
-    ContextId,
-    usize,
-    DKGParams,
-    Eip712Domain,
-    Vec<u8>,
-)> {
+fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRequest> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
@@ -803,15 +787,15 @@ fn unpack_crs_gen_request(
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((
+    Ok(VerifiedCrsGenRequest {
         req_id,
         epoch_id,
         context_id,
         witness_dim,
         params,
         eip712_domain,
-        req.extra_data.clone(),
-    ))
+        extra_data: req.extra_data.clone(),
+    })
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)

@@ -55,23 +55,22 @@ pub async fn crs_gen_impl<
         .start();
     let inner = request.into_inner();
     let max_bits = inner.max_num_bits;
-    let (req_id, epoch_id, context_id, _witness_dimension, params, eip712_domain, extra_data) =
-        validate_crs_gen_request(inner, op_tag)?;
+    let verified = validate_crs_gen_request(inner, op_tag)?;
     let metric_tags = vec![
-        (TAG_CRS_ID, req_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
+        (TAG_CRS_ID, verified.req_id.to_string()),
+        (TAG_CONTEXT_ID, verified.context_id.to_string()),
     ];
     timer.tags(metric_tags.clone());
 
     if !service
         .context_manager
-        .mpc_context_exists_in_cache(&context_id)
+        .mpc_context_exists_in_cache(&verified.context_id)
         .await
     {
         return Err(MetricedError::new(
             op_tag,
-            Some(req_id),
-            anyhow::anyhow!("context at ID {context_id} not found"),
+            Some(verified.req_id),
+            anyhow::anyhow!("context at ID {} not found", verified.context_id),
             tonic::Code::NotFound,
         ));
     }
@@ -79,7 +78,11 @@ pub async fn crs_gen_impl<
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
-    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag)?;
+    add_req_to_meta_store(
+        &mut service.crs_meta_map.write().await,
+        &verified.req_id,
+        op_tag,
+    )?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -89,7 +92,7 @@ pub async fn crs_gen_impl<
             .map_err(|e| {
         MetricedError::new(
             op_tag,
-            Some(req_id),
+            Some(verified.req_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
             tonic::Code::FailedPrecondition,
         )
@@ -102,15 +105,15 @@ pub async fn crs_gen_impl<
             let _timer = timer;
             let _permit = permit;
             crs_gen_background(
-                &req_id,
-                &epoch_id,
+                &verified.req_id,
+                &verified.epoch_id,
                 rng,
                 meta_store,
                 crypto_storage,
                 sk,
-                params,
-                eip712_domain,
-                extra_data,
+                verified.params,
+                verified.eip712_domain,
+                verified.extra_data,
                 max_bits,
                 op_tag,
             )
