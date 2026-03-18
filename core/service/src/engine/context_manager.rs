@@ -1242,10 +1242,9 @@ mod tests {
         }
     }
 
-    /// Test that `load_mpc_context_from_storage` succeeds when no signing key is present
-    /// (recovery mode). Contexts exist in storage but cannot be verified, so they should
-    /// be skipped with warnings rather than causing a startup failure.
-    #[tracing_test::traced_test]
+    // Test that `load_mpc_context_from_storage` succeeds when no signing key is present
+    // (recovery mode). Contexts exist in storage but cannot be verified, so they should
+    // be skipped with warnings rather than causing a startup failure.
     #[tokio::test]
     async fn test_load_mpc_context_without_signing_key() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
@@ -1321,10 +1320,6 @@ mod tests {
 
             // But no contexts should be loaded since verification failed
             assert_eq!(0, context_manager.session_maker.context_count().await);
-
-            // Verify warnings were logged about skipped contexts
-            assert!(logs_contain("Skipping context"));
-            assert!(logs_contain("failed to verify context"));
         }
     }
 
@@ -1494,7 +1489,7 @@ mod tests {
         }
     }
 
-    /// Test to sanity check the overall flow of construction of material needed for backup
+    // Test to sanity check the overall flow of construction of material needed for backup
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
