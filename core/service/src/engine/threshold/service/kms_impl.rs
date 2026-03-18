@@ -4,7 +4,6 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
-    identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
@@ -65,14 +64,14 @@ use crate::{
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
-        utils::{sanity_check_crs_materials, sanity_check_public_materials},
+        utils::sanity_check_crs_materials,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
+            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned, Storage,
+            StorageExt,
         },
         Vault,
     },
@@ -365,15 +364,7 @@ where
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
 
-    // load keys from storage
-    let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
-        read_all_data_from_all_epochs_versioned(
-            &private_storage,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await?;
-
-    let mut public_key_info = HashMap::new();
+    let public_key_info = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -384,18 +375,6 @@ where
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-
-    // Build public_key_info map
-    for ((id, _), info) in &key_info_versioned {
-        public_key_info.insert(*id, info.meta_data.clone());
-    }
-
-    // sanity check the public materials
-    let entries: Vec<_> = key_info_versioned
-        .iter()
-        .map(|((id, _), info)| (*id, info.meta_data.clone()))
-        .collect();
-    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
@@ -539,7 +518,7 @@ where
         public_storage,
         private_storage,
         backup_storage,
-        key_info_versioned,
+        HashMap::new(),
     );
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
