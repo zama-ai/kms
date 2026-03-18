@@ -82,7 +82,6 @@ ml-kem.workspace = true
 networking = { workspace = true, optional = true }
 nom.workspace = true
 observability = { workspace = true, optional = true }
-ordermap.workspace = true
 nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
 p384.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
