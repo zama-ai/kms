@@ -29,7 +29,7 @@ pub(crate) fn compute_external_user_decrypt_signature(
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     let message = compute_user_decrypt_message(payload, user_pk, extra_data)?;
     tracing::debug!("Computing signature for UserDecryptResponseVerification");
@@ -39,7 +39,7 @@ pub(crate) fn compute_external_user_decrypt_signature(
 pub(crate) fn compute_user_decrypt_message(
     payload: &UserDecryptionResponsePayload,
     user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<UserDecryptResponseVerification> {
     // convert external_handles back to 256-bit bytes32 to be signed
     let external_handles_bytes32: Vec<_> = payload
@@ -72,13 +72,13 @@ pub(crate) fn compute_user_decrypt_message(
     tracing::info!(
         "Computed UserDecryptResponseVerification for handles {:?} and extra data \"{}\".",
         external_handles_bytes32,
-        hex::encode(&extra_data)
+        hex::encode(extra_data)
     );
 
     Ok(UserDecryptResponseVerification {
         publicKey: user_pk_buf.into(),
         ctHandles: external_handles_bytes32,
         userDecryptedShare: user_decrypted_share_buf.into(),
-        extraData: extra_data.into(),
+        extraData: extra_data.to_vec().into(),
     })
 }

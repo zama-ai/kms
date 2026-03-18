@@ -69,10 +69,10 @@ services:
       - "9646:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50100"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -115,10 +115,10 @@ services:
       - "50200:50200"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50200"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -158,10 +158,10 @@ services:
       - "50300:50300"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50300"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -201,10 +201,10 @@ services:
       - "50400:50400"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50400"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -244,10 +244,10 @@ services:
       - "50500:50500"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50500"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -287,10 +287,10 @@ services:
       - "50600:50600"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50600"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
