@@ -743,7 +743,7 @@ where
                 Ok(role) => role,
                 Err(e) => {
                     tracing::warn!(
-                        "Skipping context {} during startup: failed to verify context: {}",
+                        "Skipping context {}: failed to verify context: {}",
                         context.context_id(),
                         e
                     );
@@ -752,7 +752,7 @@ where
             };
             if let Err(e) = self.session_maker.add_context_info(my_role, context).await {
                 tracing::warn!(
-                    "Failed to add context {} during startup: {}",
+                    "Failed to add context {} to session: {}",
                     context.context_id(),
                     e
                 );
@@ -760,9 +760,11 @@ where
             }
             loaded_count += 1;
         }
-        if loaded_count < contexts.len() {
+        if loaded_count == 0 {
+            tracing::warn!("Failed to load any of the MPC contexts from storage. Server is likely in recovery mode.");
+        } else if loaded_count < contexts.len() {
             tracing::warn!(
-                "Loaded only {}/{} MPC contexts. Server may be in recovery mode.",
+                "Loaded only {}/{} MPC contexts.",
                 loaded_count,
                 contexts.len()
             );
