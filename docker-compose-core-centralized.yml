@@ -25,10 +25,10 @@ services:
       - "9646:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50051"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - minio_secrets:/minio_secrets
       - ./core/service/config/:/app/kms/core/service/config
