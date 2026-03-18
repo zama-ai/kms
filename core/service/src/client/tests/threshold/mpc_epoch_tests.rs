@@ -409,10 +409,7 @@ async fn run_new_epoch(
 
         // Transform the reshare response to its equivalent keygen response
         // and also extract the CRS responses
-        let (responses_as_dkg, crs_responses_per_party): (
-            Vec<(u32, Result<Vec<KeyGenResult>, Status>)>,
-            Vec<(u32, Vec<CrsGenResult>)>,
-        ) = responses
+        let (responses_as_dkg, crs_responses_per_party): (Vec<_>, Vec<_>) = responses
             .into_iter()
             .map(|(party_idx, _, response)| match response {
                 Ok(response) => {

@@ -242,7 +242,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     drop(kms_clients);
     drop(internal_client);
 
-    //Qu: Shouldn't rather we be trying to read from the Parties' private storage
+    // TODO(2942): Shouldn't rather we be trying to read from the Parties' private storage
     // to make sure they've correctly recovered ? Not sure what reading from backup brings us here ?
 
     // Check that the backup is still there an unmodified
