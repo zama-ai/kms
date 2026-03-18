@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
+    kms::v1::{
+        CrsGenResult, EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo,
+    },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, PubDataType},
+    rpc_types::{alloy_to_protobuf_domain, protobuf_to_alloy_domain, PubDataType},
     ContextId, RequestId,
 };
 use serial_test::serial;
@@ -42,9 +44,13 @@ use crate::{
         threshold::service::ThresholdFheKeys,
     },
     util::{
-        key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext},
+        key_setup::{
+            max_threshold,
+            test_tools::{purge, EncryptionConfig, TestingPlaintext},
+        },
         rate_limiter::RateLimiterConfig,
     },
+    vault::storage::{file::FileStorage, StorageType},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -402,28 +408,31 @@ async fn run_new_epoch(
         assert_eq!(responses.len(), amount_parties);
 
         // Transform the reshare response to its equivalent keygen response
-        // TODO: check the CRSS resigns as well
-        let responses_as_dkg = responses
+        // and also extract the CRS responses
+        let (responses_as_dkg, crs_responses_per_party): (
+            Vec<(u32, Result<Vec<KeyGenResult>, Status>)>,
+            Vec<(u32, Vec<CrsGenResult>)>,
+        ) = responses
             .into_iter()
-            .map(|(party_idx, _, response)| {
-                (
-                    party_idx,
-                    response.map(|response| {
-                        response
-                            .into_inner()
-                            .reshare_responses
-                            .into_iter()
-                            .map(|response| KeyGenResult {
-                                request_id: response.request_id.clone(),
-                                preprocessing_id: response.preprocessing_id.clone(),
-                                key_digests: response.key_digests.clone(),
-                                external_signature: response.external_signature.clone(),
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
+            .map(|(party_idx, _, response)| match response {
+                Ok(response) => {
+                    let inner = response.into_inner();
+                    let kg_results = inner
+                        .reshare_responses
+                        .into_iter()
+                        .map(|response| KeyGenResult {
+                            request_id: response.request_id.clone(),
+                            preprocessing_id: response.preprocessing_id.clone(),
+                            key_digests: response.key_digests.clone(),
+                            external_signature: response.external_signature.clone(),
+                        })
+                        .collect::<Vec<_>>();
+                    let crs_results = inner.crs_responses;
+                    ((party_idx, Ok(kg_results)), (party_idx, crs_results))
+                }
+                Err(e) => ((party_idx, Err(e)), (party_idx, vec![])),
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
         // Transform from Vec(party_idx, Vec<KGResult>) to Vec<Vec<(party_idx, KGResult)>>
         // to verify keys one by one
@@ -457,6 +466,8 @@ async fn run_new_epoch(
             .collect_vec();
 
         assert_eq!(responses_as_dkg.len(), num_keys);
+
+        let crs_info = previous_epoch.crs_info.clone();
 
         let mut outs = Vec::new();
         for (key_info, responses) in previous_epoch
@@ -492,6 +503,44 @@ async fn run_new_epoch(
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
             outs.push(out);
         }
+        // Verify CRS re-signing
+        let threshold = max_threshold(amount_parties);
+        let min_agree_count = (threshold + 1) as u32;
+
+        for crs in &crs_info {
+            let crs_id: RequestId = crs.crs_id.as_ref().unwrap().try_into().unwrap();
+            let domain = protobuf_to_alloy_domain(crs.domain.as_ref().unwrap()).unwrap();
+
+            let res_storage: Vec<_> = crs_responses_per_party
+                .iter()
+                .map(|(party_idx, crs_results)| {
+                    let result = crs_results
+                        .iter()
+                        .find(|r| r.request_id == crs.crs_id)
+                        .expect("each party should have a CRS response")
+                        .clone();
+                    let storage = FileStorage::new(
+                        None,
+                        StorageType::PUB,
+                        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[*party_idx as usize - 1].as_deref(),
+                    )
+                    .unwrap();
+                    (result, storage)
+                })
+                .collect();
+
+            internal_client
+                .process_distributed_crs_result(
+                    &crs_id,
+                    res_storage,
+                    &domain,
+                    vec![],
+                    min_agree_count,
+                )
+                .await
+                .expect("Failed to verify CRS re-signing");
+        }
+
         Some(outs)
     } else {
         None
