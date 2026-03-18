@@ -230,7 +230,9 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
 use kms_lib::client::test_tools::ServerHandle;
-use kms_lib::consts::{ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use kms_lib::consts::{
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
+};
 use kms_lib::testing::prelude::*;
 use serial_test::serial;
 use std::collections::HashMap;
@@ -239,6 +241,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
+#[cfg(feature = "threshold_tests")]
+use tfhe::zk::CompactPkeCrs;
 
 // Additional imports for custodian and threshold tests
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
@@ -251,7 +255,9 @@ use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test (only needed with threshold_tests feature)
 #[cfg(feature = "threshold_tests")]
-use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
+use kms_lib::engine::base::{
+    safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+};
 #[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
@@ -1342,7 +1348,16 @@ async fn crs_gen_isolated(
     test_path: &Path,
     insecure_crs_gen: bool,
 ) -> Result<String> {
-    crs_gen_isolated_with_params(config_path, test_path, insecure_crs_gen, 2048, 200).await
+    crs_gen_isolated_with_params(
+        config_path,
+        test_path,
+        insecure_crs_gen,
+        2048,
+        200,
+        *DEFAULT_EPOCH_ID,
+        *DEFAULT_MPC_CONTEXT,
+    )
+    .await
 }
 
 /// CRS generation with configurable max_num_bits and max_iter.
@@ -1353,11 +1368,21 @@ async fn crs_gen_isolated_with_params(
     insecure_crs_gen: bool,
     max_num_bits: u32,
     max_iter: usize,
+    epoch_id: EpochId,
+    context_id: ContextId,
 ) -> Result<String> {
     let command = if insecure_crs_gen {
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits })
+        CCCommand::InsecureCrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id: Some(epoch_id),
+            context_id: Some(context_id),
+        })
     } else {
-        CCCommand::CrsGen(CrsParameters { max_num_bits })
+        CCCommand::CrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id: Some(epoch_id),
+            context_id: Some(context_id),
+        })
     };
 
     let config = CmdConfig {
@@ -2353,6 +2378,7 @@ async fn reshare_isolated(
     from_epoch_id: Option<EpochId>,
     new_epoch_id: EpochId,
     previous_key_infos: Vec<PreviousKeyInfo>,
+    previous_crs_infos: Vec<PreviousCrsInfo>,
 ) -> Result<Vec<(Option<RequestId>, String)>> {
     let ctx_id = from_context_id.expect("context_id required for reshare");
     let ep_id = from_epoch_id.expect("epoch_id required for reshare");
@@ -2365,6 +2391,7 @@ async fn reshare_isolated(
                 context_id: ctx_id,
                 epoch_id: ep_id,
                 previous_keys: previous_key_infos,
+                previous_crs: previous_crs_infos,
             }),
         }),
         logs: true,
@@ -2896,10 +2923,26 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
     // Secure ZK ceremony with Default params can take ~17min per CRS gen
     let keys_folder = material_dir.path();
-    let crs_id_1 =
-        crs_gen_isolated_with_params(&config_path, keys_folder, false, 2048, 5000).await?;
-    let crs_id_2 =
-        crs_gen_isolated_with_params(&config_path, keys_folder, false, 2048, 5000).await?;
+    let crs_id_1 = crs_gen_isolated_with_params(
+        &config_path,
+        keys_folder,
+        false,
+        2048,
+        5000,
+        *DEFAULT_EPOCH_ID,
+        *DEFAULT_MPC_CONTEXT,
+    )
+    .await?;
+    let crs_id_2 = crs_gen_isolated_with_params(
+        &config_path,
+        keys_folder,
+        false,
+        2048,
+        5000,
+        *DEFAULT_EPOCH_ID,
+        *DEFAULT_MPC_CONTEXT,
+    )
+    .await?;
 
     // Verify different CRS IDs generated
     assert_ne!(crs_id_1, crs_id_2);
@@ -2933,8 +2976,24 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
         &keys_folder_2.path().join("CLIENT"),
     )?;
     let res = join_all([
-        crs_gen_isolated_with_params(&config_path, keys_folder_1.path(), true, 2048, 5000),
-        crs_gen_isolated_with_params(&config_path, keys_folder_2.path(), true, 2048, 5000),
+        crs_gen_isolated_with_params(
+            &config_path,
+            keys_folder_1.path(),
+            true,
+            2048,
+            5000,
+            *DEFAULT_EPOCH_ID,
+            *DEFAULT_MPC_CONTEXT,
+        ),
+        crs_gen_isolated_with_params(
+            &config_path,
+            keys_folder_2.path(),
+            true,
+            2048,
+            5000,
+            *DEFAULT_EPOCH_ID,
+            *DEFAULT_MPC_CONTEXT,
+        ),
     ])
     .await;
 
@@ -3224,10 +3283,26 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
     // Run sequential CRS generation with production-sized params (max_num_bits=2048)
     // Secure ZK ceremony with Default params can take ~17min per CRS gen
     let keys_folder = material_dir.path();
-    let crs_id_1 =
-        crs_gen_isolated_with_params(&config_path, keys_folder, false, 2048, 5000).await?;
-    let crs_id_2 =
-        crs_gen_isolated_with_params(&config_path, keys_folder, false, 2048, 5000).await?;
+    let crs_id_1 = crs_gen_isolated_with_params(
+        &config_path,
+        keys_folder,
+        false,
+        2048,
+        5000,
+        *DEFAULT_EPOCH_ID,
+        *DEFAULT_MPC_CONTEXT,
+    )
+    .await?;
+    let crs_id_2 = crs_gen_isolated_with_params(
+        &config_path,
+        keys_folder,
+        false,
+        2048,
+        5000,
+        *DEFAULT_EPOCH_ID,
+        *DEFAULT_MPC_CONTEXT,
+    )
+    .await?;
 
     // Verify different CRS IDs generated
     assert_ne!(crs_id_1, crs_id_2);
@@ -3428,8 +3503,9 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 /// 2. Initialize PRSS for the context
 /// 3. Run preprocessing and keygen with the context
 /// 4. Download key materials (ServerKey, PublicKey)
-/// 5. Compute digests of the key materials
-/// 6. Execute resharing command
+/// 5. Run Crs generation
+/// 6. Compute digests of the key materials
+/// 7. Execute resharing command
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
@@ -3467,7 +3543,19 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await?;
 
-    // Step 5: Download the key materials
+    // Step 5 : Run Crs generation
+    let crs_id = crs_gen_isolated_with_params(
+        &config_path,
+        test_path,
+        true,
+        2048,
+        5000,
+        epoch_id,
+        context_id,
+    )
+    .await?;
+
+    // Step 6: Download the key materials
     let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
         .path(config_path.to_str().unwrap())
         .env_prefix("CORE_CLIENT")
@@ -3483,7 +3571,7 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await?;
 
-    // Step 6: Read the key materials from file and compute digests
+    // Step 7: Read the key and crs materials from file and compute digests
     let key_id = RequestId::from_str(&key_id_str)?;
     // Use first party's storage prefix for reading materials
     let storage_prefix = format!("PUB-p{}", ids[0].party_id);
@@ -3506,7 +3594,24 @@ async fn test_threshold_reshare() -> Result<()> {
         &public_key,
     )?);
 
-    // Step 7: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
+    let _ids =
+        fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
+
+    let crs_id = RequestId::from_str(&crs_id)?;
+    let crs: CompactPkeCrs = load_material_from_pub_storage(
+        Some(test_path),
+        &crs_id,
+        PubDataType::CRS,
+        Some(&storage_prefix),
+    )
+    .await;
+
+    let crs_digest = hex::encode(safe_serialize_hash_element_versioned(
+        &DSEP_PUBDATA_CRS,
+        &crs,
+    )?);
+
+    // Step 8: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
     let new_epoch_id =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")?;
     let preproc_id = RequestId::from_str(&preproc_id_str)?;
@@ -3515,6 +3620,10 @@ async fn test_threshold_reshare() -> Result<()> {
         preproc_id,
         key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
     };
+    let previous_crs_info = PreviousCrsInfo {
+        crs_id,
+        digest: crs_digest,
+    };
     let resharing_result = reshare_isolated(
         &config_path,
         test_path,
@@ -3522,6 +3631,7 @@ async fn test_threshold_reshare() -> Result<()> {
         Some(epoch_id),
         new_epoch_id,
         vec![previous_key_info],
+        vec![previous_crs_info],
     )
     .await?;
 

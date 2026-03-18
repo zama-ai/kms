@@ -9,7 +9,7 @@ cfg_if::cfg_if! {
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, data_exists, get_core_signing_key,
+            calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
         use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
@@ -338,6 +338,7 @@ pub async fn ensure_central_crs_exists<PubS, PrivS>(
     priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     crs_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
@@ -346,12 +347,15 @@ where
 {
     // Check if data already exists in both storages
 
-    match check_data_exists(
+    use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
+
+    match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         crs_id,
-        &PubDataType::CRS.to_string(),
-        &PrivDataType::CrsInfo.to_string(),
+        epoch_id,
+        &[PubDataType::CRS.to_string()],
+        &[PrivDataType::CrsInfo.to_string()],
     )
     .await
     {
@@ -401,9 +405,10 @@ where
     };
 
     // Store private CRS info with proper error handling
-    if let Err(e) = store_versioned_at_request_id(
+    if let Err(e) = store_versioned_at_request_and_epoch_id(
         priv_storage,
         crs_id,
+        epoch_id,
         &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
@@ -1196,6 +1201,7 @@ pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     crs_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
@@ -1212,12 +1218,15 @@ where
     // PANICS: If storage access fails or if no storage is available
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists(
+        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
+
+        match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             crs_id,
-            &PubDataType::CRS.to_string(),
-            &PrivDataType::CrsInfo.to_string(),
+            epoch_id,
+            &[PubDataType::CRS.to_string()],
+            &[PrivDataType::CrsInfo.to_string()],
         )
         .await
         {
@@ -1303,9 +1312,10 @@ where
 
         // Store private CRS info with signature - essential for verification chain
         // PANICS: If storage fails - system would be in inconsistent state
-        store_versioned_at_request_id::<PrivS, CrsGenMetadata>(
+        store_versioned_at_request_and_epoch_id::<PrivS, CrsGenMetadata>(
             cur_priv,
             crs_id,
+            epoch_id,
             &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )

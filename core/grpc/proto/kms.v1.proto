@@ -271,7 +271,8 @@ message CrsGenRequest {
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
 
-  // Epoch ID palaceholder
+  // MPC Epoch ID because we tie all key material to epochs
+  // In particular this is used to store the CRS at the correct location in the private storage
   RequestId epoch_id = 6;
 
   // Extra data from the gateway.
@@ -773,7 +774,18 @@ message KeyInfo {
   // If there are no key_digests, the digest verification is skipped.
   repeated KeyDigest key_digests = 4;
   Eip712DomainMsg domain = 5;
+}
 
+message CrsInfo {
+  // The 32 Byte / 256 Bit ID of the initial CrsGenRequest
+  RequestId crs_id = 1;
+
+  // The digest of the generated CRS.
+  // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
+  bytes crs_digest = 2;
+
+  // The EIP712 domain from the initial CrsGenRequest
+  Eip712DomainMsg domain = 4;
 }
 
 message PreviousEpochInfo {
@@ -784,6 +796,8 @@ message PreviousEpochInfo {
   RequestId epoch_id = 2;
   // Info about all the keys to be reshared (if any)
   repeated KeyInfo keys_info = 3;
+  // Info about all CRS to be re-signed
+  repeated CrsInfo crs_info = 4;
 }
 
 message NewMpcEpochRequest {
@@ -801,6 +815,7 @@ message NewMpcEpochRequest {
 
 message EpochResultResponse {
   repeated KeyGenResult reshare_responses = 1;
+  repeated CrsGenResult crs_responses = 2;
 }
 
 message DestroyMpcEpochRequest {

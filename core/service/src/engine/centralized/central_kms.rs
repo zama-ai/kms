@@ -900,8 +900,14 @@ impl<
             .iter()
             .map(|((id, _), info)| (id.to_owned(), info.public_key_info.to_owned()))
             .collect();
-        let crs_info: HashMap<RequestId, CrsGenMetadata> =
-            read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+        let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?
+        .into_iter()
+        .map(|((req, _epoch), v)| (req, v))
+        .collect();
 
         sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
