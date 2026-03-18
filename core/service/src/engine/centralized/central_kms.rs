@@ -510,7 +510,7 @@ pub async fn async_user_decrypt<
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
     use observability::{
         metrics,

@@ -72,11 +72,16 @@ Before a PR is created and a PR review is requested, the PR author should go ove
 - [ ] The PR does not contain any breaking changes to the configuration and deployment files.
       (A change is _only_ considered breaking if a deployment configuration must be changed as part of an update. Adding new fields, with default values is _not_ considered breaking). Or if it does then these steps must be taken:
     - [ ] The PR is labeled with `devops`.
+    - [ ] The PR is marked using `!` in accordance with conventional commits. E.g. `chore!: changed decryption format according to Q3 release`.
     - [ ] I have pinged the infra team on Slack (in the MPC channel).
     - [ ] I have put a devops person on the PR as reviewer.
+    - [ ] I have added an issue for [infra](https://github.com/zama-ai/infra-internal) to take care of the changes needed. 
 - [ ] The PR does not contain breaking changes to the gRPC interface or data serialized in the service gRPC interface. In particular there are no changes to the `extraData` fields. Or if it does the following steps have been taken:
     - [ ] The PR is marked using `!` in accordance with conventional commits. E.g. `chore!: changed decryption format according to Q3 release`.
     - [ ] The Gateway and Connector teams have been notified about this change.
+    - [ ] A message has been posted in the Slack channel for the relevant guilds. 
+    - [ ] An issue has been made for the relevant teams to handle these changes. 
+- [ ] The PR does not contain changes to the interal protobufs/communication protocols that breaks compatibility with the previous version. That is, if we release from `main` after your PR, the KMS can still communicate with other KMS' that run the previous release. This ensures a much simpler upgrade process, in order to avoid the green/blue upgrade approach.
 - [ ] I have not changed existing `versionized` structs, nor added new `versionized` structs. Or if I have, these steps must be taken:
     - [ ] The backwards compatibility tests have been updated and/or new tests covering the changes have been added.
 - [ ] The PR does not contain changes to the critical business logic or cryptographic code. Or if it does then these steps must be taken:

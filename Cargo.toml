@@ -153,7 +153,6 @@ opentelemetry-prometheus = "=0.29.1"  # Prometheus metrics exporter - LOW RISK: 
 opentelemetry-semantic-conventions = "=0.29.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
 opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
 opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
-ordermap = "=0.5.7"  # Ordered map implementation - LOW RISK: Wrapper over indexmap with stronger ordering guarantees
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
@@ -188,8 +187,8 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.5.3"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.8.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe = "=1.5.4"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.8.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.8.0"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads

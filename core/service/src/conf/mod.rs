@@ -112,8 +112,6 @@ pub struct AWSConfig {
 #[serde(deny_unknown_fields)]
 pub struct VaultConfig {
     pub storage: Storage,
-    #[validate(range(min = 1))]
-    pub storage_cache_size: Option<usize>,
     #[validate(nested)]
     pub keychain: Option<Keychain>,
 }

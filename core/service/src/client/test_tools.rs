@@ -835,7 +835,7 @@ pub async fn centralized_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None).unwrap();
     let backup_vault = Vault {
         storage: backup_proxy_storage,
         keychain: None,

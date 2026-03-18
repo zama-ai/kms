@@ -28,7 +28,7 @@ use kms_lib::{
         },
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
-            s3::build_s3_client, StorageCache, StorageReader, StorageType,
+            s3::build_s3_client, StorageReader, StorageType,
         },
         Vault,
     },
@@ -451,17 +451,6 @@ async fn main_exec() -> anyhow::Result<()> {
         None
     };
 
-    // storage cache (don't forget to remove `storage_cache_size` from the
-    // config if weird inconsistencies appear)
-    let public_storage_cache = core_config
-        .public_vault
-        .as_ref()
-        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
-    let private_storage_cache = core_config
-        .private_vault
-        .as_ref()
-        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
-
     // security module (used for remote attestation with AWS KMS or mTLS)
     let need_security_module = need_awskms_client
         || core_config
@@ -483,13 +472,8 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // public vault
     let public_storage_conf = core_config.public_vault.as_ref().map(|v| v.storage.clone());
-    let public_storage = make_storage(
-        public_storage_conf,
-        StorageType::PUB,
-        public_storage_cache,
-        s3_client.clone(),
-    )
-    .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
+    let public_storage = make_storage(public_storage_conf, StorageType::PUB, s3_client.clone())
+        .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
         storage: public_storage.clone(),
         keychain: None,
@@ -502,7 +486,6 @@ async fn main_exec() -> anyhow::Result<()> {
             .as_ref()
             .map(|v| v.storage.clone()),
         StorageType::PRIV,
-        private_storage_cache,
         s3_client.clone(),
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
@@ -514,7 +497,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
     migrate_to_0_13_10(&mut private_storage, kms_type)
         .await
-        .expect("Could not complete migration: {e}");
+        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     let attest_private_vault_root_key_policy = core_config
         .threshold
@@ -560,14 +543,7 @@ async fn main_exec() -> anyhow::Result<()> {
     let backup_storage = core_config
         .backup_vault
         .as_ref()
-        .map(|v| {
-            make_storage(
-                Some(v.storage.clone()),
-                StorageType::BACKUP,
-                None,
-                s3_client,
-            )
-        })
+        .map(|v| make_storage(Some(v.storage.clone()), StorageType::BACKUP, s3_client))
         .transpose()
         .inspect_err(|e| tracing::warn!("Could not initialize backup storage: {e}"))?;
     let backup_keychain = OptionFuture::from(
