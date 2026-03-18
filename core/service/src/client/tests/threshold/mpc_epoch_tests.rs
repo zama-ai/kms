@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{
-        CrsGenResult, EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo,
-    },
+    kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{alloy_to_protobuf_domain, protobuf_to_alloy_domain, PubDataType},
     ContextId, RequestId,

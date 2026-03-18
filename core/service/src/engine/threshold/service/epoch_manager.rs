@@ -760,20 +760,16 @@ impl<
                 crs_info.extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
-            let meta_store = Arc::clone(&meta_store);
             storage_tasks.push(
-                async move {
-                    crypto_storage
-                        .inner_write_crs(
-                            &crs_info.crs_id,
-                            &new_epoch_id,
-                            crs.clone(),
-                            crs_meta_data,
-                            meta_store,
-                        )
-                        .await
-                }
-                .boxed(),
+                crypto_storage
+                    .inner_write_crs(
+                        &crs_info.crs_id,
+                        &new_epoch_id,
+                        crs,
+                        crs_meta_data,
+                        Arc::clone(&meta_store),
+                    )
+                    .boxed(),
             );
         }
 
