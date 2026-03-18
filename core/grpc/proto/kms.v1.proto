@@ -811,6 +811,9 @@ message NewMpcEpochRequest {
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
   PreviousEpochInfo previous_epoch = 3;
+  // The EIP712 domain used for signing the reshared key results.
+  // Should be set when previous_epoch is set (resharing produces signed results).
+  Eip712DomainMsg domain = 4;
 }
 
 message EpochResultResponse {
