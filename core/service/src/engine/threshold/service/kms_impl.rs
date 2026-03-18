@@ -361,29 +361,9 @@ where
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
-    let rate_limiter_conf = config.rate_limiter_conf.to_owned().unwrap_or_default();
-    let telemetry_conf = config
-        .telemetry
-        .unwrap_or_else(|| TelemetryConfig::builder().build());
 
-    let public_key_info = HashMap::new();
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
-
-    // Validate the recovery material against the provided verification key
-    for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
-        }
-    }
-
-    // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-    sanity_check_crs_materials(&public_storage, &crs_info).await?;
-
+    // 1. Start core-to-core networking ASAP
+    // ======================================
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
@@ -412,8 +392,7 @@ where
         mpc_socket_addr,
         threshold_config.my_id,
     );
-
-    // clone the verifier for later use
+    // Clone the AttestedVerifier for use below to set up the [`SessionMaker`].
     let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -469,6 +448,27 @@ where
         );
         Ok(())
     });
+    // Give the runtime a chance to poll the server task so other cores can talk to us.
+    // TODO(dp): Ask reviewers about this – worthwhile?
+    tokio::task::yield_now().await;
+
+    let public_key_info = HashMap::new();
+    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+            .await?;
+
+    // Validate the recovery material against the provided verification key
+    for (cur_req_id, cur_rec_material) in &validation_material {
+        if !cur_rec_material.validate(&base_kms.verf_key()) {
+            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
+        }
+    }
+
+    // load crs_info (roughly hashes of CRS) from storage
+    let crs_info: HashMap<RequestId, CrsGenMetadata> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+    sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &threshold_config.preproc_redis {
@@ -542,9 +542,6 @@ where
     .await?;
     let immutable_session_maker = session_maker.make_immutable();
 
-    let tracker = Arc::new(TaskTracker::new());
-    let rate_limiter = RateLimiter::new(rate_limiter_conf);
-
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
     let context_manager = ThresholdContextManager::new(
@@ -560,13 +557,15 @@ where
             e
         );
     }
+    let tracker = Arc::new(TaskTracker::new());
+    let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
 
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance().await,
         reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-        tracker: Arc::clone(&tracker),
+        tracker: tracker.clone(),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
         _reshare: PhantomData,
@@ -669,8 +668,12 @@ where
     backup_operator.update_backup_vault(false).await?;
 
     // Start updating system metrics
+    let telemetry_conf = config
+        .telemetry
+        .unwrap_or_else(|| TelemetryConfig::builder().build());
+
     update_threshold_kms_system_metrics(
-        rate_limiter.clone(),
+        rate_limiter,
         immutable_session_maker.clone(),
         Arc::clone(&user_decrypt_meta_store),
         Arc::clone(&pub_dec_meta_store),
