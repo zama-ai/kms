@@ -6588,7 +6588,7 @@ dependencies = [
 [[package]]
 name = "rustls-webpki"
 version = "0.103.7"
-source = "git+https://github.com/zama-ai/webpki.git?branch=0.103.7-k256#87e2ef4b55f8769a55c57985906e4e59887a76c2"
+source = "git+https://github.com/zama-ai/webpki.git?branch=0.103.7-k256#173cd968166e1429958b24da242cba93700c9ac0"
 dependencies = [
  "aws-lc-rs",
  "ring",
