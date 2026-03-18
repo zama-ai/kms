@@ -11,3 +11,6 @@ description = "Testing utilities"
 anyhow.workspace = true
 bc2wrap.workspace = true
 serde.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+comfy-table = "7"

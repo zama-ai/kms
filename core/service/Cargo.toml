@@ -98,6 +98,7 @@ session-id.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
+test-utils.workspace = true
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",

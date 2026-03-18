@@ -1,24 +1,28 @@
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::{future::Future, pin::Pin};
+
+    use execution::tfhe_internals::parameters::DKGParams;
+    use kms_grpc::RequestId;
+    use kms_grpc::kms::v1::CrsGenRequest;
+    use kms_grpc::kms::v1::{Empty, FheParameter};
+    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+    use serial_test::serial;
+    use tokio::task::JoinSet;
+    use tonic::transport::Channel;
+    use tonic::{Request, Response, Status};
+
     use crate::client::client_wasm::Client;
+    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
+    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::CrsGenRequest;
-    use kms_grpc::kms::v1::{Empty, FheParameter};
-    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::RequestId;
-    use serial_test::serial;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use execution::tfhe_internals::parameters::DKGParams;
-    use tokio::task::JoinSet;
-    use tonic::transport::Channel;
-    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 }}
 
 #[cfg(feature = "insecure")]
@@ -198,17 +202,30 @@ pub async fn wait_for_crsgen_result(
     internal_client: &Client,
     param: &DKGParams,
 ) {
-    let amount_parties = kms_clients.len();
-    // wait a bit for the crs generation to finish
-    let joined_responses =
-        crate::par_poll_responses!(kms_clients, reqs, get_crs_gen_result, amount_parties);
+    use futures_util::future::join_all;
+    use itertools::Itertools;
+    use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+
+    let amount_parties: usize = kms_clients.len();
+
+    // Poll each (client, request) pair independently until all succeed.
+    let mut futs = Vec::new();
+    for req in reqs {
+        let req_id: ProtoRequestId = req.request_id.clone().unwrap();
+        for i in 1..=amount_parties as u32 {
+            if let Some(client) = kms_clients.get(&i) {
+                let client: CoreServiceEndpointClient<Channel> = client.clone();
+                futs.push(poll_with_retries(client, i, req_id.clone(), |c, req| {
+                    Box::pin(c.get_crs_gen_result(req))
+                }));
+            }
+        }
+    }
+    let joined_responses = join_all(futs).await;
 
     // first check the happy path
     // the public parameter is checked in ddec tests, so we don't specifically check _pp
     for req in reqs {
-        use itertools::Itertools;
-        use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-
         let req_id: RequestId = req.clone().request_id.unwrap().try_into().unwrap();
         let joined_responses: Vec<_> = joined_responses
             .iter()
@@ -226,7 +243,7 @@ pub async fn wait_for_crsgen_result(
 
         // we need to setup the storage devices in the right order
         // so that the client can read the CRS
-        tracing::info!(
+        tracing::debug!(
             "Got {} responses for CRS gen request id {}",
             joined_responses.len(),
             req_id
@@ -395,71 +412,40 @@ fn set_digests(
     }
 }
 
-// Poll the client method function `f_to_poll` until there is a result
-// or error out until some timeout.
-// The requests from the `reqs` argument need to implement `RequestIdGetter`.
-#[macro_export]
-macro_rules! par_poll_responses {
-    ($kms_clients:expr,$reqs:expr,$f_to_poll:ident,$amount_parties:expr) => {{
-        use $crate::consts::MAX_TRIES;
-        let mut joined_responses = vec![];
-        for count in 0..MAX_TRIES {
-            // Reset the list every time since we get all old results as well
-            joined_responses = vec![];
-            tokio::time::sleep(tokio::time::Duration::from_secs(30 * $reqs.len() as u64)).await;
+type ProtoRequestId = kms_grpc::kms::v1::RequestId;
 
-            let mut tasks_get = JoinSet::new();
-            for req in $reqs {
-                for i in 1..=$amount_parties as u32 {
-                    // Make sure we only consider clients for which
-                    // we haven't killed the corresponding server
-                    if let Some(cur_client) = $kms_clients.get(&i) {
-                        let mut cur_client = cur_client.clone();
-                        let req_id_proto = req.request_id.clone().unwrap();
-                        tasks_get.spawn(async move {
-                            (
-                                i,
-                                req_id_proto.clone(),
-                                cur_client
-                                    .$f_to_poll(tonic::Request::new(req_id_proto))
-                                    .await,
-                            )
-                        });
+/// Retry a single poll call until it succeeds or we exhaust [`crate::consts::MAX_TRIES`].
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+async fn poll_with_retries<R: Send>(
+    mut client: CoreServiceEndpointClient<Channel>,
+    server_id: u32,
+    req_id: ProtoRequestId,
+    poll_fn: impl for<'a> Fn(
+        &'a mut CoreServiceEndpointClient<Channel>,
+        Request<ProtoRequestId>,
+    )
+        -> Pin<Box<dyn Future<Output = Result<Response<R>, Status>> + Send + 'a>>,
+) -> (u32, ProtoRequestId, R) {
+    use crate::consts::MAX_TRIES;
+
+    for count in 0..MAX_TRIES {
+        // By default our gRPC calls do not time out. Here we're giving it 2sec per poll attempt to reply.
+        tokio::select! {
+            result = poll_fn(&mut client, Request::new(req_id.clone())) => {
+                match result {
+                    Ok(resp) => return (server_id, req_id, resp.into_inner()),
+                    Err(e) => {
+                        let id_str = RequestId::try_from(req_id.clone()).unwrap().to_string();
+                        tracing::trace!("Attempt {count} for server {server_id}, req {id_str}: {e:?}");
                     }
                 }
             }
-
-            while let Some(res) = tasks_get.join_next().await {
-                match res {
-                    Ok(inner) => {
-                        // Validate if the result returned is ok, if not we ignore, since it likely means that the process is still running on the server
-                        if let (j, req_id, Ok(resp)) = inner {
-                            joined_responses.push((j, req_id, resp.into_inner()));
-                        } else {
-                            let (j, req_id, inner_resp) = inner;
-                            // Explicitly convert to string to avoid any type conversion issues
-                            let req_id_str = match kms_grpc::RequestId::try_from(req_id.clone()).unwrap() {
-                                id => id.to_string(),
-                            };
-                            tracing::info!("Response in iteration {count} for server {j} and req_id {req_id_str} is: {:?}", inner_resp);
-                        }
-                    }
-                    _ => {
-                        panic!("Something went wrong while polling for responses");
-                    }
-                }
-            }
-
-            if joined_responses.len() >= $kms_clients.len() * $reqs.len() {
-                break;
-            }
-
-            // fail if we can't find a response
-            if count >= MAX_TRIES - 1 {
-                panic!("could not get response after {} tries", count);
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                tracing::trace!("Attempt {count} for server {server_id} timed out");
             }
         }
-
-        joined_responses
-    }};
+        // Back-off a little bit before re-trying
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    panic!("no response for server {server_id} after {MAX_TRIES} tries");
 }
