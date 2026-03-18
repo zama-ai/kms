@@ -338,34 +338,37 @@ pub(crate) async fn get_keygen_responses(
             };
 
             let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                if ctr >= max_iter {
-                    anyhow::bail!(
-                        "timeout while waiting for keygen from party {:?} after {max_iter} retries (insecure: {insecure})",
-                        core_conf.party_id
-                    );
-                }
-                ctr += 1;
-                response = if insecure {
-                    cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                } else {
-                    cur_client
-                        .get_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                };
+            loop {
+                match &response {
+                    Err(e) if e.code() == tonic::Code::Unavailable => {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                        ))
+                        .await;
+                        if ctr >= max_iter {
+                            anyhow::bail!(
+                                "timeout while waiting for keygen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                                core_conf.party_id
+                            );
+                        }
+                        ctr += 1;
+                        response = if insecure {
+                            cur_client
+                                .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
+                                .await
+                        } else {
+                            cur_client
+                                .get_key_gen_result(tonic::Request::new(request_id.into()))
+                                .await
+                        };
 
-                tracing::info!(
-                    "Got response for insecure keygen: {:?} (insecure: {insecure})",
-                    response
-                );
+                        tracing::info!(
+                            "Got response for insecure keygen: {:?} (insecure: {insecure})",
+                            response
+                        );
+                    }
+                    _ => break,
+                }
             }
             let resp = response.map_err(|e| {
                 anyhow::anyhow!("keygen response from party {:?} failed: {e}", core_conf.party_id)
@@ -640,28 +643,31 @@ pub(crate) async fn get_preproc_keygen_responses(
                 .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                 .await;
             let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                // do at most max_iter retries
-                if ctr >= max_iter {
-                    anyhow::bail!(
-                        "timeout while waiting for preprocessing from party {:?} after {max_iter} retries.",
-                        core_conf.party_id
-                    );
+            loop {
+                match &response {
+                    Err(e) if e.code() == tonic::Code::Unavailable => {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                        ))
+                        .await;
+                        // do at most max_iter retries
+                        if ctr >= max_iter {
+                            anyhow::bail!(
+                                "timeout while waiting for preprocessing from party {:?} after {max_iter} retries.",
+                                core_conf.party_id
+                            );
+                        }
+                        ctr += 1;
+                        tracing::info!(
+                            "Preproc result not ready yet for request {} from party {} (retry {}/{})",
+                            request_id, core_conf.party_id, ctr, max_iter
+                        );
+                        response = client
+                            .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
+                            .await;
+                    }
+                    _ => break,
                 }
-                ctr += 1;
-                tracing::info!(
-                    "Preproc result not ready yet for request {} from party {} (retry {}/{})",
-                    request_id, core_conf.party_id, ctr, max_iter
-                );
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                    .await;
             }
 
             let resp = response.map_err(|e| {

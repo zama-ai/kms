@@ -40,12 +40,21 @@ pub async fn create_test_context_info_from_core_config(
             .config_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Core config path not set for core {}", c.party_id))?;
-        let core_config: CoreConfig = init_conf(config_path.to_str().unwrap()).unwrap();
+        let config_path_str = config_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Config path for core {} is not valid UTF-8", c.party_id)
+        })?;
+        let core_config: CoreConfig = init_conf(config_path_str)?;
 
         // For testing, we only support the mocked trusted release mode
         // this requires the "mock_enclave = true" attribute in the kms-server config toml files.
-        let threshold_config = core_config.threshold.clone().unwrap();
-        match threshold_config.tls.unwrap() {
+        let threshold_config = core_config
+            .threshold
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Threshold config not set for core {}", c.party_id))?;
+        match threshold_config
+            .tls
+            .ok_or_else(|| anyhow::anyhow!("TLS config not set for core {}", c.party_id))?
+        {
             kms_lib::conf::threshold::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
@@ -65,7 +74,17 @@ pub async fn create_test_context_info_from_core_config(
         }
 
         // this assumes that the peer list is ordered by party ID
-        let peer = &threshold_config.peers.unwrap()[c.party_id - 1];
+        let peers = threshold_config
+            .peers
+            .ok_or_else(|| anyhow::anyhow!("Peers not set for core {}", c.party_id))?;
+        let peer = peers.get(c.party_id - 1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Peer index {} out of bounds (peers len: {}) for core {}",
+                c.party_id - 1,
+                peers.len(),
+                c.party_id
+            )
+        })?;
         let (role, identity) = peer.into_role_identity();
         if let Some(initial_id) = threshold_config.my_id {
             if role.one_based() != initial_id {
@@ -216,7 +235,11 @@ pub(crate) async fn do_new_mpc_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context_cloned.try_into().unwrap()),
+                    new_context: Some(new_context_cloned.try_into().map_err(|e| {
+                        tonic::Status::internal(format!(
+                            "Failed to convert context info to proto: {e}"
+                        ))
+                    })?),
                 }))
                 .await
         });

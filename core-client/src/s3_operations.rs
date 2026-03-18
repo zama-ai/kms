@@ -99,7 +99,13 @@ pub(crate) async fn fetch_kms_verification_keys(
             std::io::Cursor::new(&content),
             SAFE_SER_SIZE_LIMIT,
         )
-        .unwrap();
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize verification key for party {}: {}",
+                cur_core.party_id,
+                e
+            )
+        })?;
         keys_map.insert(cur_core.party_id, vk);
     }
 
@@ -138,7 +144,13 @@ pub(crate) async fn fetch_kms_signing_keys(
             std::io::Cursor::new(&content),
             SAFE_SER_SIZE_LIMIT,
         )
-        .unwrap();
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize signing key for party {}: {}",
+                cur_core.party_id,
+                e
+            )
+        })?;
         keys_map.insert(cur_core.party_id, signing_key);
     }
 
