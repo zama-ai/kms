@@ -40,10 +40,13 @@ pub async fn create_test_context_info_from_core_config(
             .config_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Core config path not set for core {}", c.party_id))?;
-        let config_path_str = config_path.to_str().ok_or_else(|| {
-            anyhow::anyhow!("Config path for core {} is not valid UTF-8", c.party_id)
-        })?;
-        let core_config: CoreConfig = init_conf(config_path_str)?;
+        let core_config: CoreConfig = init_conf(
+            config_path
+                .to_str()
+                .expect("Config path is not valid UTF-8"),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to init config due to error: {e}"))
+        .unwrap();
 
         // For testing, we only support the mocked trusted release mode
         // this requires the "mock_enclave = true" attribute in the kms-server config toml files.

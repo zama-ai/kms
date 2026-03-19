@@ -237,32 +237,29 @@ pub(crate) async fn get_crsgen_responses(
             };
 
             let mut ctr = 0_usize;
-            loop {
-                match &response {
-                    Err(e) if e.code() == tonic::Code::Unavailable => {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
-                        // do at most max_iter retries
-                        if ctr >= max_iter {
-                            anyhow::bail!(
-                                "timeout while waiting for CRS gen from party {:?} after {max_iter} retries (insecure: {insecure})",
-                                core_conf.party_id
-                            );
-                        }
-                        ctr += 1;
-                        response = if insecure {
-                            cur_client
-                                .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
-                                .await
-                        } else {
-                            cur_client
-                                .get_crs_gen_result(tonic::Request::new(request_id.into()))
-                                .await
-                        };
-
-                        tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
-                    }
-                    _ => break,
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for CRS gen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                        core_conf.party_id
+                    );
                 }
+                ctr += 1;
+                response = if insecure {
+                    cur_client
+                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
+                        .await
+                } else {
+                    cur_client
+                        .get_crs_gen_result(tonic::Request::new(request_id.into()))
+                        .await
+                };
+
+                tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
             }
             let resp = response.map_err(|e| {
                 anyhow::anyhow!("CRS gen response from party {:?} failed: {e}", core_conf.party_id)

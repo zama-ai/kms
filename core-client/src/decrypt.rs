@@ -207,22 +207,22 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             .await?;
 
             let res = format!("{resp_response_vec:x?}");
-            Ok((Some(req_id), res))
+            Ok((req_id, res))
         });
     }
 
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
         let res = result??;
-        let req_id = res
-            .0
-            .ok_or_else(|| anyhow::anyhow!("missing request ID in public decrypt result"))?;
+        let req_id = res.0;
         let elapsed = timings_start
             .remove(&req_id)
-            .ok_or_else(|| anyhow::anyhow!("missing timing for request {req_id}"))?
+            .unwrap_or_else(|| {
+                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
+            })
             .elapsed();
         durations.push(elapsed);
-        result_vec.push(res);
+        result_vec.push((Some(res.0), res.1));
     }
 
     print_timings("public decrypt", &mut durations, start);
@@ -346,26 +346,24 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                         .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                         .await;
                     let mut ctr = 0_usize;
-                    loop {
-                        match &response {
-                            Err(e) if e.code() == tonic::Code::Unavailable => {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(
-                                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                                ))
-                                .await;
-                                // do at most max_iter retries
-                                if ctr >= max_iter {
-                                    anyhow::bail!(
-                                        "timeout while waiting for user decryption after {max_iter} retries."
-                                    );
-                                }
-                                ctr += 1;
-                                response = cur_client
-                                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                                    .await;
-                            }
-                            _ => break,
+                    while response.is_err()
+                        && response.as_ref().unwrap_err().code()
+                            == tonic::Code::Unavailable
+                    {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                        ))
+                        .await;
+                        // do at most max_iter retries
+                        if ctr >= max_iter {
+                            anyhow::bail!(
+                                "timeout while waiting for user decryption after {max_iter} retries."
+                            );
                         }
+                        ctr += 1;
+                        response = cur_client
+                            .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                            .await;
                     }
                     let resp = response.map_err(|e| {
                         anyhow::anyhow!("user decryption response failed: {e}")
@@ -458,21 +456,21 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
-            Ok((Some(req_id), res))
+            Ok((req_id, res))
         });
     }
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
         let res = result??;
-        let req_id = res
-            .0
-            .ok_or_else(|| anyhow::anyhow!("missing request ID in user decrypt result"))?;
+        let req_id = res.0;
         let elapsed = timings_start
             .remove(&req_id)
-            .ok_or_else(|| anyhow::anyhow!("missing timing for request {req_id}"))?
+            .unwrap_or_else(|| {
+                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
+            })
             .elapsed();
         durations.push(elapsed);
-        result_vec.push(res);
+        result_vec.push((Some(res.0), res.1));
     }
 
     print_timings("user decrypt", &mut durations, start);
@@ -510,27 +508,24 @@ pub(crate) async fn get_public_decrypt_responses(
                 .get_public_decryption_result(tonic::Request::new(request_id.into()))
                 .await;
             let mut ctr = 0_usize;
-            loop {
-                match &response {
-                    Err(e) if e.code() == tonic::Code::Unavailable => {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                        ))
-                        .await;
-                        // do at most max_iter retries
-                        if ctr >= max_iter {
-                            anyhow::bail!(
-                                "timeout while waiting for public decryption from party {:?} after {max_iter} retries.",
-                                core_conf.party_id
-                            );
-                        }
-                        ctr += 1;
-                        response = cur_client
-                            .get_public_decryption_result(tonic::Request::new(request_id.into()))
-                            .await;
-                    }
-                    _ => break,
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for public decryption from party {:?} after {max_iter} retries.",
+                        core_conf.party_id
+                    );
                 }
+                ctr += 1;
+                response = cur_client
+                    .get_public_decryption_result(tonic::Request::new(request_id.into()))
+                    .await;
             }
             let resp = response.map_err(|e| {
                 anyhow::anyhow!("public decryption response from party {:?} failed: {e}", core_conf.party_id)

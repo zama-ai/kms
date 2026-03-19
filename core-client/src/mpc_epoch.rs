@@ -176,22 +176,19 @@ pub(crate) async fn do_new_epoch(
             let mut response = cur_client.get_epoch_result(response_request).await;
 
             let mut ctr = 0_usize;
-            loop {
-                match &response {
-                    Err(e) if e.code() == tonic::Code::Unavailable => {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                        ))
-                        .await;
-                        let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                            tonic::Request::new(new_epoch_id.into());
-                        response = cur_client.get_epoch_result(response_request).await;
-                        ctr += 1;
-                        if ctr >= max_iter {
-                            break;
-                        }
-                    }
-                    _ => break,
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                    tonic::Request::new(new_epoch_id.into());
+                response = cur_client.get_epoch_result(response_request).await;
+                ctr += 1;
+                if ctr >= max_iter {
+                    break;
                 }
             }
 
@@ -270,10 +267,9 @@ pub(crate) async fn do_new_epoch(
                 num_parties
             );
 
-            let first_party_id = party_confs_successful
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("No party configs returned after resharing"))?
-                .party_id as usize;
+            // We just check we even have num_parties of them
+            let first_party_id = party_confs_successful.first()
+                .expect("unexpected error because we have previously checked that the array has length of num_parties").party_id;
             let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
             let public_key =
