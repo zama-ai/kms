@@ -46,6 +46,7 @@
 #![cfg(feature = "kind_tests")]
 
 use kms_core_client::*;
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use std::path::{Path, PathBuf};
 
 // ============================================================================
@@ -245,11 +246,15 @@ impl K8sTestContext {
 
     /// Generate a CRS.
     async fn crs_gen(&self) -> String {
-        println!("[K8S-THRESHOLD] Executing CrsGen (max_num_bits=2048)...");
+        println!("[K8S-THRESHOLD] Executing CrsGen (max_num_bits=2048) on default epoch...");
         let start = std::time::Instant::now();
 
         let results = self
-            .execute(CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 }))
+            .execute(CCCommand::CrsGen(CrsParameters {
+                max_num_bits: 2048,
+                epoch_id: Some(*DEFAULT_EPOCH_ID),
+                context_id: Some(*DEFAULT_MPC_CONTEXT),
+            }))
             .await;
 
         let crs_id = results

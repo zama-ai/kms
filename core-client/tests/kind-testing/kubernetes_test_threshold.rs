@@ -5,6 +5,7 @@
 #![cfg(feature = "kind_tests")]
 
 use kms_core_client::*;
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
@@ -49,7 +50,11 @@ async fn insecure_key_gen(test_path: &Path) -> String {
 
 async fn crs_gen(test_path: &Path) -> String {
     let path_to_config = root_path().join(config_path());
-    let command = CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 });
+    let command = CCCommand::CrsGen(CrsParameters {
+        max_num_bits: 2048,
+        epoch_id: Some(*DEFAULT_EPOCH_ID),
+        context_id: Some(*DEFAULT_MPC_CONTEXT),
+    });
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command,

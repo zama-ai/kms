@@ -74,7 +74,7 @@ async fn crs_gen_centralized_manual(
     };
     let domain = dummy_domain();
     let ceremony_req = internal_client
-        .crs_gen_request(request_id, max_num_bits, params, &domain)
+        .crs_gen_request(request_id, None, None, max_num_bits, params, &domain)
         .unwrap();
 
     let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -180,7 +180,7 @@ pub(crate) async fn run_crs_centralized(
     let max_num_bits = Some(2048);
     let domain = dummy_domain();
     let gen_req = internal_client
-        .crs_gen_request(crs_req_id, max_num_bits, Some(params), &domain)
+        .crs_gen_request(crs_req_id, None, None, max_num_bits, Some(params), &domain)
         .unwrap();
 
     tracing::debug!("making crs request, insecure? {insecure}");

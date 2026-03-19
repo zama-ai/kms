@@ -15,8 +15,8 @@ use crate::{
         purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
     },
     vault::storage::{
-        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageReaderExt,
-        StorageType,
+        delete_all_at_request_id, delete_at_request_and_epoch_id, file::FileStorage, make_storage,
+        StorageReaderExt, StorageType,
     },
 };
 use kms_grpc::{
@@ -119,18 +119,24 @@ async fn nightly_test_insecure_central_crs_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
         derive_request_id(&format!("test_insecure_central_crs_backup_{param:?}",)).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     purge(None, None, &req_id, &[None], &[None]).await;
     purge_backup(None, &[None]).await;
     crs_gen_centralized(&req_id, param, true, None).await;
 
     // Generated crs, delete it from private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &req_id)
-        .await
-        .unwrap();
+    delete_at_request_and_epoch_id(
+        &mut priv_storage,
+        &req_id,
+        &epoch_id,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await
+    .unwrap();
     // Check that is has been removed
     assert!(!priv_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
 
@@ -155,14 +161,14 @@ async fn nightly_test_insecure_central_crs_backup() {
     let backup_storage: FileStorage = FileStorage::new(None, StorageType::BACKUP, None).unwrap();
     // Check the back up is still there
     assert!(backup_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
     // Check that the file has been restored
     let priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     // Check the back up is still there
     assert!(priv_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
     purge_priv(None, &[None]).await;

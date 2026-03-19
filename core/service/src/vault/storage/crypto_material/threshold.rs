@@ -70,6 +70,22 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         Arc::clone(&self.inner.private_storage)
     }
 
+    /// Write the CRS to the storage backend.
+    /// On failure, the meta_store is used to purge dangling data.
+    /// On success, the meta_store is NOT updated; the caller is responsible for that.
+    pub(crate) async fn inner_write_crs<T: Clone>(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
+    ) {
+        self.inner
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info, meta_store)
+            .await
+    }
+
     /// Write the CRS to the storage backend as well as the cache,
     /// and update the [meta_store] to "Done" if the procedure is successful.
     ///
@@ -77,20 +93,21 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_crs_with_meta_store(
         &self,
-        req_id: &RequestId,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
     ) {
         self.inner
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_metric_tag)
+            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
             .await
     }
 
-    /// Check if the CRS under [req_id] exists in the storage.
-    pub async fn crs_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
-        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
+    /// Check if the CRS under [req_id, epoch_id] exists in the storage.
+    pub async fn crs_exists(&self, req_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
+        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id, epoch_id).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -539,10 +556,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         self.inner
-            .purge_crs_material(req_id, guarded_meta_store)
+            .purge_crs_material(req_id, epoch_id, guarded_meta_store)
             .await
     }
 

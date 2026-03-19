@@ -400,8 +400,14 @@ where
     sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
+        &private_storage,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await?
+    .into_iter()
+    .map(|((req, _epoch), v)| (req, v))
+    .collect();
 
     sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
@@ -574,15 +580,13 @@ where
         custodian_meta_store,
         session_maker.clone(),
     );
-    context_manager
-        .load_mpc_context_from_storage()
-        .await
-        .inspect_err(|e| {
-            tracing::error!(
-                "Failed to load MPC context from storage during KMS startup: {}",
-                e
-            )
-        })?;
+    if let Err(e) = context_manager.load_mpc_context_from_storage().await {
+        tracing::warn!(
+            "Failed to load all MPC contexts from storage during KMS startup: {}. \
+             Server will continue in degraded mode (recovery operations only).",
+            e
+        );
+    }
 
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),

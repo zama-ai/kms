@@ -17,6 +17,7 @@ use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
+use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
@@ -31,6 +32,7 @@ use std::string::String;
 use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
 use tfhe::safe_serialization;
+use tfhe::zk::CompactPkeCrs;
 
 // IMPORTANT: These integration tests require Docker running and images build.
 // You can build the images by running the following commands from the root of the repo:
@@ -280,6 +282,8 @@ async fn insecure_key_gen<T: DockerComposeManager>(
     key_id.to_string()
 }
 
+/// Uses default for epoch and context id.
+/// See [`crs_gen_with_custom_conf`] if you want to specify them.
 async fn crs_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
@@ -289,16 +293,56 @@ async fn crs_gen<T: DockerComposeManager>(
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let command = match insecure_crs_gen {
         true => CCCommand::InsecureCrsGen(CrsParameters {
-            max_num_bits: 2048,
             extra_data,
+            ..Default::default()
         }),
         false => CCCommand::CrsGen(CrsParameters {
-            max_num_bits: 2048,
             extra_data,
+            ..Default::default()
         }),
     };
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing CRS-gen");
+    let crs_gen_results = execute_cmd(&config, test_path).await.unwrap();
+    println!("CRS-gen done");
+    assert_eq!(crs_gen_results.len(), 1);
+    let crs_id = match crs_gen_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing keygen"),
+    };
+
+    crs_id.to_string()
+}
+
+async fn crs_gen_with_custom_conf(
+    config_path: &str,
+    test_path: &Path,
+    insecure_crs_gen: bool,
+    epoch_id: EpochId,
+    context_id: ContextId,
+    extra_data: Option<String>,
+) -> String {
+    let params = CrsParameters {
+        max_num_bits: 2048,
+        epoch_id: Some(epoch_id),
+        context_id: Some(context_id),
+        extra_data,
+    };
+
+    let command = match insecure_crs_gen {
+        true => CCCommand::InsecureCrsGen(params),
+        false => CCCommand::CrsGen(params),
+    };
+    let config = CmdConfig {
+        file_conf: Some(vec![config_path.to_string()]),
         command,
         logs: true,
         max_iter: 200,
@@ -1745,6 +1789,17 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     )
     .await;
 
+    // do crs gen
+    let crs_id = crs_gen_with_custom_conf(
+        config_path_set_1.to_str().unwrap(),
+        test_path,
+        false,
+        epoch_id_set_1,
+        context_id_set_1,
+        None,
+    )
+    .await;
+
     // download the key materials
     let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
         .path(config_path_set_1.to_str().unwrap())
@@ -1781,6 +1836,21 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let public_key_digest =
         hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
 
+    let _ = fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false)
+        .await
+        .unwrap();
+    let crs_id = RequestId::from_str(&crs_id).unwrap();
+
+    let crs: CompactPkeCrs = load_material_from_pub_storage(
+        Some(test_path),
+        &crs_id,
+        PubDataType::CRS,
+        Some(object_folder),
+    )
+    .await;
+    let crs_digest =
+        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap());
+
     // create and store second mpc context
     // create and store mpc context
     println!("Creating second MPC context");
@@ -1814,6 +1884,10 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
                 key_id: key_id.into(),
                 preproc_id: RequestId::from_str(&preproc_id).unwrap(),
                 key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
+            }],
+            previous_crs: vec![PreviousCrsInfo {
+                crs_id,
+                digest: crs_digest,
             }],
         }),
     });
