@@ -52,6 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 epoch_id: Some(req_id.clone()),
                 context_id: None,
                 previous_epoch: None,
+                // WARNING: domain is set to None here, as this CLI currently only supports
+                // initializing the KMS for the first epoch.
                 domain: None,
             };
             let _ = kms_client.new_mpc_epoch(request).await.unwrap();
