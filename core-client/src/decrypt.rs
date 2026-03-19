@@ -213,8 +213,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
 
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let res = result??;
-        let req_id = res.0;
+        let (req_id, resp_msg) = result??;
         let elapsed = timings_start
             .remove(&req_id)
             .unwrap_or_else(|| {
@@ -222,7 +221,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             })
             .elapsed();
         durations.push(elapsed);
-        result_vec.push((Some(res.0), res.1));
+        result_vec.push((Some(req_id), resp_msg));
     }
 
     print_timings("public decrypt", &mut durations, start);
@@ -461,8 +460,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     }
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let res = result??;
-        let req_id = res.0;
+        let (req_id, resp_msg) = result??;
         let elapsed = timings_start
             .remove(&req_id)
             .unwrap_or_else(|| {
@@ -470,7 +468,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             })
             .elapsed();
         durations.push(elapsed);
-        result_vec.push((Some(res.0), res.1));
+        result_vec.push((Some(req_id), resp_msg));
     }
 
     print_timings("user decrypt", &mut durations, start);

@@ -43,7 +43,7 @@ pub async fn create_test_context_info_from_core_config(
         let core_config: CoreConfig = init_conf(
             config_path
                 .to_str()
-                .expect("Config path is not valid UTF-8"),
+                .expect("Config path to be a valid UTF-8"),
         )
         .map_err(|e| anyhow::anyhow!("Failed to init config due to error: {e}"))
         .unwrap();
