@@ -209,7 +209,9 @@ fn verify_epoch_info(
                 key_parameters,
                 key_digests,
                 eip712_domain,
-                extra_data: vec![], //TODO: for RFC005 add this field to request and here
+                // TODO: for RFC005 add this field to request and here
+                // this will come externally, i.e., via KeyInfo
+                extra_data: vec![],
             })
         })
         .try_collect()?;

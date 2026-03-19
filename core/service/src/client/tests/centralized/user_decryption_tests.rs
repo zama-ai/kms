@@ -275,6 +275,7 @@ pub(crate) async fn user_decryption_centralized(
                         None,
                         None,
                         PkeSchemeType::MlKem1024,
+                        &[],
                     )
                     .unwrap()
             } else {
@@ -287,6 +288,7 @@ pub(crate) async fn user_decryption_centralized(
                         None,
                         None,
                         PkeSchemeType::MlKem512,
+                        &[],
                     )
                     .unwrap()
             }

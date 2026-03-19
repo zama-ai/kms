@@ -115,6 +115,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
@@ -137,6 +138,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         let core_endpoints_resp = core_endpoints_resp.clone();
         let ptxt = ptxt.clone();
         let kms_addrs = kms_addrs.clone();
+        let extra_data = extra_data.clone();
 
         // start timing measurement for this request
         timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
@@ -150,6 +152,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 context_id.as_ref(),
                 &key_id.into(),
                 epoch_id.as_ref(),
+                &extra_data,
             )?;
 
             // make parallel requests by calling [decrypt] in a thread
@@ -243,6 +246,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
@@ -264,6 +268,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         let core_endpoints_req = core_endpoints_req.clone();
         let core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
+        let extra_data = extra_data.clone();
 
         // start timing measurement for this request
         timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
@@ -278,6 +283,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 context_id.as_ref(),
                 epoch_id.as_ref(),
                 PkeSchemeType::MlKem512,
+                &extra_data,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;

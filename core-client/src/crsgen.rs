@@ -31,6 +31,7 @@ pub(crate) async fn do_crsgen(
     param: FheParameter,
     insecure: bool,
     destination_prefix: &Path,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -107,7 +108,7 @@ pub(crate) async fn do_crsgen(
         destination_prefix,
         req_id,
         domain,
-        vec![],
+        extra_data,
         resp_response_vec,
         cmd_conf.download_all,
     )
