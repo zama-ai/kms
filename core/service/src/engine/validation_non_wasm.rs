@@ -810,19 +810,21 @@ fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ResharingParams {
     pub previous_epoch: PreviousEpochInfo,
     /// The EIP-712 domain used to sign the reshared key results.
     pub signing_domain: Eip712Domain,
 }
 
+#[derive(Debug)]
 pub(crate) struct VerifiedNewMpcEpochRequest {
     pub context_id: ContextId,
     pub epoch_id: EpochId,
     pub resharing: Option<ResharingParams>,
 }
 
-pub(crate) async fn validate_new_mpc_epoch_request(
+pub(crate) fn validate_new_mpc_epoch_request(
     req: NewMpcEpochRequest,
 ) -> Result<VerifiedNewMpcEpochRequest, MetricedError> {
     unpack_new_mpc_epoch_req(req).map_err(|e| {
@@ -866,9 +868,9 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{
-            self, PublicDecryptionRequest, PublicDecryptionResponse,
-            PublicDecryptionResponsePayload, TypedCiphertext, TypedPlaintext,
-            UserDecryptionRequest,
+            self, NewMpcEpochRequest, PreviousEpochInfo, PublicDecryptionRequest,
+            PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
+            TypedPlaintext, UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
         RequestId,
@@ -884,7 +886,9 @@ mod tests {
         dummy_domain,
         engine::{
             base::{compute_external_pt_signature, derive_request_id},
-            validation::{parse_grpc_request_id, RequestIdParsingErr},
+            validation::{
+                parse_grpc_request_id, validate_new_mpc_epoch_request, RequestIdParsingErr,
+            },
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
             },
@@ -1832,6 +1836,33 @@ mod tests {
                 2,
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_validate_new_mpc_epoch_request() {
+        // When previous_epoch is set but domain is None, optional_protobuf_to_alloy_domain
+        // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: Some(PreviousEpochInfo::default()),
+                domain: None,
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        // Happy path
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: Some(PreviousEpochInfo::default()),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }
 

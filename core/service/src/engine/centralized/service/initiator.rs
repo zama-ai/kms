@@ -43,7 +43,7 @@ pub async fn init_impl<
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
-    let verified_request = validate_new_mpc_epoch_request(inner).await?;
+    let verified_request = validate_new_mpc_epoch_request(inner)?;
 
     if !service
         .context_manager

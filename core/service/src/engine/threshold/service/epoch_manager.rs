@@ -1191,7 +1191,7 @@ impl<
             context_id,
             epoch_id,
             resharing: resharing_params,
-        } = validate_new_mpc_epoch_request(inner).await?;
+        } = validate_new_mpc_epoch_request(inner)?;
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(MetricedError::new(
