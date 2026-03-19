@@ -1552,7 +1552,7 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls 0.21.12",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
@@ -3811,7 +3811,7 @@ dependencies = [
  "http 1.3.1",
  "hyper 1.8.1",
  "hyper-util",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
@@ -4280,7 +4280,7 @@ dependencies = [
  "rcgen",
  "rsa",
  "rstest",
- "rustls-webpki 0.103.7",
+ "rustls-webpki 0.103.9",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -5872,7 +5872,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "socket2 0.6.1",
  "thiserror 2.0.12",
  "tokio",
@@ -5892,7 +5892,7 @@ dependencies = [
  "rand 0.9.2",
  "ring",
  "rustc-hash",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.12",
@@ -6238,7 +6238,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -6518,16 +6518,15 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c665f33d38cea657d9614f766881e4d510e0eda4239891eea56b4cadcf01801b"
+version = "0.23.37"
+source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23-k256#b459952c88fc64c0a1352447cd5e10284670166f"
 dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.7",
+ "rustls-webpki 0.103.9",
  "subtle",
  "zeroize",
 ]
@@ -6587,8 +6586,8 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.7"
-source = "git+https://github.com/zama-ai/webpki.git?branch=0.103.7-k256#173cd968166e1429958b24da242cba93700c9ac0"
+version = "0.103.9"
+source = "git+https://github.com/zama-ai/webpki.git?branch=rel-0.103-k256#0b5ee7b1de0b2d87457c0bf1cc93f8e442f3a3c1"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -7689,7 +7688,7 @@ dependencies = [
  "rcgen",
  "redis",
  "rstest",
- "rustls-webpki 0.103.7",
+ "rustls-webpki 0.103.9",
  "serde",
  "serial_test",
  "sha2",
@@ -7858,7 +7857,7 @@ version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "tokio",
 ]
 
