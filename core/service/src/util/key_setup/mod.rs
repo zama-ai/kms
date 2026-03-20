@@ -34,6 +34,7 @@ use crate::vault::storage::{
     store_versioned_at_request_id, Storage, StorageReader, StorageType,
 };
 use itertools::Itertools;
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use std::collections::HashMap;
@@ -931,12 +932,22 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
     tls_wildcard: bool,
 ) -> anyhow::Result<()> {
     // self-sign a CA certificate with the private signing key
-    let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-        subject.as_str(),
-        tls_wildcard,
-        #[allow(deprecated)]
-        sk.sk(),
+    let sk_der = {
+        // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+        #[expect(deprecated)]
+        let ecdsa_sk = sk.sk();
+        ecdsa_sk.to_pkcs8_der()?
+    };
+    let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+        &sk_der.as_bytes().into(),
+        &rcgen::PKCS_ECDSA_P256K1_SHA256,
     )?;
+    let (ca_cert_ki, ca_cert, _ca_params) =
+        threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+            subject.as_str(),
+            tls_wildcard,
+            &ca_keypair,
+        )?;
 
     // Store self-signed CA certificate
     if let Err(store_err) = store_text_at_request_id(
@@ -955,7 +966,7 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
     }
     tracing::info!(
         "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
-        hex::encode(ca_cert_ki),
+        ca_cert_ki,
         req_id,
         pub_storage.info()
     );
