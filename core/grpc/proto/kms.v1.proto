@@ -782,9 +782,6 @@ message CrsInfo {
   // The digest of the generated CRS.
   // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
   bytes crs_digest = 2;
-
-  // The EIP712 domain from the initial CrsGenRequest
-  Eip712DomainMsg domain = 4;
 }
 
 message PreviousEpochInfo {

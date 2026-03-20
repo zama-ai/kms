@@ -32,7 +32,7 @@ use kms_grpc::{
         CrsGenResult, DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, KeyGenResult,
         NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
@@ -135,7 +135,6 @@ struct VerifiedKeyInfo {
 struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
-    pub eip712_domain: Eip712Domain,
     pub extra_data: Vec<u8>,
 }
 
@@ -227,20 +226,9 @@ fn verify_epoch_info(
             )
             .map_err(make_metriced_err)?;
 
-            let eip712_domain = optional_protobuf_to_alloy_domain(crs_info.domain.as_ref())
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_NEW_EPOCH,
-                        Some(*epoch_id_as_request_id),
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?;
-
             Ok(VerifiedCrsInfo {
                 crs_id,
                 crs_digest: crs_info.crs_digest,
-                eip712_domain,
                 extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
@@ -745,7 +733,7 @@ impl<
                 &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
                 &crs,
-                &crs_info.eip712_domain,
+                eip712_domain,
                 crs_info.extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
@@ -1448,7 +1436,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::KMSType,
     };
     use rand::SeedableRng;
     use threshold_fhe::{
@@ -1801,14 +1789,6 @@ pub(crate) mod tests {
         let preproc_id = derive_request_id("preproc_id").unwrap();
         let crs_id = derive_request_id("crs_id").unwrap();
 
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
-        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-
         let valid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
@@ -1824,7 +1804,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
@@ -1850,7 +1829,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1868,7 +1846,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1886,7 +1863,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1904,7 +1880,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1922,7 +1897,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1940,7 +1914,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1958,7 +1931,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1976,7 +1948,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1994,7 +1965,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -2012,7 +1982,6 @@ pub(crate) mod tests {
             crs_info: vec![CrsInfo {
                 crs_id: None,
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();

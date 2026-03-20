@@ -7,7 +7,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, PubDataType},
+    rpc_types::PubDataType,
     RequestId,
 };
 use kms_lib::{
@@ -81,8 +81,7 @@ impl PreviousEpochParameters {
                         e
                     )
                 })?,
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain())?),
-            });
+            })
         }
 
         let resp = PreviousEpochInfo {

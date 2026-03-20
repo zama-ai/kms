@@ -224,7 +224,6 @@ pub async fn wait_for_crsgen_result(
             })
             .collect();
         // domain should always exist
-        let domain_msg = req.domain.clone();
         let domain = protobuf_to_alloy_domain(&req.domain.clone().unwrap()).unwrap();
 
         // we need to setup the storage devices in the right order
@@ -275,7 +274,6 @@ pub async fn wait_for_crsgen_result(
         results.push(CrsInfo {
             crs_id: ref_response.request_id,
             crs_digest: ref_response.crs_digest,
-            domain: domain_msg,
         });
 
         // if there are only THRESHOLD results then we do not have consensus as at least THRESHOLD+1 is needed

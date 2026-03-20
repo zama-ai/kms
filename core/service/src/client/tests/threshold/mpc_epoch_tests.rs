@@ -5,7 +5,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{protobuf_to_alloy_domain, PubDataType},
+    rpc_types::PubDataType,
     ContextId, RequestId,
 };
 use serial_test::serial;
@@ -512,7 +512,6 @@ async fn run_new_epoch(
 
         for crs in &crs_info {
             let crs_id: RequestId = crs.crs_id.as_ref().unwrap().try_into().unwrap();
-            let domain = protobuf_to_alloy_domain(crs.domain.as_ref().unwrap()).unwrap();
 
             let res_storage: Vec<_> = crs_responses_per_party
                 .iter()
@@ -536,7 +535,7 @@ async fn run_new_epoch(
                 .process_distributed_crs_result(
                     &crs_id,
                     res_storage,
-                    &domain,
+                    &resharing_params.signing_domain,
                     vec![],
                     min_agree_count,
                 )
