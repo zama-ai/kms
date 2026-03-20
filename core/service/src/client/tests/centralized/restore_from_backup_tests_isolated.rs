@@ -295,6 +295,16 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
     let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
+    // CrsInfo is epoch-specific data, so delete_all_at_request_id skips it.
+    // We need to delete it explicitly at the epoch level.
+    let _ = crate::vault::storage::delete_at_request_and_epoch_id(
+        &mut priv_storage,
+        &req_id,
+        &epoch_id,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
+
     assert!(
         !priv_storage
             .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
