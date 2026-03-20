@@ -1820,7 +1820,6 @@ pub(crate) mod tests {
                 // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
                 // which may cause inconsistencies down the line.
                 key_digests: vec![],
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1847,7 +1846,6 @@ pub(crate) mod tests {
                 // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
                 // which may cause inconsistencies down the line.
                 key_digests: vec![],
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1866,7 +1864,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1885,7 +1882,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1904,7 +1900,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1923,7 +1918,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1942,7 +1936,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1961,7 +1954,6 @@ pub(crate) mod tests {
                 preproc_id: Some(bad_req_id.clone()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1980,7 +1972,6 @@ pub(crate) mod tests {
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
@@ -1999,7 +1990,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
@@ -2018,7 +2008,6 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: None,

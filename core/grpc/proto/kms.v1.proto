@@ -773,7 +773,6 @@ message KeyInfo {
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
   // If there are no key_digests, the digest verification is skipped.
   repeated KeyDigest key_digests = 4;
-  Eip712DomainMsg domain = 5;
 }
 
 message CrsInfo {

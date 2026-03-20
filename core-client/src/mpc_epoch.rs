@@ -67,7 +67,6 @@ impl PreviousEpochParameters {
                 preproc_id: Some(previous_key_info.preproc_id.into()),
                 key_parameters: fhe_params.into(),
                 key_digests: digest,
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain())?),
             });
         }
 

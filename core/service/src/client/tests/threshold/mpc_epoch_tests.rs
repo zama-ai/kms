@@ -5,7 +5,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, protobuf_to_alloy_domain, PubDataType},
+    rpc_types::{protobuf_to_alloy_domain, PubDataType},
     ContextId, RequestId,
 };
 use serial_test::serial;
@@ -211,7 +211,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                     digest: public_key_digest,
                 },
             ],
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
         });
         keysets.push((
             key_req_id,
@@ -485,7 +484,6 @@ async fn run_new_epoch(
                 preproc_id,
                 key_parameters: _,
                 key_digests: _,
-                domain: _,
             } = key_info;
 
             let preproc_id = preproc_id.as_ref().unwrap().try_into().unwrap();
