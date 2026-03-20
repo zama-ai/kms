@@ -6113,7 +6113,7 @@ dependencies = [
 [[package]]
 name = "rcgen"
 version = "0.14.7"
-source = "git+https://github.com/zama-ai/rcgen.git?branch=k256#f8582f243899a7eff1a6524b42da60faaec73f15"
+source = "git+https://github.com/zama-ai/rcgen.git#17504e6dd9c430784dd83a81db7a865b0db38e5d"
 dependencies = [
  "aws-lc-rs",
  "pem",
@@ -6519,7 +6519,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.23.37"
-source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23-k256#b459952c88fc64c0a1352447cd5e10284670166f"
+source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#49aa4091eae6a73f575bebeae28d370acd74f8b6"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6587,7 +6587,7 @@ dependencies = [
 [[package]]
 name = "rustls-webpki"
 version = "0.103.9"
-source = "git+https://github.com/zama-ai/webpki.git?branch=rel-0.103-k256#0b5ee7b1de0b2d87457c0bf1cc93f8e442f3a3c1"
+source = "git+https://github.com/zama-ai/webpki.git?branch=rel-0.103#9558707f39b97060b527966de76943e7ed40a022"
 dependencies = [
  "aws-lc-rs",
  "ring",
