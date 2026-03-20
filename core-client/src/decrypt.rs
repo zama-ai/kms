@@ -605,7 +605,16 @@ pub(crate) async fn get_public_decrypt_responses(
             .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
             .plaintexts
             .len();
-        (dummy_domain(), vec![dummy_handle(); num_handles], vec![])
+        let extra_data = resp_response_vec
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
+            .extra_data
+            .clone();
+        (
+            dummy_domain(),
+            vec![dummy_handle(); num_handles],
+            extra_data,
+        )
     };
 
     // check the internal signatures
