@@ -122,17 +122,18 @@ impl Client {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new_epoch_request(
         &self,
         to_context_id: &ContextId,
         to_epoch_id: &EpochId,
         previous_epoch: Option<PreviousEpochInfo>,
+        domain: Option<&Eip712Domain>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
         Ok(NewMpcEpochRequest {
             context_id: Some((*to_context_id).into()),
             epoch_id: Some((*to_epoch_id).into()),
             previous_epoch,
+            domain: domain.map(alloy_to_protobuf_domain).transpose()?,
         })
     }
 
