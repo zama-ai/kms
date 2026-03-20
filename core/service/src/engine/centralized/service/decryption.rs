@@ -373,7 +373,7 @@ pub async fn public_decrypt_impl<
                     &sig_key,
                     ext_handles_bytes,
                     &pts,
-                    extra_data.clone(),
+                    &extra_data,
                     eip712_domain,
                 ) {
                     Ok(sig) => Ok((request_id, pts, sig, extra_data)),

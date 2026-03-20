@@ -494,6 +494,21 @@ impl CipherArguments {
             }
         }
     }
+
+    pub fn get_extra_data(&self) -> Vec<u8> {
+        let hex_str = match self {
+            CipherArguments::FromFile(cipher_file) => &cipher_file.extra_data,
+            CipherArguments::FromArgs(cipher_parameters) => &cipher_parameters.extra_data,
+        };
+        parse_extra_data(hex_str)
+    }
+}
+
+fn parse_extra_data(hex_str: &Option<String>) -> Vec<u8> {
+    hex_str
+        .as_ref()
+        .map(|s| hex::decode(s.strip_prefix("0x").unwrap_or(s)).expect("invalid hex in extra_data"))
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -553,6 +568,11 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, default_value_t = false)]
     pub compressed_keys: bool,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -573,6 +593,10 @@ pub struct CipherFile {
     /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -601,6 +625,10 @@ pub struct SharedKeyGenParameters {
     pub use_existing_key_tag: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -626,6 +654,10 @@ pub struct CrsParameters {
     pub epoch_id: Option<EpochId>,
     #[clap(long)]
     pub context_id: Option<ContextId>,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 impl Default for CrsParameters {
@@ -634,6 +666,7 @@ impl Default for CrsParameters {
             max_num_bits: 2048,
             epoch_id: None,
             context_id: None,
+            extra_data: None,
         }
     }
 }
@@ -1667,6 +1700,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
+                cipher_args.get_extra_data(),
             )
             .await?
         }
@@ -1742,6 +1776,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 cipher_args.get_inter_request_delay_ms(),
                 cipher_args.get_parallel_requests(),
+                cipher_args.get_extra_data(),
             )
             .await?
         }
@@ -1767,6 +1802,7 @@ pub async fn execute_cmd(
                 false,
                 shared_args,
                 destination_prefix,
+                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1792,6 +1828,7 @@ pub async fn execute_cmd(
                 true,
                 shared_args,
                 destination_prefix,
+                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1801,6 +1838,7 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
+            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1822,6 +1860,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
+                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
@@ -1830,6 +1869,7 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
+            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1851,6 +1891,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
+                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]

@@ -591,7 +591,7 @@ impl<
                         &sigkey,
                         ext_handles_bytes,
                         &pts,
-                        extra_data.clone(),
+                        &extra_data,
                         eip712_domain,
                     )
                 })

@@ -1376,12 +1376,14 @@ async fn crs_gen_isolated_with_params(
             max_num_bits,
             epoch_id: Some(epoch_id),
             context_id: Some(context_id),
+            extra_data: None,
         })
     } else {
         CCCommand::CrsGen(CrsParameters {
             max_num_bits,
             epoch_id: Some(epoch_id),
             context_id: Some(context_id),
+            extra_data: None,
         })
     };
 
@@ -1440,6 +1442,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1455,6 +1458,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1470,6 +1474,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1485,6 +1490,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xFFFF".to_string(),
@@ -1500,6 +1506,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
@@ -1516,6 +1523,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
@@ -1532,6 +1540,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
@@ -1548,6 +1557,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: Some(ctxt_path.clone()),
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1555,6 +1565,7 @@ async fn integration_test_commands_isolated(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.clone(),
@@ -1562,6 +1573,7 @@ async fn integration_test_commands_isolated(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: None,
         })),
     ];
 
@@ -1581,6 +1593,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x78".to_string(),
@@ -1596,6 +1609,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1611,6 +1625,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1626,6 +1641,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
@@ -1642,6 +1658,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
@@ -1658,6 +1675,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
@@ -1674,6 +1692,7 @@ async fn integration_test_commands_isolated(
             ciphertext_output_path: Some(ctxt_with_sns_path.clone()),
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1681,6 +1700,7 @@ async fn integration_test_commands_isolated(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.clone(),
@@ -1688,6 +1708,7 @@ async fn integration_test_commands_isolated(
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: None,
         })),
     ];
 
@@ -1806,6 +1827,7 @@ async fn integration_test_commands_compressed_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: true,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x78".to_string(),
@@ -1821,6 +1843,7 @@ async fn integration_test_commands_compressed_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: true,
+            extra_data: None,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1836,6 +1859,7 @@ async fn integration_test_commands_compressed_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: true,
+            extra_data: None,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
@@ -1852,6 +1876,7 @@ async fn integration_test_commands_compressed_isolated(
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: true,
+            extra_data: None,
         })),
     ];
 
@@ -2053,6 +2078,7 @@ async fn real_preproc_and_keygen_compressed_isolated(
                 compressed: true,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
+                extra_data: None,
                 use_existing_key_tag: false,
                 context_id: None,
                 epoch_id: None,
@@ -3098,6 +3124,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         })),
         logs: true,
         max_iter: 200,
