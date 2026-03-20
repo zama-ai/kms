@@ -24,6 +24,13 @@ use crate::{
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
+/// Groups EIP-712 external signature verification parameters.
+pub(crate) struct Eip712VerificationParams<'a> {
+    pub external_signature: &'a [u8],
+    pub extra_data: &'a [u8],
+    pub eip712_domain: &'a Eip712Domain,
+}
+
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
 
@@ -64,16 +71,13 @@ pub(crate) fn check_ext_user_decryption_signature(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_user_decrypt_meta_data_and_signature(
     server_addresses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
     signature: &[u8],
-    external_signature: &[u8],
-    eip712_domain: &Eip712Domain,
-    extra_data: &[u8],
+    eip712_params: &Eip712VerificationParams,
 ) -> anyhow::Result<()> {
     let pivot_type = pivot_resp.fhe_types()?;
     let check_type = other_resp.fhe_types()?;
@@ -125,19 +129,19 @@ fn validate_user_decrypt_meta_data_and_signature(
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
         // check signature
-        if external_signature.is_empty() {
+        if eip712_params.external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
             ));
         }
 
         check_ext_user_decryption_signature(
-            external_signature,
+            eip712_params.external_signature,
             other_resp,
             client_request,
-            eip712_domain,
+            eip712_params.eip712_domain,
             expected_addr,
-            extra_data,
+            eip712_params.extra_data,
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
@@ -227,10 +231,12 @@ where
         }
     }
 
-    // turn the values in the hashmap to a vector and sort by occurence
+    // Turn the values in the hashmap to a vector and sort by occurence.
+    // If there is a tie, we use the original index as tie breaker,
+    // which is why we compare on the occurance and then on the index.
     let first = occurence_map
         .values()
-        .sorted_by(|a, b| a.0.cmp(&b.0))
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
         .next_back();
 
     Ok(match first {
@@ -303,15 +309,18 @@ fn validate_user_decrypt_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
+        let eip712_params = Eip712VerificationParams {
+            external_signature: &cur_resp.external_signature,
+            extra_data: &cur_resp.extra_data,
+            eip712_domain,
+        };
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             server_addresses,
             client_request,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
-            &cur_resp.external_signature,
-            eip712_domain,
-            &cur_resp.extra_data,
+            &eip712_params,
         ) {
             tracing::warn!(
                 "User decryption validation failed for party {} with error: {e:?}",
@@ -454,8 +463,8 @@ mod tests {
     use super::{
         check_ext_user_decryption_signature, select_most_common_user_dec,
         validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
-        validate_user_decrypt_responses_against_request, DSEP_USER_DECRYPTION,
-        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        validate_user_decrypt_responses_against_request, Eip712VerificationParams,
+        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -682,15 +691,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -711,15 +723,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -740,15 +755,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -757,15 +775,18 @@ mod tests {
 
         // no signatures are provided
         {
+            let params = Eip712VerificationParams {
+                external_signature: &[],
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &[],
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -776,15 +797,18 @@ mod tests {
         {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 10;
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[],
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -795,15 +819,18 @@ mod tests {
         {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 2; // originally the ID is 1
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[],
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -814,15 +841,18 @@ mod tests {
 
         // happy path for empty ECDSA, so we check external signature
         {
+            let params = Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap();
         }
@@ -832,15 +862,18 @@ mod tests {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
+            let params = Eip712VerificationParams {
+                external_signature: &[],
+                extra_data: &extra_data,
+                eip712_domain: &dummy_domain,
+            };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &signature_buf,
-                &[],
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap();
         }
