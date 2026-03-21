@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 
 use crate::choreography::choreographer::NetworkTopology;
-use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::party::Identity;
+use algebra::role::Role;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;

@@ -59,6 +59,7 @@ attestation-doc-validation.workspace = true
 bc2wrap.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
+hashing.workspace = true
 hex.workspace = true
 k256.workspace = true
 kms = { workspace = true, default-features = false, features = [

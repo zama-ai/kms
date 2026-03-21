@@ -1,21 +1,15 @@
-use crate::algebra::structure_traits::Ring;
 use crate::commitment::KEY_BYTE_LEN;
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use crate::session_id::SessionId;
 #[allow(deprecated)]
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
+use algebra::structure_traits::Ring;
+pub use algebra::PRSSConversions;
+use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
-use tfhe::Versionize;
-use tfhe_versionable::VersionsDispatch;
-
-/// Trait required for PRSS executions
-pub trait PRSSConversions {
-    fn from_u128_chunks(coefs: Vec<u128>) -> Self;
-    fn from_i128(value: i128) -> Self;
-}
+use tfhe_versionable::{Versionize, VersionsDispatch};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrfKeyVersioned {
@@ -218,10 +212,8 @@ fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
-    };
+    use crate::execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
+    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 
     #[test]
     fn test_phi() {

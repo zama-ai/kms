@@ -9,30 +9,30 @@ use tonic::async_trait;
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::ErrorCorrect,
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{
             generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
             send_to_all,
         },
         online::preprocessing::constants::BATCH_SIZE_BITS,
-        runtime::{
-            party::{Role, TwoSetsRole},
-            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
-        },
+        runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
     },
     networking::value::NetworkValue,
-    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
-
-use super::{
-    shamir::{
-        fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync, ShamirSharings,
+use algebra::{
+    role::{Role, TwoSetsRole},
+    sharing::{
+        shamir::{
+            fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync,
+            ShamirSharings,
+        },
+        share::Share,
     },
-    share::Share,
+    structure_traits::ErrorCorrect,
 };
+use error_utils::anyhow_error_and_log;
+use thread_handles::spawn_compute_bound;
 
 /// Enum to state whether we want to open
 /// only to some designated parties or
@@ -571,15 +571,10 @@ pub(crate) mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
-    use crate::algebra::structure_traits::{
-        ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
-    };
-    use crate::execution::runtime::party::{Role, TwoSetsRole, TwoSetsThreshold};
     use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::open::ExternalOpeningInfo;
-    use crate::execution::sharing::shamir::InputOp;
     use crate::execution::small_execution::prf::PRSSConversions;
     use crate::malicious_execution::open::malicious_open::{
         MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
@@ -589,9 +584,11 @@ pub(crate) mod test {
         execute_protocol_small_w_malicious, execute_protocol_two_sets_w_malicious,
         TestingParameters,
     };
-    use crate::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z128,
-        execution::sharing::shamir::ShamirSharings,
+    use algebra::{
+        galois_rings::degree_4::ResiduePolyF4Z128,
+        role::{Role, TwoSetsRole, TwoSetsThreshold},
+        sharing::shamir::{InputOp, ShamirSharings},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     };
 
     use super::{RobustOpen, SecureRobustOpen};
@@ -809,11 +806,8 @@ pub(crate) mod test {
         num_parties_set_1: usize,
         robust_open: RO,
         session: TwoSetsBaseSession,
-    ) -> (
-        crate::execution::runtime::party::TwoSetsRole,
-        Option<Vec<Z>>,
-        Option<Vec<Z>>,
-    ) {
+    ) -> (algebra::role::TwoSetsRole, Option<Vec<Z>>, Option<Vec<Z>>) {
+        use algebra::role::TwoSetsRole;
         let mut secrets = None;
         let mut input_map = None;
         let mut external_opening_info = None;
@@ -833,14 +827,9 @@ pub(crate) mod test {
 
             let mut inner_input_map = HashMap::new();
             for outer_output_role in session.roles().iter() {
-                if let crate::execution::runtime::party::TwoSetsRole::Set2(inner_output_role) =
-                    outer_output_role
-                {
+                if let TwoSetsRole::Set2(inner_output_role) = outer_output_role {
                     inner_input_map.insert(*outer_output_role, vec![shares[inner_output_role]]);
-                } else if let crate::execution::runtime::party::TwoSetsRole::Both(
-                    inner_output_role_both,
-                ) = outer_output_role
-                {
+                } else if let TwoSetsRole::Both(inner_output_role_both) = outer_output_role {
                     println!("Inserting share for both role {:?}", inner_output_role_both);
                     inner_input_map.insert(
                         *outer_output_role,

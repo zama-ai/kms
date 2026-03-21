@@ -56,8 +56,6 @@ pub mod sharing {
     pub mod input;
     #[cfg(feature = "non-wasm")]
     pub mod open;
-    pub mod shamir;
-    pub mod share;
 }
 
 pub mod tfhe_internals {

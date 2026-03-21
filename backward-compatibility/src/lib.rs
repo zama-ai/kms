@@ -926,7 +926,7 @@ pub enum TestMetadataDD {
     PrfKey(PrfKeyTest),
     Share(ShareTest),
     ReleasePCRValues(ReleasePCRValuesTest),
-    PrivateKeySet(PrivateKeySetTest),
+    PrivateKeySet(Box<PrivateKeySetTest>),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

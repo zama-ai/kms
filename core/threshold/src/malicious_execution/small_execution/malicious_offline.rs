@@ -1,7 +1,6 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
         communication::broadcast::Broadcast,
         config::BatchParams,
@@ -11,6 +10,7 @@ use crate::{
     },
     ProtocolDescription,
 };
+use algebra::structure_traits::{ErrorCorrect, Ring};
 
 /// Malicious implementation of [`Preprocessing`]
 /// for any kind of session that never communicates

@@ -15,25 +15,23 @@ use tfhe::{
 };
 use tfhe_versionable::VersionsDispatch;
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
+use crate::execution::{
+    online::{
+        preprocessing::{BitPreprocessing, DKGPreprocessing},
+        triple::open_list,
     },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::{
-            preprocessing::{BitPreprocessing, DKGPreprocessing},
-            triple::open_list,
-        },
-        runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-        tfhe_internals::{
-            parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
-            utils::compute_hamming_weight_lwe_sk,
-        },
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{
+        parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
+        utils::compute_hamming_weight_lwe_sk,
     },
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
+};
+use error_utils::anyhow_error_and_log;
 
 use super::{
     glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
@@ -346,11 +344,6 @@ mod tests {
     use tfhe_csprng::generators::SoftwareRandomGenerator;
 
     use crate::{
-        algebra::{
-            base_ring::Z64,
-            galois_rings::degree_4::ResiduePolyF4Z64,
-            structure_traits::{One, Ring, Zero},
-        },
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
@@ -370,6 +363,11 @@ mod tests {
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use algebra::{
+        base_ring::Z64,
+        galois_rings::degree_4::ResiduePolyF4Z64,
+        structure_traits::{One, Ring, Zero},
     };
 
     use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
