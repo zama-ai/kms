@@ -32,7 +32,7 @@ use kms_grpc::{
         CrsGenResult, DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, KeyGenResult,
         NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
@@ -87,7 +87,7 @@ use crate::{
         utils::MetricedError,
         validation::{
             parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
-            RequestIdParsingErr,
+            RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
         },
     },
     util::{
@@ -128,7 +128,6 @@ struct VerifiedKeyInfo {
     /// The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
-    pub eip712_domain: Eip712Domain,
     pub extra_data: Vec<u8>,
 }
 
@@ -136,7 +135,6 @@ struct VerifiedKeyInfo {
 struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
-    pub eip712_domain: Eip712Domain,
     pub extra_data: Vec<u8>,
 }
 
@@ -188,16 +186,6 @@ fn verify_epoch_info(
             )
             .map_err(make_metriced_err)?;
 
-            let eip712_domain = optional_protobuf_to_alloy_domain(key_info.domain.as_ref())
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_NEW_EPOCH,
-                        Some(*epoch_id_as_request_id),
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?;
-
             let key_parameters =
                 retrieve_parameters(Some(key_info.key_parameters)).map_err(make_metriced_err)?;
 
@@ -223,7 +211,6 @@ fn verify_epoch_info(
                 preproc_id,
                 key_parameters,
                 key_digests,
-                eip712_domain,
                 // TODO: for RFC005 add this field to request and here
                 // this will come externally, i.e., via KeyInfo
                 extra_data: vec![],
@@ -241,20 +228,9 @@ fn verify_epoch_info(
             )
             .map_err(make_metriced_err)?;
 
-            let eip712_domain = optional_protobuf_to_alloy_domain(crs_info.domain.as_ref())
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_NEW_EPOCH,
-                        Some(*epoch_id_as_request_id),
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })?;
-
             Ok(VerifiedCrsInfo {
                 crs_id,
                 crs_digest: crs_info.crs_digest,
-                eip712_domain,
                 extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
@@ -630,9 +606,9 @@ impl<
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Stores the reshared keys and updates the meta store.
     /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
+    #[allow(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
@@ -641,6 +617,7 @@ impl<
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
         verified_materials: Vec<VerifiedPublicMaterial>,
         new_private_keysets: Vec<PrivateKeySet<4>>,
+        eip712_domain: &Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
     ) -> anyhow::Result<()> {
         let mut fhe_key_infos = Vec::new();
@@ -664,7 +641,7 @@ impl<
                         &key_info.preproc_id,
                         &key_info.key_id,
                         &fhe_pubkeys,
-                        &key_info.eip712_domain,
+                        eip712_domain,
                         key_info.extra_data.clone(),
                     ) {
                         Ok(info) => info,
@@ -706,7 +683,7 @@ impl<
                         &key_info.preproc_id,
                         &key_info.key_id,
                         &compressed_keyset,
-                        &key_info.eip712_domain,
+                        eip712_domain,
                         key_info.extra_data.clone(),
                     ) {
                         Ok(info) => info,
@@ -758,7 +735,7 @@ impl<
                 &DSEP_PUBDATA_CRS,
                 &crs_info.crs_id,
                 &crs,
-                &crs_info.eip712_domain,
+                eip712_domain,
                 crs_info.extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
@@ -789,6 +766,7 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
+        eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
@@ -868,6 +846,7 @@ impl<
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
+                &eip712_domain,
                 crs_info,
             )
             .await
@@ -882,6 +861,7 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
+        eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
     ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
@@ -990,6 +970,7 @@ impl<
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
+                &eip712_domain,
                 crs_info,
             )
             .await
@@ -1096,6 +1077,7 @@ impl<
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
         previous_epoch: PreviousEpochInfo,
+        eip712_domain: Eip712Domain,
     ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
@@ -1157,6 +1139,7 @@ impl<
                     *new_epoch_id,
                     *new_context_id,
                     verified_previous_epoch,
+                    eip712_domain,
                     crs_info,
                 )
                 .await?
@@ -1167,6 +1150,7 @@ impl<
                     *new_epoch_id,
                     *new_context_id,
                     verified_previous_epoch,
+                    eip712_domain,
                     crs_info,
                 )
                 .await?
@@ -1193,8 +1177,11 @@ impl<
         let permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
-        let (context_id, epoch_id, previous_epoch_info) =
-            validate_new_mpc_epoch_request(inner).await?;
+        let VerifiedNewMpcEpochRequest {
+            context_id,
+            epoch_id,
+            resharing: resharing_params,
+        } = validate_new_mpc_epoch_request(inner)?;
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(MetricedError::new(
@@ -1205,10 +1192,18 @@ impl<
             ));
         }
 
-        let resharing_task = match previous_epoch_info {
-            Some(prev_epoch) => Some(
-                self.initiate_resharing_and_crs_resign(&context_id, &epoch_id, prev_epoch)
-                    .await?,
+        let resharing_task = match resharing_params {
+            Some(ResharingParams {
+                previous_epoch,
+                signing_domain,
+            }) => Some(
+                self.initiate_resharing_and_crs_resign(
+                    &context_id,
+                    &epoch_id,
+                    previous_epoch,
+                    signing_domain,
+                )
+                .await?,
             ),
             None => None,
         };
@@ -1443,7 +1438,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::KMSType,
     };
     use rand::SeedableRng;
     use threshold_fhe::{
@@ -1659,6 +1654,7 @@ pub(crate) mod tests {
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 previous_epoch: None,
+                domain: None,
             }))
             .await
             .unwrap();
@@ -1684,6 +1680,7 @@ pub(crate) mod tests {
                     epoch_id: Some(epoch_id.into()),
                     context_id: None,
                     previous_epoch: None,
+                    domain: None,
                 }))
                 .await
                 .unwrap_err()
@@ -1708,6 +1705,7 @@ pub(crate) mod tests {
                         epoch_id: Some(bad_epoch_id),
                         context_id: None,
                         previous_epoch: None,
+                        domain: None,
                     }))
                     .await
                     .unwrap_err()
@@ -1722,6 +1720,7 @@ pub(crate) mod tests {
                         epoch_id: None,
                         context_id: None,
                         previous_epoch: None,
+                        domain: None,
                     }))
                     .await
                     .unwrap_err()
@@ -1743,6 +1742,7 @@ pub(crate) mod tests {
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some(context_id.into()),
                 previous_epoch: None,
+                domain: None,
             }))
             .await
             .unwrap_err();
@@ -1761,6 +1761,7 @@ pub(crate) mod tests {
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
                 previous_epoch: None,
+                domain: None,
             }))
             .await
             .unwrap();
@@ -1772,6 +1773,7 @@ pub(crate) mod tests {
                     epoch_id: Some(epoch_id.into()),
                     context_id: None,
                     previous_epoch: None,
+                    domain: None,
                 }))
                 .await
                 .unwrap_err()
@@ -1789,14 +1791,6 @@ pub(crate) mod tests {
         let preproc_id = derive_request_id("preproc_id").unwrap();
         let crs_id = derive_request_id("crs_id").unwrap();
 
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
-        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
-
         let valid_previous_epoch = PreviousEpochInfo {
             context_id: Some(context_id.into()),
             epoch_id: Some(old_epoch_id.into()),
@@ -1808,12 +1802,10 @@ pub(crate) mod tests {
                 // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
                 // which may cause inconsistencies down the line.
                 key_digests: vec![],
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
@@ -1835,12 +1827,10 @@ pub(crate) mod tests {
                 // if the business logic (on gateway/L1) makes a mistake sends us empty digests,
                 // which may cause inconsistencies down the line.
                 key_digests: vec![],
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1854,12 +1844,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1873,12 +1861,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1892,12 +1878,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1911,12 +1895,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1930,12 +1912,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1949,12 +1929,10 @@ pub(crate) mod tests {
                 preproc_id: Some(bad_req_id.clone()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -1968,12 +1946,10 @@ pub(crate) mod tests {
                 preproc_id: None,
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
@@ -1987,12 +1963,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: Some(bad_req_id.clone()),
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
@@ -2006,12 +1980,10 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 key_parameters: FheParameter::Test as i32,
                 key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
-                domain: Some(domain.clone()),
             }],
             crs_info: vec![CrsInfo {
                 crs_id: None,
                 crs_digest: vec![],
-                domain: Some(domain.clone()),
             }],
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();

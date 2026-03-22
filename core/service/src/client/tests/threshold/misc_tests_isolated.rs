@@ -122,6 +122,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
                     epoch_id: Some(req_id.into()),
                     context_id: None,
                     previous_epoch: None,
+                    domain: None,
                 }))
                 .await
         });

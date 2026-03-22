@@ -7,7 +7,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, PubDataType},
+    rpc_types::PubDataType,
     RequestId,
 };
 use kms_lib::{
@@ -67,7 +67,6 @@ impl PreviousEpochParameters {
                 preproc_id: Some(previous_key_info.preproc_id.into()),
                 key_parameters: fhe_params.into(),
                 key_digests: digest,
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain())?),
             });
         }
 
@@ -82,8 +81,7 @@ impl PreviousEpochParameters {
                         e
                     )
                 })?,
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain())?),
-            });
+            })
         }
 
         let resp = PreviousEpochInfo {
@@ -124,8 +122,17 @@ pub(crate) async fn do_new_epoch(
         .as_ref()
         .map(|previous_epoch| previous_epoch.convert_to_grpc(fhe_params))
         .transpose()?;
-    let request =
-        internal_client.new_epoch_request(&new_context_id, &new_epoch_id, previous_epoch_grpc)?;
+    let domain = if new_epoch_params.previous_epoch_params.is_some() {
+        Some(dummy_domain())
+    } else {
+        None
+    };
+    let request = internal_client.new_epoch_request(
+        &new_context_id,
+        &new_epoch_id,
+        previous_epoch_grpc,
+        domain.as_ref(),
+    )?;
 
     // Send the request
     let mut req_tasks = JoinSet::new();

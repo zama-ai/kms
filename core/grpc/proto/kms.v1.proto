@@ -773,7 +773,6 @@ message KeyInfo {
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
   // If there are no key_digests, the digest verification is skipped.
   repeated KeyDigest key_digests = 4;
-  Eip712DomainMsg domain = 5;
 }
 
 message CrsInfo {
@@ -783,9 +782,6 @@ message CrsInfo {
   // The digest of the generated CRS.
   // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
   bytes crs_digest = 2;
-
-  // The EIP712 domain from the initial CrsGenRequest
-  Eip712DomainMsg domain = 4;
 }
 
 message PreviousEpochInfo {
@@ -811,6 +807,9 @@ message NewMpcEpochRequest {
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
   PreviousEpochInfo previous_epoch = 3;
+  // The EIP712 domain used for signing the reshared key results.
+  // Should be set when previous_epoch is set (resharing produces signed results).
+  Eip712DomainMsg domain = 4;
 }
 
 message EpochResultResponse {

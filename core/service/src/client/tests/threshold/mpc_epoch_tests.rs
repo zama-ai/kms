@@ -5,7 +5,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, protobuf_to_alloy_domain, PubDataType},
+    rpc_types::PubDataType,
     ContextId, RequestId,
 };
 use serial_test::serial;
@@ -40,6 +40,7 @@ use crate::{
     engine::{
         base::{derive_request_id, safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
         threshold::service::ThresholdFheKeys,
+        validation::ResharingParams,
     },
     util::{
         key_setup::{
@@ -210,7 +211,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                     digest: public_key_digest,
                 },
             ],
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
         });
         keysets.push((
             key_req_id,
@@ -239,11 +239,14 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     }
 
     assert_eq!(keys_info.len(), num_keys);
-    let previous_epoch = Some(PreviousEpochInfo {
-        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-        keys_info,
-        crs_info,
+    let resharing = Some(ResharingParams {
+        previous_epoch: PreviousEpochInfo {
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            keys_info,
+            crs_info,
+        },
+        signing_domain: dummy_domain(),
     });
 
     // Create the new epoch and reshare from previous one
@@ -257,7 +260,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         &internal_client,
         new_context_id,
         new_epoch_id,
-        previous_epoch,
+        resharing,
     )
     .await
     .unwrap();
@@ -378,13 +381,18 @@ async fn run_new_epoch(
     internal_client: &Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
-    previous_epoch: Option<PreviousEpochInfo>,
+    resharing: Option<ResharingParams>,
 ) -> Option<Vec<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)>> {
-    let num_keys = previous_epoch
+    let num_keys = resharing
         .as_ref()
-        .map_or(0, |epoch| epoch.keys_info.len());
+        .map_or(0, |r| r.previous_epoch.keys_info.len());
     let reshare_request = internal_client
-        .new_epoch_request(&new_context_id, &new_epoch_id, previous_epoch.clone())
+        .new_epoch_request(
+            &new_context_id,
+            &new_epoch_id,
+            resharing.as_ref().map(|r| r.previous_epoch.clone()),
+            resharing.as_ref().map(|r| &r.signing_domain),
+        )
         .unwrap();
 
     // Execute reshare
@@ -395,7 +403,7 @@ async fn run_new_epoch(
         tasks_reshare.spawn(async move { client.new_mpc_epoch(req).await });
     }
 
-    if let Some(previous_epoch) = previous_epoch {
+    if let Some(resharing_params) = resharing {
         tasks_reshare.join_all().await.into_iter().for_each(|res| {
             assert!(res.is_ok(), "Reshare party failed: {:?}", res.err());
         });
@@ -446,7 +454,7 @@ async fn run_new_epoch(
                                             .iter()
                                             .find(|kg_result| {
                                                 kg_result.request_id
-                                                    == previous_epoch.keys_info[key_idx].key_id
+                                                    == resharing_params.previous_epoch.keys_info[key_idx].key_id
                                             })
                                             .unwrap_or_else(|| panic!("Each party should have a response for the key {}",
                                                 key_idx))
@@ -462,10 +470,11 @@ async fn run_new_epoch(
 
         assert_eq!(responses_as_dkg.len(), num_keys);
 
-        let crs_info = previous_epoch.crs_info.clone();
+        let crs_info = resharing_params.previous_epoch.crs_info.clone();
 
         let mut outs = Vec::new();
-        for (key_info, responses) in previous_epoch
+        for (key_info, responses) in resharing_params
+            .previous_epoch
             .keys_info
             .into_iter()
             .zip_eq(responses_as_dkg)
@@ -475,7 +484,6 @@ async fn run_new_epoch(
                 preproc_id,
                 key_parameters: _,
                 key_digests: _,
-                domain: _,
             } = key_info;
 
             let preproc_id = preproc_id.as_ref().unwrap().try_into().unwrap();
@@ -486,7 +494,7 @@ async fn run_new_epoch(
                 internal_client,
                 &preproc_id,
                 &key_id,
-                &dummy_domain(),
+                &resharing_params.signing_domain,
                 amount_parties,
                 Some(new_epoch_id.into()),
                 false, // compressed
@@ -504,7 +512,6 @@ async fn run_new_epoch(
 
         for crs in &crs_info {
             let crs_id: RequestId = crs.crs_id.as_ref().unwrap().try_into().unwrap();
-            let domain = protobuf_to_alloy_domain(crs.domain.as_ref().unwrap()).unwrap();
 
             let res_storage: Vec<_> = crs_responses_per_party
                 .iter()
@@ -528,7 +535,7 @@ async fn run_new_epoch(
                 .process_distributed_crs_result(
                     &crs_id,
                     res_storage,
-                    &domain,
+                    &resharing_params.signing_domain,
                     vec![],
                     min_agree_count,
                 )
