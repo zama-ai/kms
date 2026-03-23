@@ -15,7 +15,8 @@ use crate::{
         TestingPlaintext,
     },
     vault::storage::{
-        delete_all_at_request_id, file::FileStorage, StorageReader, StorageReaderExt, StorageType,
+        delete_all_at_request_id, delete_at_request_and_epoch_id, file::FileStorage,
+        StorageReaderExt, StorageType,
     },
 };
 use execution::endpoints::decryption::DecryptionMode;
@@ -263,6 +264,7 @@ async fn test_insecure_threshold_crs_backup() {
         "test_insecure_threshold_crs_backup_{amount_parties}_{param:?}",
     ))
     .unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     let test_path = None;
     purge(
         test_path,
@@ -288,12 +290,17 @@ async fn test_insecure_threshold_crs_backup() {
     for prefix in priv_storage_prefixes {
         let mut priv_storage: FileStorage =
             FileStorage::new(test_path, StorageType::PRIV, prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut priv_storage, &req_id)
-            .await
-            .unwrap();
+        delete_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
         // Check that is has been removed
         assert!(!priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await
             .unwrap());
     }
@@ -329,7 +336,7 @@ async fn test_insecure_threshold_crs_backup() {
             FileStorage::new(test_path, StorageType::BACKUP, backup_prefix.as_deref()).unwrap();
         // Check the back up is still there
         assert!(backup_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await
             .unwrap());
         // Check that the file has been restored
@@ -337,7 +344,7 @@ async fn test_insecure_threshold_crs_backup() {
             FileStorage::new(test_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         // Check the back up is still there
         assert!(priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await
             .unwrap());
     }

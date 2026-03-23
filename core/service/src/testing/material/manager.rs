@@ -551,7 +551,7 @@ impl TestMaterialManager {
                         crs_id,
                     )
                     .await?;
-                    self.copy_key_files(
+                    self.copy_epoch_key_files(
                         &source_priv,
                         &dest_priv,
                         &PrivDataType::CrsInfo.to_string(),
@@ -574,7 +574,7 @@ impl TestMaterialManager {
                     crs_id,
                 )
                 .await?;
-                self.copy_key_files(
+                self.copy_epoch_key_files(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::CrsInfo.to_string(),

@@ -313,7 +313,7 @@ where
                         .await?;
                     }
                     PrivDataType::CrsInfo => {
-                        update_specific_backup_vault::<PrivS, CrsGenMetadata>(
+                        update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,

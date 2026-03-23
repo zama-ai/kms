@@ -250,6 +250,8 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
 async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
+    use crate::consts::DEFAULT_EPOCH_ID;
+
     // Setup using builder pattern with backup vault
     let env = CentralizedTestEnv::builder()
         .with_test_name("crs_backup")
@@ -262,6 +264,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let mut client = env.client;
 
     let req_id = derive_request_id("isolated-crs-backup")?;
+    let epoch_id = *DEFAULT_EPOCH_ID;
 
     let domain_msg = domain_to_msg(&dummy_domain());
     let req = CrsGenRequest {
@@ -270,7 +273,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         max_num_bits: Some(16),
         domain: Some(domain_msg),
         context_id: None,
-        epoch_id: None,
+        epoch_id: Some(epoch_id.into()),
         extra_data: vec![],
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
@@ -292,9 +295,19 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
     let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
+    // CrsInfo is epoch-specific data, so delete_all_at_request_id skips it.
+    // We need to delete it explicitly at the epoch level.
+    let _ = crate::vault::storage::delete_at_request_and_epoch_id(
+        &mut priv_storage,
+        &req_id,
+        &epoch_id,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
+
     assert!(
         !priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 
@@ -305,13 +318,13 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
     assert!(
         backup_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 
     assert!(
         priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
             .await?
     );
 
