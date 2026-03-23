@@ -728,21 +728,20 @@ fn unpack_key_gen_request(
     ))
 }
 
-#[allow(clippy::type_complexity)]
+pub(crate) struct VerifiedCrsGenRequest {
+    pub req_id: RequestId,
+    pub epoch_id: EpochId,
+    pub context_id: ContextId,
+    pub witness_dim: usize,
+    pub params: DKGParams,
+    pub eip712_domain: Eip712Domain,
+    pub extra_data: Vec<u8>,
+}
+
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
     op_tag: &'static str,
-) -> Result<
-    (
-        RequestId,
-        ContextId,
-        usize,
-        DKGParams,
-        Eip712Domain,
-        Vec<u8>,
-    ),
-    MetricedError,
-> {
+) -> Result<VerifiedCrsGenRequest, MetricedError> {
     unpack_crs_gen_request(req).map_err(|e| {
         MetricedError::new(
             op_tag,
@@ -753,17 +752,7 @@ pub(crate) fn validate_crs_gen_request(
     })
 }
 
-#[allow(clippy::type_complexity)]
-fn unpack_crs_gen_request(
-    req: CrsGenRequest,
-) -> anyhow::Result<(
-    RequestId,
-    ContextId,
-    usize,
-    DKGParams,
-    Eip712Domain,
-    Vec<u8>,
-)> {
+fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRequest> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
@@ -771,6 +760,9 @@ fn unpack_crs_gen_request(
         request_id = ?req_id,
         "Received new crs generation request"
     );
+
+    let epoch_id =
+        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::CrsGenRequest)?;
 
     // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
@@ -788,7 +780,6 @@ fn unpack_crs_gen_request(
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // remove the default context when all of context is ready
-    // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
         Some(ctx) => parse_grpc_request_id(ctx, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
@@ -796,14 +787,15 @@ fn unpack_crs_gen_request(
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((
+    Ok(VerifiedCrsGenRequest {
         req_id,
+        epoch_id,
         context_id,
         witness_dim,
         params,
         eip712_domain,
-        req.extra_data.clone(),
-    ))
+        extra_data: req.extra_data.clone(),
+    })
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
@@ -818,9 +810,23 @@ fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     }
 }
 
-pub(crate) async fn validate_new_mpc_epoch_request(
+#[derive(Debug)]
+pub(crate) struct ResharingParams {
+    pub previous_epoch: PreviousEpochInfo,
+    /// The EIP-712 domain used to sign the reshared key results.
+    pub signing_domain: Eip712Domain,
+}
+
+#[derive(Debug)]
+pub(crate) struct VerifiedNewMpcEpochRequest {
+    pub context_id: ContextId,
+    pub epoch_id: EpochId,
+    pub resharing: Option<ResharingParams>,
+}
+
+pub(crate) fn validate_new_mpc_epoch_request(
     req: NewMpcEpochRequest,
-) -> Result<(ContextId, EpochId, Option<PreviousEpochInfo>), MetricedError> {
+) -> Result<VerifiedNewMpcEpochRequest, MetricedError> {
     unpack_new_mpc_epoch_req(req).map_err(|e| {
         MetricedError::new(
             OP_NEW_EPOCH,
@@ -831,16 +837,28 @@ pub(crate) async fn validate_new_mpc_epoch_request(
     })
 }
 
-fn unpack_new_mpc_epoch_req(
-    req: NewMpcEpochRequest,
-) -> anyhow::Result<(ContextId, EpochId, Option<PreviousEpochInfo>)> {
+fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedNewMpcEpochRequest> {
     let context_id = match req.context_id {
         Some(context_id) => parse_grpc_request_id(&context_id, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
-    Ok((context_id, epoch_id, req.previous_epoch))
+    let resharing = match req.previous_epoch {
+        Some(previous_epoch) => {
+            let signing_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+            Some(ResharingParams {
+                previous_epoch,
+                signing_domain,
+            })
+        }
+        None => None,
+    };
+    Ok(VerifiedNewMpcEpochRequest {
+        context_id,
+        epoch_id,
+        resharing,
+    })
 }
 
 #[cfg(test)]
@@ -850,9 +868,9 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{
-            self, PublicDecryptionRequest, PublicDecryptionResponse,
-            PublicDecryptionResponsePayload, TypedCiphertext, TypedPlaintext,
-            UserDecryptionRequest,
+            self, NewMpcEpochRequest, PreviousEpochInfo, PublicDecryptionRequest,
+            PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
+            TypedPlaintext, UserDecryptionRequest,
         },
         rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
         RequestId,
@@ -868,7 +886,9 @@ mod tests {
         dummy_domain,
         engine::{
             base::{compute_external_pt_signature, derive_request_id},
-            validation::{parse_grpc_request_id, RequestIdParsingErr},
+            validation::{
+                parse_grpc_request_id, validate_new_mpc_epoch_request, RequestIdParsingErr,
+            },
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
             },
@@ -1816,6 +1836,33 @@ mod tests {
                 2,
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_validate_new_mpc_epoch_request() {
+        // When previous_epoch is set but domain is None, optional_protobuf_to_alloy_domain
+        // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: Some(PreviousEpochInfo::default()),
+                domain: None,
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        // Happy path
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: Some(PreviousEpochInfo::default()),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }
 

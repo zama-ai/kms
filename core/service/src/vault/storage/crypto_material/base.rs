@@ -54,6 +54,7 @@ pub(crate) trait PrivateMaterialUnderEpoch {}
 
 impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
 impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
+impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -229,11 +230,12 @@ where
     }
 
     /// Check if CRS exists
-    pub async fn crs_exists(&self, crs_handle: &RequestId) -> anyhow::Result<bool> {
-        self.data_exists(
-            crs_handle,
-            &PubDataType::CRS.to_string(),
-            &PrivDataType::CrsInfo.to_string(),
+    pub async fn crs_exists(&self, crs_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
+        self.data_exists_at_epoch(
+            crs_id,
+            epoch_id,
+            &[PubDataType::CRS.to_string()],
+            &[PrivDataType::CrsInfo.to_string()],
         )
         .await
     }
@@ -527,24 +529,17 @@ where
         }
     }
 
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
+    /// Write the CRS to the storage backend.
+    /// On failure, the meta_store is used to purge dangling data.
+    /// On success, the meta_store is NOT updated; the caller is responsible for that.
+    pub(crate) async fn inner_write_crs<T: Clone>(
         &self,
-        req_id: &RequestId,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let mut guarded_meta_store = meta_store.write().await;
-
         let (r1, r2, r3) = {
             // Enforce locking order for internal types
             let mut pub_storage = self.public_storage.lock().await;
@@ -555,9 +550,10 @@ where
             };
 
             let f1 = async {
-                let result = store_versioned_at_request_id(
+                let result = store_versioned_at_request_and_epoch_id(
                     &mut (*priv_storage),
-                    req_id,
+                    crs_id,
+                    epoch_id,
                     &crs_info,
                     &PrivDataType::CrsInfo.to_string(),
                 )
@@ -565,7 +561,7 @@ where
                 if let Err(e) = &result {
                     tracing::error!(
                         "Failed to store CRS info to private storage for request {}: {}",
-                        req_id,
+                        crs_id,
                         e
                     );
                 }
@@ -574,7 +570,7 @@ where
             let f2 = async {
                 let result = store_versioned_at_request_id(
                     &mut (*pub_storage),
-                    req_id,
+                    crs_id,
                     &pp,
                     &PubDataType::CRS.to_string(),
                 )
@@ -582,7 +578,7 @@ where
                 if let Err(e) = &result {
                     tracing::error!(
                         "Failed to store CRS to public storage for request {}: {}",
-                        req_id,
+                        crs_id,
                         e
                     );
                 }
@@ -591,21 +587,22 @@ where
             let f3 = async {
                 match back_vault {
                     Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_id(
+                        let backup_result = store_versioned_at_request_and_epoch_id(
                             &mut (*guarded_backup_vault),
-                            req_id,
+                            crs_id,
+                            epoch_id,
                             &crs_info,
                             &PrivDataType::CrsInfo.to_string(),
                         )
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted crs info to backup storage for request {req_id}: {e}");
+                            tracing::error!("Failed to store encrypted crs info to backup storage for request {crs_id}: {e}");
                         }
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {req_id}");
+                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {crs_id}");
                         true
                     }
                 }
@@ -613,27 +610,50 @@ where
             tokio::join!(f1, f2, f3)
         };
 
-        if r1
-            && r2
-            && r3
-            && update_ok_req_in_meta_store(&mut guarded_meta_store, req_id, crs_info, op_metric_tag)
-        {
-            // everything is ok, there's no cache to update
-        } else {
+        if !(r1 && r2 && r3) {
+            // Some store op failed, we need to purge any potentially
+            // dangling data and update the meta store accordingly.
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might
             // be because the data did not get created
             // In any case, we can't do much.
-            self.purge_crs_material(req_id, guarded_meta_store).await;
+            let guarded_meta_store = meta_store.write().await;
+            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
+                .await;
         }
+    }
+
+    /// Write the CRS to the storage backend as well as the cache,
+    /// and update the [`MetaStore`] to "Done" if the procedure is successful.
+    ///
+    /// When calling this function more than once, the same [meta_store]
+    /// must be used, otherwise the storage state may become inconsistent.
+    pub async fn write_crs_with_meta_store(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
+    ) {
+        let info = crs_info.clone();
+        self.inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
+            .await;
+
+        // Not much we can do if this fails
+        // Note: it will fail if inner_write_crs failed
+        let _ =
+            update_ok_req_in_meta_store(&mut meta_store.write().await, crs_id, info, op_metric_tag);
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
     /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
-    pub async fn purge_crs_material(
+    pub async fn purge_crs_material<T: Clone>(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
+        epoch_id: &EpochId,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
@@ -657,9 +677,10 @@ where
             result.is_err()
         };
         let f2 = async {
-            let priv_result = delete_at_request_id(
+            let priv_result = delete_at_request_and_epoch_id(
                 &mut (*priv_storage),
                 req_id,
+                epoch_id,
                 &PrivDataType::CrsInfo.to_string(),
             )
             .await;
@@ -676,9 +697,10 @@ where
         let f3 = async {
             match back_vault {
                 Some(mut back_vault) => {
-                    let vault_result = delete_at_request_id(
+                    let vault_result = delete_at_request_and_epoch_id(
                         &mut (*back_vault),
                         req_id,
+                        epoch_id,
                         &PrivDataType::CrsInfo.to_string(),
                     )
                     .await;

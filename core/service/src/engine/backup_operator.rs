@@ -784,8 +784,12 @@ where
                     .await?;
             }
             PrivDataType::CrsInfo => {
-                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
-                    .await?;
+                restore_data_type_for_all_epochs::<PrivS, CrsGenMetadata>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
             }
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
@@ -818,7 +822,10 @@ pub(crate) async fn update_specific_backup_vault_for_all_epochs<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
-    if data_type_enum != PrivDataType::FheKeyInfo && data_type_enum != PrivDataType::FhePrivateKey {
+    if data_type_enum != PrivDataType::FheKeyInfo
+        && data_type_enum != PrivDataType::FhePrivateKey
+        && data_type_enum != PrivDataType::CrsInfo
+    {
         anyhow::bail!("This method is only meant to be used for epoched material, but the provided data type is not epoched.");
     }
     let epoch_ids = priv_storage
@@ -993,7 +1000,7 @@ where
                             .await?;
                         }
                         PrivDataType::CrsInfo => {
-                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
+                            update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

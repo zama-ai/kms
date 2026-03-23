@@ -6,7 +6,7 @@ use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::CrsgenVerification;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS};
@@ -31,6 +31,8 @@ pub(crate) async fn do_crsgen(
     param: FheParameter,
     insecure: bool,
     destination_prefix: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -41,8 +43,14 @@ pub(crate) async fn do_crsgen(
         cc_conf.num_majority
     };
 
-    let crs_req =
-        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
+    let crs_req = internal_client.crs_gen_request(
+        &req_id,
+        context_id,
+        epoch_id,
+        max_num_bits,
+        Some(param),
+        &dummy_domain(),
+    )?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -305,6 +313,12 @@ fn check_crsgen_ext_signature(
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
+    tracing::info!(
+        "Checking external signature on CRS gen result. crs_id={},digest={}",
+        crs_id,
+        hex::encode(&crs_digest),
+    );
+
     let max_num_bits = max_num_bits_from_crs(crs);
     let sol_type = CrsgenVerification::new(
         crs_id,
@@ -328,7 +342,7 @@ mod tests {
     use super::*;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
-        consts::{SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
+        consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
         cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
@@ -358,6 +372,7 @@ mod tests {
             &mut priv_storage,
             TEST_PARAM,
             crs_id,
+            &DEFAULT_EPOCH_ID,
             true,
         )
         .await;
