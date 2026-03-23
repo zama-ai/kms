@@ -3,7 +3,7 @@
 
 [advisories]
 # RUSTSEC-2023-0071 is not applicable in our use-case.
-# RUSTSEC-2026-0049 is is not a big deal because in our case it could only be
+# RUSTSEC-2026-0049 is not a big deal because in our case it could only be
 # triggered when talking to AWS APIs, and it could only allow the attacker to
 # force us to accept expired certificates, but the attack scenario when an
 # attacker steals the private keys for AWS TLS certificates is going to have
