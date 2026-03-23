@@ -1,4 +1,5 @@
 use crate::{
+    consts::DEFAULT_EPOCH_ID,
     cryptography::signatures::gen_sig_keys,
     dummy_domain,
     engine::base::{derive_request_id, KeyGenMetadata},
@@ -60,6 +61,7 @@ async fn write_crs() {
             .await
             .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
+    let default_epoch_id = *DEFAULT_EPOCH_ID;
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
@@ -67,6 +69,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -83,6 +86,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -94,6 +98,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -110,6 +115,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &new_req_id,
+            &default_epoch_id,
             pp,
             crs_info,
             meta_store.clone(),

@@ -25,6 +25,7 @@ execution.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+hex.workspace = true
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true

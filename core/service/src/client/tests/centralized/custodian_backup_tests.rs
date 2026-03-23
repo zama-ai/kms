@@ -8,7 +8,9 @@ use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{DEFAULT_EPOCH_ID, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
+use crate::util::key_setup::test_tools::{
+    purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
+};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -127,10 +129,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss = read_custodian_backup_files(
+    let crss = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         &[None],
     )
@@ -145,10 +148,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
-    let reread_crss = read_custodian_backup_files(
+    let reread_crss = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         &[None],
     )

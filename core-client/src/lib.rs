@@ -622,6 +622,20 @@ pub struct InsecureKeyGenParameters {
 pub struct CrsParameters {
     #[clap(long, short = 'm')]
     pub max_num_bits: u32,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+}
+
+impl Default for CrsParameters {
+    fn default() -> Self {
+        Self {
+            max_num_bits: 2048,
+            epoch_id: None,
+            context_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -718,11 +732,22 @@ pub struct PreviousKeyInfo {
     /// Key id of the key to reshare
     pub key_id: KeyId,
 
-    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing done for the key specified by `key_id`.
+    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing used to generate the key specified by `key_id`.
     pub preproc_id: RequestId,
 
-    /// The hex-encoded server key digest to use for resharing for the key to reshare.
+    /// The hex-encoded digest(s) of the public part(s) of the key being reshared.
+    /// For compressed keysets, this is a single digest of the compressed keyset.
+    /// For non-compressed keysets, this includes the digest of the server key and the digest of the public key.
     pub key_digest: DigestKeySet,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviousCrsInfo {
+    /// Id of the CRS to re-sign
+    pub crs_id: RequestId,
+
+    /// The hex-encoded digest of the CRS to re-sign
+    pub digest: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -736,6 +761,10 @@ pub struct PreviousEpochParameters {
     /// Information about the keys to reshare in the new epoch.
     #[clap(long)]
     pub previous_keys: Vec<PreviousKeyInfo>,
+
+    /// Information about the CRSes to re-sign in the new epoch.
+    #[clap(long)]
+    pub previous_crs: Vec<PreviousCrsInfo>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -752,10 +781,10 @@ pub struct NewEpochParameters {
     /// Format is:
     ///
     /// For compressed keyset
-    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...]`
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
     ///
     /// For non-compressed keyset
-    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...]`
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
     #[clap(long)]
     pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
@@ -910,6 +939,7 @@ impl FromStr for PreviousEpochParameters {
         let mut context_id = None;
         let mut epoch_id = None;
         let mut previous_keys = Vec::new();
+        let mut previous_crs = Vec::new();
 
         let mut string_iterator = s.split(";");
 
@@ -934,7 +964,8 @@ impl FromStr for PreviousEpochParameters {
                     )
                 }
                 "previous_keys" => {
-                    let mut values = vec![value
+                    let mut values = Vec::new();
+                    let value = value
                         .strip_prefix('[')
                         .ok_or_else(|| {
                             format!(
@@ -942,32 +973,85 @@ impl FromStr for PreviousEpochParameters {
                                 value
                             )
                         })?
-                        .to_string()];
-                    for next_value in string_iterator {
-                        if next_value.ends_with(']') {
-                            values.push(
-                                next_value
-                                    .to_string()
-                                    .strip_suffix(']')
-                                    .expect("we just checked the suffix is ]")
-                                    .to_string(),
-                            );
-                            break;
+                        .to_string();
+
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
+                                        "previous_keys value must be enclosed in square brackets {}",
+                                        value
+                                    )
+                                })?
+                                .to_string());
+                    } else {
+                        values.push(value);
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
                         }
-                        values.push(next_value.to_string());
                     }
 
                     for key_info_str in values {
                         previous_keys.push(key_info_str.parse()?);
                     }
-
-                    return Ok(PreviousEpochParameters {
-                        context_id: context_id.ok_or("Missing context_id")?,
-                        epoch_id: epoch_id.ok_or("Missing epoch_id")?,
-                        previous_keys,
-                    });
                 }
-                _ => return Err(format!("Unknown field: {}", key)),
+                "previous_crs" => {
+                    let mut values = Vec::new();
+                    let value = value
+                        .strip_prefix('[')
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_crs value must be enclosed in square brackets: {}",
+                                value
+                            )
+                        })?
+                        .to_string();
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
+                                    "previous_crs value must be enclosed in square brackets: {}",
+                                    values[0]
+                                )
+                                })?
+                                .to_string(),
+                        );
+                    } else {
+                        values.push(value);
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
+                        }
+                    }
+
+                    for crs_info_str in values {
+                        previous_crs.push(crs_info_str.parse()?);
+                    }
+                }
+                _ => return Err(format!("[PreviousEpochParameters] Unknown field: {}", key)),
             }
         }
 
@@ -975,7 +1059,48 @@ impl FromStr for PreviousEpochParameters {
             context_id: context_id.ok_or("Missing context_id")?,
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
+            previous_crs,
         })
+    }
+}
+
+impl FromStr for PreviousCrsInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (crs_id_str, digest_str) = s.split_once(',').ok_or_else(|| {
+            format!(
+                "Invalid crs info layout expect [crs_id=<id>,digest=<digest>]: {}",
+                s
+            )
+        })?;
+
+        // Parse Id
+        let (key, value) = crs_id_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key=value pair: {}", crs_id_str))?;
+
+        if key != "crs_id" {
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"crs_id\"",
+                key
+            ));
+        }
+        let crs_id = value.parse().map_err(|e| format!("Invalid crs_id: {e}"))?;
+
+        // Parse digest
+        let (key, value) = digest_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key=value pair: {}", digest_str))?;
+        if key != "digest" {
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"digest\"",
+                key
+            ));
+        }
+        let digest = value.to_string();
+
+        Ok(PreviousCrsInfo { crs_id, digest })
     }
 }
 
@@ -992,15 +1117,19 @@ impl FromStr for PreviousKeyInfo {
         for pair in s.split(',') {
             let (key, value) = pair
                 .split_once('=')
-                .ok_or_else(|| format!("Invalid key:value pair: {}", pair))?;
+                .ok_or_else(|| format!("Invalid key=value pair: {}", pair))?;
 
             match key {
                 "key_id" => {
-                    assert!(key_id.is_none(), "Duplicate key_id field");
+                    if key_id.is_some() {
+                        return Err("Duplicate key_id field".to_string());
+                    }
                     key_id = Some(value.parse().map_err(|e| format!("Invalid key_id: {e}"))?);
                 }
                 "preproc_id" => {
-                    assert!(preproc_id.is_none(), "Duplicate preproc_id field");
+                    if preproc_id.is_some() {
+                        return Err("Duplicate preproc_id field".to_string());
+                    }
                     preproc_id = Some(
                         value
                             .parse()
@@ -1008,36 +1137,33 @@ impl FromStr for PreviousKeyInfo {
                     )
                 }
                 "xof_key_digest" => {
-                    assert!(xof_key_digest.is_none(), "Duplicate xof_key_digest field");
-                    assert!(
-                        server_key_digest.is_none(),
-                        "xof_key_digest field is mutually exclusive with server_key_digest and public_key_digest fields"
-                    );
+                    if xof_key_digest.is_some() {
+                        return Err("Duplicate xof_key_digest field".to_string());
+                    }
+                    if server_key_digest.is_some() || public_key_digest.is_some() {
+                        return Err("xof_key_digest field is mutually exclusive with server_key_digest and public_key_digest fields".to_string());
+                    }
                     xof_key_digest = Some(value.to_string());
                 }
                 "server_key_digest" => {
-                    assert!(
-                        server_key_digest.is_none(),
-                        "Duplicate server_key_digest field"
-                    );
-                    assert!(
-                        xof_key_digest.is_none(),
-                        "server_key_digest field is mutually exclusive with xof_key_digest field"
-                    );
+                    if server_key_digest.is_some() {
+                        return Err("Duplicate server_key_digest field".to_string());
+                    }
+                    if xof_key_digest.is_some() {
+                        return Err("server_key_digest field is mutually exclusive with xof_key_digest field".to_string());
+                    }
                     server_key_digest = Some(value.to_string());
                 }
                 "public_key_digest" => {
-                    assert!(
-                        public_key_digest.is_none(),
-                        "Duplicate public_key_digest field"
-                    );
-                    assert!(
-                        xof_key_digest.is_none(),
-                        "public_key_digest field is mutually exclusive with xof_key_digest field"
-                    );
+                    if public_key_digest.is_some() {
+                        return Err("Duplicate public_key_digest field".to_string());
+                    }
+                    if xof_key_digest.is_some() {
+                        return Err("public_key_digest field is mutually exclusive with xof_key_digest field".to_string());
+                    }
                     public_key_digest = Some(value.to_string());
                 }
-                _ => return Err(format!("Unknown field: {}", key)),
+                _ => return Err(format!("[PreviousKeyInfo] Unknown field: {}", key)),
             }
         }
 
@@ -1671,7 +1797,11 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "insecure keygen done".to_string())]
         }
-        CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::CrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "CRS generation with parameter {}.",
@@ -1690,11 +1820,17 @@ pub async fn execute_cmd(
                 fhe_params,
                 false,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
         }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::InsecureCrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure CRS generation with parameter {}.",
@@ -1713,6 +1849,8 @@ pub async fn execute_cmd(
                 fhe_params,
                 true,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
@@ -2217,9 +2355,11 @@ mod tests {
         let id4 = "1111030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let id5 = "1111130405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let id6 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id7 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id8 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         // Test the FromStr impl of PreviousEpochParameters
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]");
         let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
 
         assert_eq!(parsed.context_id.to_string(), id1);
@@ -2240,6 +2380,14 @@ mod tests {
                 }
             }
         }
+        assert_eq!(parsed.previous_crs.len(), 2);
+        let crs_info_1 = &parsed.previous_crs[0];
+        assert_eq!(crs_info_1.crs_id.to_string(), id7);
+        assert_eq!(crs_info_1.digest, "abc789");
+
+        let crs_info_2 = &parsed.previous_crs[1];
+        assert_eq!(crs_info_2.crs_id.to_string(), id8);
+        assert_eq!(crs_info_2.digest, "abc000");
 
         // Missing context_id should fail
         let input_string = format!("epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
@@ -2261,6 +2409,14 @@ mod tests {
         let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
+        // Mixing compressed and non-compressed key sets should fail
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing server key digest for non-compressed key set should fail
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
         // Wrong ids test
         let input_string = format!("context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
@@ -2278,6 +2434,9 @@ mod tests {
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]");
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]");
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
     }
 }

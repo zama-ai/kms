@@ -6,7 +6,7 @@ use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{EpochResultResponse, FheParameter, KeyGenResult, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::{alloy_to_protobuf_domain, PubDataType},
+    rpc_types::PubDataType,
     ContextId, RequestId,
 };
 use serial_test::serial;
@@ -22,6 +22,7 @@ use crate::{
             common::standard_keygen_config,
             threshold::{
                 common::threshold_handles,
+                crs_gen_tests::run_crs,
                 key_gen_tests::{
                     run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
                 },
@@ -38,23 +39,29 @@ use crate::{
     engine::{
         base::{derive_request_id, safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
         threshold::service::ThresholdFheKeys,
+        validation::ResharingParams,
     },
     util::{
-        key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext},
+        key_setup::{
+            max_threshold,
+            test_tools::{purge, EncryptionConfig, TestingPlaintext},
+        },
         rate_limiter::RateLimiterConfig,
     },
+    vault::storage::{file::FileStorage, StorageType},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[traced_test]
 async fn test_new_epoch_with_reshare() {
-    new_epoch_with_reshare(4, 3, FheParameter::Test, None).await;
+    new_epoch_with_reshare_and_crs(4, 3, 2, FheParameter::Test, None).await;
 }
 
-pub(crate) async fn new_epoch_with_reshare(
+pub(crate) async fn new_epoch_with_reshare_and_crs(
     amount_parties: usize,
     num_keys: usize,
+    num_crs: usize,
     parameters: FheParameter,
     party_ids_to_crash: Option<Vec<usize>>,
 ) {
@@ -77,7 +84,7 @@ pub(crate) async fn new_epoch_with_reshare(
     let mut key_ids = Vec::new();
     for key_id in 0..num_keys {
         let preproc_req_id: RequestId = derive_request_id(&format!(
-            "new_epoch_with_reshare_preproc_{amount_parties}_{key_id}_{parameters:?}"
+            "reshare_dkg_preproc_{amount_parties}_{key_id}_{parameters:?}"
         ))
         .unwrap();
         let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -94,7 +101,7 @@ pub(crate) async fn new_epoch_with_reshare(
         preproc_ids.push(preproc_req_id);
 
         let key_req_id: RequestId = derive_request_id(&format!(
-            "new_epoch_with_reshare_dkg_{amount_parties}_{key_id}_{parameters:?}"
+            "reshare_dkg_key_{amount_parties}_{key_id}_{parameters:?}"
         ))
         .unwrap();
         purge(
@@ -108,11 +115,28 @@ pub(crate) async fn new_epoch_with_reshare(
         key_ids.push(key_req_id);
     }
 
-    let new_epoch_id: EpochId = derive_request_id(&format!(
-        "new_epoch_with_reshare_epoch_{amount_parties}_{parameters:?}"
-    ))
-    .unwrap()
-    .into();
+    let mut crs_ids: Vec<RequestId> = Vec::new();
+
+    for crs_id in 0..num_crs {
+        let req_id = derive_request_id(&format!(
+            "reshare_crs_{amount_parties}_{crs_id}_{parameters:?}"
+        ))
+        .unwrap();
+        purge(
+            None,
+            None,
+            &req_id,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
+        )
+        .await;
+        crs_ids.push(req_id);
+    }
+
+    let new_epoch_id: EpochId =
+        derive_request_id(&format!("new_epoch_id__{amount_parties}_{parameters:?}"))
+            .unwrap()
+            .into();
     purge(
         None,
         None,
@@ -186,7 +210,6 @@ pub(crate) async fn new_epoch_with_reshare(
                     digest: public_key_digest,
                 },
             ],
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
         });
         keysets.push((
             key_req_id,
@@ -197,11 +220,32 @@ pub(crate) async fn new_epoch_with_reshare(
         ));
     }
 
+    let mut crs_info = Vec::new();
+    for crs_id in crs_ids.iter() {
+        //Run CRS gen
+        let mut crs = run_crs(
+            parameters,
+            &kms_clients,
+            &internal_client,
+            false,
+            crs_id,
+            Some(2048),
+        )
+        .await;
+        assert_eq!(crs.len(), 1);
+
+        crs_info.push(crs.pop().unwrap());
+    }
+
     assert_eq!(keys_info.len(), num_keys);
-    let previous_epoch = Some(PreviousEpochInfo {
-        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-        keys_info,
+    let resharing = Some(ResharingParams {
+        previous_epoch: PreviousEpochInfo {
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            keys_info,
+            crs_info,
+        },
+        signing_domain: dummy_domain(),
     });
 
     // Create the new epoch and reshare from previous one
@@ -215,7 +259,7 @@ pub(crate) async fn new_epoch_with_reshare(
         &internal_client,
         new_context_id,
         new_epoch_id,
-        previous_epoch,
+        resharing,
     )
     .await
     .unwrap();
@@ -336,13 +380,18 @@ async fn run_new_epoch(
     internal_client: &Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
-    previous_epoch: Option<PreviousEpochInfo>,
+    resharing: Option<ResharingParams>,
 ) -> Option<Vec<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)>> {
-    let num_keys = previous_epoch
+    let num_keys = resharing
         .as_ref()
-        .map_or(0, |epoch| epoch.keys_info.len());
+        .map_or(0, |r| r.previous_epoch.keys_info.len());
     let reshare_request = internal_client
-        .new_epoch_request(&new_context_id, &new_epoch_id, previous_epoch.clone())
+        .new_epoch_request(
+            &new_context_id,
+            &new_epoch_id,
+            resharing.as_ref().map(|r| r.previous_epoch.clone()),
+            resharing.as_ref().map(|r| &r.signing_domain),
+        )
         .unwrap();
 
     // Execute reshare
@@ -353,7 +402,7 @@ async fn run_new_epoch(
         tasks_reshare.spawn(async move { client.new_mpc_epoch(req).await });
     }
 
-    if let Some(previous_epoch) = previous_epoch {
+    if let Some(resharing_params) = resharing {
         tasks_reshare.join_all().await.into_iter().for_each(|res| {
             assert!(res.is_ok(), "Reshare party failed: {:?}", res.err());
         });
@@ -364,27 +413,28 @@ async fn run_new_epoch(
         assert_eq!(responses.len(), amount_parties);
 
         // Transform the reshare response to its equivalent keygen response
-        let responses_as_dkg = responses
+        // and also extract the CRS responses
+        let (responses_as_dkg, crs_responses_per_party): (Vec<_>, Vec<_>) = responses
             .into_iter()
-            .map(|(party_idx, _, response)| {
-                (
-                    party_idx,
-                    response.map(|response| {
-                        response
-                            .into_inner()
-                            .reshare_responses
-                            .into_iter()
-                            .map(|response| KeyGenResult {
-                                request_id: response.request_id.clone(),
-                                preprocessing_id: response.preprocessing_id.clone(),
-                                key_digests: response.key_digests.clone(),
-                                external_signature: response.external_signature.clone(),
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
+            .map(|(party_idx, _, response)| match response {
+                Ok(response) => {
+                    let inner = response.into_inner();
+                    let kg_results = inner
+                        .reshare_responses
+                        .into_iter()
+                        .map(|response| KeyGenResult {
+                            request_id: response.request_id.clone(),
+                            preprocessing_id: response.preprocessing_id.clone(),
+                            key_digests: response.key_digests.clone(),
+                            external_signature: response.external_signature.clone(),
+                        })
+                        .collect::<Vec<_>>();
+                    let crs_results = inner.crs_responses;
+                    ((party_idx, Ok(kg_results)), (party_idx, crs_results))
+                }
+                Err(e) => ((party_idx, Err(e)), (party_idx, vec![])),
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
         // Transform from Vec(party_idx, Vec<KGResult>) to Vec<Vec<(party_idx, KGResult)>>
         // to verify keys one by one
@@ -403,7 +453,7 @@ async fn run_new_epoch(
                                             .iter()
                                             .find(|kg_result| {
                                                 kg_result.request_id
-                                                    == previous_epoch.keys_info[key_idx].key_id
+                                                    == resharing_params.previous_epoch.keys_info[key_idx].key_id
                                             })
                                             .unwrap_or_else(|| panic!("Each party should have a response for the key {}",
                                                 key_idx))
@@ -419,8 +469,11 @@ async fn run_new_epoch(
 
         assert_eq!(responses_as_dkg.len(), num_keys);
 
+        let crs_info = resharing_params.previous_epoch.crs_info.clone();
+
         let mut outs = Vec::new();
-        for (key_info, responses) in previous_epoch
+        for (key_info, responses) in resharing_params
+            .previous_epoch
             .keys_info
             .into_iter()
             .zip_eq(responses_as_dkg)
@@ -430,7 +483,6 @@ async fn run_new_epoch(
                 preproc_id,
                 key_parameters: _,
                 key_digests: _,
-                domain: _,
             } = key_info;
 
             let preproc_id = preproc_id.as_ref().unwrap().try_into().unwrap();
@@ -441,7 +493,7 @@ async fn run_new_epoch(
                 internal_client,
                 &preproc_id,
                 &key_id,
-                &dummy_domain(),
+                &resharing_params.signing_domain,
                 amount_parties,
                 Some(new_epoch_id.into()),
                 false, // compressed
@@ -453,6 +505,43 @@ async fn run_new_epoch(
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
             outs.push(out);
         }
+        // Verify CRS re-signing
+        let threshold = max_threshold(amount_parties);
+        let min_agree_count = (threshold + 1) as u32;
+
+        for crs in &crs_info {
+            let crs_id: RequestId = crs.crs_id.as_ref().unwrap().try_into().unwrap();
+
+            let res_storage: Vec<_> = crs_responses_per_party
+                .iter()
+                .map(|(party_idx, crs_results)| {
+                    let result = crs_results
+                        .iter()
+                        .find(|r| r.request_id == crs.crs_id)
+                        .expect("each party should have a CRS response")
+                        .clone();
+                    let storage = FileStorage::new(
+                        None,
+                        StorageType::PUB,
+                        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[*party_idx as usize - 1].as_deref(),
+                    )
+                    .unwrap();
+                    (result, storage)
+                })
+                .collect();
+
+            internal_client
+                .process_distributed_crs_result(
+                    &crs_id,
+                    res_storage,
+                    &resharing_params.signing_domain,
+                    vec![],
+                    min_agree_count,
+                )
+                .await
+                .expect("Failed to verify CRS re-signing");
+        }
+
         Some(outs)
     } else {
         None

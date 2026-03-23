@@ -301,7 +301,11 @@ impl ServerCertVerifier for AttestedVerifier {
         server_verifier
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
             .inspect_err(|e| {
-                tracing::error!("server verifier validation error: {e}");
+                tracing::error!(
+                    "server verifier validation error: {}, supported algorithms: {:?}",
+                    e,
+                    &self.supported_algs
+                );
             })?;
         // check the bundled attestation document and EIF signing certificate
         #[cfg(feature = "testing")]
@@ -396,7 +400,11 @@ impl ClientCertVerifier for AttestedVerifier {
         client_verifier
             .verify_client_cert(end_entity, intermediates, now)
             .inspect_err(|e| {
-                tracing::error!("client verifier validation error: {e}");
+                tracing::error!(
+                    "client verifier validation error: {}, supported algorithms: {:?}",
+                    e,
+                    &self.supported_algs
+                );
             })?;
 
         // check the bundled attestation document and EIF signing certificate

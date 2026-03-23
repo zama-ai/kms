@@ -207,17 +207,21 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             .await?;
 
             let res = format!("{resp_response_vec:x?}");
-            Ok((Some(req_id), res))
+            Ok((req_id, res))
         });
     }
 
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let res = result??;
-        let req_id = res.0.unwrap();
-        let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
+        let (req_id, resp_msg) = result??;
+        let elapsed = timings_start
+            .remove(&req_id)
+            .unwrap_or_else(|| {
+                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
+            })
+            .elapsed();
         durations.push(elapsed);
-        result_vec.push(res);
+        result_vec.push((Some(req_id), resp_msg));
     }
 
     print_timings("public decrypt", &mut durations, start);
@@ -328,7 +332,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
             let mut resp_tasks = JoinSet::new();
             for ce in core_endpoints_resp.values() {
                 let mut cur_client = ce.clone();
-                let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
+                let req_id_clone = user_decrypt_req.request_id.as_ref().ok_or_else(|| anyhow::anyhow!("request_id not set in user decrypt request"))?.clone();
 
                 resp_tasks.spawn(async move {
                     // Sleep to give the server some time to complete decryption
@@ -342,7 +346,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                         .await;
                     let mut ctr = 0_usize;
                     while response.is_err()
-                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                        && response.as_ref().unwrap_err().code()
+                            == tonic::Code::Unavailable
                     {
                         tokio::time::sleep(tokio::time::Duration::from_millis(
                             SLEEP_TIME_BETWEEN_REQUESTS_MS,
@@ -401,9 +406,9 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
-            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
+            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).map_err(|e| anyhow::anyhow!("failed to parse user decryption request: {e}"))?;
             let eip712_domain =
-                protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap()).unwrap();
+                protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?)?;
             let plaintexts = internal_client
                 .read()
                 .await
@@ -423,13 +428,15 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
             // test that all results are matching the original plaintext
             for pt in &plaintexts {
-                assert_eq!(
-                    TestingPlaintext::try_from(pt.clone())?,
-                    TestingPlaintext::try_from(original_plaintext.clone())?
+                anyhow::ensure!(
+                    TestingPlaintext::try_from(pt.clone())? == TestingPlaintext::try_from(original_plaintext.clone())?,
+                    "user decryption result mismatch: expected {:?}, got {:?}",
+                    TestingPlaintext::try_from(original_plaintext.clone())?,
+                    TestingPlaintext::try_from(pt.clone())?
                 );
             }
 
-            let decrypted_plaintext = plaintexts[0].clone();
+            let decrypted_plaintext = plaintexts.first().ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))?.clone();
 
             tracing::info!(
                 "User decryption response is ok: {:?} / {:?}",
@@ -448,16 +455,20 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 start.elapsed()
             );
 
-            Ok((Some(req_id), res))
+            Ok((req_id, res))
         });
     }
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        let res = result??;
-        let req_id = res.0.unwrap();
-        let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
+        let (req_id, resp_msg) = result??;
+        let elapsed = timings_start
+            .remove(&req_id)
+            .unwrap_or_else(|| {
+                panic!("programmer error, req_id {req_id} should have been inserted to timing map")
+            })
+            .elapsed();
         durations.push(elapsed);
-        result_vec.push(res);
+        result_vec.push((Some(req_id), resp_msg));
     }
 
     print_timings("user decrypt", &mut durations, start);
@@ -577,7 +588,10 @@ pub(crate) async fn get_public_decrypt_responses(
     };
 
     let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
-        let domain_msg = decryption_request.domain.as_ref().unwrap();
+        let domain_msg = decryption_request
+            .domain
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("domain not set in decryption request"))?;
         let domain = protobuf_to_alloy_domain(domain_msg)?;
         // retrieve external handles from request
         let external_handles: Vec<_> = decryption_request
