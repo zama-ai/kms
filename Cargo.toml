@@ -95,7 +95,7 @@ aws-lc-rs = { version = "=1.16.2" } # AWS-LC dependency pinned because of an ear
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
 aws-sdk-kms = { version = "=1.98.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
 aws-sdk-s3 = { version = "=1.120.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.10.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library
+aws-smithy-runtime = { version = "=1.10.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library. Remove "connector-hyper-0-14-x" when possible as it introduces a potential vulnerability.
 aws-smithy-runtime-api = { version = "=1.11.6" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
 aws-smithy-types = { version = "=1.4.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained

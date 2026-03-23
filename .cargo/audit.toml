@@ -2,8 +2,17 @@
 # permanently specified in this file.
 
 [advisories]
-# The ignored vulnerability RUSTSEC-2023-0071 is not applicable in our use-case
-ignore = ["RUSTSEC-2023-0071"]
+# RUSTSEC-2023-0071 is not applicable in our use-case.
+# RUSTSEC-2026-0049 is is not a big deal because in our case it could only be
+# triggered when talking to AWS APIs, and it could only allow the attacker to
+# force us to accept expired certificates, but the attack scenario when an
+# attacker steals the private keys for AWS TLS certificates is going to have
+# larger consequences on the world. Additionally, we need to keep the
+# "connector-hyper-0-14-x" feature because we need to specify fixed server
+# names for TLS connections (because when socat proxies are used, the
+# connection goes to localhost and if we don't overload the server names, the
+# handshake would fail because localhost isn't sts.*.amazonaws.com).
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0049"]
 informational_warnings = ["unmaintained"]
 severity_threshold = "medium"
 
