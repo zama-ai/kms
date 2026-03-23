@@ -288,11 +288,18 @@ async fn crs_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     insecure_crs_gen: bool,
+    extra_data: Option<String>,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let command = match insecure_crs_gen {
-        true => CCCommand::InsecureCrsGen(CrsParameters::default()),
-        false => CCCommand::CrsGen(CrsParameters::default()),
+        true => CCCommand::InsecureCrsGen(CrsParameters {
+            extra_data,
+            ..Default::default()
+        }),
+        false => CCCommand::CrsGen(CrsParameters {
+            extra_data,
+            ..Default::default()
+        }),
     };
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
@@ -321,11 +328,13 @@ async fn crs_gen_with_custom_conf(
     insecure_crs_gen: bool,
     epoch_id: EpochId,
     context_id: ContextId,
+    extra_data: Option<String>,
 ) -> String {
     let params = CrsParameters {
         max_num_bits: 2048,
         epoch_id: Some(epoch_id),
         context_id: Some(context_id),
+        extra_data,
     };
 
     let command = match insecure_crs_gen {
@@ -997,7 +1006,7 @@ async fn test_centralized_insecure(ctx: &DockerComposeCentralized) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, false).await;
-    integration_test_commands(ctx, key_id).await;
+    integration_test_commands(ctx, key_id, Some("0xabcd".to_string())).await;
 }
 
 #[test_context(DockerComposeCentralized)]
@@ -1007,7 +1016,7 @@ async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id = crs_gen(ctx, keys_folder, false).await;
+    let crs_id = crs_gen(ctx, keys_folder, false, Some("0xffff".to_string())).await;
     // hex string with double the length of ID_LENGTH
     assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
@@ -1020,7 +1029,7 @@ async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, keys_folder, true).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
@@ -1081,10 +1090,14 @@ async fn test_threshold_insecure(ctx: &DockerComposeThresholdDefault) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, false).await;
-    integration_test_commands(ctx, key_id).await;
+    integration_test_commands(ctx, key_id, Some("0xabcd".to_string())).await;
 }
 
-async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: String) {
+async fn integration_test_commands<T: DockerComposeManager>(
+    ctx: &T,
+    key_id: String,
+    extra_data: Option<String>,
+) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
@@ -1106,6 +1119,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1121,6 +1135,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1136,6 +1151,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1151,6 +1167,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xFFFF".to_string(),
@@ -1166,6 +1183,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
@@ -1182,6 +1200,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
@@ -1198,6 +1217,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
@@ -1214,6 +1234,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.to_path_buf(),
@@ -1221,6 +1242,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.to_path_buf(),
@@ -1228,6 +1250,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: extra_data.clone(),
         })),
     ];
 
@@ -1246,6 +1269,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x78".to_string(),
@@ -1261,6 +1285,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1276,6 +1301,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1291,6 +1317,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
@@ -1307,6 +1334,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
@@ -1323,6 +1351,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
@@ -1339,6 +1368,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: extra_data.clone(),
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.to_path_buf(),
@@ -1346,6 +1376,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.to_path_buf(),
@@ -1353,6 +1384,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             num_requests: 3,
             parallel_requests: 1,
             inter_request_delay_ms: 0,
+            extra_data,
         })),
     ];
 
@@ -1429,8 +1461,8 @@ async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdDefa
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
-    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false, Some("0xabcd".to_string())).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 
@@ -1442,8 +1474,8 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let res = join_all([
-        crs_gen(ctx, keys_folder, false),
-        crs_gen(ctx, keys_folder, false),
+        crs_gen(ctx, keys_folder, false, None),
+        crs_gen(ctx, keys_folder, false, Some("0xabcd".to_string())),
     ])
     .await;
     assert_ne!(res[0], res[1]);
@@ -1457,7 +1489,7 @@ async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdTest) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, keys_folder, true).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
@@ -1552,6 +1584,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
         ciphertext_output_path: None,
         inter_request_delay_ms: 0,
         compressed_keys: false,
+        extra_data: None,
     }));
     test_template(ctx, vec![ddec_command], test_path).await;
 }
@@ -1675,6 +1708,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
                 existing_keyset_id: None,
                 existing_epoch_id: None,
                 use_existing_key_tag: false,
+                extra_data: None,
             },
             200,
         )
@@ -1762,6 +1796,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         false,
         epoch_id_set_1,
         context_id_set_1,
+        None,
     )
     .await;
 
@@ -1887,6 +1922,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         parallel_requests: 1,
         inter_request_delay_ms: 0,
         compressed_keys: false,
+        extra_data: None,
     }));
 
     let ddec_config = CmdConfig {
@@ -1916,6 +1952,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             existing_keyset_id: None,
             existing_epoch_id: None,
             use_existing_key_tag: false,
+            extra_data: None,
         },
         200,
     )
@@ -1971,8 +2008,8 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs(
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
-    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false, Some("0x9999".to_string())).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 

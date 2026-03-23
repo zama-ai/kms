@@ -1021,6 +1021,26 @@ mod tests {
             );
         }
 
+        // one response has a wrong extra_data
+        {
+            let mut bad_resp = resp4.clone();
+            bad_resp.extra_data = vec![0];
+            let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), bad_resp];
+
+            assert_eq!(
+                validate_user_decrypt_responses(
+                    &server_addresses,
+                    &client_request,
+                    &dummy_domain,
+                    &agg_resp
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
+                3 // instead of 4
+            );
+        }
+
         // empty responses, should return None
         {
             assert!(validate_user_decrypt_responses(
