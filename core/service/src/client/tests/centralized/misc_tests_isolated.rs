@@ -216,6 +216,7 @@ async fn test_largecipher_isolated() -> Result<()> {
             None, // context_id
             None, // epoch_id
             PkeSchemeType::MlKem512,
+            &[],
         )
         .unwrap();
     let response = kms_client

@@ -193,6 +193,7 @@ impl K8sTestContext {
             ciphertext_output_path: Some(cipher_path.clone()),
             inter_request_delay_ms: 0,
             compressed_keys: false,
+            extra_data: None,
         }))
         .await;
 
@@ -230,6 +231,7 @@ impl K8sTestContext {
                     num_requests: 1,
                     inter_request_delay_ms: 0,
                     parallel_requests: 1,
+                    extra_data: None,
                 },
             )))
             .await;
@@ -254,6 +256,7 @@ impl K8sTestContext {
                 max_num_bits: 2048,
                 epoch_id: Some(*DEFAULT_EPOCH_ID),
                 context_id: Some(*DEFAULT_MPC_CONTEXT),
+                extra_data: None,
             }))
             .await;
 

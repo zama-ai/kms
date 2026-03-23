@@ -432,6 +432,7 @@ async fn nightly_test_complete_session_notification() {
                 None,
                 key_id,
                 None,
+                &[],
             )
             .unwrap();
 
