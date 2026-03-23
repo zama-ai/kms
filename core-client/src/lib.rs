@@ -504,11 +504,10 @@ impl CipherArguments {
     }
 }
 
+// Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
+// Defaults to an empty byte vector if the extra data is not provided or if the hex parsing fails.
 fn parse_extra_data(hex_str: &Option<String>) -> Vec<u8> {
-    hex_str
-        .as_ref()
-        .map(|s| hex::decode(s.strip_prefix("0x").unwrap_or(s)).expect("invalid hex in extra_data"))
-        .unwrap_or_default()
+    parse_hex(hex_str.as_deref().unwrap_or("")).unwrap_or_default()
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
