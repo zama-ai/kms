@@ -56,6 +56,7 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
+// Default log filters for tests
 const DEFAULT_TEST_CONSOLE_FILTER: &str =
     "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
 const DEFAULT_TEST_FILE_FILTER: &str =
@@ -64,9 +65,14 @@ const DEFAULT_TEST_VERBOSE_FILTER: &str =
     "info,tonic=info,h2=warn,hyper=warn,tower=warn,opentelemetry_sdk=warn,reqwest=warn,rustls=warn";
 const DEFAULT_TEST_LOG_MAX_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+// `KMS_TEST_LOG_MODE` is the canonical high-level switch for test logging.
+// `quiet` keeps the quiet defaults and no console, `console` keeps the quiet
+// defaults but enables console output, and `verbose`/`debug`/`trace` enables
+// the verbose defaults plus console output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TestLogMode {
     Quiet,
+    Console,
     Verbose,
 }
 
@@ -159,16 +165,27 @@ fn test_logging_enabled() -> bool {
 }
 
 fn test_log_mode() -> TestLogMode {
-    match env::var("KMS_TEST_LOG_MODE")
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "verbose" | "debug" | "trace" | "console" => TestLogMode::Verbose,
+    let mode = env::var("KMS_TEST_LOG_MODE").ok();
+    parse_test_log_mode(mode.as_deref())
+}
+
+fn parse_test_log_mode(value: Option<&str>) -> TestLogMode {
+    match value.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "verbose" | "debug" | "trace" => TestLogMode::Verbose,
+        "console" => TestLogMode::Console,
         _ => TestLogMode::Quiet,
     }
 }
 
+fn parse_boolish_env(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|value| value.to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+// Resolution order is sink-specific override -> shared override -> `RUST_LOG`
+// -> preset selected by `KMS_TEST_LOG_MODE`.
 fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
     if let Ok(filter) = env::var(override_var) {
         return EnvFilter::new(filter);
@@ -178,9 +195,12 @@ fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
         return EnvFilter::new(filter);
     }
 
+    if let Ok(filter) = env::var("RUST_LOG") {
+        return EnvFilter::new(filter);
+    }
+
     if matches!(test_log_mode(), TestLogMode::Verbose) {
-        return EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER));
+        return EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER);
     }
 
     EnvFilter::new(quiet_default)
@@ -201,14 +221,37 @@ pub fn test_log_max_bytes() -> usize {
         .unwrap_or(DEFAULT_TEST_LOG_MAX_BYTES)
 }
 
+// `KMS_TEST_LOG_STDOUT` is kept as a backward-compatible alias for callers
+// that want console output without changing the selected log-mode preset.
 fn test_console_enabled() -> bool {
-    matches!(
-        env::var("KMS_TEST_LOG_STDOUT")
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    ) || matches!(test_log_mode(), TestLogMode::Verbose)
+    let stdout = env::var("KMS_TEST_LOG_STDOUT").ok();
+    matches!(test_log_mode(), TestLogMode::Console | TestLogMode::Verbose)
+        || parse_boolish_env(stdout.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_test_log_mode_supports_tri_state_values() {
+        assert_eq!(parse_test_log_mode(None), TestLogMode::Quiet);
+        assert_eq!(parse_test_log_mode(Some("quiet")), TestLogMode::Quiet);
+        assert_eq!(parse_test_log_mode(Some("console")), TestLogMode::Console);
+        assert_eq!(parse_test_log_mode(Some("verbose")), TestLogMode::Verbose);
+        assert_eq!(parse_test_log_mode(Some("debug")), TestLogMode::Verbose);
+        assert_eq!(parse_test_log_mode(Some("trace")), TestLogMode::Verbose);
+    }
+
+    #[test]
+    fn parse_boolish_env_accepts_common_truthy_values() {
+        assert!(parse_boolish_env(Some("1")));
+        assert!(parse_boolish_env(Some("true")));
+        assert!(parse_boolish_env(Some("YES")));
+        assert!(!parse_boolish_env(Some("0")));
+        assert!(!parse_boolish_env(Some("false")));
+        assert!(!parse_boolish_env(None));
+    }
 }
 
 #[derive(Clone)]

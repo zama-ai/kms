@@ -19,6 +19,8 @@ members = [
     "observability",
     "tools/kms-health-check",
     "tools/generate-test-material",
+    "tools/tracing-test",
+    "tools/tracing-test-macro",
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
@@ -217,7 +219,7 @@ tracing = { version = "=0.1.44", features = ["log"] }  # Application instrumenta
 tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
 tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
 tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
-tracing-test = "=0.2.5"  # Tracing test utilities - LOW RISK: tokio-rs team
+tracing-test = { path = "./tools/tracing-test" }  # Internal tracing test compatibility layer - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,

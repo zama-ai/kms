@@ -1,0 +1,15 @@
+[package]
+name = "tracing-test-macro"
+version.workspace = true
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
