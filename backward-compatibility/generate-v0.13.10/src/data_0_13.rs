@@ -5,7 +5,7 @@
 use aes_prng::AesRng;
 use algebra::role::Role;
 use algebra::sharing::share::Share;
-use kms_0_13_1::backup::custodian::{
+use kms_0_13_10::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_13_10::backup::{
