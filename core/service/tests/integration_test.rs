@@ -29,10 +29,8 @@ fn kill_process(process_name: &str) {
         if let Some(path) = process.exe() {
             if let Some(s) = path.to_str() {
                 if s.contains(process_name) {
-                    println!(
-                        "killing process {process_name} with pid {pid}: ok={}",
-                        process.kill()
-                    );
+                    let _ = pid;
+                    let _ = process.kill();
                 }
             }
         }
@@ -400,8 +398,10 @@ mod kms_gen_keys_binary_test {
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         let err_log = String::from_utf8_lossy(&output.stderr);
-        println!("Command output: {log}");
-        println!("Command error output: {err_log}");
+        if !output.status.success() {
+            eprintln!("Command output: {log}");
+            eprintln!("Command error output: {err_log}");
+        }
         assert!(output.status.success());
         assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
         assert!(log.contains("Successfully stored private centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
@@ -442,7 +442,11 @@ mod kms_server_binary_test {
                 .arg(config_file)
                 .output();
             // Debug output of failing tests
-            println!("Command output: {out:?}");
+            if let Ok(ref output) = out {
+                if !output.status.success() {
+                    eprintln!("Command output: {out:?}");
+                }
+            }
         });
 
         thread::sleep(Duration::from_secs(5));
@@ -530,11 +534,7 @@ mod kms_server_binary_test {
             .tempdir()
             .unwrap();
         let actual_permissions = temp_dir.path().metadata().unwrap().permissions();
-        println!(
-            "temp_dir path: {:?}, permission: {:o}",
-            temp_dir.path(),
-            actual_permissions.mode()
-        );
+        assert_ne!(actual_permissions.mode(), 0);
 
         // Note that we're testing the type `CertificatePaths`
         // which is from core/threshold but using the binary in core/service.
@@ -623,7 +623,9 @@ mod kms_custodian_binary_tests {
         let out = h.join().unwrap().unwrap();
         let output_string = String::from_utf8_lossy(&out.stdout);
         let errors = String::from_utf8_lossy(&out.stderr);
-        println!("Command output: {output_string}");
+        if !out.status.success() || !errors.is_empty() {
+            eprintln!("Command output: {output_string}");
+        }
         assert!(
             out.status.success(),
             "Command did not execute successfully: {} : {}",

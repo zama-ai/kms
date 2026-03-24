@@ -48,6 +48,7 @@ use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
 use kms_lib::vault::Vault;
 use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
+use observability::telemetry::test_console_env_filter;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1360,7 +1361,7 @@ pub async fn encrypt(
 static INIT_LOG: Once = Once::new();
 
 pub fn init_testing() {
-    INIT_LOG.call_once(setup_logging);
+    INIT_LOG.call_once(setup_test_logging);
 }
 
 pub fn setup_logging() {
@@ -1371,8 +1372,6 @@ pub fn setup_logging() {
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
 
-    println!("Setting up logging with level: {log_level:?}");
-
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
         .with_ansi(false)
@@ -1380,6 +1379,16 @@ pub fn setup_logging() {
         .json()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
+}
+
+fn setup_test_logging() {
+    std::env::set_var("KMS_TEST_MODE", "1");
+
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(test_console_env_filter())
+        .try_init();
 }
 
 /// This reads the kms ethereum address from local file system
