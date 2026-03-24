@@ -39,7 +39,7 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .expect("Could not parse quoted statement init");
     let span = parse::<Stmt>(
         quote! {
-            let span = tracing::info_span!(#scope);
+            let span = tracing::error_span!(#scope);
         }
         .into(),
     )
