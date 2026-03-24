@@ -130,7 +130,7 @@ where
 pub fn init_subscriber() {
     let subscriber = tracing_subscriber::registry()
         .with(CaptureLayer)
-        .with(test_env_filter());
+        .with(test_capture_env_filter());
 
     if test_console_enabled() {
         subscriber
@@ -143,7 +143,8 @@ pub fn init_subscriber() {
                     .with_line_number(true)
                     .with_span_events(FmtSpan::NONE)
                     .with_ansi(false)
-                    .with_writer(std::io::stderr),
+                    .with_writer(std::io::stderr)
+                    .with_filter(test_env_filter()),
             )
             .try_init()
             .expect("failed to initialize tracing-test subscriber");
@@ -262,9 +263,22 @@ fn capture_max_bytes() -> usize {
         .unwrap_or(DEFAULT_CAPTURE_MAX_BYTES)
 }
 
-// Keep the tracing-test runtime aligned with `observability::telemetry` so
-// traced unit tests and spawned binaries interpret the same env vars the same
-// way.
+fn test_capture_env_filter() -> EnvFilter {
+    if let Ok(filter) = std::env::var("KMS_TEST_LOG_CAPTURE_FILTER") {
+        return EnvFilter::new(filter);
+    }
+
+    if let Ok(filter) = std::env::var("KMS_TEST_LOG_FILTER") {
+        return EnvFilter::new(filter);
+    }
+
+    if let Ok(filter) = EnvFilter::try_from_default_env() {
+        return filter;
+    }
+
+    EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER)
+}
+
 fn test_env_filter() -> EnvFilter {
     if let Ok(filter) = std::env::var("KMS_TEST_LOG_CONSOLE_FILTER") {
         return EnvFilter::new(filter);
