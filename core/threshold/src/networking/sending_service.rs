@@ -218,9 +218,15 @@ impl GrpcSendingService {
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
+        let mut receiver_completed = false;
 
         while let Some(value) = receiver.recv().await {
+            if receiver_completed {
+                continue;
+            }
+
             received_request += 1;
+
             let send_fn = || async {
                 let value = value.deep_clone();
                 network_channel
@@ -258,12 +264,14 @@ impl GrpcSendingService {
                             tracing::warn!("Receiver {other_role_kind} is inactive.");
                         }
                         Status::Completed => {
-                            // Failed to have receiver accept the message
-                            // Should be marked as completed
+                            // The receiver already completed this session.
+                            // Do not break — that would drop the receiver and cause
+                            // "channel closed" errors on subsequent sends.
+                            // Instead, mark as completed and drain remaining messages.
                             completed_parties.insert(other_role_kind);
                             tracing::warn!("Failed to send message to {other_role_kind} party since it claims the session is already completed");
                             incorrectly_sent += 1;
-                            break;
+                            receiver_completed = true;
                         }
                     };
                 }
