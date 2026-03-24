@@ -111,6 +111,19 @@ mod kms_gen_keys_binary_test {
 
     use super::*;
 
+    fn kms_gen_keys_command() -> Command {
+        let mut command = Command::cargo_bin(KMS_GEN_KEYS).unwrap();
+        // Integration tests run with quiet-by-default test logging, but these
+        // subprocess assertions intentionally depend on child `info!` output.
+        // Clear inherited filter overrides so the child's verbose preset wins.
+        command
+            .env("KMS_TEST_LOG_MODE", "verbose")
+            .env_remove("KMS_TEST_LOG_FILTER")
+            .env_remove("KMS_TEST_LOG_CONSOLE_FILTER")
+            .env_remove("RUST_LOG");
+        command
+    }
+
     #[test]
     #[integration_test]
     fn help() {
@@ -215,8 +228,7 @@ mod kms_gen_keys_binary_test {
     #[serial_test::serial]
     #[integration_test]
     fn central_signing_keys_overwrite() {
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
+        let output = kms_gen_keys_command()
             .arg("--param-test")
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
@@ -231,8 +243,7 @@ mod kms_gen_keys_binary_test {
             "Successfully stored public centralized server signing key under the handle"
         ));
 
-        let new_output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
+        let new_output = kms_gen_keys_command()
             .arg("--param-test")
             .arg("--cmd=signing-keys")
             .arg("centralized")
@@ -249,8 +260,7 @@ mod kms_gen_keys_binary_test {
     fn central_signing_address_format() {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
+        let output = kms_gen_keys_command()
             .arg("--param-test")
             .arg("--private-storage=file")
             .arg("--private-file-path")
@@ -348,8 +358,7 @@ mod kms_gen_keys_binary_test {
         let temp_dir_pub = tempdir().unwrap();
 
         // finally we run the command with the right args
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
+        let output = kms_gen_keys_command()
             .arg("--private-storage=file")
             .arg("--private-file-path")
             .arg(temp_dir_priv.path())
@@ -377,8 +386,7 @@ mod kms_gen_keys_binary_test {
 
         // Test the following command:
         // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=central_s3 --private-storage=file --private-file-path=./temp/keys/ --cmd=signing-keys --overwrite --deterministic
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
+        let output = kms_gen_keys_command()
             .arg("--param-test")
             .arg(format!("--aws-region={AWS_REGION}"))
             .arg(format!("--aws-s3-endpoint={AWS_S3_ENDPOINT}"))
