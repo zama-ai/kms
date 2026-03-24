@@ -3,9 +3,7 @@
 //! for kms-core v0.13.10
 
 use aes_prng::AesRng;
-use algebra::role::Role;
-use algebra::sharing::share::Share;
-use kms_0_13_1::backup::custodian::{
+use kms_0_13_10::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_13_10::backup::{
@@ -71,6 +69,8 @@ use threshold_fhe_0_13_10::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_13_10::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_fhe_0_13_10::{
     execution::{
+        runtime::party::Role,
+        sharing::share::Share,
         small_execution::prss::{PrssSet, PrssSetV0},
         tfhe_internals::{
             parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
