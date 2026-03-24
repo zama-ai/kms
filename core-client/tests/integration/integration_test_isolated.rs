@@ -243,6 +243,7 @@ use std::string::String;
 use tempfile::TempDir;
 #[cfg(feature = "threshold_tests")]
 use tfhe::zk::CompactPkeCrs;
+use tracing::info;
 
 // Additional imports for custodian and threshold tests
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
@@ -1273,7 +1274,7 @@ config_path = "{}"
 // ============================================================================
 
 fn init_testing() {
-    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+    kms_core_client::init_testing();
 }
 
 /// Helper to run insecure key generation via CLI (isolated version)
@@ -1289,11 +1290,11 @@ async fn insecure_key_gen_isolated(config_path: &Path, test_path: &Path) -> Resu
         download_all: false,
     };
 
-    println!("Doing insecure key-gen");
+    info!("Doing insecure key-gen");
     let key_gen_results = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Insecure key-gen done");
+    info!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
@@ -1323,11 +1324,11 @@ async fn insecure_key_gen_compressed_isolated(
         download_all: false,
     };
 
-    println!("Doing insecure key-gen (compressed)");
+    info!("Doing insecure key-gen (compressed)");
     let key_gen_results = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Insecure key-gen (compressed) done");
+    info!("Insecure key-gen (compressed) done");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
@@ -1396,11 +1397,11 @@ async fn crs_gen_isolated_with_params(
         download_all: false,
     };
 
-    println!("Doing CRS generation");
+    info!("Doing CRS generation");
     let crs_gen_results = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("CRS generation done");
+    info!("CRS generation done");
 
     assert_eq!(crs_gen_results.len(), 1);
     let crs_id = match crs_gen_results.first().unwrap() {
@@ -1955,11 +1956,11 @@ async fn restore_from_backup_isolated(config_path: &Path, test_path: &Path) -> R
         download_all: false,
     };
 
-    println!("Doing restore from backup");
+    info!("Doing restore from backup");
     let restore_results = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Restore from backup done");
+    info!("Restore from backup done");
 
     assert_eq!(restore_results.len(), 1);
     // No backup ID is returned since restore_from_backup can also be used without custodians
@@ -1992,13 +1993,13 @@ async fn real_preproc_and_keygen_isolated(
     };
 
     let t0 = std::time::Instant::now();
-    println!("Doing preprocessing");
+    info!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!(
+    info!(
         "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
         t0.elapsed().as_secs_f64()
     );
@@ -2017,11 +2018,11 @@ async fn real_preproc_and_keygen_isolated(
     };
 
     let t1 = std::time::Instant::now();
-    println!("Doing key-gen");
+    info!("Doing key-gen");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
+    info!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -2058,13 +2059,13 @@ async fn real_preproc_and_keygen_compressed_isolated(
     };
 
     let t0 = std::time::Instant::now();
-    println!("Doing preprocessing (compressed)");
+    info!("Doing preprocessing (compressed)");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!(
+    info!(
         "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
         t0.elapsed().as_secs_f64()
     );
@@ -2091,11 +2092,11 @@ async fn real_preproc_and_keygen_compressed_isolated(
     };
 
     let t1 = std::time::Instant::now();
-    println!("Doing key-gen (compressed)");
+    info!("Doing key-gen (compressed)");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!(
+    info!(
         "Key-gen (compressed) done (elapsed: {:.1}s)",
         t1.elapsed().as_secs_f64()
     );
@@ -2137,13 +2138,13 @@ async fn real_partial_preproc_and_keygen_isolated(
     };
 
     let t0 = std::time::Instant::now();
-    println!("Doing partial preprocessing ({percentage_offline}%)");
+    info!("Doing partial preprocessing ({percentage_offline}%)");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!(
+    info!(
         "Partial preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
         t0.elapsed().as_secs_f64()
     );
@@ -2162,11 +2163,11 @@ async fn real_partial_preproc_and_keygen_isolated(
     };
 
     let t1 = std::time::Instant::now();
-    println!("Doing key-gen");
+    info!("Doing key-gen");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
+    info!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -2196,7 +2197,7 @@ async fn store_mpc_context_in_file_isolated(
 
     let context = create_test_context_info_from_core_config(context_id, &cc_conf).await?;
 
-    println!("Storing context {:?} to file {:?}", context, context_path);
+    info!("Storing context {:?} to file {:?}", context, context_path);
 
     let mut buf = Vec::new();
     safe_serialize(&context, &mut buf, SAFE_SER_SIZE_LIMIT)
@@ -2227,11 +2228,11 @@ async fn new_mpc_context_isolated(
         download_all: false,
     };
 
-    println!("Creating new MPC context");
+    info!("Creating new MPC context");
     let context_result = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create MPC context: {}", e))?;
-    println!("MPC context created");
+    info!("MPC context created");
     assert_eq!(context_result.len(), 1);
     Ok(())
 }
@@ -2258,11 +2259,11 @@ async fn new_prss_isolated(
         download_all: false,
     };
 
-    println!("Initializing PRSS");
+    info!("Initializing PRSS");
     let prss_result = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to initialize PRSS: {}", e))?;
-    println!("PRSS initialized");
+    info!("PRSS initialized");
     assert_eq!(prss_result.len(), 1);
     Ok(())
 }
@@ -2289,13 +2290,13 @@ async fn real_preproc_and_keygen_with_context_isolated(
         download_all: false,
     };
 
-    println!("Doing preprocessing with context");
+    info!("Doing preprocessing with context");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to do preprocessing: {}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
+    info!("Preprocessing done with ID {preproc_id:?}");
 
     // Step 2: Key generation using preprocessing result
     let keygen_config = CmdConfig {
@@ -2314,11 +2315,11 @@ async fn real_preproc_and_keygen_with_context_isolated(
         download_all: false,
     };
 
-    println!("Doing key-gen with context");
+    info!("Doing key-gen with context");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to do keygen: {}", e))?;
-    println!("Key-gen done");
+    info!("Key-gen done");
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -2353,14 +2354,14 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
         download_all: false,
     };
 
-    println!("Doing preprocessing with context");
+    info!("Doing preprocessing with context");
     let mut preproc_result = execute_cmd(&preproc_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to do preprocessing: {}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id_opt, _) = preproc_result.pop().unwrap();
     let preproc_id = preproc_id_opt.unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
+    info!("Preprocessing done with ID {preproc_id:?}");
 
     // Step 2: Key generation using preprocessing result
     let keygen_config = CmdConfig {
@@ -2379,11 +2380,11 @@ async fn real_preproc_and_keygen_with_context_isolated_full(
         download_all: false,
     };
 
-    println!("Doing key-gen with context");
+    info!("Doing key-gen with context");
     let key_gen_results = execute_cmd(&keygen_config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to do keygen: {}", e))?;
-    println!("Key-gen done");
+    info!("Key-gen done");
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
@@ -2426,11 +2427,11 @@ async fn reshare_isolated(
         download_all: false,
     };
 
-    println!("Doing resharing");
+    info!("Doing resharing");
     let resharing_result = execute_cmd(&config, test_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to do resharing: {}", e))?;
-    println!("Resharing done");
+    info!("Resharing done");
 
     Ok(resharing_result)
 }
@@ -2459,9 +2460,9 @@ async fn new_custodian_context_isolated(
         download_all: false,
     };
 
-    println!("Doing new custodian context");
+    info!("Doing new custodian context");
     let backup_init_results = execute_cmd(&init_config, test_path).await.unwrap();
-    println!("New custodian context done");
+    info!("New custodian context done");
     assert_eq!(backup_init_results.len(), 1);
     let res_id = match backup_init_results.first().unwrap() {
         (Some(value), _) => value,
@@ -2573,9 +2574,9 @@ async fn custodian_backup_init_isolated(
         download_all: false,
     };
 
-    println!("Doing backup init");
+    info!("Doing backup init");
     let backup_init_results = execute_cmd(&init_config, test_path).await.unwrap();
-    println!("Backup init done");
+    info!("Backup init done");
     assert_eq!(backup_init_results.len(), 1);
     let res_id = match backup_init_results.first().unwrap() {
         (Some(value), _) => value,
@@ -2686,9 +2687,9 @@ async fn custodian_backup_recovery_isolated(
         download_all: false,
     };
 
-    println!("Doing backup recovery");
+    info!("Doing backup recovery");
     let backup_recovery_results = execute_cmd(&init_config, test_path).await.unwrap();
-    println!("Backup recovery done");
+    info!("Backup recovery done");
     assert_eq!(backup_recovery_results.len(), 1);
     let res_id = match backup_recovery_results.first().unwrap() {
         (Some(value), _) => value,
@@ -3287,7 +3288,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
         200,
     )
     .await?;
-    println!(
+    info!(
         "nightly_full_gen_tests_default_threshold_sequential_preproc_keygen (partial={}%) completed in {:.1}s",
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         t0.elapsed().as_secs_f64(),
@@ -3384,7 +3385,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     )
     .await?;
 
-    println!("MPC context initialization test completed successfully");
+    info!("MPC context initialization test completed successfully");
     Ok(())
 }
 
@@ -3425,8 +3426,8 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let test_path = material_dir.path();
 
     // === CONTEXT 1: Servers 1,2,3,4 as parties 1,2,3,4 ===
-    println!("\n========== CONTEXT 1 ==========");
-    println!("Creating first context with servers [1, 2, 3, 4] as parties [1, 2, 3, 4]");
+    info!("========== CONTEXT 1 ==========");
+    info!("Creating first context with servers [1, 2, 3, 4] as parties [1, 2, 3, 4]");
 
     let context_1_id =
         ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")?;
@@ -3446,15 +3447,15 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         Some(epoch_1_id),
     )
     .await?;
-    println!(
+    info!(
         "✅ Context 1 (servers 1,2,3,4): Key generated: {}",
         key_1_id
     );
 
     // === CONTEXT 2: Servers 5,6,4,3 as parties 1,2,3,4 (party resharing + role swap) ===
-    println!("\n========== CONTEXT 2 (PARTY RESHARING) ==========");
-    println!("Creating second context with servers [5, 6, 4, 3] as parties [1, 2, 3, 4]");
-    println!("Note: Servers 5,6 REPLACE servers 1,2; servers 3,4 SWAP roles in this context");
+    info!("========== CONTEXT 2 (PARTY RESHARING) ==========");
+    info!("Creating second context with servers [5, 6, 4, 3] as parties [1, 2, 3, 4]");
+    info!("Note: Servers 5,6 REPLACE servers 1,2; servers 3,4 SWAP roles in this context");
 
     let context_2_id =
         ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
@@ -3474,14 +3475,14 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         Some(epoch_2_id),
     )
     .await?;
-    println!(
+    info!(
         "✅ Context 2 (servers 5,6,4,3): Key generated: {}",
         key_2_id
     );
 
     // === SWITCH BACK TO CONTEXT 1 ===
-    println!("\n========== SWITCH BACK TO CONTEXT 1 ==========");
-    println!("Switching back to context 1 (servers 1,2,3,4)");
+    info!("========== SWITCH BACK TO CONTEXT 1 ==========");
+    info!("Switching back to context 1 (servers 1,2,3,4)");
 
     let key_1b_id = real_preproc_and_keygen_with_context_isolated(
         &config_path_1234,
@@ -3490,10 +3491,10 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         Some(epoch_1_id),
     )
     .await?;
-    println!("✅ Context 1 (switched back): Key generated: {}", key_1b_id);
+    info!("✅ Context 1 (switched back): Key generated: {}", key_1b_id);
 
     // === VALIDATION ===
-    println!("\n========== VALIDATION ==========");
+    info!("========== VALIDATION ==========");
     assert_ne!(context_1_id, context_2_id, "Context IDs must be different");
     assert_ne!(
         key_1_id, key_2_id,
@@ -3508,14 +3509,14 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         "Keys from different contexts must be different"
     );
 
-    println!("✅ Party resharing validated:");
-    println!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
-    println!(
+    info!("✅ Party resharing validated:");
+    info!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
+    info!(
         "   - Context 2: servers 5,6,4,3 as parties 1,2,3,4 (5,6 replaced 1,2; 3↔4 swapped roles)"
     );
-    println!("   - Servers 3,4 participated in BOTH contexts with DIFFERENT party roles");
-    println!("   - All 3 keys are unique and isolated");
-    println!("✅ 6-party MPC context switch with party resharing test completed successfully");
+    info!("   - Servers 3,4 participated in BOTH contexts with DIFFERENT party roles");
+    info!("   - All 3 keys are unique and isolated");
+    info!("✅ 6-party MPC context switch with party resharing test completed successfully");
 
     // Cleanup: drop servers explicitly
     drop(servers);
@@ -3662,12 +3663,12 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await?;
 
-    println!("Resharing result: {:?}", resharing_result);
+    info!("Resharing result: {:?}", resharing_result);
     assert_eq!(resharing_result.len(), 2);
 
     // The second element is the previous epoch_id used for reshare
     assert_eq!(resharing_result[1].0.unwrap(), epoch_id.into());
 
-    println!("✅ Threshold reshare test completed successfully");
+    info!("✅ Threshold reshare test completed successfully");
     Ok(())
 }

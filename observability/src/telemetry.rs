@@ -22,9 +22,12 @@ use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use serde::Serialize;
 use std::{
-    env,
+    env, io,
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, SystemTime},
 };
 use tonic::{
@@ -37,6 +40,7 @@ use tracing_appender::non_blocking;
 use tracing_appender::rolling::never;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
@@ -50,6 +54,161 @@ pub const TRACER_PARENT_SPAN_ID: &str = "x-zama-kms-parent-span-id";
 
 pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
+}
+
+const DEFAULT_TEST_CONSOLE_FILTER: &str =
+    "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
+const DEFAULT_TEST_FILE_FILTER: &str =
+    "warn,observability=info,kms_core_client=info,kms_lib=info,kms_server=info,kms_init=info,kms_gen_keys=info,kms_custodian=info,tonic=warn,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
+const DEFAULT_TEST_VERBOSE_FILTER: &str =
+    "info,tonic=info,h2=warn,hyper=warn,tower=warn,opentelemetry_sdk=warn,reqwest=warn,rustls=warn";
+const DEFAULT_TEST_LOG_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestLogMode {
+    Quiet,
+    Verbose,
+}
+
+#[derive(Clone)]
+struct TruncatingMakeWriter<W> {
+    inner: W,
+    state: Arc<TruncatingWriterState>,
+}
+
+struct TruncatingWriterState {
+    max_bytes: usize,
+    written_bytes: AtomicUsize,
+    truncated: AtomicBool,
+}
+
+struct TruncatingWriter<W> {
+    inner: W,
+    state: Arc<TruncatingWriterState>,
+}
+
+impl<W> TruncatingMakeWriter<W> {
+    fn new(inner: W, max_bytes: usize) -> Self {
+        Self {
+            inner,
+            state: Arc::new(TruncatingWriterState {
+                max_bytes,
+                written_bytes: AtomicUsize::new(0),
+                truncated: AtomicBool::new(false),
+            }),
+        }
+    }
+}
+
+impl<'a, W> MakeWriter<'a> for TruncatingMakeWriter<W>
+where
+    W: MakeWriter<'a> + Clone,
+{
+    type Writer = TruncatingWriter<W::Writer>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        TruncatingWriter {
+            inner: self.inner.make_writer(),
+            state: self.state.clone(),
+        }
+    }
+}
+
+impl<W> io::Write for TruncatingWriter<W>
+where
+    W: io::Write,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.state.max_bytes == 0 {
+            return self.inner.write(buf);
+        }
+
+        let written = self.state.written_bytes.load(Ordering::Relaxed);
+        if written >= self.state.max_bytes {
+            return Ok(buf.len());
+        }
+
+        let remaining = self.state.max_bytes.saturating_sub(written);
+        let to_write = remaining.min(buf.len());
+
+        if to_write > 0 {
+            self.inner.write_all(&buf[..to_write])?;
+            self.state
+                .written_bytes
+                .fetch_add(to_write, Ordering::Relaxed);
+        }
+
+        if to_write < buf.len() && !self.state.truncated.swap(true, Ordering::Relaxed) {
+            self.inner.write_all(b"\n[truncated test trace output]\n")?;
+        }
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn test_logging_enabled() -> bool {
+    matches!(
+        env::var("KMS_TEST_MODE").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    ) || matches!(env::var("RUN_MODE").as_deref(), Ok("integration"))
+        || env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled"
+}
+
+fn test_log_mode() -> TestLogMode {
+    match env::var("KMS_TEST_LOG_MODE")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "verbose" | "debug" | "trace" | "console" => TestLogMode::Verbose,
+        _ => TestLogMode::Quiet,
+    }
+}
+
+fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
+    if let Ok(filter) = env::var(override_var) {
+        return EnvFilter::new(filter);
+    }
+
+    if let Ok(filter) = env::var("KMS_TEST_LOG_FILTER") {
+        return EnvFilter::new(filter);
+    }
+
+    if matches!(test_log_mode(), TestLogMode::Verbose) {
+        return EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER));
+    }
+
+    EnvFilter::new(quiet_default)
+}
+
+pub fn test_console_env_filter() -> EnvFilter {
+    test_log_filter("KMS_TEST_LOG_CONSOLE_FILTER", DEFAULT_TEST_CONSOLE_FILTER)
+}
+
+pub fn test_persistent_env_filter() -> EnvFilter {
+    test_log_filter("KMS_TEST_LOG_FILE_FILTER", DEFAULT_TEST_FILE_FILTER)
+}
+
+pub fn test_log_max_bytes() -> usize {
+    env::var("KMS_TEST_LOG_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_TEST_LOG_MAX_BYTES)
+}
+
+fn test_console_enabled() -> bool {
+    matches!(
+        env::var("KMS_TEST_LOG_STDOUT")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    ) || matches!(test_log_mode(), TestLogMode::Verbose)
 }
 
 #[derive(Clone)]
@@ -251,18 +410,14 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         // Explicitly ignore errors since we can still proceed with console logging if this fails
         METRICS.set_trace_guard(Box::new(guard));
 
-        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("info")
-                .add_directive("tonic=info".parse().unwrap())
-                .add_directive("h2=info".parse().unwrap())
-                .add_directive("tower=warn".parse().unwrap())
-                .add_directive("hyper=warn".parse().unwrap())
-                .add_directive("opentelemetry_sdk=warn".parse().unwrap())
-        });
+        let env_filter = test_persistent_env_filter();
 
         // Configure file output with JSON formatting for better machine parsing
         let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(non_blocking)
+            .with_writer(TruncatingMakeWriter::new(
+                non_blocking,
+                test_log_max_bytes(),
+            ))
             .with_target(true)
             .with_thread_ids(true)
             .with_thread_names(true)
@@ -273,14 +428,20 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_current_span(true) // Include current span in output
             .with_span_list(true); // Include span hierarchy
 
-        let console_layer = fmt_layer();
-
-        tracing_subscriber::registry()
+        let subscriber = tracing_subscriber::registry()
             .with(file_layer)
-            .with(console_layer)
-            .with(env_filter)
-            .try_init()
-            .context("Failed to initialize tracing")?;
+            .with(env_filter);
+
+        if test_console_enabled() {
+            subscriber
+                .with(fmt_layer())
+                .try_init()
+                .context("Failed to initialize tracing")?;
+        } else {
+            subscriber
+                .try_init()
+                .context("Failed to initialize tracing")?;
+        }
 
         info!(
             "Integration test tracing initialized with file output to {}",
@@ -297,12 +458,6 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
 
     // If no endpoint is configured, set up only console logging
     let provider = if let Some(endpoint) = settings.tracing_endpoint() {
-        println!(
-            "Configuring OTLP Tracing exporter with endpoint: {} and tracing_otlp_timeout={}ms",
-            endpoint,
-            settings.tracing_otlp_timeout().as_millis()
-        );
-
         // Create an exporter for OTLP
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -312,20 +467,12 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
 
         // Configure batch processing
         let batch_config = if let Some(batch_conf) = settings.batch() {
-            println!(
-                "Configuring batch processing with: max_queue_size={}, scheduled_delay={}ms, max_export_batch_size={}",
-                batch_conf.max_queue_size(),
-                batch_conf.scheduled_delay().as_millis(),
-                batch_conf.max_export_batch_size(),
-            );
-
             opentelemetry_sdk::trace::BatchConfigBuilder::default()
                 .with_max_queue_size(batch_conf.max_queue_size())
                 .with_scheduled_delay(batch_conf.scheduled_delay())
                 .with_max_export_batch_size(batch_conf.max_export_batch_size())
                 .build()
         } else {
-            println!("Using default batch processing configuration");
             opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
         };
 
@@ -355,7 +502,6 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             )
             .build()
     } else {
-        println!("No tracing_endpoint is provided");
         SdkTracerProvider::builder()
             .with_sampler(
                 // When RUST_LOG=trace, sample everything
@@ -394,19 +540,23 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
     // Clone the provider to set it globally while keeping the original for explicit shutdown
     let tracer = provider.clone().tracer("kms-core");
 
-    let env_filter = match *ENVIRONMENT {
-        // For integration and local development, optionally use a more verbose filter
-        ExecutionEnvironment::Integration | ExecutionEnvironment::Local => {
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::new("info")
-                    .add_directive("tonic=info".parse().unwrap())
-                    .add_directive("h2=info".parse().unwrap())
-                    .add_directive("tower=warn".parse().unwrap())
-                    .add_directive("hyper=warn".parse().unwrap())
-                    .add_directive("opentelemetry_sdk=warn".parse().unwrap())
-            })
+    let env_filter = if test_logging_enabled() {
+        test_console_env_filter()
+    } else {
+        match *ENVIRONMENT {
+            // For integration and local development, optionally use a more verbose filter
+            ExecutionEnvironment::Integration | ExecutionEnvironment::Local => {
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    EnvFilter::new("info")
+                        .add_directive("tonic=info".parse().unwrap())
+                        .add_directive("h2=info".parse().unwrap())
+                        .add_directive("tower=warn".parse().unwrap())
+                        .add_directive("hyper=warn".parse().unwrap())
+                        .add_directive("opentelemetry_sdk=warn".parse().unwrap())
+                })
+            }
+            _ => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         }
-        _ => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
     };
 
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -432,20 +582,17 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
 pub async fn init_telemetry<T: Serialize + ConfigTracing>(
     config: &T,
 ) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
-    println!("Starting telemetry initialization...");
     let telemetry_conf = config.telemetry().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("kms_core".to_string())
             .build()
     });
     // First initialize tracing as it's more critical
-    println!("Initializing tracing subsystem...");
     let tracer_provider = init_tracing(&telemetry_conf).await?;
 
     // Now that tracing is initialized, we can use info! tracing macros
     info!("Tracing initialization completed successfully");
 
-    println!("Initializing metrics subsystem...");
     let meter_provider = init_metrics(config)?;
     info!("Metrics initialization completed successfully");
 

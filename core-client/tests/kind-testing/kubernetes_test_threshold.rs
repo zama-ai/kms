@@ -35,9 +35,7 @@ async fn insecure_key_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
-    println!("Doing insecure key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
@@ -65,9 +63,7 @@ async fn crs_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
-    println!("Doing CRS-gen");
     let crs_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("CRS-gen done");
     assert_eq!(crs_gen_results.len(), 1);
     let crs_id = match crs_gen_results.first().unwrap() {
         (Some(value), _) => value,
