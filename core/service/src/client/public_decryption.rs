@@ -15,6 +15,7 @@ impl Client {
     ///
     /// The key_id should be the request ID of the key generation
     /// request that generated the key which should be used for public decryption
+    #[allow(clippy::too_many_arguments)]
     pub fn public_decryption_request(
         &mut self,
         ciphertexts: Vec<TypedCiphertext>,
@@ -23,6 +24,7 @@ impl Client {
         context_id: Option<&ContextId>,
         key_id: &RequestId,
         epoch_id: Option<&EpochId>,
+        extra_data: &[u8],
     ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -37,7 +39,7 @@ impl Client {
             key_id: Some((*key_id).into()),
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
-            extra_data: vec![],
+            extra_data: extra_data.to_vec(),
             context_id: context_id.map(|c| (*c).into()),
             epoch_id: epoch_id.map(|e| (*e).into()),
         };
