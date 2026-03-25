@@ -56,7 +56,19 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
-// Default log filters for tests
+// Default log filters for tests.
+//
+// These presets drive three different test logging behaviors:
+// - `DEFAULT_TEST_CONSOLE_FILTER` keeps parent-process stderr quiet by default
+//   during local runs and CI, while still surfacing warnings and errors.
+// - `DEFAULT_TEST_FILE_FILTER` is used for persistent trace artifacts and keeps
+//   the in-repo crates at `info` so the saved JSON logs remain useful for
+//   debugging without opening the floodgates on transport noise.
+// - `DEFAULT_TEST_VERBOSE_FILTER` is the broader preset selected by
+//   `KMS_TEST_LOG_MODE=verbose|debug|trace` when no sink-specific override is
+//   provided.
+// - `DEFAULT_TEST_LOG_MAX_BYTES` caps persistent trace files; `init_tracing()`
+//   feeds it into `TruncatingMakeWriter` so CI artifacts stay bounded.
 const DEFAULT_TEST_CONSOLE_FILTER: &str =
     "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
 const DEFAULT_TEST_FILE_FILTER: &str =
@@ -206,6 +218,12 @@ fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
     EnvFilter::new(quiet_default)
 }
 
+// These helpers apply the override precedence above and expose the sink-specific
+// defaults used throughout the repo:
+// - `test_console_env_filter()` is used by the parent-process test subscribers
+//   installed by the integration-test macro and client-side test helpers.
+// - `test_persistent_env_filter()` is used by the JSON file sink when
+//   `TRACE_PERSISTENCE=enabled`.
 pub fn test_console_env_filter() -> EnvFilter {
     test_log_filter("KMS_TEST_LOG_CONSOLE_FILTER", DEFAULT_TEST_CONSOLE_FILTER)
 }
@@ -214,6 +232,8 @@ pub fn test_persistent_env_filter() -> EnvFilter {
     test_log_filter("KMS_TEST_LOG_FILE_FILTER", DEFAULT_TEST_FILE_FILTER)
 }
 
+// Used by the persistent trace file sink in `init_tracing()` to bound artifact
+// size while still emitting an explicit truncation marker.
 pub fn test_log_max_bytes() -> usize {
     env::var("KMS_TEST_LOG_MAX_BYTES")
         .ok()
