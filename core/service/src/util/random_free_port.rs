@@ -19,8 +19,17 @@ cfg_if::cfg_if! {
             host: &IpAddr,
             n: usize,
         ) -> anyhow::Result<Vec<(TcpListener, u16)>> {
+            // Cap attempts to avoid an unbounded loop if the OS ephemeral range
+            // is unusually narrow or keeps returning reserved ports.
+            let max_attempts = n.saturating_mul(10).max(100);
             let mut listeners_and_ports = Vec::with_capacity(n);
+            let mut attempts = 0usize;
             while listeners_and_ports.len() < n {
+                anyhow::ensure!(
+                    attempts < max_attempts,
+                    "failed to find {n} non-reserved free ports after {attempts} attempts"
+                );
+                attempts += 1;
                 let listener = get_listener_free_tcp(host).await?;
                 let port = listener.local_addr().unwrap().port();
                 if is_reserved_test_port(port) {

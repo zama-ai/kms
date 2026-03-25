@@ -128,15 +128,19 @@ where
 }
 
 pub fn init_subscriber() {
-    // Keep capture and console filtering separate: test assertions must keep
-    // seeing the events they assert on even when the console sink is configured
-    // to stay quiet in CI.
-    let subscriber = tracing_subscriber::registry()
-        .with(CaptureLayer)
-        .with(test_capture_env_filter());
+    // Both sinks use per-layer filters so that capture and console filtering
+    // stay independent.  A global filter would cap both sinks at the most
+    // restrictive level, which breaks `logs_contain(...)` when the console
+    // filter is quieter than the capture filter.
+    let subscriber =
+        tracing_subscriber::registry().with(CaptureLayer.with_filter(test_capture_env_filter()));
 
+    // Use `let _ =` instead of `.expect()` so this doesn't panic when another
+    // macro (e.g. `#[integration_test]`) already installed a global subscriber
+    // in the same test binary.  The `INITIALIZED` Once-guard still prevents
+    // redundant work within traced_test itself.
     if test_console_enabled() {
-        subscriber
+        let _ = subscriber
             .with(
                 tracing_fmt::layer()
                     .with_target(true)
@@ -149,12 +153,9 @@ pub fn init_subscriber() {
                     .with_writer(std::io::stderr)
                     .with_filter(test_env_filter()),
             )
-            .try_init()
-            .expect("failed to initialize tracing-test subscriber");
+            .try_init();
     } else {
-        subscriber
-            .try_init()
-            .expect("failed to initialize tracing-test subscriber");
+        let _ = subscriber.try_init();
     }
 }
 
