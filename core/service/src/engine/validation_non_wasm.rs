@@ -417,7 +417,7 @@ fn validate_public_decrypt_meta_data(
             return Ok(false);
         }
         let message = compute_public_decryption_message(
-            ext_handles_bytes.to_vec(),
+            ext_handles_bytes,
             &other_resp.plaintexts,
             params.extra_data,
         )?;
@@ -489,11 +489,20 @@ pub(crate) fn select_most_common_public_dec(
 
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
+///
+/// If Ok(None) is returned, it means there are no responses to verify.
+///
+/// If Ok(Some(vec![])) is returned, it means there were responses to
+/// verify but none of them pass the verification.
+///
+/// If Ok(Some(vec![...])) is returned, the values inside the vec are
+/// the verified response payloads.
 fn validate_public_decrypt_responses(
     server_pks: &HashMap<u32, PublicSigKey>,
     agg_resp: &[PublicDecryptionResponse],
     eip712_domain: Option<&Eip712Domain>,
     ext_handles_bytes: &[Vec<u8>],
+    extra_data: &[u8],
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
@@ -529,7 +538,7 @@ fn validate_public_decrypt_responses(
         // response
         let eip712_params = eip712_domain.map(|domain| Eip712VerificationParams {
             external_signature: &cur_resp.external_signature,
-            extra_data: &cur_resp.extra_data,
+            extra_data,
             eip712_domain: domain,
         });
         if !validate_public_decrypt_meta_data(
@@ -572,7 +581,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 ) -> anyhow::Result<()> {
     // Extract EIP-712 domain and external handles from request for external sig verification
     let eip712_domain = match &request {
-        Some(req) => optional_protobuf_to_alloy_domain(req.domain.as_ref()).ok(),
+        Some(req) => Some(optional_protobuf_to_alloy_domain(req.domain.as_ref())?),
         None => None,
     };
     let ext_handles_bytes: Vec<Vec<u8>> = match &request {
@@ -583,12 +592,17 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
             .collect(),
         None => vec![],
     };
+    let extra_data = match &request {
+        Some(req) => req.extra_data.as_slice(),
+        None => &[],
+    };
     let resp_parsed_payloads = crate::some_or_err(
         validate_public_decrypt_responses(
             server_pks,
             agg_resp,
             eip712_domain.as_ref(),
             &ext_handles_bytes,
+            extra_data,
         )?,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
     )?;
@@ -1283,7 +1297,7 @@ mod tests {
 
         let typed_ciphertext = TypedCiphertext {
             ciphertext,
-            fhe_type: 1,
+            fhe_type: tfhe::FheTypes::Uint4 as i32,
             ciphertext_format: 0,
             external_handle: vec![123],
         };
@@ -1360,7 +1374,7 @@ mod tests {
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 1,
+                fhe_type: tfhe::FheTypes::Uint4 as i32,
             }],
             request_id: request_id.clone(),
         };
@@ -1411,7 +1425,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: bad_request_id,
             };
@@ -1443,7 +1457,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: bad_request_id,
             };
@@ -1470,7 +1484,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: request_id.clone(),
             };
@@ -1497,7 +1511,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id,
             };
@@ -1560,7 +1574,7 @@ mod tests {
         let extra_data_1 = vec![1, 2, 3, 4]; // same extra_data as resp0
         let plaintexts = vec![TypedPlaintext {
             bytes: vec![1],
-            fhe_type: 2, // Uint8, supported for ABI encoding
+            fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
         }];
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
@@ -1576,7 +1590,7 @@ mod tests {
 
             let external_signature = compute_external_pt_signature(
                 &sk0,
-                ext_handles_bytes.clone(),
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data_0,
                 domain.clone(),
@@ -1602,7 +1616,7 @@ mod tests {
 
             let external_signature = compute_external_pt_signature(
                 &sk1,
-                ext_handles_bytes.clone(),
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data_1,
                 domain.clone(),
@@ -1630,7 +1644,8 @@ mod tests {
                     &pks,
                     &bad_agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1645,7 +1660,8 @@ mod tests {
                     &pks,
                     &bad_agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1662,7 +1678,8 @@ mod tests {
                     &pks,
                     &bad_agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1679,11 +1696,11 @@ mod tests {
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
-                            fhe_type: 2,
+                            fhe_type: tfhe::FheTypes::Uint8 as i32,
                         },
                         TypedPlaintext {
                             bytes: vec![1],
-                            fhe_type: 2,
+                            fhe_type: tfhe::FheTypes::Uint8 as i32,
                         },
                     ],
                     request_id,
@@ -1706,7 +1723,8 @@ mod tests {
                     &pks,
                     &agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1725,7 +1743,8 @@ mod tests {
                     &pks,
                     &agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1742,7 +1761,8 @@ mod tests {
                     &pks,
                     &agg_resp,
                     Some(&domain),
-                    &ext_handles_bytes
+                    &ext_handles_bytes,
+                    &extra_data_0,
                 )
                 .unwrap()
                 .unwrap()
@@ -1769,7 +1789,7 @@ mod tests {
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let ciphertexts = vec![TypedCiphertext {
             ciphertext: vec![1, 2, 3, 4],
-            fhe_type: 2,
+            fhe_type: tfhe::FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3, 4],
             ciphertext_format: 1,
         }];
@@ -1795,7 +1815,7 @@ mod tests {
         let resp0 = {
             let plaintexts = vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 2,
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
             }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
@@ -1809,7 +1829,7 @@ mod tests {
             let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
             let external_signature = compute_external_pt_signature(
                 &sk0,
-                ext_handles_bytes.clone(),
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
                 domain.clone(),
@@ -1826,7 +1846,7 @@ mod tests {
         let resp1 = {
             let plaintexts = vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 2,
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
             }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
@@ -1840,7 +1860,7 @@ mod tests {
             let extra_data = vec![1, 2, 3]; // some extra data, independent of resp0
             let external_signature = compute_external_pt_signature(
                 &sk1,
-                ext_handles_bytes,
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
                 domain,
@@ -1892,13 +1912,13 @@ mod tests {
                 ciphertexts: vec![
                     TypedCiphertext {
                         ciphertext: vec![1, 2, 3, 4],
-                        fhe_type: 1,
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
                         external_handle: vec![1, 2, 3, 4],
                         ciphertext_format: 1,
                     },
                     TypedCiphertext {
                         ciphertext: vec![5, 6, 7, 8],
-                        fhe_type: 1,
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
                         external_handle: vec![5, 6, 7, 8],
                         ciphertext_format: 1,
                     },
@@ -1982,7 +2002,7 @@ mod tests {
                 ),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
-                    fhe_type: 2,
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
@@ -2062,7 +2082,7 @@ mod tests {
         );
         let plaintexts = vec![TypedPlaintext {
             bytes: vec![1],
-            fhe_type: 1,
+            fhe_type: tfhe::FheTypes::Uint4 as i32,
         }];
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
@@ -2098,7 +2118,7 @@ mod tests {
             resp1.payload.iter_mut().for_each(|x| {
                 x.plaintexts = vec![TypedPlaintext {
                     bytes: vec![0],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }]
             });
             let agg_resp = vec![resp0.clone(), resp1];

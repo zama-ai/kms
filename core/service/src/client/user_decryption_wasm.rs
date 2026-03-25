@@ -158,7 +158,6 @@ impl Client {
                 request,
                 eip712_domain,
                 expected_server_addr,
-                &resp.extra_data,
             )
             .inspect_err(|e| {
                 tracing::warn!("signature on received response is not valid ({})", e)
@@ -738,6 +737,7 @@ pub struct ParsedUserDecryptionRequest {
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
+    extra_data: Vec<u8>,
 }
 
 impl ParsedUserDecryptionRequest {
@@ -747,6 +747,7 @@ impl ParsedUserDecryptionRequest {
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
+        extra_data: Vec<u8>,
     ) -> Self {
         Self {
             signature,
@@ -754,11 +755,16 @@ impl ParsedUserDecryptionRequest {
             enc_key,
             ciphertext_handles,
             eip712_verifying_contract,
+            extra_data,
         }
     }
 
     pub fn enc_key(&self) -> &[u8] {
         &self.enc_key
+    }
+
+    pub fn extra_data(&self) -> &[u8] {
+        &self.extra_data
     }
 }
 
@@ -785,6 +791,8 @@ pub(crate) struct ParsedUserDecryptionRequestHex {
     enc_key: String,
     ciphertext_handles: Vec<String>,
     eip712_verifying_contract: String,
+    #[serde(default)]
+    extra_data: String,
 }
 
 impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
@@ -806,6 +814,11 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
                 .map_err(|e| JsError::new(&e.to_string()))?;
+        let extra_data = if req_hex.extra_data.is_empty() {
+            vec![]
+        } else {
+            hex_decode_js_err(&req_hex.extra_data)?
+        };
         let out = Self {
             signature,
             client_address,
@@ -816,6 +829,7 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
                 .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
                 .collect::<Result<Vec<_>, JsError>>()?,
             eip712_verifying_contract,
+            extra_data,
         };
         Ok(out)
     }
@@ -849,6 +863,7 @@ impl From<&ParsedUserDecryptionRequest> for ParsedUserDecryptionRequestHex {
                 .map(|hdl| hex::encode(&hdl.0))
                 .collect::<Vec<_>>(),
             eip712_verifying_contract: value.eip712_verifying_contract.to_checksum(None),
+            extra_data: hex::encode(&value.extra_data),
         }
     }
 }
@@ -880,6 +895,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             enc_key: value.enc_key.clone(),
             ciphertext_handles,
             eip712_verifying_contract,
+            extra_data: value.extra_data.clone(),
         };
         Ok(out)
     }

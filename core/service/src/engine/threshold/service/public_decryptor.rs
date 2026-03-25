@@ -589,7 +589,7 @@ impl<
                 spawn_compute_bound(move || {
                     compute_external_pt_signature(
                         &sigkey,
-                        ext_handles_bytes,
+                        &ext_handles_bytes,
                         &pts,
                         &extra_data,
                         eip712_domain,

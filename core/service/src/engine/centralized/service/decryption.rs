@@ -371,7 +371,7 @@ pub async fn public_decrypt_impl<
                 // sign the plaintexts and handles for external verification (in fhevm)
                 match compute_external_pt_signature(
                     &sig_key,
-                    ext_handles_bytes,
+                    &ext_handles_bytes,
                     &pts,
                     &extra_data,
                     eip712_domain,
