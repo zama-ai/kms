@@ -9,6 +9,7 @@ use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
+use tracing::info;
 
 fn root_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -35,7 +36,9 @@ async fn insecure_key_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
+    info!("Doing insecure key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
+    info!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
@@ -63,7 +66,9 @@ async fn crs_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
+    info!("Doing CRS-gen");
     let crs_gen_results = execute_cmd(&config, test_path).await.unwrap();
+    info!("CRS-gen done");
     assert_eq!(crs_gen_results.len(), 1);
     let crs_id = match crs_gen_results.first().unwrap() {
         (Some(value), _) => value,

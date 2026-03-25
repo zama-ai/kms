@@ -441,7 +441,12 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         // Create directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(&log_path).parent() {
             if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
+                tokio::fs::create_dir_all(parent).await.with_context(|| {
+                    format!(
+                        "Failed to create persistent trace directory {}",
+                        parent.display()
+                    )
+                })?;
             }
         }
 
@@ -479,11 +484,17 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             subscriber
                 .with(fmt_layer())
                 .try_init()
-                .context("Failed to initialize tracing")?;
+                .with_context(|| {
+                    format!(
+                        "Failed to initialize persistent test tracing with console output enabled and file output to {log_path}"
+                    )
+                })?;
         } else {
-            subscriber
-                .try_init()
-                .context("Failed to initialize tracing")?;
+            subscriber.try_init().with_context(|| {
+                format!(
+                    "Failed to initialize persistent test tracing with file output to {log_path}"
+                )
+            })?;
         }
 
         info!(
@@ -498,26 +509,49 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         .tracing_service_name()
         .unwrap_or("unknown-service")
         .to_string();
+    let service_name_for_logs = service_name.clone();
+    let tracing_endpoint = settings.tracing_endpoint().map(str::to_owned);
+    let tracing_otlp_timeout_ms = settings.tracing_otlp_timeout().as_millis();
+    let batch_override = settings.batch().map(|batch_conf| {
+        (
+            batch_conf.max_queue_size(),
+            batch_conf.scheduled_delay(),
+            batch_conf.scheduled_delay().as_millis(),
+            batch_conf.max_export_batch_size(),
+        )
+    });
+    let sample_all_stdout_spans = std::env::var("RUST_LOG")
+        .map(|v| v == "trace")
+        .unwrap_or(false);
 
     // If no endpoint is configured, set up only console logging
-    let provider = if let Some(endpoint) = settings.tracing_endpoint() {
+    let provider = if let Some(endpoint) = tracing_endpoint.as_deref() {
         // Create an exporter for OTLP
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .with_timeout(settings.tracing_otlp_timeout())
-            .build()?;
+            .build()
+            .with_context(|| {
+                format!(
+                    "Failed to build OTLP span exporter for endpoint {endpoint} with tracing_otlp_timeout={}ms",
+                    tracing_otlp_timeout_ms
+                )
+            })?;
 
         // Configure batch processing
-        let batch_config = if let Some(batch_conf) = settings.batch() {
-            opentelemetry_sdk::trace::BatchConfigBuilder::default()
-                .with_max_queue_size(batch_conf.max_queue_size())
-                .with_scheduled_delay(batch_conf.scheduled_delay())
-                .with_max_export_batch_size(batch_conf.max_export_batch_size())
-                .build()
-        } else {
-            opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
-        };
+        let batch_config =
+            if let Some((max_queue_size, scheduled_delay, _, max_export_batch_size)) =
+                batch_override.as_ref()
+            {
+                opentelemetry_sdk::trace::BatchConfigBuilder::default()
+                    .with_max_queue_size(*max_queue_size)
+                    .with_scheduled_delay(*scheduled_delay)
+                    .with_max_export_batch_size(*max_export_batch_size)
+                    .build()
+            } else {
+                opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
+            };
 
         let batch_processor = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter)
             .with_batch_config(batch_config)
@@ -530,7 +564,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
                     .with_attributes(vec![
                         KeyValue::new(
                             opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                            service_name,
+                            service_name.clone(),
                         ),
                         KeyValue::new(
                             "service.version".to_string(),
@@ -549,10 +583,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_sampler(
                 // When RUST_LOG=trace, sample everything
                 // Otherwise, sample nothing for OpenTelemetry
-                if std::env::var("RUST_LOG")
-                    .map(|v| v == "trace")
-                    .unwrap_or(false)
-                {
+                if sample_all_stdout_spans {
                     Sampler::AlwaysOn
                 } else {
                     Sampler::AlwaysOff
@@ -610,7 +641,43 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         .with(fmt_layer)
         .with(env_filter)
         .try_init()
-        .context("Failed to initialize tracing")?;
+        .with_context(|| match tracing_endpoint.as_deref() {
+            Some(endpoint) => format!(
+                "Failed to initialize tracing subscriber for service `{service_name_for_logs}` with OTLP endpoint {endpoint}"
+            ),
+            None => format!(
+                "Failed to initialize tracing subscriber for service `{service_name_for_logs}` without an OTLP endpoint"
+            ),
+        })?;
+
+    match (tracing_endpoint.as_deref(), batch_override.as_ref()) {
+        (Some(endpoint), Some((max_queue_size, _, scheduled_delay_ms, max_export_batch_size))) => {
+            info!(
+                service_name = %service_name_for_logs,
+                endpoint = %endpoint,
+                tracing_otlp_timeout_ms = tracing_otlp_timeout_ms,
+                max_queue_size = *max_queue_size,
+                scheduled_delay_ms = *scheduled_delay_ms,
+                max_export_batch_size = *max_export_batch_size,
+                "Tracing initialized with OTLP exporter and custom batch processing"
+            );
+        }
+        (Some(endpoint), None) => {
+            info!(
+                service_name = %service_name_for_logs,
+                endpoint = %endpoint,
+                tracing_otlp_timeout_ms = tracing_otlp_timeout_ms,
+                "Tracing initialized with OTLP exporter and default batch processing"
+            );
+        }
+        (None, _) => {
+            info!(
+                service_name = %service_name_for_logs,
+                sample_all_spans = sample_all_stdout_spans,
+                "Tracing initialized without an OTLP endpoint; using stdout exporter"
+            );
+        }
+    }
 
     // Propagate both W3C tracecontext and baggage
     global::set_text_map_propagator(TextMapCompositePropagator::new(vec![

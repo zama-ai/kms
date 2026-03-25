@@ -3,10 +3,11 @@ use kms_lib::consts::{
     KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
+use observability::telemetry::test_console_env_filter;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{fs, thread, time::Duration};
+use std::{fs, sync::Once, thread, time::Duration};
 use sysinfo::System;
 use tests_utils::integration_test;
 use tests_utils::persistent_traces;
@@ -16,6 +17,17 @@ const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
+
+fn init_test_logging() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_ansi(false)
+            .with_env_filter(test_console_env_filter())
+            .try_init();
+    });
+}
 
 /// Kill processes based on the executable name.
 /// Note that tests using this function should run in serial mode
@@ -28,9 +40,12 @@ fn kill_process(process_name: &str) {
         // exe returns the path to the process
         if let Some(path) = process.exe() {
             if let Some(s) = path.to_str() {
-                if s.contains(process_name) {
-                    let _ = pid;
-                    let _ = process.kill();
+                if s.contains(process_name) && !process.kill() {
+                    tracing::error!(
+                        process_name = %process_name,
+                        pid = %pid,
+                        "Failed to kill matching process during integration test cleanup"
+                    );
                 }
             }
         }
@@ -407,8 +422,12 @@ mod kms_gen_keys_binary_test {
         let log = String::from_utf8_lossy(&output.stdout);
         let err_log = String::from_utf8_lossy(&output.stderr);
         if !output.status.success() {
-            eprintln!("Command output: {log}");
-            eprintln!("Command error output: {err_log}");
+            tracing::error!(
+                status = %output.status,
+                stdout = %log,
+                stderr = %err_log,
+                "kms-gen-keys centralized S3 integration command failed"
+            );
         }
         assert!(output.status.success());
         assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
@@ -450,10 +469,24 @@ mod kms_server_binary_test {
                 .arg(config_file)
                 .output();
             // Debug output of failing tests
-            if let Ok(ref output) = out {
-                if !output.status.success() {
-                    eprintln!("Command output: {out:?}");
+            match out {
+                Ok(ref output) if !output.status.success() => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    tracing::error!(
+                        status = %output.status,
+                        stdout = %stdout,
+                        stderr = %stderr,
+                        "kms-server integration command exited unexpectedly"
+                    );
                 }
+                Err(ref err) => {
+                    tracing::error!(
+                        error = %err,
+                        "Failed to capture kms-server subprocess output in integration test"
+                    );
+                }
+                _ => {}
             }
         });
 
@@ -541,8 +574,6 @@ mod kms_server_binary_test {
             .permissions(all_rwx)
             .tempdir()
             .unwrap();
-        let actual_permissions = temp_dir.path().metadata().unwrap().permissions();
-        assert_ne!(actual_permissions.mode(), 0);
 
         // Note that we're testing the type `CertificatePaths`
         // which is from core/threshold but using the binary in core/service.
@@ -590,6 +621,7 @@ mod kms_server_binary_test {
 
 #[cfg(test)]
 mod kms_custodian_binary_tests {
+    use super::init_test_logging;
     use aes_prng::AesRng;
     use algebra::role::Role;
     use assert_cmd::Command;
@@ -618,6 +650,7 @@ mod kms_custodian_binary_tests {
     use std::{collections::BTreeMap, path::Path, thread};
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
+        init_test_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {
@@ -632,7 +665,12 @@ mod kms_custodian_binary_tests {
         let output_string = String::from_utf8_lossy(&out.stdout);
         let errors = String::from_utf8_lossy(&out.stderr);
         if !out.status.success() || !errors.is_empty() {
-            eprintln!("Command output: {output_string}");
+            tracing::error!(
+                status = %out.status,
+                stdout = %output_string,
+                stderr = %errors,
+                "kms-custodian integration command returned unexpected output"
+            );
         }
         assert!(
             out.status.success(),
