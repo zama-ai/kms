@@ -1956,6 +1956,20 @@ mod tests {
             .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE));
         }
 
+        // bad external signature
+        {
+            let mut bad_resp = resp1.clone();
+            bad_resp.external_signature[0] ^= 1;
+            let agg_resp = vec![resp0.clone(), bad_resp];
+            validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(request.clone()),
+                &agg_resp,
+                1,
+            )
+            .unwrap();
+        }
+
         // request ID
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
