@@ -47,7 +47,7 @@ fetch_pcrs_from_image() {
         return
     fi
 
-    local IMAGE_REPO="ghcr.io/zama-ai/kms"
+    local IMAGE_REPO="hub.zama.org/ghcr/zama-ai/kms"
     local FULL_IMAGE="${IMAGE_REPO}/core-service-enclave:${KMS_CORE_TAG}"
 
     log_info "Pulling ${FULL_IMAGE}..."

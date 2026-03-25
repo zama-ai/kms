@@ -9,7 +9,7 @@ kmsCore:
   nameOverride:
   addressOverride:
   image:
-    name: ghcr.io/zama-ai/kms/core-service-enclave
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
     tag: <version>
   thresholdMode:
     enabled: false
