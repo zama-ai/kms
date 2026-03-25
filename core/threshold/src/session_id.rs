@@ -1,5 +1,5 @@
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
-use crate::hashing::{serialize_hash_element, DomainSep};
+use hashing::{serialize_hash_element, DomainSep};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 

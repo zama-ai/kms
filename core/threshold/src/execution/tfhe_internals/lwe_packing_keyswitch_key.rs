@@ -17,17 +17,15 @@ use tfhe::{
 };
 
 use super::{glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType};
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
-    },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
-        sharing::share::Share,
-    },
+use crate::execution::{
+    online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
 };
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::{BaseRing, ErrorCorrect},
+};
+use error_utils::anyhow_error_and_log;
 
 // Data structure to hold the shares of the Packing KS
 // used for compression.

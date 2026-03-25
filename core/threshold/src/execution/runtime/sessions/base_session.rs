@@ -1,15 +1,12 @@
 use crate::{
-    execution::runtime::{
-        party::{Role, RoleTrait, TwoSetsRole},
-        sessions::session_parameters::{
-            DeSerializationRunTime, GenericParameterHandles, GenericSessionParameters,
-            ParameterHandles,
-        },
+    execution::runtime::sessions::session_parameters::{
+        DeSerializationRunTime, GenericParameterHandles, GenericSessionParameters, ParameterHandles,
     },
     networking::Networking,
     session_id::SessionId,
 };
 use aes_prng::AesRng;
+use algebra::role::{Role, RoleTrait, TwoSetsRole};
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::{collections::HashSet, sync::Arc};
 

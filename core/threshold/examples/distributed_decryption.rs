@@ -8,11 +8,11 @@
 //! This is an example where we setup a testing runtime that runs 4 parties on the same machine.
 //! You can run it with `cargo run -F testing --example distributed_decryption`.
 use aes_prng::AesRng;
+use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use tfhe::{set_server_key, FheUint8};
 use threshold_fhe::{
-    algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
     execution::{
         endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
         runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},

@@ -1,14 +1,18 @@
 use crate::{
-    error::error_handler::anyhow_error_and_log,
-    execution::runtime::{party::Role, sessions::base_session::BaseSessionHandles},
-    networking::value::NetworkValue,
+    execution::runtime::sessions::base_session::BaseSessionHandles, networking::value::NetworkValue,
 };
+use error_utils::anyhow_error_and_log;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{task::JoinSet, time::timeout_at};
 
-use super::{shamir::ShamirSharings, share::Share};
-use crate::algebra::structure_traits::Ring;
-use crate::execution::sharing::shamir::InputOp;
+use algebra::{
+    role::Role,
+    sharing::{
+        shamir::{InputOp, ShamirSharings},
+        share::Share,
+    },
+    structure_traits::Ring,
+};
 
 pub async fn robust_input<Z, S: BaseSessionHandles>(
     session: &mut S,

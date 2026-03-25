@@ -1,11 +1,9 @@
-use crate::{
-    algebra::{
-        base_ring::Z128,
-        galois_rings::common::ResiduePoly,
-        structure_traits::{ErrorCorrect, Invert, Solve},
-    },
-    error::error_handler::anyhow_error_and_log,
+use algebra::{
+    base_ring::Z128,
+    galois_rings::common::ResiduePoly,
+    structure_traits::{ErrorCorrect, Invert, Solve},
 };
+use error_utils::anyhow_error_and_log;
 
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use async_trait::async_trait;

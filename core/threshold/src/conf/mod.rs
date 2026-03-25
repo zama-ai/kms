@@ -1,4 +1,5 @@
-use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::party::Identity;
+use algebra::role::Role;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

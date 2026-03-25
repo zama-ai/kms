@@ -1,5 +1,5 @@
 //! Networking traits and implementations.
-use crate::execution::runtime::party::RoleTrait;
+use algebra::role::RoleTrait;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
@@ -12,7 +12,7 @@ pub mod sending_service;
 pub mod tls;
 pub mod value;
 
-mod gen {
+mod ggen {
     #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_networking");
 }

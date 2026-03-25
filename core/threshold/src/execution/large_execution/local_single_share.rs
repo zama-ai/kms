@@ -4,20 +4,23 @@ use super::{
     share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutput},
 };
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
-        sharing::{
-            shamir::{RevealOp, ShamirSharings},
-            share::Share,
-        },
+        runtime::sessions::large_session::LargeSessionHandles,
     },
     networking::value::BroadcastValue,
     ProtocolDescription,
 };
+use algebra::{
+    role::Role,
+    sharing::{
+        shamir::{RevealOp, ShamirSharings},
+        share::Share,
+    },
+    structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+};
 use async_trait::async_trait;
+use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use num_integer::div_ceil;
 use serde::{Deserialize, Serialize};
@@ -441,11 +444,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     use super::RealLocalSingleShare;
     use super::{Derive, LocalSingleShare, SecureLocalSingleShare};
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert};
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
-    use crate::execution::sharing::shamir::RevealOp;
     #[cfg(feature = "slow_tests")]
     use crate::execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
@@ -468,17 +467,21 @@ pub(crate) mod tests {
     };
     use crate::networking::NetworkMode;
     use crate::{
-        execution::{
-            runtime::party::Role,
-            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
-            sharing::{shamir::ShamirSharings, share::Share},
-        },
+        execution::runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
     };
+    use algebra::{
+        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
 
-    use crate::algebra::structure_traits::Ring;
     use aes_prng::AesRng;
     use futures_util::future::join;
     use itertools::Itertools;

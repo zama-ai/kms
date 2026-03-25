@@ -1,5 +1,6 @@
 use crate::engine::base::{CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
+use hashing::hash_element;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
@@ -10,7 +11,6 @@ use observability::metrics_names::{
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use threshold_fhe::hashing::hash_element;
 use tonic::Status;
 
 pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";

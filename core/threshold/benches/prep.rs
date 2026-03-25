@@ -1,9 +1,10 @@
 use aes_prng::AesRng;
+use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
+use algebra::galois_rings::degree_8::ResiduePolyF8Z64;
+use algebra::sharing::shamir::{InputOp, RevealOp};
+use algebra::structure_traits::Ring;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use threshold_fhe::algebra::structure_traits::Ring;
 use threshold_fhe::execution::config::BatchParams;
 use threshold_fhe::execution::large_execution::double_sharing::{
     DoubleSharing, SecureDoubleSharing,
@@ -13,7 +14,6 @@ use threshold_fhe::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use threshold_fhe::execution::runtime::sessions::{
     large_session::LargeSession, small_session::SmallSession128,
 };
-use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp};
 use threshold_fhe::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use threshold_fhe::networking::NetworkMode;
 use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_large;
@@ -394,8 +394,8 @@ fn bitgen_nlarge(c: &mut Criterion) {
 }
 
 fn batch_decode2t(c: &mut Criterion) {
+    use algebra::sharing::shamir::ShamirSharings;
     use std::num::Wrapping;
-    use threshold_fhe::execution::sharing::shamir::ShamirSharings;
 
     let mut group = c.benchmark_group("batch_decode2t");
     group.sample_size(10);

@@ -1,20 +1,17 @@
 use crate::{
-    execution::runtime::{
-        party::Role,
-        sessions::{
-            base_session::{
-                BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
-                SingleSetNetworkingImpl, ToBaseSession,
-            },
-            session_parameters::{
-                DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
-                SessionParameters,
-            },
+    execution::runtime::sessions::{
+        base_session::{
+            BaseSession, BaseSessionHandles, GenericBaseSessionHandles, SingleSetNetworkingImpl,
+            ToBaseSession,
+        },
+        session_parameters::{
+            DeSerializationRunTime, GenericParameterHandles, ParameterHandles, SessionParameters,
         },
     },
     session_id::SessionId,
 };
 use aes_prng::AesRng;
+use algebra::role::Role;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
