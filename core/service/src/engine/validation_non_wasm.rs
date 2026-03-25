@@ -361,6 +361,11 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
+///
+/// Note that `eip712_params` needs to be optional because for some tests, e.g.,
+/// when the core-client just tried to query for a decryption result without knowing the
+/// original request, we will not have EIP-712 parameters.
+/// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
 fn validate_public_decrypt_meta_data(
     server_pks: &HashMap<u32, PublicSigKey>,
     pivot_resp: &PublicDecryptionResponsePayload,
