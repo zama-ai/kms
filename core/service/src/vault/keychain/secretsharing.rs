@@ -265,12 +265,12 @@ mod tests {
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
     use aes_prng::AesRng;
+    use algebra::role::Role;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use std::collections::BTreeMap;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tfhe::safe_serialization::safe_serialize;
-    use threshold_fhe::execution::runtime::party::Role;
 
     #[tokio::test]
     async fn test_new_keychain_without_pub_storage() {

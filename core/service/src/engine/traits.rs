@@ -1,10 +1,10 @@
+use hashing::DomainSep;
 use kms_grpc::kms::v1::*;
 use kms_grpc::ContextId;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
 use tfhe::FheTypes;
-use threshold_fhe::hashing::DomainSep;
 use tonic::Request;
 use tonic::Response;
 

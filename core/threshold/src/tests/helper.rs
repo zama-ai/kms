@@ -7,10 +7,8 @@ pub mod tests_and_benches {
     use tokio::time::Duration;
 
     use crate::{
-        algebra::structure_traits::{ErrorCorrect, Invert, Ring},
         execution::{
             runtime::{
-                party::{Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::base_session::{BaseSession, GenericBaseSession},
                 test_runtime::generate_fixed_roles_two_sets_with_intersection,
             },
@@ -19,6 +17,8 @@ pub mod tests_and_benches {
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
+    use algebra::role::{Role, TwoSetsRole, TwoSetsThreshold};
+    use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures::Future;
     use rand::SeedableRng;
     use tokio::task::JoinSet;
@@ -338,10 +338,8 @@ pub mod tests_and_benches {
 #[cfg(any(test, feature = "testing"))]
 pub mod testing {
     use crate::{
-        algebra::structure_traits::{ErrorCorrect, Invert},
         execution::{
             runtime::{
-                party::Role,
                 sessions::{base_session::BaseSession, session_parameters::SessionParameters},
                 test_runtime::generate_fixed_roles,
             },
@@ -355,6 +353,10 @@ pub mod testing {
         session_id::SessionId,
     };
     use aes_prng::AesRng;
+    use algebra::{
+        role::Role,
+        structure_traits::{ErrorCorrect, Invert},
+    };
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
     use tokio::runtime::Runtime;
@@ -409,11 +411,13 @@ pub mod testing {
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
     use crate::{
-        algebra::structure_traits::{ErrorCorrect, Invert, Ring},
+        execution::constants::{PARAMS_DIR, REAL_KEY_PATH, TEMP_DKG_DIR},
+        tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
+    };
+    use crate::{
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::{Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::{
                     base_session::{BaseSession, GenericBaseSession},
                     large_session::{LargeSession, LargeSessionHandles},
@@ -438,11 +442,11 @@ pub mod tests {
             test_data_setup::tests::DEFAULT_SEED,
         },
     };
-    use crate::{
-        execution::constants::{PARAMS_DIR, REAL_KEY_PATH, TEMP_DKG_DIR},
-        tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
-    };
     use aes_prng::AesRng;
+    use algebra::{
+        role::{Role, TwoSetsRole, TwoSetsThreshold},
+        structure_traits::{ErrorCorrect, Invert, Ring},
+    };
     use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
     use rand::SeedableRng;

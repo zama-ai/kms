@@ -1,15 +1,15 @@
 use aes_prng::AesRng;
+use algebra::poly::lagrange_interpolation;
+use algebra::poly::lagrange_polynomials;
+use algebra::poly::Poly;
+use algebra::sharing::shamir::InputOp;
+use algebra::sharing::shamir::ShamirSharings;
+use algebra::structure_traits::FromU128;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use itertools::Itertools;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
-use threshold_fhe::algebra::poly::lagrange_interpolation;
-use threshold_fhe::algebra::poly::lagrange_polynomials;
-use threshold_fhe::algebra::poly::Poly;
-use threshold_fhe::algebra::structure_traits::FromU128;
-use threshold_fhe::execution::sharing::shamir::InputOp;
-use threshold_fhe::execution::sharing::shamir::ShamirSharings;
 
 fn bench_lagrange_poly(c: &mut Criterion) {
     // params are (num_parties, threshold, max_errors)

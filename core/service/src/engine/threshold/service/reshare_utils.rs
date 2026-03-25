@@ -24,6 +24,7 @@ use crate::{
         Storage, StorageExt, StorageReader, StorageType,
     },
 };
+use hashing::hash_element;
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest},

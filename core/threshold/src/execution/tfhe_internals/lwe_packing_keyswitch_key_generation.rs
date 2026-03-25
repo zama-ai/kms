@@ -11,7 +11,7 @@ use super::{
     lwe_key::LweSecretKeyShare, lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
     parameters::EncryptionType, randomness::MPCEncryptionRandomGenerator,
 };
-use crate::algebra::{
+use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{BaseRing, ErrorCorrect, Zero},
 };

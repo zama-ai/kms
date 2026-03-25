@@ -1,14 +1,14 @@
 use aes_prng::AesRng;
+use algebra::{
+    galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    structure_traits::Ring,
+};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use tfhe::{set_server_key, FheUint8};
 use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
-        structure_traits::Ring,
-    },
     execution::{
         constants::REAL_KEY_PATH,
         endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},

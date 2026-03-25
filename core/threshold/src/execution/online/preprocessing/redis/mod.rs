@@ -1,12 +1,12 @@
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::triple::Triple;
-use crate::execution::sharing::share::Share;
+use algebra::base_ring::{Z128, Z64};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
 use itertools::Itertools;
 use redis::Client;
 use redis::{Commands, RedisResult};
@@ -551,12 +551,14 @@ pub mod tests {
     use paste::paste;
     use std::num::Wrapping;
 
-    use crate::algebra::base_ring::{Z128, Z64};
-    use crate::algebra::galois_fields::gf16::GF16;
-    use crate::algebra::galois_rings::degree_4::ResiduePolyF4;
     use crate::execution::online::triple::Triple;
-    use crate::execution::runtime::party::Role;
-    use crate::execution::sharing::share::Share;
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_fields::gf16::GF16,
+        galois_rings::degree_4::ResiduePolyF4,
+        role::Role,
+        sharing::share::Share,
+    };
 
     macro_rules! test_triples {
         ($z:ty) => {
