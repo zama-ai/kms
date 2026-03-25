@@ -11,7 +11,7 @@ members = [
     "core/threshold",
     "core/threshold-algebra",
     "core/threshold-execution",
-    "core/threshold-experimental", # TODO: Do we want this in the workspace? We could keep it in the repo, test it in CI etc, but do we need it in the workspace?
+    "core/threshold-experimental",
     "core/threshold-hashing",
     "core/threshold-networking",
     "core/threshold-types",
