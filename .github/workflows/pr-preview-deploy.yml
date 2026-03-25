@@ -31,7 +31,9 @@ on:
         required: false
         type: string
     secrets:
-      ZWS_BOT_TOKEN:
+      HUB_ZAMA_ORG_USERNAME:
+        required: true
+      HUB_ZAMA_ORG_SECRET:
         required: true
       TS_OAUTH_CLIENT_ID:
         required: true

@@ -10,6 +10,10 @@ on:
         required: false
         type: string
     secrets:
+      HUB_ZAMA_ORG_USERNAME:
+        required: true
+      HUB_ZAMA_ORG_SECRET:
+        required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       SLAB_ACTION_TOKEN:
@@ -17,8 +21,6 @@ on:
       SLAB_BASE_URL:
         required: true
       JOB_SECRET:
-        required: true
-      ZWS_BOT_TOKEN:
         required: true
       AWS_ACCESS_KEY_S3_USER:
         required: true
