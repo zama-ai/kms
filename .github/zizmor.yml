@@ -5,6 +5,9 @@ rules:
       - workflow-pr-dockerfile.yml:61
   secrets-inherit:
     ignore:
-      - performance-testing.yml:223
+      - performance-testing.yml:210
+      - performance-testing.yml:211
       - kind-testing.yml:260
+      - kind-testing.yml:261
       - pr-preview-deploy.yml:100
+      - pr-preview-deploy.yml:101
