@@ -264,19 +264,27 @@ fn capture_max_bytes() -> usize {
 }
 
 fn test_capture_env_filter() -> EnvFilter {
-    if let Ok(filter) = std::env::var("KMS_TEST_LOG_CAPTURE_FILTER") {
-        return EnvFilter::new(filter);
+    let capture_override = std::env::var("KMS_TEST_LOG_CAPTURE_FILTER").ok();
+    let shared_override = std::env::var("KMS_TEST_LOG_FILTER").ok();
+    EnvFilter::new(resolve_test_capture_filter(
+        capture_override.as_deref(),
+        shared_override.as_deref(),
+    ))
+}
+
+fn resolve_test_capture_filter(
+    capture_override: Option<&str>,
+    shared_override: Option<&str>,
+) -> String {
+    if let Some(filter) = capture_override {
+        return filter.to_owned();
     }
 
-    if let Ok(filter) = std::env::var("KMS_TEST_LOG_FILTER") {
-        return EnvFilter::new(filter);
+    if let Some(filter) = shared_override {
+        return filter.to_owned();
     }
 
-    if let Ok(filter) = EnvFilter::try_from_default_env() {
-        return filter;
-    }
-
-    EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER)
+    DEFAULT_TEST_VERBOSE_FILTER.to_owned()
 }
 
 fn test_env_filter() -> EnvFilter {
@@ -362,5 +370,22 @@ mod tests {
         assert!(!parse_boolish_env(Some("0")));
         assert!(!parse_boolish_env(Some("false")));
         assert!(!parse_boolish_env(None));
+    }
+
+    #[test]
+    fn resolve_test_capture_filter_defaults_to_verbose() {
+        assert_eq!(
+            resolve_test_capture_filter(None, None),
+            DEFAULT_TEST_VERBOSE_FILTER
+        );
+    }
+
+    #[test]
+    fn resolve_test_capture_filter_prefers_explicit_overrides() {
+        assert_eq!(
+            resolve_test_capture_filter(Some("trace"), Some("warn")),
+            "trace"
+        );
+        assert_eq!(resolve_test_capture_filter(None, Some("warn")), "warn");
     }
 }
