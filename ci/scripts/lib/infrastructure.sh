@@ -238,6 +238,92 @@ deploy_tkms_infra() {
 }
 
 #=============================================================================
+# Update TKMS Infrastructure for Rolling Upgrade
+# Updates per-party recipientAttestationImageSHA384 via partyOverrides
+# so that upgraded parties use the new PCR0 in their AWS KMS key policy
+# while non-upgraded parties keep the old one.
+#
+# Required env vars: NAMESPACE, TARGET, DEPLOYMENT_TYPE, TKMS_INFRA_VERSION,
+#                    NUM_PARTIES
+# Arguments:
+#   $1 - old PCR0 value (for non-upgraded parties)
+#   $2 - new PCR0 value (for upgraded parties)
+#   $3 - comma-separated list of party IDs that have been upgraded
+#=============================================================================
+update_tkms_infra_for_upgrade() {
+    local old_pcr0="$1"
+    local new_pcr0="$2"
+    local upgraded_parties_csv="$3"
+
+    log_info "Updating TKMS infra with per-party recipientAttestationImageSHA384..."
+    log_info "  Old PCR0 (default): ${old_pcr0:0:16}..."
+    log_info "  New PCR0 (upgraded): ${new_pcr0:0:16}..."
+    log_info "  Upgraded parties: ${upgraded_parties_csv}"
+
+    set_path_suffix
+    local VALUES_FILE="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/tkms-infra/values-${PATH_SUFFIX}.yaml"
+
+    # Build partyOverrides --set args for each upgraded party
+    local OVERRIDE_ARGS=()
+    OVERRIDE_ARGS+=(--set "kmsParties.awsKms.recipientAttestationImageSHA384=${old_pcr0}")
+
+    IFS=',' read -ra UPGRADED_IDS <<< "${upgraded_parties_csv}"
+    local override_idx=0
+    for party_id in "${UPGRADED_IDS[@]}"; do
+        party_id=$(echo "${party_id}" | tr -d ' ')
+        OVERRIDE_ARGS+=(
+            --set "kmsParties.partyOverrides[${override_idx}].partyIndex=${party_id}"
+            --set "kmsParties.partyOverrides[${override_idx}].awsKms.recipientAttestationImageSHA384=${new_pcr0}"
+        )
+        override_idx=$((override_idx + 1))
+    done
+
+    log_info "Running helm upgrade for tkms-infra with ${#UPGRADED_IDS[@]} party overrides..."
+    helm upgrade --install tkms-infra \
+        oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+        --namespace "${NAMESPACE}" \
+        --version "${TKMS_INFRA_VERSION}" \
+        --values "${VALUES_FILE}" \
+        "${OVERRIDE_ARGS[@]}" \
+        --wait
+
+    # Wait for Crossplane to reconcile the key policy changes
+    log_info "Waiting for Crossplane to reconcile KMS key policy changes..."
+    wait_kms_key_policy_ready "${upgraded_parties_csv}"
+}
+
+#=============================================================================
+# Wait for KMS Key Policy Updates
+# After updating recipientAttestationImageSHA384, Crossplane needs to
+# reconcile and update the actual AWS KMS key policy.
+#=============================================================================
+wait_kms_key_policy_ready() {
+    local upgraded_parties_csv="$1"
+
+    local party_prefix="kms-party-${NAMESPACE}"
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        set_path_suffix
+        party_prefix="kms-party-${PATH_SUFFIX}"
+    fi
+
+    IFS=',' read -ra UPGRADED_IDS <<< "${upgraded_parties_csv}"
+    log_info "Waiting for ${#UPGRADED_IDS[@]} KMS party resources to reconcile..."
+
+    for party_id in "${UPGRADED_IDS[@]}"; do
+        party_id=$(echo "${party_id}" | tr -d ' ')
+        local resource_name="${party_prefix}-${party_id}"
+        log_info "Waiting for Kmsparties/${resource_name} to become ready..."
+        kubectl wait --for=condition=ready Kmsparties "${resource_name}" \
+            -n "${NAMESPACE}" --timeout=300s || {
+                log_warn "Timeout waiting for ${resource_name}, checking status..."
+                kubectl get Kmsparties "${resource_name}" -n "${NAMESPACE}" -o yaml || true
+            }
+    done
+
+    log_info "KMS key policy reconciliation complete"
+}
+
+#=============================================================================
 # Deploy Registry Credentials
 # Deploy registry credentials for private image access
 # - Kind: Create dockerconfigjson secret locally

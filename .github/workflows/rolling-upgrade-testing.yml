@@ -1,0 +1,492 @@
+##############################################################################
+# Rolling Upgrade Testing Workflow
+#
+# Tests partial rolling upgrades of KMS enclave nodes (thresholdWithEnclave).
+# Deploys 13 nodes on an old version, then upgrades 5/13, runs perf tests,
+# upgrades 9/13, and runs perf tests again.
+#
+# This validates that the cluster operates correctly during mixed-version
+# states, including:
+#   - Per-party AWS KMS key policy (recipientAttestationImageSHA384)
+#   - Dual trustedReleases PCR entries for TLS peer attestation
+#   - Per-party image tag upgrades
+#
+# Triggers: Manual dispatch only
+##############################################################################
+name: rolling-upgrade-testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_image_tag:
+        description: 'Old (baseline) KMS Core image tag'
+        required: true
+        type: string
+      new_image_tag:
+        description: 'New KMS Core image tag to roll out'
+        required: true
+        type: string
+      build:
+        description: 'Build new Docker image from branch (overrides new_image_tag)'
+        required: true
+        default: false
+        type: boolean
+      kms_branch:
+        description: 'KMS branch to build from (only used when build=true)'
+        required: false
+        type: string
+      fhe_params:
+        description: 'FHE parameters for preprocessing and keygen'
+        required: true
+        default: 'Test'
+        type: choice
+        options:
+          - 'Default'
+          - 'Test'
+      kms_chart_version:
+        description: 'KMS Helm chart version'
+        required: true
+        type: choice
+        options:
+          - '1.4.17'
+          - 'repository'
+        default: '1.4.17'
+      tkms_infra_chart_version:
+        description: 'TKMS Infra chart version'
+        required: true
+        default: '0.3.2'
+        type: string
+      first_batch_parties:
+        description: 'Comma-separated party IDs for 1st upgrade batch (e.g. 1,2,3,4,5)'
+        required: true
+        default: '1,2,3,4,5'
+        type: string
+      second_batch_parties:
+        description: 'Comma-separated party IDs for 2nd upgrade batch (e.g. 6,7,8,9)'
+        required: true
+        default: '6,7,8,9'
+        type: string
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # Docker Build Job (Conditional)
+  # Only runs when build=true to create the "new" image
+  ############################################################################
+  docker-build:
+    if: inputs.build == true
+    name: rolling-upgrade/docker-build
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      pull-requests: read
+      packages: write
+      attestations: write
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Start Runner
+  ############################################################################
+  start-runner:
+    name: rolling-upgrade/start-runner
+    needs: [docker-build]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: small-instance
+
+  ############################################################################
+  # Rolling Upgrade Testing Job
+  ############################################################################
+  rolling-upgrade-testing:
+    needs: [docker-build, start-runner]
+    if: always() && needs.start-runner.result == 'success' && !cancelled()
+    name: rolling-upgrade-testing
+    runs-on: ${{ needs.start-runner.outputs.label }}
+    timeout-minutes: 2400
+    env:
+      DEPLOYMENT_TYPE: 'thresholdWithEnclave'
+      TLS: 'true'
+      NAMESPACE: 'kms-ci'
+      PATH_SUFFIX: 'kms-enclave-ci'
+    steps:
+      - name: Setup Home
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
+
+      # ====================================================================
+      # DETERMINE IMAGE TAGS
+      # ====================================================================
+      - name: Determine image tags
+        env:
+          DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          INPUT_OLD_TAG: ${{ inputs.old_image_tag }}
+          INPUT_NEW_TAG: ${{ inputs.new_image_tag }}
+        run: |
+          OLD_TAG="${INPUT_OLD_TAG}"
+
+          if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
+            echo "Using freshly built image as new tag"
+            NEW_TAG="${DOCKER_BUILD_TAG}"
+          else
+            NEW_TAG="${INPUT_NEW_TAG}"
+          fi
+
+          if [[ -z "${OLD_TAG}" ]]; then
+            echo "ERROR: old_image_tag is required"
+            exit 1
+          fi
+          if [[ -z "${NEW_TAG}" ]]; then
+            echo "ERROR: No new image tag available. Either build or provide new_image_tag"
+            exit 1
+          fi
+
+          echo "Old image tag: ${OLD_TAG}"
+          echo "New image tag: ${NEW_TAG}"
+
+          {
+            echo "OLD_IMAGE_TAG=${OLD_TAG}"
+            echo "NEW_IMAGE_TAG=${NEW_TAG}"
+            echo "KMS_CORE_IMAGE_TAG=${OLD_TAG}"
+            echo "KMS_CORE_CLIENT_IMAGE_TAG=${OLD_TAG}"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure deployment parameters
+        env:
+          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+          KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
+          KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
+          TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+          FIRST_BATCH: ${{ inputs.first_batch_parties || '1,2,3,4,5' }}
+          SECOND_BATCH: ${{ inputs.second_batch_parties || '6,7,8,9' }}
+          SYNC_SECRETS_CHART_VERSION: '0.2.1'
+        run: |
+          {
+            echo "FHE_PARAMS=${FHE_PARAMS}"
+            echo "KMS_BRANCH=${KMS_BRANCH}"
+            echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
+            echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
+            echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
+            echo "FIRST_BATCH=${FIRST_BATCH}"
+            echo "SECOND_BATCH=${SECOND_BATCH}"
+          } >> "$GITHUB_ENV"
+
+      # ====================================================================
+      # TOOLING SETUP
+      # ====================================================================
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.HUB_ZAMA_ORG_USERNAME }}
+          password: ${{ secrets.HUB_ZAMA_ORG_SECRET }}
+
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:${NAMESPACE}
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
+
+      - name: Setup argo workflow CLI
+        env:
+          ARGO_OS: '${{ runner.os }}'
+          ARGO_VERSION: 'v3.7.2'
+        run: |
+          if [[ "$(uname -s)" != "Darwin" ]]; then
+            ARGO_OS="linux"
+          fi
+          curl -sLO "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-${ARGO_OS}-amd64.gz"
+          gunzip "argo-${ARGO_OS}-amd64.gz"
+          chmod +x "argo-${ARGO_OS}-amd64"
+          mv "./argo-${ARGO_OS}-amd64" /usr/local/bin/argo
+          argo version
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
+
+      # ====================================================================
+      # KUBERNETES SETUP
+      # ====================================================================
+      - name: Setup kubeconfig
+        run: |
+          echo "Configuring kubeconfig for Tailscale cluster..."
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Checkout Project
+        if: ${{ env.KMS_CHART_VERSION != 'repository' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Checkout Project (from branch)
+        if: ${{ env.KMS_CHART_VERSION == 'repository' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: "${{ env.KMS_BRANCH }}"
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Set kubeconfig context
+        run: |
+          kubectl config get-contexts
+          kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Install jq
+        env:
+          JQ_VERSION: 1.8.1
+        run: |
+          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+          sudo chmod +x /usr/local/bin/jq
+          echo "JQ version: $(jq --version)"
+
+      # ====================================================================
+      # STEP 1: Deploy all 13 nodes with OLD version
+      # ====================================================================
+      - name: 'Step 1: Deploy all 13 nodes with old version'
+        run: |
+          echo "Deploying all 13 nodes with old tag: ${OLD_IMAGE_TAG}"
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
+            --target aws-perf \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --core-tag "${OLD_IMAGE_TAG}" \
+            --client-tag "${OLD_IMAGE_TAG}" \
+            --num-parties 13 \
+            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+
+      # ====================================================================
+      # STEP 2: Run baseline performance tests
+      # ====================================================================
+      - name: 'Step 2: Run baseline performance tests (all old version)'
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Running baseline performance tests with all nodes on old version..."
+
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
+
+          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+             /tmp/baseline-workflow.yaml
+          sed -i "s/<version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
+
+          argo submit -n argo /tmp/baseline-workflow.yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p test_label="baseline-all-old"
+
+          echo "Streaming baseline workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-baseline-logs.txt
+          echo "Baseline tests completed."
+
+      # ====================================================================
+      # STEP 3: Rolling upgrade 5/13 (first batch)
+      # ====================================================================
+      - name: 'Step 3: Rolling upgrade - first batch'
+        run: |
+          echo "Upgrading first batch [${FIRST_BATCH}] to new tag: ${NEW_IMAGE_TAG}"
+          chmod +x ci/scripts/rolling_upgrade.sh
+          ./ci/scripts/rolling_upgrade.sh \
+            --old-tag "${OLD_IMAGE_TAG}" \
+            --new-tag "${NEW_IMAGE_TAG}" \
+            --parties-to-upgrade "${FIRST_BATCH}" \
+            --all-upgraded-parties "${FIRST_BATCH}" \
+            --namespace "${NAMESPACE}" \
+            --num-parties 13 \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+
+      # ====================================================================
+      # STEP 4: Run performance tests with 5/13 upgraded
+      # ====================================================================
+      - name: 'Step 4: Run performance tests (5/13 mixed state)'
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Running performance tests with 5/13 nodes upgraded..."
+
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
+
+          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+             /tmp/mixed-5-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
+
+          argo submit -n argo /tmp/mixed-5-workflow.yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p test_label="mixed-5-of-13"
+
+          echo "Streaming mixed-5/13 workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
+          echo "Mixed 5/13 tests completed."
+
+      # ====================================================================
+      # STEP 5: Rolling upgrade 9/13 (second batch)
+      # ====================================================================
+      - name: 'Step 5: Rolling upgrade - second batch'
+        run: |
+          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
+          echo "Upgrading second batch [${SECOND_BATCH}] to new tag: ${NEW_IMAGE_TAG}"
+          echo "Cumulative upgraded parties: ${ALL_UPGRADED}"
+
+          ./ci/scripts/rolling_upgrade.sh \
+            --old-tag "${OLD_IMAGE_TAG}" \
+            --new-tag "${NEW_IMAGE_TAG}" \
+            --parties-to-upgrade "${SECOND_BATCH}" \
+            --all-upgraded-parties "${ALL_UPGRADED}" \
+            --namespace "${NAMESPACE}" \
+            --num-parties 13 \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+
+      # ====================================================================
+      # STEP 6: Run performance tests with 9/13 upgraded
+      # ====================================================================
+      - name: 'Step 6: Run performance tests (9/13 mixed state)'
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Running performance tests with 9/13 nodes upgraded..."
+
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
+
+          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+             /tmp/mixed-9-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
+
+          argo submit -n argo /tmp/mixed-9-workflow.yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p test_label="mixed-9-of-13"
+
+          echo "Streaming mixed-9/13 workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
+          echo "Mixed 9/13 tests completed."
+
+      # ====================================================================
+      # UPLOAD TEST LOGS
+      # ====================================================================
+      - name: Upload Argo workflow logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: argo-rolling-upgrade-logs
+          path: argo-*-logs.txt
+          retention-days: 30
+
+      # ====================================================================
+      # LOG COLLECTION
+      # ====================================================================
+      - name: Collect logs from kms-core pods
+        if: always()
+        run: |
+          echo "Collecting logs from all KMS Core pods..."
+          for i in {1..13}; do
+            POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
+            LOG_FILE="kms-core-${i}-logs.txt"
+
+            if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+              kubectl logs "${POD_NAME}" -c kms-core-enclave-logger -n "${NAMESPACE}" > "${LOG_FILE}" 2>/dev/null || \
+              kubectl logs "${POD_NAME}" -c kms-core -n "${NAMESPACE}" > "${LOG_FILE}" 2>/dev/null || \
+              echo "Failed to get logs" > "${LOG_FILE}"
+              echo "Logs saved for pod ${POD_NAME}"
+            else
+              echo "Pod ${POD_NAME} not found" > "${LOG_FILE}"
+            fi
+          done
+
+      - name: Upload kms-core logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kms-core-rolling-upgrade-logs
+          path: kms-core-*.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ====================================================================
+      # CLEANUP
+      # ====================================================================
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Starting cleanup of KMS resources..."
+          helm list -n "${NAMESPACE}" -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
+          kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
+          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
+          argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
+          echo "Cleanup completed"
+
+  ############################################################################
+  # Stop Runner
+  ############################################################################
+  stop-runner:
+    name: rolling-upgrade/stop-runner
+    needs: [start-runner, rolling-upgrade-testing]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Stop runner
+        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner.outputs.label }}
