@@ -94,6 +94,7 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
       HUB_ZAMA_ORG_USERNAME: ${{ secrets.HUB_ZAMA_ORG_USERNAME }}
       HUB_ZAMA_ORG_SECRET: ${{ secrets.HUB_ZAMA_ORG_SECRET }}
+      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   ############################################################################
   # Determine deployment type from PR labels
