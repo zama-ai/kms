@@ -31,6 +31,7 @@ impl Client {
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
         encryption_scheme: PkeSchemeType,
+        extra_data: &[u8],
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
@@ -62,7 +63,7 @@ impl Client {
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
-                extra_data: vec![],
+                extra_data: extra_data.to_vec(),
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
             },

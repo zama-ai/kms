@@ -137,6 +137,7 @@ pub trait RingWithExceptionalSequence: Ring + Sized {
     fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self>;
 
     /// Embed the Role (starting at index 1) from the exceptional sequence into the ring.
+    // TODO(dp): this can be changed to take a 1-based index instead
     fn embed_role_to_exceptional_sequence(role: &Role) -> anyhow::Result<Self> {
         Self::get_from_exceptional_sequence(role.one_based())
     }

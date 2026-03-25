@@ -26,13 +26,13 @@ fn check_ext_pt_signature(
     external_handles: Vec<Vec<u8>>,
     domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     tracing::debug!(
         "Checking signature for PTs: {:?}, ext. handles: {:?}, extra_data: {}, ext. sig {}",
         plaintexts,
         external_handles,
-        hex::encode(&extra_data),
+        hex::encode(extra_data),
         hex::encode(external_sig)
     );
     let message = compute_public_decryption_message(external_handles, plaintexts, extra_data)?;
@@ -54,6 +54,7 @@ fn check_external_decryption_signature(
     external_handles: &[Vec<u8>],
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
+    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for response in responses {
@@ -67,7 +68,7 @@ fn check_external_decryption_signature(
             external_handles.to_owned(),
             domain.clone(),
             kms_addrs,
-            vec![],
+            extra_data,
         )?;
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {
@@ -114,6 +115,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
@@ -136,6 +138,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         let core_endpoints_resp = core_endpoints_resp.clone();
         let ptxt = ptxt.clone();
         let kms_addrs = kms_addrs.clone();
+        let extra_data = extra_data.clone();
 
         // start timing measurement for this request
         timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
@@ -149,6 +152,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 context_id.as_ref(),
                 &key_id.into(),
                 epoch_id.as_ref(),
+                &extra_data,
             )?;
 
             // make parallel requests by calling [decrypt] in a thread
@@ -246,6 +250,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
     parallel_requests: usize,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
@@ -267,6 +272,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         let core_endpoints_req = core_endpoints_req.clone();
         let core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
+        let extra_data = extra_data.clone();
 
         // start timing measurement for this request
         timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
@@ -281,6 +287,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 context_id.as_ref(),
                 epoch_id.as_ref(),
                 PkeSchemeType::MlKem512,
+                &extra_data,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -587,7 +594,8 @@ pub(crate) async fn get_public_decrypt_responses(
             .clone(),
     };
 
-    let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
+    let (domain, external_handles, extra_data) = if let Some(decryption_request) = dec_req.as_ref()
+    {
         let domain_msg = decryption_request
             .domain
             .as_ref()
@@ -599,7 +607,8 @@ pub(crate) async fn get_public_decrypt_responses(
             .iter()
             .map(|ct| ct.external_handle.clone())
             .collect();
-        (domain, external_handles)
+        let extra_data = decryption_request.extra_data.clone();
+        (domain, external_handles, extra_data)
     } else {
         //If the decryption request isn't provided we assume it was dummy domains and handles
         let num_handles = resp_response_vec
@@ -610,7 +619,16 @@ pub(crate) async fn get_public_decrypt_responses(
             .ok_or_else(|| anyhow::anyhow!("missing payload in first decryption response"))?
             .plaintexts
             .len();
-        (dummy_domain(), vec![dummy_handle(); num_handles])
+        let extra_data = resp_response_vec
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no public decryption responses available"))?
+            .extra_data
+            .clone();
+        (
+            dummy_domain(),
+            vec![dummy_handle(); num_handles],
+            extra_data,
+        )
     };
 
     // check the internal signatures
@@ -627,6 +645,7 @@ pub(crate) async fn get_public_decrypt_responses(
         &external_handles,
         &domain,
         kms_addrs,
+        &extra_data,
     )?;
 
     tracing::info!(

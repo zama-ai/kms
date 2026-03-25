@@ -618,7 +618,7 @@ pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
     eip712_domain: Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     tracing::info!(
@@ -817,7 +817,7 @@ pub fn abi_encode_plaintexts_ebytes(ptxts: &[TypedPlaintext]) -> Bytes {
 pub fn compute_public_decryption_message(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<PublicDecryptVerification> {
     // convert external_handles back to U256 to be signed
     let external_handles_bytes32: Vec<_> = ext_handles_bytes
@@ -839,14 +839,14 @@ pub fn compute_public_decryption_message(
     tracing::info!(
         "Computed PublicDecryptVerification for handles {:?} with extra_data \"{}\".",
         external_handles_bytes32,
-        hex::encode(&extra_data)
+        hex::encode(extra_data)
     );
 
     // the solidity structure to sign with EIP-712
     Ok(PublicDecryptVerification {
         ctHandles: external_handles_bytes32.clone(),
         decryptedResult: pt_bytes.clone(),
-        extraData: extra_data.into(),
+        extraData: extra_data.to_vec().into(),
     })
 }
 
@@ -1754,13 +1754,13 @@ pub(crate) mod tests {
         let handles = vec![vec![0xAAu8; 32], vec![0xBBu8; 32]];
 
         // Extra data (empty for now)
-        let extra_data: Vec<u8> = vec![];
+        let extra_data: &[u8] = &[];
 
         // Determinism: same inputs -> same hash
-        let m1 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+        let m1 = compute_public_decryption_message(handles.clone(), &pts, extra_data)
             .expect("msg computation should succeed");
         let h1 = m1.eip712_signing_hash(&domain);
-        let m2 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+        let m2 = compute_public_decryption_message(handles.clone(), &pts, extra_data)
             .expect("msg computation should succeed");
         let h2 = m2.eip712_signing_hash(&domain);
         assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
@@ -1768,9 +1768,8 @@ pub(crate) mod tests {
         // Changing a handle changes the message
         let mut mutated_handles = handles.clone();
         mutated_handles[1][0] ^= 0x23;
-        let m_changed_handle =
-            compute_public_decryption_message(mutated_handles, &pts, extra_data.clone())
-                .expect("msg computation should succeed");
+        let m_changed_handle = compute_public_decryption_message(mutated_handles, &pts, extra_data)
+            .expect("msg computation should succeed");
         let h_changed_handle = m_changed_handle.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_handle,
@@ -1781,7 +1780,7 @@ pub(crate) mod tests {
         let mut pts_modified = pts.clone();
         pts_modified[0] = TypedPlaintext::from_u16(69);
         let m_changed_pt =
-            compute_public_decryption_message(handles.clone(), &pts_modified, extra_data.clone())
+            compute_public_decryption_message(handles.clone(), &pts_modified, extra_data)
                 .expect("msg computation should succeed");
         let h_changed_pt = m_changed_pt.eip712_signing_hash(&domain);
         assert_ne!(
@@ -1791,8 +1790,9 @@ pub(crate) mod tests {
 
         // Changing extra data changes the hash
         let extra_data2 = vec![1u8, 2, 3, 5, 23];
-        let m_changed_extra = compute_public_decryption_message(handles.clone(), &pts, extra_data2)
-            .expect("msg computation should succeed");
+        let m_changed_extra =
+            compute_public_decryption_message(handles.clone(), &pts, &extra_data2)
+                .expect("msg computation should succeed");
         let h_changed_extra = m_changed_extra.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_extra,
@@ -1801,7 +1801,7 @@ pub(crate) mod tests {
 
         // Error path: a handle longer than 32 bytes should fail
         let bad_handles = vec![vec![0u8; 33]];
-        let err = compute_public_decryption_message(bad_handles, &pts, vec![]).unwrap_err();
+        let err = compute_public_decryption_message(bad_handles, &pts, &[]).unwrap_err();
         assert!(
             err.to_string().contains("too long: 33 bytes (max 32"),
             "Error message should mention 'too long: 33 bytes (max 32', got: {err}"

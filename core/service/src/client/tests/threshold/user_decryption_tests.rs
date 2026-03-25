@@ -514,6 +514,7 @@ pub(crate) async fn user_decryption_threshold(
                     None,
                     None,
                     encryption_scheme,
+                    &[],
                 )
                 .unwrap();
 

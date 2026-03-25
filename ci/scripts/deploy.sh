@@ -41,7 +41,7 @@ BUILD_IMAGES="false"
 # Perf-testing defaults (can be overridden by env/args)
 KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
 TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
-SYNC_SECRETS_VERSION="0.2.1"
+SYNC_SECRETS_VERSION="0.2.3"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 

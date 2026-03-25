@@ -191,6 +191,7 @@ async fn test_largecipher() {
             None,
             None,
             PkeSchemeType::MlKem512,
+            &[],
         )
         .unwrap();
     let response = kms_client
