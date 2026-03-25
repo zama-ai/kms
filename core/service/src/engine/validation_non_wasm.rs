@@ -980,7 +980,7 @@ mod tests {
     use super::{
         unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
         validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        verify_user_decrypt_eip712, Eip712VerificationParams, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -2044,6 +2044,101 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn test_validate_public_decrypt_meta_response_with_eip712() {
+        let mut rng = AesRng::seed_from_u64(9999);
+        let (vk0, sk0) = gen_sig_keys(&mut rng);
+        let (vk1, _sk1) = gen_sig_keys(&mut rng);
+        let (vk2, _sk2) = gen_sig_keys(&mut rng);
+
+        let pks = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
+
+        let request_id = Some(
+            derive_request_id("test_validate_public_decrypt_meta_response_with_eip712")
+                .unwrap()
+                .into(),
+        );
+        let pivot = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![1],
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
+            }],
+            request_id: request_id.clone(),
+        };
+
+        let domain = dummy_domain();
+        let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
+        let extra_data = vec![1, 2, 3, 4];
+
+        let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
+
+        let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
+        let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
+
+        let external_signature = compute_external_pt_signature(
+            &sk0,
+            &ext_handles_bytes,
+            &pivot.plaintexts,
+            &extra_data,
+            domain.clone(),
+        )
+        .unwrap();
+
+        let mut bad_external_signature = external_signature.clone();
+        bad_external_signature[0] ^= 1;
+
+        // return false for empty external signature
+        assert!(!validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                external_signature: &[],
+                extra_data: &extra_data,
+                eip712_domain: &domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
+
+        // return false for bad external signature
+        assert!(!validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                external_signature: &bad_external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
+
+        // happy path
+        assert!(validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                external_signature: &external_signature,
+                extra_data: &extra_data,
+                eip712_domain: &domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
     }
 
     #[test]
