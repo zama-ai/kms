@@ -4,6 +4,10 @@ cfg_if::cfg_if! {
         use tokio::net::TcpListener;
 
         fn is_reserved_test_port(port: u16) -> bool {
+            // These ports are intentionally kept out of the random allocator
+            // because Docker-based integration tests bind them explicitly. Letting
+            // isolated native tests land on the same ports makes CI flaky even
+            // when nextest serializes the Docker test groups.
             matches!(
                 port,
                 9646..=9649 | 50001..=50006 | 50051 | 50100 | 50200 | 50300 | 50400 | 50500 | 50600

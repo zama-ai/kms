@@ -615,6 +615,10 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
     let tracer = provider.clone().tracer("kms-core");
 
     let env_filter = if test_logging_enabled() {
+        // Runtime test sinks stay quiet by default and inherit the shared test
+        // filter policy from this module. Branch-specific startup visibility is
+        // emitted after `try_init()` succeeds, while pre-init failures carry
+        // explicit error context instead of unconditional bootstrap prints.
         test_console_env_filter()
     } else {
         match *ENVIRONMENT {

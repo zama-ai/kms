@@ -39,6 +39,9 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .expect("Could not parse quoted statement init");
     let span = parse::<Stmt>(
         quote! {
+            // Keep the synthetic test scope visible even when CI forces an
+            // `error`-level console filter; lower-level span metadata can be
+            // filtered out before captured assertions inspect the emitted logs.
             let span = tracing::error_span!(#scope);
         }
         .into(),

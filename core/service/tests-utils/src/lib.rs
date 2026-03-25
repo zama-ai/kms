@@ -35,6 +35,9 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
             INIT.call_once(|| {
                 std::env::set_var("RUN_MODE", "integration");
                 std::env::set_var("KMS_TEST_MODE", "1");
+                // Initialize parent-process test logging at the macro entry point so
+                // helpers in `integration_test.rs` can emit structured failure logs
+                // without carrying their own lazy bootstrap logic.
                 let _ = ::tracing_subscriber::fmt()
                     .with_writer(::std::io::stderr)
                     .with_ansi(false)

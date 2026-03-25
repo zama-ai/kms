@@ -1382,6 +1382,9 @@ pub fn setup_logging() {
 }
 
 fn setup_test_logging() {
+    // Mirror the service/integration test behavior so client-side integration
+    // and kind tests participate in the same quiet-by-default logging policy
+    // and can opt into console verbosity with the shared test env vars.
     std::env::set_var("KMS_TEST_MODE", "1");
 
     let _ = tracing_subscriber::fmt()
