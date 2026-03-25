@@ -18,6 +18,7 @@ use tfhe::CompactPublicKey;
 
 use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, FheUint64};
+//use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
 use crate::utilities::bench_memory;
 use utilities::ALL_PARAMS;
