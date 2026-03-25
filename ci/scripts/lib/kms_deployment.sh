@@ -93,7 +93,7 @@ deploy_kms() {
         performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
         # Use OCI chart if a specific version is requested
         if [[ "${KMS_CHART_VERSION}" != "repository" ]]; then
-            helm_chart_location="oci://ghcr.io/zama-ai/kms/charts/kms-core"
+            helm_chart_location="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
             helm_version_args=(--version "${KMS_CHART_VERSION}")
         fi
     fi
@@ -419,7 +419,7 @@ generate_helm_overrides() {
     #=========================================================================
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
          IS_ENCLAVE="true"
-         KMS_IMAGE_NAME="ghcr.io/zama-ai/kms/core-service-enclave"
+         KMS_IMAGE_NAME="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
          TOLERATION_KEY="app"         # Enclave uses app-based taints
          # For aws-perf, use PATH_SUFFIX for toleration value; otherwise use NAMESPACE
          if [[ "${TARGET}" == "aws-perf" ]]; then
@@ -514,11 +514,17 @@ EOF
   thresholdMode:
     tls:
       enabled: ${TLS_ENABLED}
-      trustedReleases:
-        - pcr0: "${PCR0:-}"
-          pcr1: "${PCR1:-}"
-          pcr2: "${PCR2:-}"
 EOF
+        # Only override trustedReleases if PCR values are available;
+        # otherwise let the chart defaults (or values file) be used
+        if [[ -n "${PCR0:-}" && -n "${PCR1:-}" && -n "${PCR2:-}" ]]; then
+            cat <<EOF >> "${output_file}"
+      trustedReleases:
+        - pcr0: "${PCR0}"
+          pcr1: "${PCR1}"
+          pcr2: "${PCR2}"
+EOF
+        fi
     fi
 
     # Client configuration
