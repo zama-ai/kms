@@ -621,7 +621,7 @@ pub(crate) fn compute_external_pt_signature(
     ext_handles_bytes: &[Vec<u8>],
     pts: &[TypedPlaintext],
     extra_data: &[u8],
-    eip712_domain: Eip712Domain,
+    eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     tracing::info!(
         "Computing external PT signature for {} plaintexts and {} external handles",
@@ -629,7 +629,7 @@ pub(crate) fn compute_external_pt_signature(
         ext_handles_bytes.len()
     );
     let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
-    compute_eip712_signature(server_sk, &message, &eip712_domain)
+    compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
 pub struct BaseKmsStruct {

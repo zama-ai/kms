@@ -417,19 +417,19 @@ fn validate_public_decrypt_meta_data(
 
     // Verify the external (EIP-712) signature if params are provided
     if let Some(params) = eip712_params {
-        if params.external_signature.is_empty() {
+        if params.response_external_signature.is_empty() {
             tracing::warn!("External signature is empty!");
             return Ok(false);
         }
         let message = compute_public_decryption_message(
             ext_handles_bytes,
             &other_resp.plaintexts,
-            params.extra_data,
+            params.response_extra_data,
         )?;
         match recover_address_from_ext_signature(
             &message,
-            params.eip712_domain,
-            params.external_signature,
+            params.trusted_eip712_domain,
+            params.response_external_signature,
         ) {
             Ok(recovered_addr) => {
                 let expected_addr = resp_verf_key.address();
@@ -507,7 +507,7 @@ fn validate_public_decrypt_responses(
     agg_resp: &[PublicDecryptionResponse],
     eip712_domain: Option<&Eip712Domain>,
     ext_handles_bytes: &[Vec<u8>],
-    extra_data: &[u8],
+    extra_data: Option<&[u8]>,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
@@ -530,6 +530,13 @@ fn validate_public_decrypt_responses(
             }
         };
 
+        if let Some(expected_extra_data) = extra_data {
+            if cur_resp.extra_data != expected_extra_data {
+                tracing::warn!("Extra data mismatch in public decryption!");
+                continue;
+            }
+        }
+
         // check the uniqueness of verification key
         if verification_keys.contains(&cur_payload.verification_key) {
             tracing::warn!(
@@ -542,9 +549,9 @@ fn validate_public_decrypt_responses(
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
         let eip712_params = eip712_domain.map(|domain| Eip712VerificationParams {
-            external_signature: &cur_resp.external_signature,
-            extra_data,
-            eip712_domain: domain,
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: domain,
         });
         if !validate_public_decrypt_meta_data(
             server_pks,
@@ -597,10 +604,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
             .collect(),
         None => vec![],
     };
-    let extra_data = match &request {
-        Some(req) => req.extra_data.as_slice(),
-        None => &[],
-    };
+    let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
     let resp_parsed_payloads = crate::some_or_err(
         validate_public_decrypt_responses(
             server_pks,
@@ -616,10 +620,14 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
             ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
         ));
     }
+
     match request {
         Some(req) => {
             let pivot_payload = resp_parsed_payloads[0].clone();
 
+            // NOTE: this error never happen since the number of handles
+            // is checked in `validate_public_decrypt_responses` so when we reach this point
+            // they should all match.
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
                 return Err(anyhow_error_and_log(
                     ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
@@ -986,9 +994,8 @@ mod tests {
         unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
         validate_public_decrypt_responses_against_request, verify_max_num_bits,
         verify_user_decrypt_eip712, Eip712VerificationParams, DSEP_PUBLIC_DECRYPTION,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
 
@@ -1567,7 +1574,7 @@ mod tests {
                 .map(|(i, k)| (i as u32 + 1, k)),
         );
 
-        let domain = dummy_domain();
+        let alloy_domain = dummy_domain();
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
 
         let request_id = Some(
@@ -1598,7 +1605,7 @@ mod tests {
                 &ext_handles_bytes,
                 &plaintexts,
                 &extra_data_0,
-                domain.clone(),
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1624,7 +1631,7 @@ mod tests {
                 &ext_handles_bytes,
                 &plaintexts,
                 &extra_data_1,
-                domain.clone(),
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1648,9 +1655,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &bad_agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1664,9 +1671,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &bad_agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1682,9 +1689,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &bad_agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1727,9 +1734,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1747,9 +1754,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1765,9 +1772,9 @@ mod tests {
                 validate_public_decrypt_responses(
                     &pks,
                     &agg_resp,
-                    Some(&domain),
+                    Some(&alloy_domain),
                     &ext_handles_bytes,
-                    &extra_data_0,
+                    Some(&extra_data_0),
                 )
                 .unwrap()
                 .unwrap()
@@ -1802,7 +1809,9 @@ mod tests {
             .iter()
             .map(|c| c.external_handle.to_owned())
             .collect::<Vec<_>>();
-        let domain = dummy_domain();
+        let extra_data = vec![1, 2, 3];
+        let alloy_domain = dummy_domain();
+        let domain = Some(alloy_to_protobuf_domain(&alloy_domain).unwrap());
         let request = PublicDecryptionRequest {
             request_id: request_id.clone(),
             ciphertexts,
@@ -1811,8 +1820,8 @@ mod tests {
                     .unwrap()
                     .into(),
             ),
-            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
-            extra_data: vec![1, 2, 3],
+            domain: domain.clone(),
+            extra_data: extra_data.clone(),
             context_id: None,
             epoch_id: None,
         };
@@ -1831,13 +1840,12 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
             let external_signature = compute_external_pt_signature(
                 &sk0,
                 &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
-                domain.clone(),
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1845,7 +1853,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature,
-                extra_data,
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
@@ -1862,13 +1870,12 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp0
             let external_signature = compute_external_pt_signature(
                 &sk1,
                 &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
-                domain,
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1876,7 +1883,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature,
-                extra_data,
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1908,47 +1915,6 @@ mod tests {
             .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP));
         }
 
-        // ciphertext count is wrong
-        {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let bad_request = PublicDecryptionRequest {
-                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
-                // here we use two ciphertexts
-                ciphertexts: vec![
-                    TypedCiphertext {
-                        ciphertext: vec![1, 2, 3, 4],
-                        fhe_type: tfhe::FheTypes::Uint4 as i32,
-                        external_handle: vec![1, 2, 3, 4],
-                        ciphertext_format: 1,
-                    },
-                    TypedCiphertext {
-                        ciphertext: vec![5, 6, 7, 8],
-                        fhe_type: tfhe::FheTypes::Uint4 as i32,
-                        external_handle: vec![5, 6, 7, 8],
-                        ciphertext_format: 1,
-                    },
-                ],
-                key_id: Some(
-                    derive_request_id("PublicDecryptionRequest key_id")
-                        .unwrap()
-                        .into(),
-                ),
-                domain: None,
-                extra_data: vec![],
-                context_id: None,
-                epoch_id: None,
-            };
-            assert!(validate_public_decrypt_responses_against_request(
-                &pks,
-                Some(bad_request),
-                &agg_resp,
-                2
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT));
-        }
-
         // plaintext type is wrong
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
@@ -1965,8 +1931,8 @@ mod tests {
                         .unwrap()
                         .into(),
                 ),
-                domain: None,
-                extra_data: vec![],
+                domain: domain.clone(),
+                extra_data: extra_data.clone(),
                 context_id: None,
                 epoch_id: None,
             };
@@ -2016,8 +1982,8 @@ mod tests {
                         .unwrap()
                         .into(),
                 ),
-                domain: None,
-                extra_data: vec![],
+                domain: domain.clone(),
+                extra_data: extra_data.clone(),
                 context_id: None,
                 epoch_id: None,
             };
@@ -2079,7 +2045,7 @@ mod tests {
             request_id: request_id.clone(),
         };
 
-        let domain = dummy_domain();
+        let alloy_domain = dummy_domain();
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
         let extra_data = vec![1, 2, 3, 4];
 
@@ -2093,7 +2059,7 @@ mod tests {
             &ext_handles_bytes,
             &pivot.plaintexts,
             &extra_data,
-            domain.clone(),
+            &alloy_domain,
         )
         .unwrap();
 
@@ -2107,9 +2073,9 @@ mod tests {
             &pivot,
             &signature_buf,
             Some(&Eip712VerificationParams {
-                external_signature: &[],
-                extra_data: &extra_data,
-                eip712_domain: &domain,
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
             }),
             &ext_handles_bytes
         )
@@ -2122,9 +2088,9 @@ mod tests {
             &pivot,
             &signature_buf,
             Some(&Eip712VerificationParams {
-                external_signature: &bad_external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &domain,
+                response_external_signature: &bad_external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
             }),
             &ext_handles_bytes
         )
@@ -2137,9 +2103,9 @@ mod tests {
             &pivot,
             &signature_buf,
             Some(&Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
             }),
             &ext_handles_bytes
         )

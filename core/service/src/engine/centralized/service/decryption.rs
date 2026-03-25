@@ -374,7 +374,7 @@ pub async fn public_decrypt_impl<
                     &ext_handles_bytes,
                     &pts,
                     &extra_data,
-                    eip712_domain,
+                    &eip712_domain,
                 ) {
                     Ok(sig) => Ok((request_id, pts, sig, extra_data)),
                     Err(e) => Err(format!("Failed to compute external signature: {e:?}")),

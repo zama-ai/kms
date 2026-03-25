@@ -592,7 +592,7 @@ impl<
                         &ext_handles_bytes,
                         &pts,
                         &extra_data,
-                        eip712_domain,
+                        &eip712_domain,
                     )
                 })
                 .await

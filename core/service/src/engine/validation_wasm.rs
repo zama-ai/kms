@@ -26,9 +26,9 @@ pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
 /// Groups EIP-712 external signature verification parameters.
 pub(crate) struct Eip712VerificationParams<'a> {
-    pub external_signature: &'a [u8],
-    pub extra_data: &'a [u8],
-    pub eip712_domain: &'a Eip712Domain,
+    pub response_external_signature: &'a [u8],
+    pub response_extra_data: &'a [u8],
+    pub trusted_eip712_domain: &'a Eip712Domain,
 }
 
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
@@ -131,23 +131,23 @@ fn validate_user_decrypt_meta_data_and_signature(
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
         // check signature
-        if eip712_params.external_signature.is_empty() {
+        if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
             ));
         }
 
-        if eip712_params.extra_data != client_request.extra_data() {
+        if eip712_params.response_extra_data != client_request.extra_data() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
         }
 
         check_ext_user_decryption_signature(
-            eip712_params.external_signature,
+            eip712_params.response_external_signature,
             other_resp,
             client_request,
-            eip712_params.eip712_domain,
+            eip712_params.trusted_eip712_domain,
             expected_addr,
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
@@ -241,9 +241,11 @@ where
     // Turn the values in the hashmap to a vector and sort by occurence.
     // If there is a tie, we use the original index as tie breaker,
     // which is why we compare on the occurence and then on the index.
+    // The lower index should come first, which is why we do b.1.cmp(a.1),
+    // to make sure the lowest index is selected in the end using next_back.
     let first = occurence_map
         .values()
-        .sorted_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
         .next_back();
 
     Ok(match first {
@@ -317,9 +319,9 @@ fn validate_user_decrypt_responses(
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
         let eip712_params = Eip712VerificationParams {
-            external_signature: &cur_resp.external_signature,
-            extra_data: client_request.extra_data(),
-            eip712_domain,
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: eip712_domain,
         };
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             server_addresses,
@@ -655,13 +657,14 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
+        let extra_data = vec![1, 2, 3, 4];
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
-            vec![],
+            extra_data.clone(),
         );
 
         let pivot_resp = UserDecryptionResponsePayload {
@@ -676,7 +679,6 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
-        let extra_data = vec![1, 2, 3, 4];
         let external_signature = compute_external_user_decrypt_signature(
             &sk0,
             &pivot_resp,
@@ -696,9 +698,9 @@ mod tests {
                 degree: 1,
             };
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -728,9 +730,9 @@ mod tests {
                 degree: 1,
             };
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -760,9 +762,9 @@ mod tests {
                 degree: 1,
             };
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -780,9 +782,9 @@ mod tests {
         // no signatures are provided
         {
             let params = Eip712VerificationParams {
-                external_signature: &[],
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -802,9 +804,9 @@ mod tests {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 10;
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -824,9 +826,9 @@ mod tests {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 2; // originally the ID is 1
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -846,9 +848,9 @@ mod tests {
         // happy path for empty ECDSA, so we check external signature
         {
             let params = Eip712VerificationParams {
-                external_signature: &external_signature,
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -867,9 +869,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
             let params = Eip712VerificationParams {
-                external_signature: &[],
-                extra_data: &extra_data,
-                eip712_domain: &dummy_domain,
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
             };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,

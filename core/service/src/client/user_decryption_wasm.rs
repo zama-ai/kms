@@ -791,7 +791,6 @@ pub(crate) struct ParsedUserDecryptionRequestHex {
     enc_key: String,
     ciphertext_handles: Vec<String>,
     eip712_verifying_contract: String,
-    #[serde(default)]
     extra_data: String,
 }
 
