@@ -206,9 +206,9 @@ jobs:
       - name: Login to zws GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ZWS_BOT_TOKEN }}
+          registry: hub.zama.org
+          username: ${{ secrets.HUB_ZAMA_ORG_USERNAME }}
+          password: ${{ secrets.HUB_ZAMA_ORG_SECRET }}
 
       - name: Set up path suffix based on deployment type
         run: |

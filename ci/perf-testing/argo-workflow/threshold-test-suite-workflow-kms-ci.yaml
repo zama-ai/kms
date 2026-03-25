@@ -277,7 +277,7 @@ spec:
           test: "{{inputs.parameters.test-name}}"
           app: kms-enclave-test-suite
       script:
-        image: ghcr.io/zama-ai/kms/core-client:<version>
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<version>
         command: ["/bin/bash", "-c"]
         source: |
           cat <<EOF >>config.toml
