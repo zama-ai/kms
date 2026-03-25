@@ -35,6 +35,11 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
             INIT.call_once(|| {
                 std::env::set_var("RUN_MODE", "integration");
                 std::env::set_var("KMS_TEST_MODE", "1");
+                let _ = ::tracing_subscriber::fmt()
+                    .with_writer(::std::io::stderr)
+                    .with_ansi(false)
+                    .with_env_filter(::observability::telemetry::test_console_env_filter())
+                    .try_init();
             });
             #fn_block
         }
