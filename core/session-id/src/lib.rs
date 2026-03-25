@@ -72,7 +72,7 @@ mod tests {
 
     // Indeterministic cipher generation.
     // Encrypts a small message with deterministic randomness
-    fn generate_cipher(_key_name: &str, message: u8) -> RadixOrBoolCiphertext {
+    fn generate_cipher(message: u8) -> RadixOrBoolCiphertext {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let (ct, _id, _tag, _rerand_metadata) =
             FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
@@ -81,20 +81,27 @@ mod tests {
 
     #[test]
     fn indeterminism() {
-        let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_base = generate_cipher(0);
         let base = SessionId::new(&ct_base);
-        let ct_other = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_other = generate_cipher(0);
         // validate that the same input gives a different result
         assert_ne!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]
     fn uniqueness() {
-        let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
+        let ct_base = generate_cipher(0);
         let base = SessionId::new(&ct_base);
-        let ct_other = generate_cipher(SMALL_TEST_KEY_PATH, 1);
+        let ct_other = generate_cipher(1);
         let other = SessionId::new(&ct_other);
         // Validate that a bit change results in a difference in session id
         assert_ne!(base.unwrap(), other.unwrap());
+    }
+
+    #[test]
+    fn sunshine() {
+        let ct = generate_cipher(0);
+        // Validate that session ID is sufficiently large
+        assert!(SessionId::new(&ct).unwrap().0 > 2_u128.pow(100));
     }
 }
