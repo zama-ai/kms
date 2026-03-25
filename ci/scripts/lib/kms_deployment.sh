@@ -514,11 +514,17 @@ EOF
   thresholdMode:
     tls:
       enabled: ${TLS_ENABLED}
-      trustedReleases:
-        - pcr0: "${PCR0:-}"
-          pcr1: "${PCR1:-}"
-          pcr2: "${PCR2:-}"
 EOF
+        # Only override trustedReleases if PCR values are available;
+        # otherwise let the chart defaults (or values file) be used
+        if [[ -n "${PCR0:-}" && -n "${PCR1:-}" && -n "${PCR2:-}" ]]; then
+            cat <<EOF >> "${output_file}"
+      trustedReleases:
+        - pcr0: "${PCR0}"
+          pcr1: "${PCR1}"
+          pcr2: "${PCR2}"
+EOF
+        fi
     fi
 
     # Client configuration
