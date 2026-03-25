@@ -663,7 +663,7 @@ mod tests {
         networking::{grpc::GrpcNetworkingManager, Networking},
         session_id::SessionId,
     };
-    use algebra::role::{Role, TwoSetsRole};
+    use algebra::role::{Role, RoleTrait, TwoSetsRole};
     use std::collections::HashMap;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
@@ -1088,5 +1088,126 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Verify that after receiving `Status::Completed`, the `UnboundedReceiver` is NOT dropped, so
+    /// subsequent sends on the `UnboundedSender` do not fail with "channel closed".
+    #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
+    async fn test_run_network_task_does_not_drop_receiver_on_completed() {
+        use super::ArcSendValueRequest;
+        use super::GrpcSendingService;
+        use crate::networking::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
+        use crate::networking::ggen::{
+            HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse, Status,
+        };
+        use backoff::ExponentialBackoff;
+        use tokio::sync::mpsc::unbounded_channel;
+
+        // Mock gRPC server that always returns Status::Completed
+        struct AlwaysCompletedServer;
+
+        #[tonic::async_trait]
+        impl Gnetworking for AlwaysCompletedServer {
+            async fn send_value(
+                &self,
+                _request: tonic::Request<SendValueRequest>,
+            ) -> Result<tonic::Response<SendValueResponse>, tonic::Status> {
+                Ok(tonic::Response::new(SendValueResponse {
+                    status: Status::Completed as i32,
+                }))
+            }
+
+            async fn health_check(
+                &self,
+                _request: tonic::Request<HealthCheckRequest>,
+            ) -> Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
+                unimplemented!()
+            }
+        }
+
+        // Should not conflict with the other ports used in the tests from this file
+        let myport = 6005;
+
+        let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
+        let server_handle = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(GnetworkingServer::new(AlwaysCompletedServer))
+                .serve_with_shutdown(format!("127.0.0.1:{myport}").parse().unwrap(), async move {
+                    let _ = server_terminate_rx.await;
+                })
+                .await
+                .unwrap();
+        });
+
+        // Give the server a moment to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Connect a client with the required interceptor type
+        let channel = tonic::transport::Channel::from_shared(format!("http://127.0.0.1:{myport}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let client =
+            crate::networking::ggen::gnetworking_client::GnetworkingClient::with_interceptor(
+                channel,
+                observability::telemetry::ContextPropagator,
+            );
+
+        // Create channel and shared state
+        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
+        let completed_parties = Arc::new(DashSet::new());
+        let role_kind = algebra::role::Role::indexed_from_one(1).get_role_kind();
+
+        let backoff = ExponentialBackoff {
+            max_elapsed_time: Some(Duration::from_secs(5)),
+            ..Default::default()
+        };
+
+        // Spawn the network task
+        let task_handle = tokio::spawn(GrpcSendingService::run_network_task(
+            receiver,
+            client,
+            backoff,
+            role_kind,
+            Arc::clone(&completed_parties),
+        ));
+
+        // Send first message — triggers Status::Completed
+        let msg = ArcSendValueRequest {
+            tag: Arc::new(vec![1, 2, 3]),
+            value: Arc::new(vec![4, 5, 6]),
+        };
+        assert!(sender.send(msg).is_ok(), "first send should succeed");
+
+        // Wait for the task to process the Completed response
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Verify completed_parties was populated
+        assert!(
+            completed_parties.contains(&role_kind),
+            "completed_parties should contain the role after Status::Completed"
+        );
+
+        // Send a second message — with the old `break` bug, this would fail
+        // because the receiver was dropped. With the fix, the receiver is
+        // still alive (draining), so this succeeds.
+        let msg2 = ArcSendValueRequest {
+            tag: Arc::new(vec![7, 8, 9]),
+            value: Arc::new(vec![10, 11, 12]),
+        };
+        assert!(
+            sender.send(msg2).is_ok(),
+            "second send should succeed — receiver must not be dropped after Completed"
+        );
+
+        // Drop sender so the task can finish
+        drop(sender);
+        let _ = tokio::time::timeout(Duration::from_secs(5), task_handle).await;
+
+        // Shut down the server
+        let _ = server_terminate_tx.send(());
+        let _ = tokio::time::timeout(Duration::from_secs(5), server_handle).await;
     }
 }
