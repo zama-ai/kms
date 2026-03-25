@@ -219,14 +219,16 @@ impl GrpcSendingService {
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
+        let mut skipped = 0;
         let mut receiver_completed = false;
 
         while let Some(value) = receiver.recv().await {
+            received_request += 1;
+
             if receiver_completed {
+                skipped += 1;
                 continue;
             }
-
-            received_request += 1;
 
             let send_fn = || async {
                 let value = value.deep_clone();
@@ -296,7 +298,7 @@ impl GrpcSendingService {
             tracing::error!("No more listeners on {other_role_kind}, everything failed, {incorrectly_sent} errors, shutting down network task");
         } else if incorrectly_sent > 0 {
             tracing::warn!(
-                "Network task with {other_role_kind} finished with: {incorrectly_sent}/{received_request} errors"
+                "Network task with {other_role_kind} finished with: {incorrectly_sent} errors, {skipped} skipped, {received_request} total requests"
             );
         } else {
             tracing::debug!(
