@@ -142,10 +142,6 @@ where
         }
 
         let written = self.state.written_bytes.load(Ordering::Relaxed);
-        if written >= self.state.max_bytes {
-            return Ok(buf.len());
-        }
-
         let remaining = self.state.max_bytes.saturating_sub(written);
         let to_write = remaining.min(buf.len());
 
@@ -156,7 +152,10 @@ where
                 .fetch_add(to_write, Ordering::Relaxed);
         }
 
-        if to_write < buf.len() && !self.state.truncated.swap(true, Ordering::Relaxed) {
+        // Emit the truncation marker exactly once, covering both the case
+        // where this write itself was partially dropped *and* the edge case
+        // where the previous write filled the budget exactly.
+        if remaining < buf.len() && !self.state.truncated.swap(true, Ordering::Relaxed) {
             self.inner.write_all(b"\n[truncated test trace output]\n")?;
         }
 
