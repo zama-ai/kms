@@ -128,6 +128,9 @@ where
 }
 
 pub fn init_subscriber() {
+    // Keep capture and console filtering separate: test assertions must keep
+    // seeing the events they assert on even when the console sink is configured
+    // to stay quiet in CI.
     let subscriber = tracing_subscriber::registry()
         .with(CaptureLayer)
         .with(test_capture_env_filter());
@@ -276,6 +279,9 @@ fn resolve_test_capture_filter(
     capture_override: Option<&str>,
     shared_override: Option<&str>,
 ) -> String {
+    // Intentionally do not fall back to ambient `RUST_LOG` here. The shared CI
+    // workflows set `RUST_LOG=error`, and inheriting that value made
+    // `logs_contain(...)` drop the `info!` events that these tests assert on.
     if let Some(filter) = capture_override {
         return filter.to_owned();
     }

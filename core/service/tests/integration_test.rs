@@ -21,6 +21,10 @@ const KMS_INIT: &str = "kms-init";
 fn init_test_logging() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        // Most tests in this file get parent-process logging from
+        // `#[integration_test]`. This helper remains for shared paths that are
+        // still used by non-`#[integration_test]` tests, notably the custodian
+        // CLI helpers below.
         let _ = tracing_subscriber::fmt()
             .with_writer(std::io::stderr)
             .with_ansi(false)
