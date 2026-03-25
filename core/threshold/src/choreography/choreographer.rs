@@ -146,6 +146,7 @@ impl ChoreoRuntime {
         Ok(())
     }
 
+    #[expect(clippy::too_many_arguments)]
     #[instrument(name = "DKG-Preproc Request", skip(self,session_id), fields(sid = ?session_id))]
     pub async fn initiate_preproc_keygen(
         &self,
@@ -317,6 +318,7 @@ impl ChoreoRuntime {
         Ok(pub_key)
     }
 
+    #[expect(clippy::too_many_arguments)]
     #[instrument(name = "DDec-Preproc Request", skip(self,session_id), fields(num_ctxts=?num_ctxts, ctxt_type=?ctxt_type, sid = ?session_id))]
     pub async fn initiate_preproc_decrypt(
         &self,
