@@ -1,8 +1,6 @@
-use crate::{
-    error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::{Role, RoleTrait, TwoSetsRole},
-    session_id::SessionId,
-};
+use crate::session_id::SessionId;
+use algebra::role::{Role, RoleTrait, TwoSetsRole};
+use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -126,9 +124,9 @@ impl ParameterHandles for SessionParameters {}
 #[cfg(test)]
 mod tests {
     use super::SessionParameters;
-    use crate::execution::runtime::party::Role;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::tests::helper::testing::get_dummy_parameters_for_parties;
+    use algebra::role::Role;
 
     #[test]
     fn too_large_threshold() {

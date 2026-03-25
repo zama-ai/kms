@@ -1,19 +1,15 @@
-use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::Ring,
+use crate::execution::online::{
+    preprocessing::{
+        memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
+        BasePreprocessing, BitPreprocessing, RandomPreprocessing, TriplePreprocessing,
     },
-    execution::{
-        online::{
-            preprocessing::{
-                memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
-                BasePreprocessing, BitPreprocessing, RandomPreprocessing, TriplePreprocessing,
-            },
-            triple::Triple,
-        },
-        sharing::share::Share,
-    },
+    triple::Triple,
+};
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    sharing::share::Share,
+    structure_traits::Ring,
 };
 
 #[derive(Default, Clone)]

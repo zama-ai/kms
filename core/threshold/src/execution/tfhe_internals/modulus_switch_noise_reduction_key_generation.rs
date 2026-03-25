@@ -5,21 +5,19 @@ use tfhe::{
 };
 use tracing::instrument;
 
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Zero},
+use crate::execution::{
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{
+        lwe_ciphertext::{self, encrypt_lwe_ciphertext_list, LweCiphertextShare},
+        lwe_key::LweSecretKeyShare,
+        parameters::MSNRKParams,
+        randomness::MPCEncryptionRandomGenerator,
     },
-    execution::{
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::{
-            lwe_ciphertext::{self, encrypt_lwe_ciphertext_list, LweCiphertextShare},
-            lwe_key::LweSecretKeyShare,
-            parameters::MSNRKParams,
-            randomness::MPCEncryptionRandomGenerator,
-        },
-    },
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 
 #[instrument(name="Gen Compressed MSNRK",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]

@@ -1,5 +1,3 @@
-use crate::algebra::structure_traits::{Ring, ZConsts};
-use crate::execution::sharing::share::Share;
 use crate::experimental::algebra::cyclotomic::NewHopeTernarySampler;
 use crate::experimental::algebra::cyclotomic::RingElement;
 use crate::experimental::algebra::cyclotomic::RqElement;
@@ -15,6 +13,8 @@ use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::constants::PLAINTEXT_MODULUS;
+use algebra::sharing::share::Share;
+use algebra::structure_traits::{Ring, ZConsts};
 use crypto_bigint::{Limb, NonZero, U1536};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
@@ -336,13 +336,13 @@ pub fn multiply_ctxt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::structure_traits::FromU128;
     use crate::experimental::algebra::levels::{
         GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1,
     };
     use crate::experimental::algebra::ntt::N65536;
     use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
+    use algebra::structure_traits::FromU128;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
 

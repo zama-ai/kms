@@ -1,42 +1,40 @@
-use crate::{
-    algebra::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring},
+use crate::execution::{
+    online::{
+        preprocessing::{DKGPreprocessing, RandomPreprocessing},
+        triple::open_list,
     },
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        online::{
-            preprocessing::{DKGPreprocessing, RandomPreprocessing},
-            triple::open_list,
-        },
-        runtime::sessions::{
-            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
-        },
-        tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares,
-            compression_decompression_key_generation::{
-                generate_compressed_compression_decompression_keys,
-                generate_compressed_decompression_keys, generate_decompression_keys,
-            },
-            glwe_key::GlweSecretKeyShare,
-            lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
-            lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
-            lwe_key::{generate_lwe_public_key_shared, LweSecretKeyShare},
-            lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
-            modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
-            parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
-            private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
-            public_keysets::{
-                CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
-            },
-            randomness::MPCEncryptionRandomGenerator,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
-            sns_compression_key_generation::generate_compressed_sns_compression_keys,
-        },
+    runtime::sessions::{
+        base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
     },
-    hashing::DomainSep,
+    tfhe_internals::{
+        compression_decompression_key::CompressionPrivateKeyShares,
+        compression_decompression_key_generation::{
+            generate_compressed_compression_decompression_keys,
+            generate_compressed_decompression_keys, generate_decompression_keys,
+        },
+        glwe_key::GlweSecretKeyShare,
+        lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
+        lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
+        lwe_key::{generate_lwe_public_key_shared, LweSecretKeyShare},
+        lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
+        modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
+        parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
+        private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
+        public_keysets::{
+            CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+        },
+        randomness::MPCEncryptionRandomGenerator,
+        sns_compression_key::SnsCompressionPrivateKeyShares,
+        sns_compression_key_generation::generate_compressed_sns_compression_keys,
+    },
 };
+use algebra::{
+    base_ring::{Z128, Z64},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, Ring},
+};
+use error_utils::anyhow_error_and_log;
+use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,
@@ -957,11 +955,10 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::{
-        algebra::{
-            base_ring::{Z128, Z64},
-            galois_rings::common::ResiduePoly,
-            structure_traits::{ErrorCorrect, Invert, Solve},
-        },
+        execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
+        networking::NetworkMode,
+    };
+    use crate::{
         execution::{
             endpoints::keygen::conformance::check_drift_technique_key,
             online::preprocessing::dummy::DummyPreprocessing,
@@ -978,10 +975,6 @@ pub mod tests {
         tests::helper::tests_and_benches::execute_protocol_large_w_extra_data,
     };
     use crate::{
-        execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
-        networking::NetworkMode,
-    };
-    use crate::{
         execution::{
             random::{get_rng, seed_from_rng},
             tfhe_internals::{
@@ -996,6 +989,11 @@ pub mod tests {
             },
         },
         file_handling::tests::write_element,
+    };
+    use algebra::{
+        base_ring::{Z128, Z64},
+        galois_rings::common::ResiduePoly,
+        structure_traits::{ErrorCorrect, Invert, Solve},
     };
     use itertools::Itertools;
     use std::path::Path;
@@ -1626,11 +1624,11 @@ pub mod tests {
         n: usize,
         t: usize,
         rng: &mut R,
-    ) -> Vec<Vec<crate::execution::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+    ) -> Vec<Vec<algebra::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        use crate::execution::sharing::shamir::{InputOp, ShamirSharings};
+        use algebra::sharing::shamir::{InputOp, ShamirSharings};
         use std::num::Wrapping;
         transpose2(
             v.into_iter()
@@ -1696,7 +1694,6 @@ pub mod tests {
         use crate::{
             execution::{
                 endpoints::keygen::distributed_decompression_keygen_z128,
-                sharing::share::Share,
                 tfhe_internals::{
                     compression_decompression_key::CompressionPrivateKeyShares,
                     glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
@@ -1704,6 +1701,7 @@ pub mod tests {
             },
             file_handling::tests::{read_element, write_element},
         };
+        use algebra::sharing::share::Share;
 
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;

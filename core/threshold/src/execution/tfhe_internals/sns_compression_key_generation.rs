@@ -1,20 +1,18 @@
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect},
+use crate::execution::{
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::base_session::BaseSessionHandles,
+    tfhe_internals::{
+        lwe_key::LweSecretKeyShare,
+        lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
+        lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key,
+        parameters::{DistributedSnsCompressionParameters, EncryptionType},
+        randomness::MPCEncryptionRandomGenerator,
+        sns_compression_key::SnsCompressionPrivateKeyShares,
     },
-    execution::{
-        online::preprocessing::DKGPreprocessing,
-        runtime::sessions::base_session::BaseSessionHandles,
-        tfhe_internals::{
-            lwe_key::LweSecretKeyShare,
-            lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
-            lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key,
-            parameters::{DistributedSnsCompressionParameters, EncryptionType},
-            randomness::MPCEncryptionRandomGenerator,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
-        },
-    },
+};
+use algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect},
 };
 
 use itertools::Itertools;

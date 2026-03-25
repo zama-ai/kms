@@ -2,13 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use crate::{
-    execution::runtime::party::Role,
-    networking::{
-        local::{LocalNetworking, LocalNetworkingProducer},
-        NetworkMode,
-    },
+use crate::networking::{
+    local::{LocalNetworking, LocalNetworkingProducer},
+    NetworkMode,
 };
+use algebra::role::Role;
 
 pub struct BGVTestRuntime {
     pub threshold: u8,

@@ -8,19 +8,20 @@ use tracing::instrument;
 
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::{
-    algebra::{
-        bivariate::{BivariateEval, BivariatePoly},
-        poly::Poly,
-        structure_traits::{Ring, RingWithExceptionalSequence},
-    },
-    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_parties},
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::sessions::base_session::BaseSessionHandles,
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
+use algebra::{
+    bivariate::{BivariateEval, BivariatePoly},
+    poly::Poly,
+    role::Role,
+    structure_traits::{Ring, RingWithExceptionalSequence},
+};
+use error_utils::anyhow_error_and_log;
 
 /// Secure implementation of VSS as defined in NIST document
 ///
@@ -1162,19 +1163,12 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::algebra::bivariate::BivariateEval;
-    use crate::algebra::galois_rings::degree_4::{
-        ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
-    };
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert};
     use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::large_session::LargeSession;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
-    use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
-    use crate::execution::sharing::share::Share;
     use crate::execution::small_execution::prf::PRSSConversions;
-    use crate::execution::{runtime::party::Role, runtime::sessions::large_session::LargeSession};
     use crate::malicious_execution::large_execution::malicious_vss::{
         WrongDegreeSharingVss, WrongSecretLenVss,
     };
@@ -1184,6 +1178,16 @@ pub(crate) mod tests {
         execute_protocol_large_w_disputes_and_malicious, TestingParameters,
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
+    use algebra::{
+        bivariate::BivariateEval,
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        role::Role,
+        sharing::{
+            shamir::{RevealOp, ShamirSharings},
+            share::Share,
+        },
+        structure_traits::{ErrorCorrect, Invert},
+    };
     use futures_util::future::join;
     use rstest::rstest;
     use std::num::Wrapping;
