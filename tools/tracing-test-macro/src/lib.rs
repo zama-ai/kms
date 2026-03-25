@@ -1,3 +1,8 @@
+// Keep the attribute macro in a separate crate because Rust requires
+// `#[proc_macro_attribute]` definitions to live in a proc-macro crate.
+// The macro injects the per-test scope and runtime initialization, while the
+// sibling `tracing-test` crate owns the shared subscriber and captured-log
+// state needed by `logs_contain(...)` assertions.
 extern crate proc_macro;
 
 use std::sync::{Mutex, OnceLock};

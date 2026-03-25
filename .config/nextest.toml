@@ -28,6 +28,8 @@ default-filter = 'not (binary(=integration_test_isolated) & test(/nightly_full_g
 
 [profile.ci.junit]
 path = "junit.xml"
+# Keep successful test stdout/stderr out of the JUnit artifact: it mostly adds
+# noise and size, while failure output stays embedded for debugging.
 store-success-output = false
 store-failure-output = true
 
@@ -71,6 +73,8 @@ test-group = "k8s-integration"
 
 [profile.ci-nightly.junit]
 path = "junit.xml"
+# Same policy as `profile.ci.junit`: keep the uploaded JUnit artifact focused on
+# failures instead of retaining low-value successful test output.
 store-success-output = false
 store-failure-output = true
 
