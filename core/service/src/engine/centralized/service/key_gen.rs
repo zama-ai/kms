@@ -27,8 +27,8 @@ use observability::metrics_names::{
     OP_KEYGEN_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
-use threshold_fhe::execution::keyset_config::KeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;

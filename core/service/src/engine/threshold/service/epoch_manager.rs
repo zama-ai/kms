@@ -22,7 +22,6 @@
 //! they are not part of one of the two contexts.
 
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use algebra::role::TwoSetsRole;
 use alloy_dyn_abi::Eip712Domain;
 use futures_util::{
     future::{join_all, BoxFuture},
@@ -41,26 +40,25 @@ use kms_grpc::{
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::{
-    execution::{
-        endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
-        online::preprocessing::BasePreprocessing,
-        runtime::sessions::{
-            base_session::{BaseSession, TwoSetsBaseSession},
-            session_parameters::GenericParameterHandles,
-            small_session::SmallSession,
-        },
-        small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
-            prss::{PRSSInit, PRSSSetup},
-        },
-        tfhe_internals::{
-            parameters::{DKGParams, DkgMode},
-            private_keysets::PrivateKeySet,
-        },
+use threshold_execution::{
+    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
+    online::preprocessing::BasePreprocessing,
+    runtime::sessions::{
+        base_session::{BaseSession, TwoSetsBaseSession},
+        session_parameters::GenericParameterHandles,
+        small_session::SmallSession,
     },
-    networking::NetworkMode,
+    small_execution::{
+        offline::{Preprocessing, SecureSmallPreprocessing},
+        prss::{PRSSInit, PRSSSetup},
+    },
+    tfhe_internals::{
+        parameters::{DKGParams, DkgMode},
+        private_keysets::PrivateKeySet,
+    },
 };
+use threshold_types::network::NetworkMode;
+use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
@@ -1439,8 +1437,8 @@ pub(crate) mod tests {
         rpc_types::KMSType,
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::endpoints::reshare_sk::SecureReshareSecretKeys,
+    use threshold_execution::{
+        endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
     };
 

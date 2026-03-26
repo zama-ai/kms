@@ -12,7 +12,6 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
-use algebra::role::Role;
 use algebra::{
     base_ring::{Z128, Z64},
     error_correction::MemoizedExceptionals,
@@ -31,11 +30,12 @@ use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::endpoints::reconstruct::{
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
 };
-use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 
@@ -703,7 +703,7 @@ pub struct TestingUserDecryptionTranscript {
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
-    pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+    pub(crate) params: threshold_execution::tfhe_internals::parameters::DKGParams,
     // example pt and ct
     pub(crate) fhe_types: Vec<i32>,
     pub(crate) pts: Vec<Vec<u8>>,

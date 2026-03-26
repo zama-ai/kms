@@ -14,7 +14,7 @@ use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -350,7 +350,7 @@ mod tests {
     };
     use std::str::FromStr;
     use tfhe::zk::CompactPkeCrs;
-    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+    use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
     #[tokio::test]
     async fn test_eip712_sigs() {

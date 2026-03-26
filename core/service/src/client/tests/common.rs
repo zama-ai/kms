@@ -15,7 +15,7 @@ use kms_grpc::RequestId;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::FheTypes;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 

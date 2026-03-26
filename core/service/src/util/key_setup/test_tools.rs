@@ -27,7 +27,7 @@ use tfhe::{
     FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
     Unversionize, Versionize,
 };
-use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+use threshold_execution::tfhe_internals::utils::expanded_encrypt;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -606,7 +606,7 @@ pub(crate) mod setup {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
     use std::path::Path;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist(path: Option<&Path>) {
         match path {

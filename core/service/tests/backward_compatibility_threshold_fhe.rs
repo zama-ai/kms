@@ -9,7 +9,6 @@ use common::load_and_unversionize;
 use aes_prng::AesRng;
 use algebra::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    role::Role,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring},
 };
@@ -25,17 +24,16 @@ use rand::{RngCore, SeedableRng};
 use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
-use threshold_fhe::{
-    execution::{
-        small_execution::{
-            prf::{PRSSConversions, PrfKey},
-            prss::{PRSSSetup, PrssSet, PrssSetV0},
-        },
-        tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
+use threshold_execution::{
+    small_execution::{
+        prf::{PRSSConversions, PrfKey},
+        prss::{PRSSSetup, PrssSet, PrssSetV0},
     },
-    networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
+    tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
 };
+use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::role::Role;
 
 use crate::common::load_and_unversionize_auxiliary;
 

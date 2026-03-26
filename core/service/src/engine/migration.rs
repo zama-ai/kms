@@ -8,7 +8,7 @@ use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
 use kms_grpc::ContextId;
-use threshold_fhe::execution::small_execution::prss::PRSSSetup;
+use threshold_execution::small_execution::prss::PRSSSetup;
 
 lazy_static::lazy_static! {
 static ref LEGACY_DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([

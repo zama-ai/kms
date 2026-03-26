@@ -1,0 +1,222 @@
+use crate::endpoints::keygen::DSEP_KG;
+use crate::tfhe_internals::lwe_key::to_tfhe_hl_api_compressed_compact_public_key;
+use crate::tfhe_internals::parameters::DKGParams;
+use serde::{Deserialize, Serialize};
+use tfhe::core_crypto::prelude::{
+    SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
+};
+use tfhe::shortint::atomic_pattern::compressed::{
+    CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
+};
+use tfhe::shortint::key_switching_key::KeySwitchingKeyDestinationAtomicPattern;
+use tfhe::shortint::list_compression::{
+    CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
+};
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::standard::CompressedStandardAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::CompressedAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::CompressedShortint128BootstrappingKey;
+use tfhe::shortint::server_key::{
+    CompressedModulusSwitchConfiguration, ShortintCompressedBootstrappingKey,
+};
+use tfhe::shortint::EncryptionKeyChoice;
+use tfhe::{
+    shortint::ciphertext::{MaxDegree, MaxNoiseLevel},
+    xof_key_set::CompressedXofKeySet,
+    XofSeed,
+};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FhePubKeySet {
+    pub public_key: tfhe::CompactPublicKey,
+    pub server_key: tfhe::ServerKey,
+}
+
+impl std::fmt::Debug for FhePubKeySet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PubKeySet")
+            .field("public_key", &self.public_key)
+            .field("server_key", &"ommitted")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum CompressedReRandomizationRawKeySwitchingKey {
+    UseCPKEncryptionKSK,
+    DedicatedKSK(SeededLweKeyswitchKey<Vec<u64>>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct RawCompressedPubKeySet {
+    pub lwe_public_key: SeededLweCompactPublicKey<Vec<u64>>,
+    pub ksk: SeededLweKeyswitchKey<Vec<u64>>,
+    pub pksk: Option<SeededLweKeyswitchKey<Vec<u64>>>,
+    pub bk: SeededLweBootstrapKey<Vec<u64>>,
+    pub bk_sns: Option<SeededLweBootstrapKey<Vec<u128>>>,
+    pub compression_keys: Option<(CompressedCompressionKey, CompressedDecompressionKey)>,
+    pub msnrk: CompressedModulusSwitchConfiguration<u64>,
+    pub msnrk_sns: Option<CompressedModulusSwitchConfiguration<u64>>,
+    pub sns_compression_key: Option<CompressedNoiseSquashingCompressionKey>,
+    pub cpk_re_randomization_ksk: Option<CompressedReRandomizationRawKeySwitchingKey>,
+    pub seed: u128,
+}
+
+impl RawCompressedPubKeySet {
+    pub fn compute_tfhe_hl_api_compressed_compact_public_key(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> tfhe::CompressedCompactPublicKey {
+        let params = params
+            .get_params_basics_handle()
+            .get_compact_pk_enc_params();
+        to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params, tag)
+    }
+
+    pub fn compute_tfhe_shortint_compressed_server_key(
+        &self,
+        params: DKGParams,
+    ) -> tfhe::shortint::CompressedServerKey {
+        let regular_params = params.get_params_basics_handle();
+
+        let pk_bk = ShortintCompressedBootstrappingKey::Classic {
+            bsk: self.bk.clone(),
+            modulus_switch_noise_reduction_key: self.msnrk.clone(),
+        };
+
+        let max_noise_level = MaxNoiseLevel::from_msg_carry_modulus(
+            regular_params.get_message_modulus(),
+            regular_params.get_carry_modulus(),
+        );
+
+        let atomic_pattern = CompressedStandardAtomicPatternServerKey::from_raw_parts(
+            self.ksk.clone(),
+            pk_bk,
+            regular_params.pbs_order(),
+        );
+
+        tfhe::shortint::CompressedServerKey::from_raw_parts(
+            CompressedAtomicPatternServerKey::Standard(atomic_pattern),
+            regular_params.get_message_modulus(),
+            regular_params.get_carry_modulus(),
+            MaxDegree::from_msg_carry_modulus(
+                regular_params.get_message_modulus(),
+                regular_params.get_carry_modulus(),
+            ),
+            max_noise_level,
+        )
+    }
+
+    pub fn compute_tfhe_hl_api_compressed_server_key(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> tfhe::CompressedServerKey {
+        let shortint_key = self.compute_tfhe_shortint_compressed_server_key(params);
+
+        let cpk_key_switching_key_material = self.pksk.as_ref().map(|pksk| {
+            tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts( tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                pksk.clone(),
+                params.get_params_basics_handle().pksk_rshift(),
+                params
+                    .get_params_basics_handle()
+                    .get_pksk_destination()
+                    .unwrap(),
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
+            ))
+        });
+
+        let (compression_key, decompression_key) = match self.compression_keys.as_ref() {
+            Some((compression_key, decompression_key)) => (
+                Some(compression_key.clone()),
+                Some(decompression_key.clone()),
+            ),
+            None => (None, None),
+        };
+
+        let (noise_squashing_key, noise_squashing_compression_key) = match (
+            self.bk_sns.as_ref(),
+            self.msnrk_sns.as_ref(),
+            params,
+        ) {
+            (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(params_with_sns)) => {
+                let noise_squashing_key = Some(
+                    tfhe::integer::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts( tfhe::shortint::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts(
+CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatternNoiseSquashingKey::from_raw_parts(CompressedShortint128BootstrappingKey::Classic{
+                            bsk : bk_sns.clone(),
+                            modulus_switch_noise_reduction_key: msnrk_sns.clone()
+                        })),
+                        params_with_sns.sns_params.message_modulus(),
+                        params_with_sns.sns_params.carry_modulus(),
+                        params_with_sns.sns_params.ciphertext_modulus(),
+                    )));
+                match self.sns_compression_key.as_ref() {
+                        Some(sns_compression_key) => (
+                            noise_squashing_key,
+                            Some(tfhe::integer::ciphertext::CompressedNoiseSquashingCompressionKey::from_raw_parts(
+                                sns_compression_key.clone(),
+                            )),
+                        ),
+                        None => (noise_squashing_key, None),
+                    }
+            }
+            _ => (None, None),
+        };
+
+        let rerand_ksk =
+            self.cpk_re_randomization_ksk
+                .as_ref()
+                .map(|rerand_ksk| match rerand_ksk {
+                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
+                        tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
+                    }
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(dedicated_rerand_ksk) => {
+                        let shortint_rerand_ksk =
+                        tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            dedicated_rerand_ksk.clone(),
+                            0,
+                            EncryptionKeyChoice::Big,
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
+                        );
+
+                        let rerand_ksk =
+                        tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            shortint_rerand_ksk,
+                        );
+                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
+                    }
+                });
+
+        tfhe::CompressedServerKey::from_raw_parts(
+            tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),
+            cpk_key_switching_key_material,
+            compression_key.map(|compression_key| {
+                tfhe::integer::compression_keys::CompressedCompressionKey::from_raw_parts(
+                    compression_key,
+                )
+            }),
+            decompression_key.map(|decompression_key| {
+                tfhe::integer::compression_keys::CompressedDecompressionKey::from_raw_parts(
+                    decompression_key,
+                )
+            }),
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            rerand_ksk,
+            tag,
+        )
+    }
+
+    pub fn to_compressed_pubkeyset(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> CompressedXofKeySet {
+        let seed = XofSeed::new_u128(self.seed, DSEP_KG);
+        let public_key =
+            self.compute_tfhe_hl_api_compressed_compact_public_key(params, tag.clone());
+        let server_key = self.compute_tfhe_hl_api_compressed_server_key(params, tag);
+
+        CompressedXofKeySet::from_raw_parts(seed, public_key, server_key)
+    }
+}

@@ -54,13 +54,11 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::Upgrade;
 use tfhe_versionable::Version;
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
-use threshold_fhe::execution::endpoints::decryption::{
-    LowLevelCiphertext, SnsRadixOrBoolCiphertext,
-};
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::endpoints::decryption::RadixOrBoolCiphertext;
+use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::sync::Mutex;
 use tracing::error;
 
@@ -1061,7 +1059,7 @@ pub(crate) mod tests {
     use tfhe::{
         prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
     };
-    use threshold_fhe::execution::{
+    use threshold_execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };

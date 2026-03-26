@@ -15,7 +15,7 @@ use observability::{
         TAG_EPOCH_ID, TAG_PARTY_ID,
     },
 };
-use threshold_fhe::execution::{
+use threshold_execution::{
     keyset_config as ddec_keyset_config,
     online::preprocessing::{
         orchestration::{
@@ -23,9 +23,10 @@ use threshold_fhe::execution::{
         },
         PreprocessorFactory,
     },
-    runtime::{party::Identity, sessions::small_session::SmallSession},
+    runtime::sessions::small_session::SmallSession,
     tfhe_internals::parameters::DKGParams,
 };
+use threshold_types::party::Identity;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
@@ -261,7 +262,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         #[cfg(feature = "insecure")]
         let handle_update = {
-            use threshold_fhe::execution::online::preprocessing::{
+            use threshold_execution::online::preprocessing::{
                 dummy::DummyPreprocessing, DKGPreprocessing,
             };
 
@@ -513,13 +514,12 @@ mod tests {
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::{
-            online::preprocessing::create_memory_factory, small_execution::prss::PRSSSetup,
-        },
+    use threshold_execution::{
         malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
             DummyProducerFactory, FailingProducerFactory,
         },
+        online::preprocessing::create_memory_factory,
+        small_execution::prss::PRSSSetup,
     };
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
