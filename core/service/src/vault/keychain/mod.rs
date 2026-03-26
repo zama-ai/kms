@@ -10,13 +10,13 @@ use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use iam_rs::IAMPolicy;
-use networking::tls::ReleasePCRValues;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
+use threshold_networking::tls::ReleasePCRValues;
 
 pub mod awskms;
 pub mod secretsharing;
@@ -217,7 +217,7 @@ pub mod tests {
         verify_root_key_measurements, RootKeyMeasurements,
     };
     use iam_rs::{IAMPolicy, IAMVersion};
-    use networking::tls::ReleasePCRValues;
+    use threshold_networking::tls::ReleasePCRValues;
 
     #[test]
     fn test_verify_root_key_measurements() {

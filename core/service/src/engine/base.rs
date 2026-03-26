@@ -14,11 +14,6 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
-use execution::endpoints::decryption::RadixOrBoolCiphertext;
-use execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrBoolCiphertext};
-use execution::tfhe_internals::parameters::DKGParams;
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
-use execution::zk::ceremony::max_num_bits_from_crs;
 use hashing::hash_element;
 use hashing::serialize_hash_element;
 use hashing::DomainSep;
@@ -59,6 +54,11 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::Upgrade;
 use tfhe_versionable::Version;
 use tfhe_versionable::VersionsDispatch;
+use threshold_execution::endpoints::decryption::RadixOrBoolCiphertext;
+use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::sync::Mutex;
 use tracing::error;
 
@@ -1050,10 +1050,6 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
-    use execution::{
-        keyset_config::StandardKeySetConfig,
-        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
-    };
     use kms_grpc::{
         kms::v1::CiphertextFormat,
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
@@ -1062,6 +1058,10 @@ pub(crate) mod tests {
     use rand::{RngCore, SeedableRng};
     use tfhe::{
         prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
+    };
+    use threshold_execution::{
+        keyset_config::StandardKeySetConfig,
+        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
 
     #[test]

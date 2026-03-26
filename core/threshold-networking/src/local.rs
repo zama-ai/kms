@@ -279,7 +279,7 @@ struct LocalTaggedValue {
 
 #[cfg(test)]
 mod tests {
-    use execution::{
+    use threshold_execution::{
         network_value::NetworkValue, runtime::sessions::session_parameters::DeSerializationRunTime,
     };
     use threshold_types::network::Networking;

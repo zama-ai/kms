@@ -12,7 +12,11 @@ use crate::{
 // === External Crates ===
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use execution::{
+use kms_grpc::{
+    identifiers::{ContextId, EpochId},
+    RequestId,
+};
+use threshold_execution::{
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession},
         session_parameters::{
@@ -22,11 +26,7 @@ use execution::{
     },
     small_execution::prss::{DerivePRSSState, PRSSSetup},
 };
-use kms_grpc::{
-    identifiers::{ContextId, EpochId},
-    RequestId,
-};
-use networking::{
+use threshold_networking::{
     grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
 };
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
@@ -537,7 +537,8 @@ impl SessionMaker {
         session_id: SessionId,
         context_id: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<execution::runtime::sessions::base_session::SingleSetNetworkingImpl> {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::SingleSetNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
 
         let (role_assignment, my_role) = {
@@ -576,7 +577,8 @@ impl SessionMaker {
         context_id_set1: ContextId,
         context_id_set2: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<execution::runtime::sessions::base_session::TwoSetsNetworkingImpl> {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::TwoSetsNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
         let networking = nm
             .make_network_session(session_id, &role_assignment, my_role, network_mode)

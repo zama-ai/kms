@@ -4,13 +4,15 @@ use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use execution::online::preprocessing::{
-    create_memory_factory, create_redis_factory, PreprocessorFactory,
-};
-use networking::constants::NETWORK_TIMEOUT_LONG;
-use networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;
 use std::sync::Arc;
+use threshold_execution::{
+    large_execution::offline::SecureLargePreprocessing,
+    online::preprocessing::{create_memory_factory, create_redis_factory, PreprocessorFactory},
+    small_execution::{offline::SecureSmallPreprocessing, prss::RobustSecurePrssInit},
+};
+use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
+use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use threshold_types::role::Role;
 use tonic::transport::{server::Router, Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
@@ -148,12 +150,8 @@ where
 
 pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
     EXTENSION_DEGREE,
-    execution::small_execution::prss::RobustSecurePrssInit,
-    execution::small_execution::offline::SecureSmallPreprocessing,
-    execution::large_execution::offline::SecureLargePreprocessing<
-        ResiduePoly<Z64, EXTENSION_DEGREE>,
-    >,
-    execution::large_execution::offline::SecureLargePreprocessing<
-        ResiduePoly<Z128, EXTENSION_DEGREE>,
-    >,
+    RobustSecurePrssInit,
+    SecureSmallPreprocessing,
+    SecureLargePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    SecureLargePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 >;

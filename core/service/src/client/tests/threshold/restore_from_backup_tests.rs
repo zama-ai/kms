@@ -19,13 +19,13 @@ use crate::{
         StorageReaderExt, StorageType,
     },
 };
-use execution::endpoints::decryption::DecryptionMode;
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
     RequestId,
 };
 use serial_test::serial;
+use threshold_execution::endpoints::decryption::DecryptionMode;
 use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]

@@ -117,7 +117,7 @@ macro_rules! impl_ring_level {
                 ///BIT LENGTH FOR THIS RING IS DEFINED AS THE NUMBER OF BITS REQUIRED TO SAMPLE
                 ///AN ELEMENT FROM A DISTRIBUTION INDISTINGUISHABLE FROM THE UNIFORM DISTRIBUTION
                 const BIT_LENGTH: usize = $uint_type::from_be_hex($max_val).bits() as usize ;
-                const NUM_BITS_STAT_SEC_BASE_RING: usize = Self::BIT_LENGTH + (execution::constants::STATSEC as usize);
+                const NUM_BITS_STAT_SEC_BASE_RING: usize = Self::BIT_LENGTH + (threshold_execution::constants::STATSEC as usize);
                 const CHAR_LOG2: usize = unimplemented!();
                 const EXTENSION_DEGREE: usize = 1;
 
@@ -1261,12 +1261,12 @@ mod tests {
     use algebra::poly::lagrange_interpolation;
     use algebra::sharing::shamir::{InputOp, RevealOp};
     use algebra::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
-    use execution::config::BatchParams;
-    use execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-    use execution::runtime::sessions::small_session::SmallSession;
-    use execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-    use execution::tests::helper::tests_and_benches::execute_protocol_small;
     use rand::SeedableRng;
+    use threshold_execution::config::BatchParams;
+    use threshold_execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+    use threshold_execution::runtime::sessions::small_session::SmallSession;
+    use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+    use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 

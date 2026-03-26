@@ -42,6 +42,7 @@ tracing.workspace = true
 x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
+threshold-execution = { workspace = true, features = ["testing"] }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -49,7 +50,6 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tracing-test.workspace = true
-execution = { workspace = true, features = ["testing"] }
 
 
 
@@ -60,7 +60,7 @@ tonic-build.workspace = true
 default = ["non-wasm"]
 
 non-wasm = [
-	"execution/non-wasm",
+	"threshold-execution/non-wasm",
 
 	"dep:attestation-doc-validation",
 	"dep:backoff",
@@ -75,6 +75,6 @@ non-wasm = [
     "dep:tower",
 ]
 experimental = ["choreographer", "testing"]
-testing = ["non-wasm", "execution/testing"]
+testing = ["non-wasm", "threshold-execution/testing"]
 malicious_strategies = ["testing"]
 choreographer = ["malicious_strategies"]

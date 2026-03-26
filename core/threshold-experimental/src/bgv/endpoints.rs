@@ -10,17 +10,17 @@ use crate::{
 };
 use aes_prng::AesRng;
 use algebra::sharing::share::Share;
-use execution::runtime::sessions::{
-    base_session::BaseSession,
-    session_parameters::{GenericParameterHandles, SessionParameters},
-    small_session::SmallSession,
-};
-use execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use hashing::serialize_hash_element;
 use itertools::Itertools;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
+use threshold_execution::runtime::sessions::{
+    base_session::BaseSession,
+    session_parameters::{GenericParameterHandles, SessionParameters},
+    small_session::SmallSession,
+};
+use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use threshold_types::role::Role;
 use threshold_types::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
 

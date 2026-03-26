@@ -13,11 +13,11 @@ use crate::{
         Storage, StorageExt, StorageReader, StorageType,
     },
 };
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
 use kms_grpc::{rpc_types::PubDataType, ContextId, RequestId};
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::collections::HashMap;
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs, ServerKey};
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 

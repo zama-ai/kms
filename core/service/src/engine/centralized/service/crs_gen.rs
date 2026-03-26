@@ -3,7 +3,6 @@ use std::sync::Arc;
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
@@ -11,6 +10,7 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
     TAG_CONTEXT_ID, TAG_CRS_ID, TAG_PARTY_ID,
 };
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;

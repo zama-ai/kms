@@ -7,12 +7,12 @@ use crate::{
 };
 use algebra::{sharing::share::Share, structure_traits::FromU128};
 use crypto_bigint::{NonZero, U1536};
-use execution::{
+use itertools::Itertools;
+use std::{ops::Mul, sync::Arc};
+use threshold_execution::{
     online::triple::{mult_list, open_list},
     runtime::sessions::base_session::BaseSessionHandles,
 };
-use itertools::Itertools;
-use std::{ops::Mul, sync::Arc};
 use threshold_types::role::Role;
 use tracing::instrument;
 
@@ -203,12 +203,12 @@ mod tests {
         constants::PLAINTEXT_MODULUS,
     };
     use algebra::structure_traits::{One, Ring, ZConsts, Zero};
-    use execution::{
+    use threshold_execution::{
         online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
         runtime::sessions::{base_session::GenericBaseSessionHandles, small_session::SmallSession},
         tests::helper::tests_and_benches::execute_protocol_small,
     };
-    use networking::constants::NETWORK_TIMEOUT_ASYNC;
+    use threshold_networking::constants::NETWORK_TIMEOUT_ASYNC;
     use threshold_types::network::NetworkMode;
 
     #[allow(clippy::type_complexity)]

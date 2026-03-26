@@ -243,8 +243,8 @@ mod tests {
     use super::*;
     use crate::{constants::SMALL_TEST_KEY_PATH, tfhe_internals::test_feature::KeySet};
     use algebra::base_ring::Z128;
-    use networking::local::LocalNetworkingProducer;
     use test_utils::read_element;
+    use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
 
     #[tokio::test]

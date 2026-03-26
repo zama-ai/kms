@@ -3,18 +3,18 @@
 //! It is a trusted entity and should not be used with production kms-core.
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
-use execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use execution::tfhe_internals::parameters::DkgParamsAvailable;
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
-use execution::zk::ceremony::compute_witness_dim;
+use threshold_execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DkgParamsAvailable;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::compute_witness_dim;
 
 use algebra::base_ring::Z64;
-use execution::zk::ceremony::InternalPublicParameter;
-use networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::zk::ceremony::InternalPublicParameter;
+use threshold_networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use threshold_types::party::Identity;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
@@ -29,7 +29,7 @@ use super::requests::{
     TfheType, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
     ThroughtputParams,
 };
-use networking::choreography_gen::{
+use threshold_networking::choreography_gen::{
     choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
     PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
     StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,

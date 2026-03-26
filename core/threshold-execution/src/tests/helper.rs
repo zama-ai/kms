@@ -343,9 +343,9 @@ pub mod testing {
     };
     use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert};
-    use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
     use std::{collections::HashSet, sync::Arc};
+    use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
     use threshold_types::session_id::SessionId;
@@ -426,12 +426,12 @@ pub mod tests {
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
-    use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
     use std::{
         collections::{HashMap, HashSet},
         sync::Arc,
     };
+    use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
     use threshold_types::session_id::SessionId;

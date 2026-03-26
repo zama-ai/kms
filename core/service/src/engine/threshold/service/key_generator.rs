@@ -10,17 +10,6 @@ use algebra::{
     },
     structure_traits::Ring,
 };
-use execution::{
-    endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
-    keyset_config as ddec_keyset_config,
-    online::preprocessing::DKGPreprocessing,
-    runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
-    tfhe_internals::{
-        parameters::DKGParams,
-        private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
-        public_keysets::FhePubKeySet,
-    },
-};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
@@ -39,6 +28,17 @@ use observability::{
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::{
+    endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::DKGPreprocessing,
+    runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
+    tfhe_internals::{
+        parameters::DKGParams,
+        private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
+        public_keysets::FhePubKeySet,
+    },
+};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
@@ -115,9 +115,9 @@ use crate::engine::base::INSECURE_PREPROCESSING_ID;
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
-use execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
-use execution::tfhe_internals::{
+use threshold_execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares,
     glwe_key::GlweSecretKeyShare,
     test_feature::{initialize_compressed_key_material, insecure_initialize_key_material},
@@ -794,14 +794,14 @@ impl<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >,
     ) -> anyhow::Result<DecompressionKey> {
-        use execution::{
+        use itertools::Itertools;
+        use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
+        use threshold_execution::{
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
                 to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,
             },
         };
-        use itertools::Itertools;
-        use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
         use threshold_types::role::Role;
 
         let output_party = Role::indexed_from_one(INPUT_PARTY_ID);
@@ -1472,18 +1472,18 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use execution::{
+    use kms_grpc::{
+        kms::v1::{FheParameter, KeySetConfig},
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
+    use rand::rngs::OsRng;
+    use threshold_execution::{
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
         online::preprocessing::dummy::DummyPreprocessing,
         small_execution::prss::PRSSSetup,
     };
-    use kms_grpc::{
-        kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
-    };
-    use rand::rngs::OsRng;
     use threshold_types::network::NetworkMode;
 
     use crate::{

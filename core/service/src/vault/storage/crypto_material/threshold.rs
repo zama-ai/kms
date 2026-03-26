@@ -6,7 +6,6 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
 use kms_grpc::{
     identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType},
@@ -16,6 +15,7 @@ use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
     zk::CompactPkeCrs,
 };
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::{

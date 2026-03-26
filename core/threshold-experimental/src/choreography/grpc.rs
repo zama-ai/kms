@@ -26,33 +26,21 @@ use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use execution::online::preprocessing::dummy::DummyPreprocessing;
-use execution::online::preprocessing::PreprocessorFactory;
-use execution::runtime::sessions::base_session::BaseSession;
-use execution::runtime::sessions::session_parameters::GenericParameterHandles;
-use execution::runtime::sessions::session_parameters::SessionParameters;
-use execution::runtime::sessions::small_session::SmallSession;
-use execution::small_execution::prss::{
-    DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
-};
 use itertools::Itertools;
-use networking::choreography_gen::choreography_server::{Choreography, ChoreographyServer};
-use networking::choreography_gen::{
-    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
-    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
-    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
-    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
-    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
-    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
-};
-use networking::choreography_gen::{ReshareRequest, ReshareResponse};
-use networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use networking::grpc::GrpcNetworkingManager;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::Arc;
+use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_execution::online::preprocessing::PreprocessorFactory;
+use threshold_execution::runtime::sessions::base_session::BaseSession;
+use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use threshold_execution::runtime::sessions::session_parameters::SessionParameters;
+use threshold_execution::runtime::sessions::small_session::SmallSession;
+use threshold_execution::small_execution::prss::{
+    DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
+};
 use threshold_fhe::choreography::{
     grpc::{
         create_small_sessions, fill_network_memory_info_multiple_sessions,
@@ -60,6 +48,20 @@ use threshold_fhe::choreography::{
     },
     requests::Status,
 };
+use threshold_networking::choreography_gen::choreography_server::{
+    Choreography, ChoreographyServer,
+};
+use threshold_networking::choreography_gen::{
+    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
+    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
+    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
+    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
+    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
+    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
+};
+use threshold_networking::choreography_gen::{ReshareRequest, ReshareResponse};
+use threshold_networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
+use threshold_networking::grpc::GrpcNetworkingManager;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 use threshold_types::{

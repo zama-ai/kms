@@ -23,23 +23,6 @@
 
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use alloy_dyn_abi::Eip712Domain;
-use execution::{
-    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
-    online::preprocessing::BasePreprocessing,
-    runtime::sessions::{
-        base_session::{BaseSession, TwoSetsBaseSession},
-        session_parameters::GenericParameterHandles,
-        small_session::SmallSession,
-    },
-    small_execution::{
-        offline::{Preprocessing, SecureSmallPreprocessing},
-        prss::{PRSSInit, PRSSSetup},
-    },
-    tfhe_internals::{
-        parameters::{DKGParams, DkgMode},
-        private_keysets::PrivateKeySet,
-    },
-};
 use futures_util::{
     future::{join_all, BoxFuture},
     FutureExt, TryFutureExt,
@@ -57,6 +40,23 @@ use kms_grpc::{
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::zk::CompactPkeCrs;
+use threshold_execution::{
+    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
+    online::preprocessing::BasePreprocessing,
+    runtime::sessions::{
+        base_session::{BaseSession, TwoSetsBaseSession},
+        session_parameters::GenericParameterHandles,
+        small_session::SmallSession,
+    },
+    small_execution::{
+        offline::{Preprocessing, SecureSmallPreprocessing},
+        prss::{PRSSInit, PRSSSetup},
+    },
+    tfhe_internals::{
+        parameters::{DKGParams, DkgMode},
+        private_keysets::PrivateKeySet,
+    },
+};
 use threshold_types::network::NetworkMode;
 use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
@@ -1432,15 +1432,15 @@ pub(crate) mod tests {
         },
     };
     use aes_prng::AesRng;
-    use execution::{
-        endpoints::reshare_sk::SecureReshareSecretKeys,
-        malicious_execution::small_execution::malicious_prss::EmptyPrss,
-    };
     use kms_grpc::{
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
         rpc_types::KMSType,
     };
     use rand::SeedableRng;
+    use threshold_execution::{
+        endpoints::reshare_sk::SecureReshareSecretKeys,
+        malicious_execution::small_execution::malicious_prss::EmptyPrss,
+    };
 
     impl<
             Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>

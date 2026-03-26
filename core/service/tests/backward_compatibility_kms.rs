@@ -21,7 +21,6 @@ use backward_compatibility::{
     UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
-use execution::{small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet};
 use kms_grpc::{
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
@@ -62,7 +61,6 @@ use kms_lib::{
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };
-use networking::tls::ReleasePCRValues;
 use rand::RngCore;
 use rand::SeedableRng;
 use std::{
@@ -71,6 +69,10 @@ use std::{
     sync::Arc,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
+use threshold_execution::{
+    small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
+};
+use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.

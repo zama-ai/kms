@@ -2,7 +2,6 @@ use crate::s3_operations::fetch_public_elements;
 use crate::{dummy_domain, CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use execution::zk::ceremony::max_num_bits_from_crs;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
@@ -15,6 +14,7 @@ use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -341,7 +341,6 @@ fn check_crsgen_ext_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execution::zk::ceremony::max_num_bits_from_crs;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
         consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
@@ -351,6 +350,7 @@ mod tests {
     };
     use std::str::FromStr;
     use tfhe::zk::CompactPkeCrs;
+    use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
     #[tokio::test]
     async fn test_eip712_sigs() {

@@ -10,8 +10,6 @@ use crate::{
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
     vault::storage::StorageReader,
 };
-use execution::tfhe_internals::parameters::DKGParams;
-use execution::zk::ceremony::max_num_bits_from_crs;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
@@ -22,6 +20,8 @@ use kms_grpc::{
 use serial_test::serial;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]

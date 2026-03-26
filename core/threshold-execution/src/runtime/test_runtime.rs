@@ -15,7 +15,6 @@ use crate::{
 };
 use aes_prng::AesRng;
 use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
-use networking::local::{LocalNetworking, LocalNetworkingProducer};
 use rand::SeedableRng;
 use std::{
     collections::{HashMap, HashSet},
@@ -23,6 +22,7 @@ use std::{
     time::Duration,
 };
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, ServerKey};
+use threshold_networking::local::{LocalNetworking, LocalNetworkingProducer};
 use threshold_types::network::NetworkMode;
 use threshold_types::role::{DualRole, Role, RoleKind, RoleTrait, TwoSetsRole};
 use threshold_types::session_id::SessionId;

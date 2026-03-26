@@ -11,9 +11,6 @@ use crate::{
     },
 };
 use alloy_dyn_abi::Eip712Domain;
-use execution::keyset_config::KeySetConfig;
-use execution::tfhe_internals::parameters::DKGParams;
-use execution::zk::ceremony::compute_witness_dim;
 use hashing::DomainSep;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
@@ -33,6 +30,9 @@ use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::compute_witness_dim;
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
