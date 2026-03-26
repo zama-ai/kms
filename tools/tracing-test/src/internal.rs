@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::fmt::{self as std_fmt, Write as _};
 use std::sync::{Mutex, MutexGuard, Once, OnceLock};
 
-use crate::config::{test_console_enabled, test_console_env_filter};
+use crate::config::{parse_boolish_env, test_console_enabled, test_console_env_filter};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -162,7 +162,7 @@ pub fn init_subscriber() {
     // in the same test binary. The `INITIALIZED` Once-guard still prevents
     // redundant work within traced_test itself.
     if test_console_enabled() {
-        let _ = subscriber
+        if let Err(err) = subscriber
             .with(
                 tracing_fmt::layer()
                     .with_target(true)
@@ -175,9 +175,18 @@ pub fn init_subscriber() {
                     .with_writer(std::io::stderr)
                     .with_filter(test_console_env_filter()),
             )
-            .try_init();
+            .try_init()
+        {
+            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
+                eprintln!("[tracing-test] skipped global subscriber init (console+capture): {err}");
+            }
+        }
     } else {
-        let _ = subscriber.try_init();
+        if let Err(err) = subscriber.try_init() {
+            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
+                eprintln!("[tracing-test] skipped global subscriber init (capture): {err}");
+            }
+        }
     }
 }
 
