@@ -640,9 +640,9 @@ mod tests {
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use algebra::structure_traits::{ErrorCorrect, Invert};
     use itertools::Itertools;
-    use session_id::SessionId;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
+    use threshold_types::session_id::SessionId;
 
     fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(
         senders: &HashSet<Role>,

@@ -24,7 +24,6 @@ observability = { workspace = true, optional = true }
 oid-registry.workspace = true
 prost.workspace = true
 serde.workspace = true
-session-id.workspace = true
 sha2.workspace = true
 tfhe-versionable.workspace = true
 thread-handles = { workspace = true, optional = true }

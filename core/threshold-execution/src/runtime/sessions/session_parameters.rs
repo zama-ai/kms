@@ -1,8 +1,8 @@
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::HashSet;
 use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
+use threshold_types::session_id::SessionId;
 
 /// Enum to decide where to run (de)serialization
 /// of MPC messages.

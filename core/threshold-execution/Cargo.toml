@@ -33,7 +33,6 @@ rand.workspace = true
 rayon.workspace = true
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-session-id.workspace = true
 statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 test-utils = { workspace = true, optional = true }

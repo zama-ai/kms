@@ -19,11 +19,10 @@ use execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePr
 use hashing::serialize_hash_element;
 use itertools::Itertools;
 use rand::SeedableRng;
-use session_id::DSEP_SESSION_ID;
-use session_id::{SessionId, SESSION_ID_BYTES};
 use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_types::role::Role;
+use threshold_types::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
 
 fn session_id_from_bgv_ct(
     ciphertext: &LevelledCiphertext<LevelEll, N65536>,

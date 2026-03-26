@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
         use execution::tfhe_internals::test_feature::gen_key_set;
         use execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
         use execution::zk::ceremony::public_parameters_by_trusted_setup;
-        use session_id::SessionId;
+        use threshold_types::session_id::SessionId;
     }
 }
 

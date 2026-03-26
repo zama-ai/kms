@@ -18,9 +18,9 @@ use crate::{
     },
 };
 use algebra::structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero};
-use session_id::SessionId;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// (i.e. the whole PRSS suite of traits)

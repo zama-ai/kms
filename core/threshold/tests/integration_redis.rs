@@ -20,7 +20,7 @@ use execution::{
     runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
     tfhe_internals::parameters::DKGParams,
 };
-use session_id::SessionId;
+use threshold_types::session_id::SessionId;
 
 #[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};

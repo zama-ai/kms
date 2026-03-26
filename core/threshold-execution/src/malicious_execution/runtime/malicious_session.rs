@@ -17,8 +17,8 @@ use crate::{
     },
 };
 use algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence};
-use session_id::SessionId;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 
 /// Defines a generic small session
 /// that accepts any arbitrary PRSS strategy

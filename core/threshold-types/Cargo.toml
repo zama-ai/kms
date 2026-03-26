@@ -16,3 +16,8 @@ rand.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tfhe-versionable.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+test-utils.workspace = true
+execution.workspace = true
+tfhe.workspace = true

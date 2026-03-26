@@ -22,7 +22,7 @@ use crate::{
         prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState},
     },
 };
-use session_id::SessionId;
+use threshold_types::session_id::SessionId;
 
 pub type SmallSession64<const EXTENSION_DEGREE: usize> =
     SmallSession<algebra::galois_rings::common::ResiduePoly<Z64, EXTENSION_DEGREE>>;

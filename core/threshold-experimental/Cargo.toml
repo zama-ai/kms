@@ -75,7 +75,6 @@ observability = { workspace = true, optional = true }
 paste.workspace = true
 rand.workspace = true
 serde.workspace = true
-session-id.workspace = true
 tfhe-csprng.workspace = true
 tfhe.workspace = true
 thread-handles.workspace = true

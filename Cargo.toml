@@ -4,7 +4,6 @@ resolver = "2"
 members = [
     "bc2wrap",
     "core/grpc",
-    "core/session-id",
     "core/service",
     "core/test-utils",
     "core/thread-handles",
@@ -89,10 +88,9 @@ kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 networking = { package = "threshold-networking", path = "./core/threshold-networking", default-features = false }
 observability = { path = "./observability" }  # Internal observability module
-session-id = { path = "./core/session-id" }
 test-utils = { path = "./core/test-utils" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
-threshold-types = { path = "./core/threshold-types" }
+threshold-types = { path = "./core/threshold-types" } # Types share across the KMS
 thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)

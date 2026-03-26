@@ -778,8 +778,8 @@ mod test {
         sharing::share::Share,
         structure_traits::Ring,
     };
-    use session_id::SessionId;
     use threshold_types::network::NetworkMode;
+    use threshold_types::session_id::SessionId;
 
     // Note this fn is very much tailored for the test below
     // We first push all the Z64 keys in the same vector and all the Z128 keys in another vector, then we open them separately and concatenate the results.

@@ -4294,7 +4294,6 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serial_test",
- "session-id",
  "signature 2.2.0",
  "strum",
  "strum_macros",
@@ -4389,13 +4388,13 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "serde",
- "session-id",
  "strum",
  "strum_macros",
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
  "threshold-hashing",
+ "threshold-types",
  "tonic 0.13.1",
  "tonic-build",
  "tracing",
@@ -7087,18 +7086,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "session-id"
-version = "0.13.10-rc.0"
-dependencies = [
- "anyhow",
- "serde",
- "test-utils",
- "tfhe",
- "threshold-execution",
- "threshold-hashing",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7749,7 +7736,6 @@ dependencies = [
  "rstest",
  "serde",
  "serial_test",
- "session-id",
  "statrs",
  "strum",
  "tempfile",
@@ -7794,7 +7780,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
- "session-id",
  "tfhe",
  "tfhe-csprng",
  "thread-handles",
@@ -7845,7 +7830,6 @@ dependencies = [
  "rustls-webpki 0.103.9",
  "serde",
  "serial_test",
- "session-id",
  "strum",
  "strum_macros",
  "tempfile",
@@ -7900,7 +7884,6 @@ dependencies = [
  "oid-registry",
  "prost",
  "serde",
- "session-id",
  "sha2",
  "tfhe",
  "tfhe-versionable",
@@ -7928,7 +7911,10 @@ dependencies = [
  "async-trait",
  "rand 0.8.5",
  "serde",
+ "test-utils",
+ "tfhe",
  "tfhe-versionable",
+ "threshold-execution",
  "threshold-hashing",
  "zeroize",
 ]

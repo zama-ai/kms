@@ -19,9 +19,9 @@ use execution::{
 };
 use networking::local::LocalNetworkingProducer;
 use rand::SeedableRng;
-use session_id::SessionId;
 use threshold_types::network::NetworkMode;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];

@@ -40,7 +40,6 @@ rand.workspace = true
 rcgen = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-session-id.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 test-utils = { workspace = true, optional = true }

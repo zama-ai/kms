@@ -13,7 +13,6 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::{
     collections::HashSet,
     ops::{Add, Mul, Neg},
@@ -29,6 +28,7 @@ use tfhe::{
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
 use thread_handles::spawn_compute_bound;
+use threshold_types::session_id::SessionId;
 use tracing::instrument;
 
 use super::constants::{
@@ -980,9 +980,9 @@ mod tests {
     use algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use rand::SeedableRng;
     use rstest::rstest;
-    use session_id::SessionId;
     use std::collections::HashMap;
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs, proofs::LEGACY_HASH_DS_LEN_BYTES};
+    use threshold_types::session_id::SessionId;
 
     use crate::malicious_execution::zk::ceremony::InsecureCeremony;
     use crate::tests::helper::tests::{

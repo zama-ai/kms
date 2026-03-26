@@ -63,13 +63,14 @@ impl From<SessionId> for u128 {
 mod tests {
     use tfhe::{prelude::FheEncrypt, FheUint8};
 
-    use crate::SessionId;
+    use super::SessionId;
     use execution::{
         constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
         tfhe_internals::test_feature::KeySet,
     };
     use test_utils::read_element;
 
+    // TODO(dp): print bytes and use as test vectors
     // Indeterministic cipher generation.
     // Encrypts a small message with deterministic randomness
     fn generate_cipher(message: u8) -> RadixOrBoolCiphertext {

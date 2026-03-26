@@ -77,7 +77,6 @@ use itertools::Itertools;
 use networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
@@ -86,6 +85,7 @@ use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, RoleAssignment},

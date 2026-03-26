@@ -34,9 +34,9 @@ use observability::{
         TAG_TFHE_TYPE,
     },
 };
-use session_id::SessionId;
 use tfhe::FheTypes;
 use thread_handles::spawn_compute_bound;
+use threshold_types::session_id::SessionId;
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};

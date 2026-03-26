@@ -1,5 +1,5 @@
-use session_id::SessionId;
 use threshold_types::party::MpcIdentity;
+use threshold_types::session_id::SessionId;
 
 use anyhow::{anyhow, bail, ensure};
 use attestation_doc_validation::{

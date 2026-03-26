@@ -9,10 +9,10 @@ use networking::choreography_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
-use session_id::SessionId;
 use std::collections::HashMap;
 use threshold_fhe::choreography::choreographer::ChoreoRuntime;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
 use tracing::{instrument, Instrument};

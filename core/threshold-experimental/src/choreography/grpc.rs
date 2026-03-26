@@ -50,7 +50,6 @@ use networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use networking::grpc::GrpcNetworkingManager;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::Arc;
@@ -62,6 +61,7 @@ use threshold_fhe::choreography::{
     requests::Status,
 };
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, RoleAssignment},

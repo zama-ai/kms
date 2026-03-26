@@ -175,9 +175,9 @@ mod tests {
     use execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use execution::runtime::test_runtime::generate_fixed_roles;
     use execution::runtime::test_runtime::DistributedTestRuntime;
-    use session_id::SessionId;
     use std::collections::HashMap;
     use threshold_types::network::NetworkMode;
+    use threshold_types::session_id::SessionId;
     use tokio::task::JoinSet;
 
     use itertools::Itertools;

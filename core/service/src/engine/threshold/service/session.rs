@@ -33,9 +33,9 @@ use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, MpcIdentity, RoleAssignment},

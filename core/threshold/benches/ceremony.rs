@@ -10,8 +10,8 @@ use execution::{
     zk::ceremony::{Ceremony, SecureCeremony},
 };
 use itertools::Itertools;
-use session_id::SessionId;
 use threshold_types::network::NetworkMode;
+use threshold_types::session_id::SessionId;
 use tokio::task::JoinSet;
 
 // This benchmark performs two-party CRS ceremony.

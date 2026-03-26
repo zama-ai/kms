@@ -17,7 +17,6 @@ use aes_prng::AesRng;
 use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
 use networking::local::{LocalNetworking, LocalNetworkingProducer};
 use rand::SeedableRng;
-use session_id::SessionId;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -26,6 +25,7 @@ use std::{
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, ServerKey};
 use threshold_types::network::NetworkMode;
 use threshold_types::role::{DualRole, Role, RoleKind, RoleTrait, TwoSetsRole};
+use threshold_types::session_id::SessionId;
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173

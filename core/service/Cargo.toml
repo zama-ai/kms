@@ -94,7 +94,6 @@ rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde-wasm-bindgen.workspace = true
-session-id.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
