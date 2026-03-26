@@ -15,9 +15,9 @@ kmsCore:
   addressOverride:
   # Override the image of the core:
   image:
-    # For enclave deployment: ghcr.io/zama-ai/kms/core-service-enclave
-    # For non-enclave deployment: ghcr.io/zama-ai/kms/core-service
-    name: ghcr.io/zama-ai/kms/core-service
+    # For enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
+    # For non-enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag: latest
     pullPolicy: Always
   # Define the service account name for the core:
@@ -223,7 +223,7 @@ kmsCoreClient:
   enabled: false
   nameOverride:
   image:
-    name: ghcr.io/zama-ai/kms/core-client
+    name: hub.zama.org/ghcr/zama-ai/kms/core-client
     tag: latest
   envFrom:
     configmap:
@@ -272,8 +272,8 @@ kmsGenKeys:
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
-    tag: 0.4.0-safe
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.0
     pullPolicy: Always
 
 runMode: dev
