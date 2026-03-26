@@ -58,7 +58,6 @@ use tfhe::shortint::PBSOrder;
 use thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use threshold_types::role::Role;
-use threshold_types::session_id::SessionId;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
@@ -774,6 +773,7 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
+    use threshold_types::session_id::SessionId;
     let session_id = SessionId::new(ct)?;
 
     let mut set = JoinSet::new();
