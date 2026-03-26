@@ -480,7 +480,7 @@ jobs:
         if: always()
         run: |
           echo "Starting cleanup of KMS resources..."
-          helm list -n "${NAMESPACE}" -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
+          helm list -n "${NAMESPACE}" -a -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
           kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
           kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
           kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true

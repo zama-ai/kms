@@ -977,6 +977,11 @@ upgrade_parties() {
 
     set_path_suffix
 
+    local kms_image_name="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+    if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+        kms_image_name="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
+    fi
+
     local helm_chart_location="${REPO_ROOT}/charts/kms-core"
     local helm_version_args=()
     local performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
@@ -1017,6 +1022,7 @@ upgrade_parties() {
             --set kmsCoreClient.image.tag="${party_tag}"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
+            --set kmsCore.image.name="${kms_image_name}"
             --set kmsCore.image.tag="${party_tag}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
