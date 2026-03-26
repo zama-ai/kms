@@ -29,6 +29,7 @@ strum.workspace = true
 strum_macros.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
+tracing-test.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
@@ -41,7 +42,6 @@ validator.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tracing-test.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["strum"]

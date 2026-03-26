@@ -3,11 +3,10 @@ use kms_lib::consts::{
     KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use observability::telemetry::test_console_env_filter;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{fs, sync::Once, thread, time::Duration};
+use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
@@ -17,21 +16,6 @@ const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
-
-fn init_test_logging() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        // Most tests in this file get parent-process logging from
-        // `#[integration_test]`. This helper remains for shared paths that are
-        // still used by non-`#[integration_test]` tests, notably the custodian
-        // CLI helpers below.
-        let _ = tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_ansi(false)
-            .with_env_filter(test_console_env_filter())
-            .try_init();
-    });
-}
 
 /// Kill processes based on the executable name.
 /// Note that tests using this function should run in serial mode
@@ -625,7 +609,6 @@ mod kms_server_binary_test {
 
 #[cfg(test)]
 mod kms_custodian_binary_tests {
-    use super::init_test_logging;
     use aes_prng::AesRng;
     use assert_cmd::Command;
     use kms_grpc::{kms::v1::CustodianContext, RequestId};
@@ -654,7 +637,7 @@ mod kms_custodian_binary_tests {
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        init_test_logging();
+        observability::telemetry::init_test_logging_once();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {

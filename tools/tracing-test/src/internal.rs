@@ -1,7 +1,17 @@
+// Runtime internals for the in-repo `#[traced_test]` harness.
+//
+// Owns the global subscriber setup, per-test captured-log buffer, and the
+// capture-specific filter logic. The key invariant is that the capture path
+// never inherits ambient `RUST_LOG`, so `logs_contain(...)` assertions keep
+// working even when CI forces a quiet global filter.
+//
+// Shared configuration lives in `crate::config`.
+
 use std::collections::VecDeque;
 use std::fmt::{self as std_fmt, Write as _};
 use std::sync::{Mutex, MutexGuard, Once, OnceLock};
 
+use crate::config::{test_console_enabled, test_console_env_filter};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -12,10 +22,6 @@ use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Layer};
 
 pub static INITIALIZED: Once = Once::new();
 
-const DEFAULT_TEST_CONSOLE_FILTER: &str =
-    "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
-const DEFAULT_TEST_VERBOSE_FILTER: &str =
-    "info,tonic=info,h2=warn,hyper=warn,tower=warn,opentelemetry_sdk=warn,reqwest=warn,rustls=warn";
 const DEFAULT_CAPTURE_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TRUNCATED_LINE_SUFFIX: &str = " [truncated]";
 
@@ -58,7 +64,9 @@ impl CaptureBuffer {
     }
 
     fn push(&mut self, scopes: Vec<String>, line: String) {
-        let line = truncate_line(line, self.max_bytes);
+        let scope_bytes = scopes.iter().map(|scope| scope.len()).sum::<usize>();
+        let line_budget = self.max_bytes.saturating_sub(scope_bytes);
+        let line = truncate_line(line, line_budget);
         let size_bytes = estimate_size_bytes(&scopes, &line);
 
         if size_bytes == 0 {
@@ -127,6 +135,20 @@ where
     }
 }
 
+/// Install the **capture-layer** subscriber stack for `#[traced_test]`: an in-memory
+/// buffer (for `logs_contain` / `logs_assert`) plus an optional stderr mirror when
+/// [`crate::config::test_console_enabled`] is true.
+///
+/// The attribute macro invokes [`init_subscriber`] once via [`INITIALIZED`]; call
+/// this function only when you need the same stack without using `#[traced_test]`.
+///
+/// Safe to call multiple times — [`INITIALIZED`] runs [`init_subscriber`] at most once.
+/// For stderr-only output (no capture), use [`crate::config::try_init_test_stderr_subscriber`]
+/// (`observability::telemetry::try_init_test_stderr_subscriber` in this repo).
+pub fn try_init_traced_test_subscriber() {
+    INITIALIZED.call_once(init_subscriber);
+}
+
 pub fn init_subscriber() {
     // Both sinks use per-layer filters so that capture and console filtering
     // stay independent.  A global filter would cap both sinks at the most
@@ -137,7 +159,7 @@ pub fn init_subscriber() {
 
     // Use `let _ =` instead of `.expect()` so this doesn't panic when another
     // macro (e.g. `#[integration_test]`) already installed a global subscriber
-    // in the same test binary.  The `INITIALIZED` Once-guard still prevents
+    // in the same test binary. The `INITIALIZED` Once-guard still prevents
     // redundant work within traced_test itself.
     if test_console_enabled() {
         let _ = subscriber
@@ -151,7 +173,7 @@ pub fn init_subscriber() {
                     .with_span_events(FmtSpan::NONE)
                     .with_ansi(false)
                     .with_writer(std::io::stderr)
-                    .with_filter(test_env_filter()),
+                    .with_filter(test_console_env_filter()),
             )
             .try_init();
     } else {
@@ -238,15 +260,25 @@ fn has_scope(scopes: &[String], scope: &str) -> bool {
 }
 
 fn truncate_line(mut line: String, max_bytes: usize) -> String {
-    if max_bytes == 0 || line.len() <= max_bytes {
+    if max_bytes == 0 {
+        return String::new();
+    }
+
+    if line.len() <= max_bytes {
         return line;
     }
 
     let suffix_bytes = TRUNCATED_LINE_SUFFIX.len();
     let keep_bytes = max_bytes.saturating_sub(suffix_bytes);
+    let suffix = if max_bytes >= suffix_bytes {
+        TRUNCATED_LINE_SUFFIX
+    } else {
+        let suffix_boundary = truncate_to_char_boundary(TRUNCATED_LINE_SUFFIX, max_bytes);
+        &TRUNCATED_LINE_SUFFIX[..suffix_boundary]
+    };
     let truncated = truncate_to_char_boundary(&line, keep_bytes);
     line.truncate(truncated);
-    line.push_str(TRUNCATED_LINE_SUFFIX);
+    line.push_str(suffix);
     line
 }
 
@@ -267,7 +299,10 @@ fn capture_max_bytes() -> usize {
         .unwrap_or(DEFAULT_CAPTURE_MAX_BYTES)
 }
 
-fn test_capture_env_filter() -> EnvFilter {
+/// Capture filter intentionally does **not** fall back to `RUST_LOG`.
+/// CI sets `RUST_LOG=error` which would drop the `info!` events that
+/// `logs_contain(...)` assertions depend on.
+pub fn test_capture_env_filter() -> EnvFilter {
     let capture_override = std::env::var("KMS_TEST_LOG_CAPTURE_FILTER").ok();
     let shared_override = std::env::var("KMS_TEST_LOG_FILTER").ok();
     EnvFilter::new(resolve_test_capture_filter(
@@ -280,9 +315,6 @@ fn resolve_test_capture_filter(
     capture_override: Option<&str>,
     shared_override: Option<&str>,
 ) -> String {
-    // Intentionally do not fall back to ambient `RUST_LOG` here. The shared CI
-    // workflows set `RUST_LOG=error`, and inheriting that value made
-    // `logs_contain(...)` drop the `info!` events that these tests assert on.
     if let Some(filter) = capture_override {
         return filter.to_owned();
     }
@@ -291,68 +323,11 @@ fn resolve_test_capture_filter(
         return filter.to_owned();
     }
 
-    DEFAULT_TEST_VERBOSE_FILTER.to_owned()
-}
-
-fn test_env_filter() -> EnvFilter {
-    if let Ok(filter) = std::env::var("KMS_TEST_LOG_CONSOLE_FILTER") {
-        return EnvFilter::new(filter);
-    }
-
-    if let Ok(filter) = std::env::var("KMS_TEST_LOG_FILTER") {
-        return EnvFilter::new(filter);
-    }
-
-    if let Ok(filter) = EnvFilter::try_from_default_env() {
-        return filter;
-    }
-
-    if matches!(test_log_mode(), TestLogMode::Verbose) {
-        EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER)
-    } else {
-        EnvFilter::new(DEFAULT_TEST_CONSOLE_FILTER)
-    }
-}
-
-// `KMS_TEST_LOG_STDOUT` is kept as a backward-compatible alias for callers
-// that want console output without switching away from the quiet preset.
-fn test_console_enabled() -> bool {
-    let stdout = std::env::var("KMS_TEST_LOG_STDOUT").ok();
-    matches!(test_log_mode(), TestLogMode::Console | TestLogMode::Verbose)
-        || parse_boolish_env(stdout.as_deref())
-}
-
-fn test_log_mode() -> TestLogMode {
-    let mode = std::env::var("KMS_TEST_LOG_MODE").ok();
-    parse_test_log_mode(mode.as_deref())
-}
-
-fn parse_test_log_mode(value: Option<&str>) -> TestLogMode {
-    match value.unwrap_or_default().to_ascii_lowercase().as_str() {
-        "verbose" | "debug" | "trace" => TestLogMode::Verbose,
-        "console" => TestLogMode::Console,
-        _ => TestLogMode::Quiet,
-    }
-}
-
-fn parse_boolish_env(value: Option<&str>) -> bool {
-    matches!(
-        value.map(|value| value.to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes")
-    )
+    crate::config::DEFAULT_TEST_VERBOSE_FILTER.to_owned()
 }
 
 fn lock_ignore_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|err| err.into_inner())
-}
-
-// Mirror the tri-state `KMS_TEST_LOG_MODE` semantics from
-// `observability::telemetry`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestLogMode {
-    Quiet,
-    Console,
-    Verbose,
 }
 
 #[cfg(test)]
@@ -360,30 +335,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_test_log_mode_supports_tri_state_values() {
-        assert_eq!(parse_test_log_mode(None), TestLogMode::Quiet);
-        assert_eq!(parse_test_log_mode(Some("quiet")), TestLogMode::Quiet);
-        assert_eq!(parse_test_log_mode(Some("console")), TestLogMode::Console);
-        assert_eq!(parse_test_log_mode(Some("verbose")), TestLogMode::Verbose);
-        assert_eq!(parse_test_log_mode(Some("debug")), TestLogMode::Verbose);
-        assert_eq!(parse_test_log_mode(Some("trace")), TestLogMode::Verbose);
-    }
-
-    #[test]
-    fn parse_boolish_env_accepts_common_truthy_values() {
-        assert!(parse_boolish_env(Some("1")));
-        assert!(parse_boolish_env(Some("true")));
-        assert!(parse_boolish_env(Some("YES")));
-        assert!(!parse_boolish_env(Some("0")));
-        assert!(!parse_boolish_env(Some("false")));
-        assert!(!parse_boolish_env(None));
-    }
-
-    #[test]
     fn resolve_test_capture_filter_defaults_to_verbose() {
         assert_eq!(
             resolve_test_capture_filter(None, None),
-            DEFAULT_TEST_VERBOSE_FILTER
+            crate::config::DEFAULT_TEST_VERBOSE_FILTER
         );
     }
 
@@ -394,5 +349,30 @@ mod tests {
             "trace"
         );
         assert_eq!(resolve_test_capture_filter(None, Some("warn")), "warn");
+    }
+
+    #[test]
+    fn truncate_line_returns_empty_when_budget_is_zero() {
+        assert_eq!(truncate_line("abcdef".to_owned(), 0), "");
+    }
+
+    #[test]
+    fn truncate_line_never_exceeds_budget_when_budget_smaller_than_suffix() {
+        let budget = 4;
+        let truncated = truncate_line("abcdef".to_owned(), budget);
+        assert!(truncated.len() <= budget);
+        assert_eq!(truncated, " [tr");
+    }
+
+    #[test]
+    fn capture_buffer_push_accounts_for_scope_bytes() {
+        let mut buffer = CaptureBuffer::new(10);
+        buffer.push(vec!["scope".to_owned()], "abcdef".to_owned());
+        let stored = buffer
+            .matching_lines("scope")
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        assert_eq!(stored, " [tru");
     }
 }

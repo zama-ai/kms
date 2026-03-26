@@ -22,12 +22,9 @@ use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
 use serde::Serialize;
 use std::{
-    env, io,
+    env,
     net::SocketAddr,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{Arc, Once},
     time::{Duration, SystemTime},
 };
 use tonic::{
@@ -40,7 +37,6 @@ use tracing_appender::non_blocking;
 use tracing_appender::rolling::never;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
@@ -56,221 +52,25 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
-// Default log filters for tests.
-//
-// These presets drive three different test logging behaviors:
-// - `DEFAULT_TEST_CONSOLE_FILTER` keeps parent-process stderr quiet by default
-//   during local runs and CI, while still surfacing warnings and errors.
-// - `DEFAULT_TEST_FILE_FILTER` is used for persistent trace artifacts and keeps
-//   the in-repo crates at `info` so the saved JSON logs remain useful for
-//   debugging without opening the floodgates on transport noise.
-// - `DEFAULT_TEST_VERBOSE_FILTER` is the broader preset selected by
-//   `KMS_TEST_LOG_MODE=verbose|debug|trace` when no sink-specific override is
-//   provided.
-// - `DEFAULT_TEST_LOG_MAX_BYTES` caps persistent trace files; `init_tracing()`
-//   feeds it into `TruncatingMakeWriter` so CI artifacts stay bounded.
-const DEFAULT_TEST_CONSOLE_FILTER: &str =
-    "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
-const DEFAULT_TEST_FILE_FILTER: &str =
-    "warn,observability=info,kms_core_client=info,kms_lib=info,kms_server=info,kms_init=info,kms_gen_keys=info,kms_custodian=info,tonic=warn,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
-const DEFAULT_TEST_VERBOSE_FILTER: &str =
-    "info,tonic=info,h2=warn,hyper=warn,tower=warn,opentelemetry_sdk=warn,reqwest=warn,rustls=warn";
-const DEFAULT_TEST_LOG_MAX_BYTES: usize = 4 * 1024 * 1024;
+/// Stderr-only test logging with shared filter presets (no `#[traced_test]` capture buffer).
+///
+/// See [`tracing_test::config::try_init_test_stderr_subscriber`] for full documentation.
+pub use tracing_test::config::try_init_test_stderr_subscriber;
+use tracing_test::config::{
+    test_console_env_filter, test_log_max_bytes, test_logging_enabled, test_persistent_env_filter,
+    TruncatingMakeWriter,
+};
 
-// `KMS_TEST_LOG_MODE` is the canonical high-level switch for test logging.
-// `quiet` keeps the quiet defaults and no console, `console` keeps the quiet
-// defaults but enables console output, and `verbose`/`debug`/`trace` enables
-// the verbose defaults plus console output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TestLogMode {
-    Quiet,
-    Console,
-    Verbose,
-}
-
-#[derive(Clone)]
-struct TruncatingMakeWriter<W> {
-    inner: W,
-    state: Arc<TruncatingWriterState>,
-}
-
-struct TruncatingWriterState {
-    max_bytes: usize,
-    written_bytes: AtomicUsize,
-    truncated: AtomicBool,
-}
-
-struct TruncatingWriter<W> {
-    inner: W,
-    state: Arc<TruncatingWriterState>,
-}
-
-impl<W> TruncatingMakeWriter<W> {
-    fn new(inner: W, max_bytes: usize) -> Self {
-        Self {
-            inner,
-            state: Arc::new(TruncatingWriterState {
-                max_bytes,
-                written_bytes: AtomicUsize::new(0),
-                truncated: AtomicBool::new(false),
-            }),
-        }
-    }
-}
-
-impl<'a, W> MakeWriter<'a> for TruncatingMakeWriter<W>
-where
-    W: MakeWriter<'a> + Clone,
-{
-    type Writer = TruncatingWriter<W::Writer>;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        TruncatingWriter {
-            inner: self.inner.make_writer(),
-            state: self.state.clone(),
-        }
-    }
-}
-
-impl<W> io::Write for TruncatingWriter<W>
-where
-    W: io::Write,
-{
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.state.max_bytes == 0 {
-            return self.inner.write(buf);
-        }
-
-        let written = self.state.written_bytes.load(Ordering::Relaxed);
-        let remaining = self.state.max_bytes.saturating_sub(written);
-        let to_write = remaining.min(buf.len());
-
-        if to_write > 0 {
-            self.inner.write_all(&buf[..to_write])?;
-            self.state
-                .written_bytes
-                .fetch_add(to_write, Ordering::Relaxed);
-        }
-
-        // Emit the truncation marker exactly once, covering both the case
-        // where this write itself was partially dropped *and* the edge case
-        // where the previous write filled the budget exactly.
-        if remaining < buf.len() && !self.state.truncated.swap(true, Ordering::Relaxed) {
-            self.inner.write_all(b"\n[truncated test trace output]\n")?;
-        }
-
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-fn test_logging_enabled() -> bool {
-    matches!(
-        env::var("KMS_TEST_MODE").as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
-    ) || matches!(env::var("RUN_MODE").as_deref(), Ok("integration"))
-        || env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled"
-}
-
-fn test_log_mode() -> TestLogMode {
-    let mode = env::var("KMS_TEST_LOG_MODE").ok();
-    parse_test_log_mode(mode.as_deref())
-}
-
-fn parse_test_log_mode(value: Option<&str>) -> TestLogMode {
-    match value.unwrap_or_default().to_ascii_lowercase().as_str() {
-        "verbose" | "debug" | "trace" => TestLogMode::Verbose,
-        "console" => TestLogMode::Console,
-        _ => TestLogMode::Quiet,
-    }
-}
-
-fn parse_boolish_env(value: Option<&str>) -> bool {
-    matches!(
-        value.map(|value| value.to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes")
-    )
-}
-
-// Resolution order is sink-specific override -> shared override -> `RUST_LOG`
-// -> preset selected by `KMS_TEST_LOG_MODE`.
-fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
-    if let Ok(filter) = env::var(override_var) {
-        return EnvFilter::new(filter);
-    }
-
-    if let Ok(filter) = env::var("KMS_TEST_LOG_FILTER") {
-        return EnvFilter::new(filter);
-    }
-
-    if let Ok(filter) = env::var("RUST_LOG") {
-        return EnvFilter::new(filter);
-    }
-
-    if matches!(test_log_mode(), TestLogMode::Verbose) {
-        return EnvFilter::new(DEFAULT_TEST_VERBOSE_FILTER);
-    }
-
-    EnvFilter::new(quiet_default)
-}
-
-// These helpers apply the override precedence above and expose the sink-specific
-// defaults used throughout the repo:
-// - `test_console_env_filter()` is used by the parent-process test subscribers
-//   installed by the integration-test macro and client-side test helpers.
-// - `test_persistent_env_filter()` is used by the JSON file sink when
-//   `TRACE_PERSISTENCE=enabled`.
-pub fn test_console_env_filter() -> EnvFilter {
-    test_log_filter("KMS_TEST_LOG_CONSOLE_FILTER", DEFAULT_TEST_CONSOLE_FILTER)
-}
-
-pub fn test_persistent_env_filter() -> EnvFilter {
-    test_log_filter("KMS_TEST_LOG_FILE_FILTER", DEFAULT_TEST_FILE_FILTER)
-}
-
-// Used by the persistent trace file sink in `init_tracing()` to bound artifact
-// size while still emitting an explicit truncation marker.
-pub fn test_log_max_bytes() -> usize {
-    env::var("KMS_TEST_LOG_MAX_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(DEFAULT_TEST_LOG_MAX_BYTES)
-}
-
-// `KMS_TEST_LOG_STDOUT` is kept as a backward-compatible alias for callers
-// that want console output without changing the selected log-mode preset.
-fn test_console_enabled() -> bool {
-    let stdout = env::var("KMS_TEST_LOG_STDOUT").ok();
-    matches!(test_log_mode(), TestLogMode::Console | TestLogMode::Verbose)
-        || parse_boolish_env(stdout.as_deref())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_test_log_mode_supports_tri_state_values() {
-        assert_eq!(parse_test_log_mode(None), TestLogMode::Quiet);
-        assert_eq!(parse_test_log_mode(Some("quiet")), TestLogMode::Quiet);
-        assert_eq!(parse_test_log_mode(Some("console")), TestLogMode::Console);
-        assert_eq!(parse_test_log_mode(Some("verbose")), TestLogMode::Verbose);
-        assert_eq!(parse_test_log_mode(Some("debug")), TestLogMode::Verbose);
-        assert_eq!(parse_test_log_mode(Some("trace")), TestLogMode::Verbose);
-    }
-
-    #[test]
-    fn parse_boolish_env_accepts_common_truthy_values() {
-        assert!(parse_boolish_env(Some("1")));
-        assert!(parse_boolish_env(Some("true")));
-        assert!(parse_boolish_env(Some("YES")));
-        assert!(!parse_boolish_env(Some("0")));
-        assert!(!parse_boolish_env(Some("false")));
-        assert!(!parse_boolish_env(None));
-    }
+/// Enables test-mode env defaults and initializes stderr test logging once.
+///
+/// This is intended as the shared entry point for integration-style tests to
+/// avoid repeating ad-hoc `Once` guards across crates.
+pub fn init_test_logging_once() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        std::env::set_var("KMS_TEST_MODE", "1");
+        try_init_test_stderr_subscriber();
+    });
 }
 
 #[derive(Clone)]
@@ -499,7 +299,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with(file_layer)
             .with(env_filter);
 
-        if test_console_enabled() {
+        if tracing_test::config::test_console_enabled() {
             subscriber
                 .with(fmt_layer())
                 .try_init()
@@ -535,7 +335,6 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         (
             batch_conf.max_queue_size(),
             batch_conf.scheduled_delay(),
-            batch_conf.scheduled_delay().as_millis(),
             batch_conf.max_export_batch_size(),
         )
     });
@@ -559,18 +358,17 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             })?;
 
         // Configure batch processing
-        let batch_config =
-            if let Some((max_queue_size, scheduled_delay, _, max_export_batch_size)) =
-                batch_override.as_ref()
-            {
-                opentelemetry_sdk::trace::BatchConfigBuilder::default()
-                    .with_max_queue_size(*max_queue_size)
-                    .with_scheduled_delay(*scheduled_delay)
-                    .with_max_export_batch_size(*max_export_batch_size)
-                    .build()
-            } else {
-                opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
-            };
+        let batch_config = if let Some((max_queue_size, scheduled_delay, max_export_batch_size)) =
+            batch_override.as_ref()
+        {
+            opentelemetry_sdk::trace::BatchConfigBuilder::default()
+                .with_max_queue_size(*max_queue_size)
+                .with_scheduled_delay(*scheduled_delay)
+                .with_max_export_batch_size(*max_export_batch_size)
+                .build()
+        } else {
+            opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
+        };
 
         let batch_processor = opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter)
             .with_batch_config(batch_config)
@@ -674,13 +472,13 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         })?;
 
     match (tracing_endpoint.as_deref(), batch_override.as_ref()) {
-        (Some(endpoint), Some((max_queue_size, _, scheduled_delay_ms, max_export_batch_size))) => {
+        (Some(endpoint), Some((max_queue_size, scheduled_delay, max_export_batch_size))) => {
             info!(
                 service_name = %service_name_for_logs,
                 endpoint = %endpoint,
                 tracing_otlp_timeout_ms = tracing_otlp_timeout_ms,
                 max_queue_size = *max_queue_size,
-                scheduled_delay_ms = *scheduled_delay_ms,
+                scheduled_delay_ms = scheduled_delay.as_millis(),
                 max_export_batch_size = *max_export_batch_size,
                 "Tracing initialized with OTLP exporter and custom batch processing"
             );

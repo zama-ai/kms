@@ -48,13 +48,12 @@ use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
 use kms_lib::vault::Vault;
 use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
-use observability::telemetry::test_console_env_filter;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
@@ -1358,12 +1357,6 @@ pub async fn encrypt(
     ))
 }
 
-static INIT_LOG: Once = Once::new();
-
-pub fn init_testing() {
-    INIT_LOG.call_once(setup_test_logging);
-}
-
 pub fn setup_logging() {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", "core-client.log");
     let file_and_stdout = file_appender.and(std::io::stdout);
@@ -1379,19 +1372,6 @@ pub fn setup_logging() {
         .json()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
-}
-
-fn setup_test_logging() {
-    // Mirror the service/integration test behavior so client-side integration
-    // and kind tests participate in the same quiet-by-default logging policy
-    // and can opt into console verbosity with the shared test env vars.
-    std::env::set_var("KMS_TEST_MODE", "1");
-
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .with_env_filter(test_console_env_filter())
-        .try_init();
 }
 
 /// This reads the kms ethereum address from local file system
