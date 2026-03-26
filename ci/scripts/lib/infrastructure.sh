@@ -274,7 +274,7 @@ deploy_registry_credentials() {
 {
   "auths": {
     "hub.zama.org": {
-      "auth": "$(echo -n "${HUB_ZAMA_ORG_USERNAME}:${HARBOR_READ_TOKEN}" | ${base64_cmd})"
+      "auth": "$(echo -n "${HARBOR_READ_LOGIN}:${HARBOR_READ_TOKEN}" | ${base64_cmd})"
     }
   }
 }
