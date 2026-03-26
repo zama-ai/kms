@@ -13,7 +13,7 @@ kmsCoreClient:
 
 kmsCore:
   image:
-    name: ghcr.io/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag: <version>
 
   envFrom:

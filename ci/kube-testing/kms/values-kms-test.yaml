@@ -4,7 +4,7 @@ kmsPeers:
 
 kmsCore:
   image:
-    name: ghcr.io/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag:
   envFrom:
     configmap:
@@ -78,7 +78,7 @@ environment: dev
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
     tag: v0.4.3
     pullPolicy: Always
 

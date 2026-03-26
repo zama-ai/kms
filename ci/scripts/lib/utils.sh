@@ -21,14 +21,14 @@ build_container() {
     # Build and load core-service
     #-------------------------------------------------------------------------
     log_info "Building container for core-service..."
-    docker buildx build -t "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+    docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-service:latest-dev" \
         -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
         "${REPO_ROOT}/" \
         --load
 
     log_info "Loading core-service container into Kind cluster '${NAMESPACE}'..."
-    kind load docker-image "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+    kind load docker-image "hub.zama.org/ghcr/zama-ai/kms/core-service:latest-dev" \
         -n "${NAMESPACE}" \
         --nodes "${NAMESPACE}-worker"
 
@@ -36,14 +36,14 @@ build_container() {
     # Build and load core-client
     #-------------------------------------------------------------------------
     log_info "Building container for core-client..."
-    docker buildx build -t "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+    docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-client:latest-dev" \
         -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
         "${REPO_ROOT}/" \
         --load
 
     log_info "Loading core-client container into Kind cluster '${NAMESPACE}'..."
-    kind load docker-image "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+    kind load docker-image "hub.zama.org/ghcr/zama-ai/kms/core-client:latest-dev" \
         -n "${NAMESPACE}" \
         --nodes "${NAMESPACE}-worker"
 

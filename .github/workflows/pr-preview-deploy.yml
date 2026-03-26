@@ -31,7 +31,11 @@ on:
         required: false
         type: string
     secrets:
-      ZWS_BOT_TOKEN:
+      HARBOR_URL:
+        required: true
+      HARBOR_READ_LOGIN:
+        required: true
+      HARBOR_READ_TOKEN:
         required: true
       TS_OAUTH_CLIENT_ID:
         required: true
@@ -96,9 +100,9 @@ jobs:
       - name: Login to zws GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ZWS_BOT_TOKEN }}
+          registry: ${{ secrets.HARBOR_URL }}
+          username: ${{ secrets.HARBOR_READ_LOGIN }}
+          password: ${{ secrets.HARBOR_READ_TOKEN }}
 
       - name: Handle pre-built images and PCR values
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
