@@ -1221,10 +1221,16 @@ mod tests {
 
         // Drop sender so the task can finish
         drop(sender);
-        let _ = tokio::time::timeout(Duration::from_secs(5), task_handle).await;
+        tokio::time::timeout(Duration::from_secs(300), task_handle)
+            .await
+            .unwrap()
+            .unwrap();
 
         // Shut down the server
         let _ = server_terminate_tx.send(());
-        let _ = tokio::time::timeout(Duration::from_secs(5), server_handle).await;
+        tokio::time::timeout(Duration::from_secs(300), server_handle)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
