@@ -46,6 +46,14 @@ spec:
       value: ""
     - name: test_label
       value: ""
+    - name: old_version
+      value: ""
+    - name: new_version
+      value: ""
+    - name: num_upgraded
+      value: "0"
+    - name: num_total
+      value: "13"
 
 
   templates:
@@ -65,7 +73,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
@@ -81,7 +89,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
 
@@ -98,7 +106,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -115,7 +123,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -132,7 +140,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -149,7 +157,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req100"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -186,6 +194,14 @@ spec:
                 value: "{{workflow.parameters.run_url}}"
               - name: test_label
                 value: "{{workflow.parameters.test_label}}"
+              - name: old_version
+                value: "{{workflow.parameters.old_version}}"
+              - name: new_version
+                value: "{{workflow.parameters.new_version}}"
+              - name: num_upgraded
+                value: "{{workflow.parameters.num_upgraded}}"
+              - name: num_total
+                value: "{{workflow.parameters.num_total}}"
     # Templates
     - name: run-test
       inputs:
@@ -404,6 +420,10 @@ spec:
         - name: tls
         - name: run_url
         - name: test_label
+        - name: old_version
+        - name: new_version
+        - name: num_upgraded
+        - name: num_total
       script:
         image: public.ecr.aws/docker/library/alpine:3.23
         command: ["/bin/sh", "-c"]
@@ -428,11 +448,20 @@ spec:
           ls -ali /mnt/results/
 
           TEST_LABEL="{{inputs.parameters.test_label}}"
+          OLD_VERSION="{{inputs.parameters.old_version}}"
+          NEW_VERSION="{{inputs.parameters.new_version}}"
+          NUM_UPGRADED="{{inputs.parameters.num_upgraded}}"
+          NUM_TOTAL="{{inputs.parameters.num_total}}"
+          NUM_OLD=$((NUM_TOTAL - NUM_UPGRADED))
 
           echo "=========================================="
           echo "🔍 KMS ROLLING UPGRADE TEST SUMMARY REPORT [${TEST_LABEL}]"
           echo "=========================================="
           echo "Report generated: $(date -u)"
+          echo ""
+          echo "Cluster composition:"
+          echo "  ${NUM_UPGRADED}/${NUM_TOTAL} nodes on NEW version: ${NEW_VERSION}"
+          echo "  ${NUM_OLD}/${NUM_TOTAL} nodes on OLD version: ${OLD_VERSION}"
           echo ""
 
           # Initialize counters
@@ -535,6 +564,10 @@ spec:
             "success_rate": $success_rate,
             "total_time": $total_time,
             "test_label": "${TEST_LABEL}",
+            "old_version": "${OLD_VERSION}",
+            "new_version": "${NEW_VERSION}",
+            "num_upgraded": ${NUM_UPGRADED},
+            "num_total": ${NUM_TOTAL},
             "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF
@@ -590,8 +623,8 @@ spec:
                     "short": true
                   },
                   {
-                    "title": ":package: Versions",
-                    "value": "• kms-core: <version>\n",
+                    "title": ":twisted_rightwards_arrows: Cluster Composition",
+                    "value": "• ${NUM_UPGRADED}/${NUM_TOTAL} nodes on *${NEW_VERSION}* (new)\n• ${NUM_OLD}/${NUM_TOTAL} nodes on *${OLD_VERSION}* (old)\n",
                     "short": false
                   },
                   {

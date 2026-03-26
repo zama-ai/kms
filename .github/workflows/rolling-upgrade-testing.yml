@@ -385,12 +385,19 @@ jobs:
              /tmp/mixed-5-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
 
+          # Count upgraded nodes from FIRST_BATCH
+          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+
           argo submit -n argo /tmp/mixed-5-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
             -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-            -p test_label="mixed-5-of-13" \
-            -p key-id="${BASELINE_KEY_ID}"
+            -p test_label="mixed-${NUM_UPGRADED}-of-13" \
+            -p key-id="${BASELINE_KEY_ID}" \
+            -p old_version="${OLD_IMAGE_TAG}" \
+            -p new_version="${NEW_IMAGE_TAG}" \
+            -p num_upgraded="${NUM_UPGRADED}" \
+            -p num_total="13"
 
           echo "Streaming mixed-5/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
@@ -439,12 +446,20 @@ jobs:
              /tmp/mixed-9-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
 
+          # Count all upgraded nodes (first + second batch)
+          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
+          NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
+
           argo submit -n argo /tmp/mixed-9-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
             -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-            -p test_label="mixed-9-of-13" \
-            -p key-id="${BASELINE_KEY_ID}"
+            -p test_label="mixed-${NUM_UPGRADED}-of-13" \
+            -p key-id="${BASELINE_KEY_ID}" \
+            -p old_version="${OLD_IMAGE_TAG}" \
+            -p new_version="${NEW_IMAGE_TAG}" \
+            -p num_upgraded="${NUM_UPGRADED}" \
+            -p num_total="13"
 
           echo "Streaming mixed-9/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
