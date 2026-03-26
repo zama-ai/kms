@@ -65,6 +65,13 @@ use tracing_test::config::{
 ///
 /// This is intended as the shared entry point for integration-style tests to
 /// avoid repeating ad-hoc `Once` guards across crates.
+///
+/// Use this for tests that only need stderr output. For tests that assert on
+/// captured logs (`logs_contain(...)` / `logs_assert(...)`), use
+/// `tracing_test::traced_test` instead.
+///
+/// Important: tracing subscriber installation is process-global. If another
+/// initializer already installed a subscriber, this function becomes a no-op.
 pub fn init_test_logging_once() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
