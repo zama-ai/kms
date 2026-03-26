@@ -47,8 +47,8 @@ KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
 TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
 SYNC_SECRETS_VERSION="0.2.3"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-enclave-ci}"
-KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-service}"
-KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-client}"
+KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
 HELM_RELEASE_PREFIX="${HELM_RELEASE_PREFIX:-kms-core}"
 ENABLE_TLS="true"
 TLS="true"
@@ -126,7 +126,7 @@ fetch_pcrs_for_tag() {
         exit 1
     fi
 
-    local IMAGE_REPO="ghcr.io/zama-ai/kms"
+    local IMAGE_REPO="hub.zama.org/ghcr/zama-ai/kms"
     local FULL_IMAGE="${IMAGE_REPO}/core-service-enclave:${tag}"
 
     log_info "Pulling ${FULL_IMAGE}..."

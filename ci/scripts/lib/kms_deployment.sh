@@ -982,7 +982,7 @@ upgrade_parties() {
     local performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
 
     if [[ "${KMS_CHART_VERSION}" != "repository" ]]; then
-        helm_chart_location="oci://ghcr.io/zama-ai/kms/charts/kms-core"
+        helm_chart_location="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
         helm_version_args=(--version "${KMS_CHART_VERSION}")
     fi
 
