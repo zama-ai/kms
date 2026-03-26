@@ -73,7 +73,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
@@ -89,7 +89,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
 
@@ -106,7 +106,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -123,7 +123,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -140,7 +140,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -157,7 +157,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req100"
                 - name: test-command
-                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -304,7 +304,7 @@ spec:
 
           # Run the specific test with timing and capture logs
           start_time=$(date +%s)
-          ./bin/kms-core-client --logs --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          ./bin/kms-core-client --logs --max-iter 3 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
           end_time=$(date +%s)
           duration=$((end_time - start_time))
