@@ -16,6 +16,10 @@
 name: rolling-upgrade-testing
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/rolling-upgrade-testing.yml'
+      - 'ci/scripts/**'
   workflow_dispatch:
     inputs:
       old_image_tag:
@@ -141,8 +145,8 @@ jobs:
       - name: Determine image tags
         env:
           DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          INPUT_OLD_TAG: ${{ inputs.old_image_tag }}
-          INPUT_NEW_TAG: ${{ inputs.new_image_tag }}
+          INPUT_OLD_TAG: ${{ inputs.old_image_tag || 'v0.13.3' }}
+          INPUT_NEW_TAG: ${{ inputs.new_image_tag || '560962e' }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
 
