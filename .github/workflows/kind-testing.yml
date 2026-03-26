@@ -10,6 +10,14 @@ on:
         required: false
         type: string
     secrets:
+      ZWS_BOT_TOKEN:
+        required: true
+      HARBOR_URL:
+        required: true
+      HARBOR_READ_LOGIN:
+        required: true
+      HARBOR_READ_TOKEN:
+        required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       SLAB_ACTION_TOKEN:
@@ -17,8 +25,6 @@ on:
       SLAB_BASE_URL:
         required: true
       JOB_SECRET:
-        required: true
-      ZWS_BOT_TOKEN:
         required: true
       AWS_ACCESS_KEY_S3_USER:
         required: true
@@ -252,13 +258,13 @@ jobs:
           aws-region: eu-west-3
 
       # Needed to be able to pull some docker images for the simulator test
-      - name: Login to zws GitHub Container Registry
+      - name: Login to harbor Container Registry
         if: matrix.cargo-check == false
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ZWS_BOT_TOKEN }}
+          registry: ${{ secrets.HARBOR_URL }}
+          username: ${{ secrets.HARBOR_READ_LOGIN }}
+          password: ${{ secrets.HARBOR_READ_TOKEN }}
 
       # ==========================================================================
       # Rust toolchain setup
@@ -339,6 +345,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+          HARBOR_READ_LOGIN: ${{ secrets.HARBOR_READ_LOGIN }}
+          HARBOR_READ_TOKEN: ${{ secrets.HARBOR_READ_TOKEN }}
           KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}

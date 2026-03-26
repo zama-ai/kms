@@ -47,7 +47,7 @@ fetch_pcrs_from_image() {
         return
     fi
 
-    local IMAGE_REPO="ghcr.io/zama-ai/kms"
+    local IMAGE_REPO="hub.zama.org/ghcr/zama-ai/kms"
     local FULL_IMAGE="${IMAGE_REPO}/core-service-enclave:${KMS_CORE_TAG}"
 
     log_info "Pulling ${FULL_IMAGE}..."
@@ -202,7 +202,7 @@ deploy_tkms_infra() {
         fi
 
         helm upgrade --install tkms-infra \
-            oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+            oci://hub.zama.org/ghcr/zama-zws/crossplane/tkms-infra \
             --namespace "${NAMESPACE}" \
             --version "${TKMS_INFRA_VERSION}" \
             --values "${VALUES_FILE}" \
@@ -222,7 +222,7 @@ deploy_tkms_infra() {
     fi
 
     helm upgrade --install tkms-infra \
-        oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+        oci://hub.zama.org/ghcr/zama-zws/crossplane/tkms-infra \
         --namespace "${NAMESPACE}" \
         --version "${TKMS_INFRA_VERSION}" \
         --values "${VALUES_FILE}" \
@@ -257,10 +257,10 @@ deploy_registry_credentials() {
             return 0
         fi
 
-        # kind-ci: build a dockerconfigjson secret for ghcr.io
-        if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-            log_warn "GITHUB_TOKEN not set, skipping registry credentials setup"
-            log_warn "Set GITHUB_TOKEN to enable private image pulls"
+        # kind-ci: build a dockerconfigjson secret for hub.zama.org
+        if [[ -z "${HARBOR_READ_TOKEN:-}" ]]; then
+            log_warn "HARBOR_READ_TOKEN not set, skipping registry credentials setup"
+            log_warn "Set HARBOR_READ_TOKEN to enable private image pulls"
             return 0
         fi
 
@@ -273,8 +273,8 @@ deploy_registry_credentials() {
         docker_config_json=$(cat <<JSON | ${base64_cmd}
 {
   "auths": {
-    "ghcr.io": {
-      "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | ${base64_cmd})"
+    "hub.zama.org": {
+      "auth": "$(echo -n "${HARBOR_READ_LOGIN}:${HARBOR_READ_TOKEN}" | ${base64_cmd})"
     }
   }
 }
@@ -323,7 +323,7 @@ EOF
 
     log_info "Installing sync-secrets Helm chart..."
     helm upgrade --install sync-secrets \
-        oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
+        oci://hub.zama.org/ghcr/zama-zws/helm-charts/sync-secrets \
         --namespace "${NAMESPACE}" \
         --version "${SYNC_SECRETS_VERSION}" \
         --values "${registry_values_path}" \
