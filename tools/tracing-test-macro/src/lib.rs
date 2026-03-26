@@ -16,16 +16,16 @@ fn registered_scopes() -> &'static Mutex<Vec<String>> {
     REGISTERED_SCOPES.get_or_init(|| Mutex::new(vec![]))
 }
 
-fn get_free_scope(mut test_fn_name: String) -> String {
+fn get_free_scope(test_fn_name: String) -> String {
     let mut vec = registered_scopes().lock().unwrap();
+    let mut candidate = test_fn_name.clone();
     let mut counter = 1;
-    let len = test_fn_name.len();
-    while vec.contains(&test_fn_name) {
+    while vec.contains(&candidate) {
         counter += 1;
-        test_fn_name.replace_range(len.., &counter.to_string());
+        candidate = format!("{test_fn_name}_{counter}");
     }
-    vec.push(test_fn_name.clone());
-    test_fn_name
+    vec.push(candidate.clone());
+    candidate
 }
 
 #[proc_macro_attribute]
@@ -61,16 +61,17 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .expect("Could not parse quoted statement enter");
     let logs_contain_fn = parse::<Stmt>(
         quote! {
+            #[allow(dead_code)]
             fn logs_contain(val: &str) -> bool {
                 tracing_test::internal::logs_with_scope_contain(#scope, val)
             }
-
         }
         .into(),
     )
     .expect("Could not parse quoted statement logs_contain_fn");
     let logs_assert_fn = parse::<Stmt>(
         quote! {
+            #[allow(dead_code)]
             fn logs_assert(f: impl Fn(&[&str]) -> std::result::Result<(), String>) {
                 match tracing_test::internal::logs_assert(#scope, f) {
                     Ok(()) => {}

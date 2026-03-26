@@ -47,6 +47,7 @@
 
 use kms_core_client::*;
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use observability::telemetry::init_test_logging_once;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
@@ -77,7 +78,7 @@ struct K8sTestContext {
 impl K8sTestContext {
     /// Create a new test context with the given test name.
     fn new(name: &'static str) -> Self {
-        init_testing();
+        init_test_logging_once();
         let temp_dir = tempfile::tempdir().unwrap();
 
         info!("[K8S-THRESHOLD] TEST: {}", name);

@@ -31,19 +31,8 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = quote! {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
-            static INIT: std::sync::Once = std::sync::Once::new();
-            INIT.call_once(|| {
-                std::env::set_var("RUN_MODE", "integration");
-                std::env::set_var("KMS_TEST_MODE", "1");
-                // Initialize parent-process test logging at the macro entry point so
-                // helpers in `integration_test.rs` can emit structured failure logs
-                // without carrying their own lazy bootstrap logic.
-                let _ = ::tracing_subscriber::fmt()
-                    .with_writer(::std::io::stderr)
-                    .with_ansi(false)
-                    .with_env_filter(::observability::telemetry::test_console_env_filter())
-                    .try_init();
-            });
+            std::env::set_var("RUN_MODE", "integration");
+            ::observability::telemetry::init_test_logging_once();
             #fn_block
         }
     };
