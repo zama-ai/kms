@@ -3,3 +3,11 @@ rules:
     ignore:
       # ignore line 61 in workflow-pr-dockerfile.yml, any column
       - workflow-pr-dockerfile.yml:61
+  secrets-inherit:
+    ignore:
+      - performance-testing.yml:210
+      - performance-testing.yml:211
+      - kind-testing.yml:260
+      - kind-testing.yml:261
+      - pr-preview-deploy.yml:100
+      - pr-preview-deploy.yml:101

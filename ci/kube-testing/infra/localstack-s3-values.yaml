@@ -12,7 +12,7 @@ updateStrategy:
 
 image:
   repository: localstack/localstack
-  tag: "latest"
+  tag: "4.14.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
