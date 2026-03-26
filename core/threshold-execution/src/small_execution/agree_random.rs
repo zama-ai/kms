@@ -8,7 +8,11 @@ use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
     sharing::open::{RobustOpen, SecureRobustOpen},
 };
-use algebra::{base_ring::Z64, structure_traits::ErrorCorrect};
+use algebra::{
+    base_ring::Z64,
+    commitment::{commit, verify},
+    structure_traits::ErrorCorrect,
+};
 use anyhow::Context;
 use async_trait::async_trait;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
@@ -18,7 +22,7 @@ use rand::RngCore;
 use std::collections::HashMap;
 use threshold_types::role::Role;
 use threshold_types::{
-    commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
+    commitment::{Commitment, Opening, KEY_BYTE_LEN},
     protocol::ProtocolDescription,
 };
 use tracing::instrument;
@@ -628,10 +632,9 @@ mod tests {
     };
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use algebra::commitment::commitment_inner_hash;
     use threshold_types::{
-        commitment::{
-            commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
-        },
+        commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
         network::NetworkMode,
         role::Role,
     };

@@ -1,5 +1,6 @@
 pub mod base_ring;
 pub mod bivariate;
+pub mod commitment;
 pub mod error_correction;
 pub mod galois_fields;
 pub mod galois_rings;
