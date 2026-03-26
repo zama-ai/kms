@@ -310,25 +310,25 @@ jobs:
         run: |
           echo "Running baseline performance tests with all nodes on old version..."
 
-          # if [[ "${TLS}" == "true" ]]; then
-          #   TLS_STATUS="enabled"
-          # else
-          #   TLS_STATUS="disabled"
-          # fi
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
 
-          # cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
-          #    /tmp/baseline-workflow.yaml
-          # sed -i "s/<version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
+          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+             /tmp/baseline-workflow.yaml
+          sed -i "s/<version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
 
-          # argo submit -n argo /tmp/baseline-workflow.yaml \
-          #   -p tls="${TLS_STATUS}" \
-          #   -p fhe-params="${FHE_PARAMS}" \
-          #   -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-          #   -p test_label="baseline-all-old"
+          argo submit -n argo /tmp/baseline-workflow.yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p test_label="baseline-all-old"
 
-          # echo "Streaming baseline workflow logs..."
-          # argo logs @latest -f -n "${NAMESPACE}" | tee argo-baseline-logs.txt
-          # echo "Baseline tests completed."
+          echo "Streaming baseline workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-baseline-logs.txt
+          echo "Baseline tests completed."
 
       # ====================================================================
       # STEP 3: Rolling upgrade 5/13 (first batch)
@@ -360,26 +360,26 @@ jobs:
         run: |
           echo "Running performance tests with 5/13 nodes upgraded..."
 
-          # if [[ "${TLS}" == "true" ]]; then
-          #   TLS_STATUS="enabled"
-          # else
-          #   TLS_STATUS="disabled"
-          # fi
+          if [[ "${TLS}" == "true" ]]; then
+            TLS_STATUS="enabled"
+          else
+            TLS_STATUS="disabled"
+          fi
 
-          # cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
-          #    /tmp/mixed-5-workflow.yaml
-          # sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
-          # sed -i '/name: test-command/{n; s/value: "\(public-decrypt\|user-decrypt\)\(.*\)"/value: "\1\2 -a"/}' /tmp/mixed-5-workflow.yaml
+          cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
+             /tmp/mixed-5-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
+          sed -i '/name: test-command/{n; s/value: "\(.*\)"/value: "-a \1"/}' /tmp/mixed-5-workflow.yaml
 
-          # argo submit -n argo /tmp/mixed-5-workflow.yaml \
-          #   -p tls="${TLS_STATUS}" \
-          #   -p fhe-params="${FHE_PARAMS}" \
-          #   -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-          #   -p test_label="mixed-5-of-13"
+          argo submit -n argo /tmp/mixed-5-workflow.yaml \
+            -p tls="${TLS_STATUS}" \
+            -p fhe-params="${FHE_PARAMS}" \
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+            -p test_label="mixed-5-of-13"
 
-          # echo "Streaming mixed-5/13 workflow logs..."
-          # argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
-          # echo "Mixed 5/13 tests completed."
+          echo "Streaming mixed-5/13 workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
+          echo "Mixed 5/13 tests completed."
 
       # ====================================================================
       # STEP 5: Rolling upgrade 9/13 (second batch)
@@ -422,7 +422,7 @@ jobs:
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/mixed-9-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
-          sed -i '/name: test-command/{n; s/value: "\(public-decrypt\|user-decrypt\)\(.*\)"/value: "\1\2 -a"/}' /tmp/mixed-9-workflow.yaml
+          sed -i '/name: test-command/{n; s/value: "\(.*\)"/value: "-a \1"/}' /tmp/mixed-9-workflow.yaml
 
           argo submit -n argo /tmp/mixed-9-workflow.yaml \
             -p tls="${TLS_STATUS}" \
