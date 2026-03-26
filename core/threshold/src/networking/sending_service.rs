@@ -1091,6 +1091,7 @@ mod tests {
 
     /// Verify that after receiving `Status::Completed`, the `UnboundedReceiver` is NOT dropped, so
     /// subsequent sends on the `UnboundedSender` do not fail with "channel closed".
+    /// See here for context: https://github.com/zama-ai/kms-internal/issues/2948
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_run_network_task_does_not_drop_receiver_on_completed() {
