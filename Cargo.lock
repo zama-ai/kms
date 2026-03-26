@@ -7911,10 +7911,7 @@ dependencies = [
  "async-trait",
  "rand 0.8.5",
  "serde",
- "test-utils",
- "tfhe",
  "tfhe-versionable",
- "threshold-execution",
  "threshold-hashing",
  "zeroize",
 ]

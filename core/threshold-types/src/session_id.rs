@@ -61,48 +61,42 @@ impl From<SessionId> for u128 {
 
 #[cfg(test)]
 mod tests {
-    use tfhe::{prelude::FheEncrypt, FheUint8};
-
     use super::SessionId;
-    use execution::{
-        constants::SMALL_TEST_KEY_PATH, endpoints::decryption::RadixOrBoolCiphertext,
-        tfhe_internals::test_feature::KeySet,
-    };
-    use test_utils::read_element;
-
-    // TODO(dp): print bytes and use as test vectors
-    // Indeterministic cipher generation.
-    // Encrypts a small message with deterministic randomness
-    fn generate_cipher(message: u8) -> RadixOrBoolCiphertext {
-        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
-        let (ct, _id, _tag, _rerand_metadata) =
-            FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
-        RadixOrBoolCiphertext::Radix(ct)
-    }
 
     #[test]
-    fn indeterminism() {
-        let ct_base = generate_cipher(0);
-        let base = SessionId::new(&ct_base);
-        let ct_other = generate_cipher(0);
-        // validate that the same input gives a different result
-        assert_ne!(base.unwrap(), SessionId::new(&ct_other).unwrap());
+    fn determinism() {
+        // Same input must always produce the same session id.
+        let dummy_ciphertext: Vec<u8> = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let a = SessionId::new(&dummy_ciphertext).unwrap();
+        let b = SessionId::new(&dummy_ciphertext).unwrap();
+        assert_eq!(a, b);
     }
 
     #[test]
     fn uniqueness() {
-        let ct_base = generate_cipher(0);
-        let base = SessionId::new(&ct_base);
-        let ct_other = generate_cipher(1);
-        let other = SessionId::new(&ct_other);
+        let ciphertext_a: Vec<u8> = vec![0x00; 64];
+        let mut ciphertext_b: Vec<u8> = vec![0x00; 64];
+        ciphertext_b[0] = 0x01;
         // Validate that a bit change results in a difference in session id
-        assert_ne!(base.unwrap(), other.unwrap());
+        assert_ne!(
+            SessionId::new(&ciphertext_a).unwrap(),
+            SessionId::new(&ciphertext_b).unwrap()
+        );
     }
 
     #[test]
     fn sunshine() {
-        let ct = generate_cipher(0);
-        // Validate that session ID is sufficiently large
-        assert!(SessionId::new(&ct).unwrap().0 > 2_u128.pow(100));
+        let data: &[u8] = br#"{"ciphertext":"CAFEBABE","tag":"test-vector-sunshine"}"#;
+
+        // Session id should use most of the 128-bit space.
+        assert!(SessionId::new(&data).unwrap().0 > 2_u128.pow(100));
+    }
+
+    #[test]
+    fn check_against_known_answer() {
+        let data: &[u8] = br#"known-answer-test-vector"#;
+        let id = SessionId::new(&data).unwrap();
+        // If this breaks, the hashing logic or domain separator changed.
+        assert_eq!(id.0, 144183619070594751274649460517890251705);
     }
 }
