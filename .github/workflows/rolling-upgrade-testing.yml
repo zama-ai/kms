@@ -199,10 +199,10 @@ jobs:
       # ====================================================================
       # TOOLING SETUP
       # ====================================================================
-      - name: Login to GitHub Container Registry
+      - name: Login to hub.zama.org Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
-          registry: ghcr.io
+          registry: hub.zama.org
           username: ${{ secrets.HUB_ZAMA_ORG_USERNAME }}
           password: ${{ secrets.HUB_ZAMA_ORG_SECRET }}
 
