@@ -202,9 +202,9 @@ jobs:
       - name: Login to hub.zama.org Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
-          registry: hub.zama.org
-          username: ${{ secrets.HUB_ZAMA_ORG_USERNAME }}
-          password: ${{ secrets.HUB_ZAMA_ORG_SECRET }}
+          registry: ${{ secrets.HARBOR_URL }}
+          username: ${{ secrets.HARBOR_READ_LOGIN }}
+          password: ${{ secrets.HARBOR_READ_TOKEN }}
 
       - name: Setup tailscale
         uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
