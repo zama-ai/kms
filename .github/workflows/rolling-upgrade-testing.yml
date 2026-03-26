@@ -345,7 +345,8 @@ jobs:
             --namespace "${NAMESPACE}" \
             --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
-            --kms-chart-version "${NEW_KMS_CHART_VERSION}" \
+            --old-kms-chart-version "${OLD_KMS_CHART_VERSION}" \
+            --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
@@ -397,7 +398,8 @@ jobs:
             --namespace "${NAMESPACE}" \
             --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
-            --kms-chart-version "${NEW_KMS_CHART_VERSION}" \
+            --old-kms-chart-version "${OLD_KMS_CHART_VERSION}" \
+            --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================

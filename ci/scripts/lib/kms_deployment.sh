@@ -936,17 +936,19 @@ generate_and_upload_tls_certs() {
 # old and new versions), then upgrades only the targeted parties' image tags.
 #
 # Required env vars: NAMESPACE, TARGET, DEPLOYMENT_TYPE, NUM_PARTIES,
-#                    KMS_CHART_VERSION, HELM_RELEASE_PREFIX, ENABLE_TLS
+#                    HELM_RELEASE_PREFIX, ENABLE_TLS
 # Arguments:
-#   $1 - new image tag for upgraded parties
-#   $2 - old image tag for non-upgraded parties
-#   $3 - comma-separated list of party IDs to upgrade (e.g. "1,2,3,4,5")
-#   $4 - old PCR0 value
-#   $5 - old PCR1 value
-#   $6 - old PCR2 value
-#   $7 - new PCR0 value
-#   $8 - new PCR1 value
-#   $9 - new PCR2 value
+#   $1  - new image tag for upgraded parties
+#   $2  - old image tag for non-upgraded parties
+#   $3  - comma-separated list of party IDs to upgrade (e.g. "1,2,3,4,5")
+#   $4  - old PCR0 value
+#   $5  - old PCR1 value
+#   $6  - old PCR2 value
+#   $7  - new PCR0 value
+#   $8  - new PCR1 value
+#   $9  - new PCR2 value
+#   $10 - old KMS chart version (for non-upgraded parties)
+#   $11 - new KMS chart version (for upgraded parties)
 #=============================================================================
 upgrade_parties() {
     local new_tag="$1"
@@ -958,11 +960,15 @@ upgrade_parties() {
     local new_pcr0="$7"
     local new_pcr1="$8"
     local new_pcr2="$9"
+    local old_chart_version="${10:-repository}"
+    local new_chart_version="${11:-repository}"
 
     log_info "========================================="
     log_info "Rolling Upgrade: Upgrading parties [${parties_csv}]"
     log_info "  Old tag: ${old_tag}"
     log_info "  New tag: ${new_tag}"
+    log_info "  Old chart version: ${old_chart_version}"
+    log_info "  New chart version: ${new_chart_version}"
     log_info "  Old PCR0: ${old_pcr0:0:16}..."
     log_info "  New PCR0: ${new_pcr0:0:16}..."
     log_info "========================================="
@@ -982,14 +988,7 @@ upgrade_parties() {
         kms_image_name="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
     fi
 
-    local helm_chart_location="${REPO_ROOT}/charts/kms-core"
-    local helm_version_args=()
     local performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
-
-    if [[ "${KMS_CHART_VERSION}" != "repository" ]]; then
-        helm_chart_location="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
-        helm_version_args=(--version "${KMS_CHART_VERSION}")
-    fi
 
     # Re-generate peers config (unchanged, all 13 peers)
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
@@ -1007,12 +1006,21 @@ upgrade_parties() {
 
     for i in $(seq 1 "${NUM_PARTIES}"); do
         local party_tag="${old_tag}"
+        local party_chart_version="${old_chart_version}"
         if [[ -n "${upgrade_set[${i}]+_}" ]]; then
             party_tag="${new_tag}"
+            party_chart_version="${new_chart_version}"
+        fi
+
+        local helm_chart_location="${REPO_ROOT}/charts/kms-core"
+        local helm_version_args=()
+        if [[ "${party_chart_version}" != "repository" ]]; then
+            helm_chart_location="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
+            helm_version_args=(--version "${party_chart_version}")
         fi
 
         local release_name="${HELM_RELEASE_PREFIX}-${i}"
-        log_info "Updating party ${i}/${NUM_PARTIES} (tag=${party_tag})..."
+        log_info "Updating party ${i}/${NUM_PARTIES} (tag=${party_tag}, chart=${party_chart_version})..."
 
         local HELM_ARGS=(
             --namespace "${NAMESPACE}"

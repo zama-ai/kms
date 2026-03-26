@@ -43,7 +43,8 @@ TARGET="aws-perf"
 NAMESPACE="${NAMESPACE:-kms-ci}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-thresholdWithEnclave}"
 NUM_PARTIES="${NUM_PARTIES:-13}"
-KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
+OLD_KMS_CHART_VERSION="${OLD_KMS_CHART_VERSION:-repository}"
+NEW_KMS_CHART_VERSION="${NEW_KMS_CHART_VERSION:-repository}"
 TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
 SYNC_SECRETS_VERSION="0.2.3"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-enclave-ci}"
@@ -83,7 +84,8 @@ parse_rolling_upgrade_args() {
             --namespace) NAMESPACE="$2"; shift 2 ;;
             --num-parties) NUM_PARTIES="$2"; shift 2 ;;
             --deployment-type) DEPLOYMENT_TYPE="$2"; shift 2 ;;
-            --kms-chart-version) KMS_CHART_VERSION="$2"; shift 2 ;;
+            --old-kms-chart-version) OLD_KMS_CHART_VERSION="$2"; shift 2 ;;
+            --new-kms-chart-version) NEW_KMS_CHART_VERSION="$2"; shift 2 ;;
             --tkms-infra-version) TKMS_INFRA_VERSION="$2"; shift 2 ;;
             --help)
                 echo "Usage: $0 --old-tag <tag> --new-tag <tag> --parties-to-upgrade <ids> --all-upgraded-parties <ids> [OPTIONS]"
@@ -208,7 +210,9 @@ main() {
         "${OLD_TAG}" \
         "${ALL_UPGRADED_PARTIES}" \
         "${OLD_PCR0}" "${OLD_PCR1}" "${OLD_PCR2}" \
-        "${NEW_PCR0}" "${NEW_PCR1}" "${NEW_PCR2}"
+        "${NEW_PCR0}" "${NEW_PCR1}" "${NEW_PCR2}" \
+        "${OLD_KMS_CHART_VERSION}" \
+        "${NEW_KMS_CHART_VERSION}"
 
     log_info "========================================="
     log_info "Rolling Upgrade Complete!"
