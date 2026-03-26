@@ -258,9 +258,9 @@ deploy_registry_credentials() {
         fi
 
         # kind-ci: build a dockerconfigjson secret for hub.zama.org
-        if [[ -z "${HUB_ZAMA_ORG_SECRET:-}" ]]; then
-            log_warn "HUB_ZAMA_ORG_SECRET not set, skipping registry credentials setup"
-            log_warn "Set HUB_ZAMA_ORG_SECRET to enable private image pulls"
+        if [[ -z "${HARBOR_READ_TOKEN:-}" ]]; then
+            log_warn "HARBOR_READ_TOKEN not set, skipping registry credentials setup"
+            log_warn "Set HARBOR_READ_TOKEN to enable private image pulls"
             return 0
         fi
 
@@ -274,7 +274,7 @@ deploy_registry_credentials() {
 {
   "auths": {
     "hub.zama.org": {
-      "auth": "$(echo -n "${HUB_ZAMA_ORG_USERNAME}:${HUB_ZAMA_ORG_SECRET}" | ${base64_cmd})"
+      "auth": "$(echo -n "${HARBOR_READ_LOGIN}:${HARBOR_READ_TOKEN}" | ${base64_cmd})"
     }
   }
 }
