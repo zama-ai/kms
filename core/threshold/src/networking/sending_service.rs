@@ -1148,6 +1148,7 @@ mod tests {
         let channel = loop {
             match tonic::transport::Channel::from_shared(endpoint.clone())
                 .unwrap()
+                .connect_timeout(connect_timeout)
                 .connect()
                 .await
             {
