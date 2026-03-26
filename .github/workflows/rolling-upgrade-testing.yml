@@ -47,14 +47,22 @@ on:
         options:
           - 'Default'
           - 'Test'
-      kms_chart_version:
-        description: 'KMS Helm chart version'
+      old_kms_chart_version:
+        description: 'KMS Helm chart version for old (baseline) deployment'
         required: true
         type: choice
         options:
-          - '1.4.17'
+          - '1.5.1'
           - 'repository'
-        default: '1.4.17'
+        default: '1.5.1'
+      new_kms_chart_version:
+        description: 'KMS Helm chart version for new (upgraded) deployment'
+        required: true
+        type: choice
+        options:
+          - '1.5.0-beta.12'
+          - 'repository'
+        default: 'repository'
       tkms_infra_chart_version:
         description: 'TKMS Infra chart version'
         required: true
@@ -180,7 +188,8 @@ jobs:
         env:
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
-          KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
+          OLD_KMS_CHART_VERSION: ${{ inputs.old_kms_chart_version || '1.5.1' }}
+          NEW_KMS_CHART_VERSION: ${{ inputs.new_kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
           FIRST_BATCH: ${{ inputs.first_batch_parties || '1,2,3,4,5' }}
           SECOND_BATCH: ${{ inputs.second_batch_parties || '6,7,8,9' }}
@@ -189,7 +198,8 @@ jobs:
           {
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
-            echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
+            echo "OLD_KMS_CHART_VERSION=${OLD_KMS_CHART_VERSION}"
+            echo "NEW_KMS_CHART_VERSION=${NEW_KMS_CHART_VERSION}"
             echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
             echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
             echo "FIRST_BATCH=${FIRST_BATCH}"
@@ -244,14 +254,14 @@ jobs:
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
 
       - name: Checkout Project
-        if: ${{ env.KMS_CHART_VERSION != 'repository' }}
+        if: ${{ env.NEW_KMS_CHART_VERSION != 'repository' }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project (from branch)
-        if: ${{ env.KMS_CHART_VERSION == 'repository' }}
+        if: ${{ env.NEW_KMS_CHART_VERSION == 'repository' }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: "${{ env.KMS_BRANCH }}"
@@ -286,7 +296,7 @@ jobs:
             --core-tag "${OLD_IMAGE_TAG}" \
             --client-tag "${OLD_IMAGE_TAG}" \
             --num-parties 13 \
-            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
@@ -335,7 +345,7 @@ jobs:
             --namespace "${NAMESPACE}" \
             --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
-            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
@@ -358,6 +368,7 @@ jobs:
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/mixed-5-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
+          sed -i '/name: test-command/{n; s/value: "\(public-decrypt\|user-decrypt\)\(.*\)"/value: "\1\2 -a"/}' /tmp/mixed-5-workflow.yaml
 
           argo submit -n argo /tmp/mixed-5-workflow.yaml \
             -p tls="${TLS_STATUS}" \
@@ -386,7 +397,7 @@ jobs:
             --namespace "${NAMESPACE}" \
             --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
-            --kms-chart-version "${KMS_CHART_VERSION}" \
+            --kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
@@ -409,6 +420,7 @@ jobs:
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/mixed-9-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
+          sed -i '/name: test-command/{n; s/value: "\(public-decrypt\|user-decrypt\)\(.*\)"/value: "\1\2 -a"/}' /tmp/mixed-9-workflow.yaml
 
           argo submit -n argo /tmp/mixed-9-workflow.yaml \
             -p tls="${TLS_STATUS}" \
