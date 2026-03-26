@@ -280,7 +280,7 @@ update_tkms_infra_for_upgrade() {
 
     log_info "Running helm upgrade for tkms-infra with ${#UPGRADED_IDS[@]} party overrides..."
     helm upgrade --install tkms-infra \
-        oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+        oci://hub.zama.org/ghcr/zama-zws/crossplane/tkms-infra \
         --namespace "${NAMESPACE}" \
         --version "${TKMS_INFRA_VERSION}" \
         --values "${VALUES_FILE}" \
