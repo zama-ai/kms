@@ -1129,6 +1129,7 @@ mod tests {
         }
 
         // Should not conflict with the other ports used in the tests from this file
+        // TODO(zama-ai/kms-internal#2952): we should look into how to find ports for tests.
         let myport = 6005;
 
         let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1142,15 +1143,29 @@ mod tests {
                 .unwrap();
         });
 
-        // Give the server a moment to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Connect a client with the required interceptor type, retrying until the server is ready
+        let endpoint = format!("http://127.0.0.1:{myport}");
+        let connect_timeout = Duration::from_secs(5);
+        let start = tokio::time::Instant::now();
+        let channel = loop {
+            match tonic::transport::Channel::from_shared(endpoint.clone())
+                .unwrap()
+                .connect()
+                .await
+            {
+                Ok(channel) => break channel,
+                Err(e) => {
+                    if start.elapsed() >= connect_timeout {
+                        panic!(
+                            "failed to connect to test server at {} within {:?}: {}",
+                            endpoint, connect_timeout, e
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        };
 
-        // Connect a client with the required interceptor type
-        let channel = tonic::transport::Channel::from_shared(format!("http://127.0.0.1:{myport}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
         let client =
             crate::networking::ggen::gnetworking_client::GnetworkingClient::with_interceptor(
                 channel,
@@ -1183,14 +1198,17 @@ mod tests {
         };
         assert!(sender.send(msg).is_ok(), "first send should succeed");
 
-        // Wait for the task to process the Completed response
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Verify completed_parties was populated
-        assert!(
-            completed_parties.contains(&role_kind),
-            "completed_parties should contain the role after Status::Completed"
-        );
+        // Wait (with timeout) for the task to process the Completed response
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if completed_parties.contains(&role_kind) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("completed_parties should contain the role after Status::Completed");
 
         // Send a second message — with the old `break` bug, this would fail
         // because the receiver was dropped. With the fix, the receiver is
