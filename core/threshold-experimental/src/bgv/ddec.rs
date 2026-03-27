@@ -25,8 +25,10 @@ use algebra::{
     sharing::share::Share,
     structure_traits::{FromU128, One, ZConsts, Zero},
 };
-use execution::small_execution::prss::PRSSPrimitives;
-use execution::{online::triple::open_list, runtime::sessions::small_session::SmallSessionHandles};
+use threshold_execution::small_execution::prss::PRSSPrimitives;
+use threshold_execution::{
+    online::triple::open_list, runtime::sessions::small_session::SmallSessionHandles,
+};
 use threshold_types::role::Role;
 
 fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
@@ -172,12 +174,13 @@ mod tests {
     use algebra::structure_traits::Ring;
     use algebra::structure_traits::ZConsts;
     use algebra::structure_traits::Zero;
-    use execution::runtime::sessions::session_parameters::GenericParameterHandles;
-    use execution::runtime::test_runtime::generate_fixed_roles;
-    use execution::runtime::test_runtime::DistributedTestRuntime;
-    use session_id::SessionId;
     use std::collections::HashMap;
+    use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
+    use threshold_execution::runtime::test_runtime::generate_fixed_roles;
+    use threshold_execution::runtime::test_runtime::DistributedTestRuntime;
     use threshold_types::network::NetworkMode;
+    use threshold_types::session_id::SessionId;
+
     use tokio::task::JoinSet;
 
     use itertools::Itertools;

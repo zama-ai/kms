@@ -30,7 +30,6 @@ use error_utils::{anyhow_error_and_log, log_error_wrapper};
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
@@ -38,6 +37,7 @@ use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use tonic::async_trait;
 use tracing::{instrument, Instrument};
 

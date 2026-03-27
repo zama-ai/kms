@@ -3,17 +3,6 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
-use execution::{
-    keyset_config as ddec_keyset_config,
-    online::preprocessing::{
-        orchestration::{
-            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
-        },
-        PreprocessorFactory,
-    },
-    runtime::sessions::small_session::SmallSession,
-    tfhe_internals::parameters::DKGParams,
-};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
@@ -25,6 +14,17 @@ use observability::{
         ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_CONTEXT_ID,
         TAG_EPOCH_ID, TAG_PARTY_ID,
     },
+};
+use threshold_execution::{
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::{
+        orchestration::{
+            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
+        },
+        PreprocessorFactory,
+    },
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::party::Identity;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
@@ -262,7 +262,9 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         #[cfg(feature = "insecure")]
         let handle_update = {
-            use execution::online::preprocessing::{dummy::DummyPreprocessing, DKGPreprocessing};
+            use threshold_execution::online::preprocessing::{
+                dummy::DummyPreprocessing, DKGPreprocessing,
+            };
 
             match (handle_update, partial_params) {
                 (Err(e), _) => Err(e),
@@ -507,18 +509,18 @@ mod tests {
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
-    use execution::{
+    use kms_grpc::{
+        kms::v1::FheParameter,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
+    use rand::SeedableRng;
+    use threshold_execution::{
         malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
             DummyProducerFactory, FailingProducerFactory,
         },
         online::preprocessing::create_memory_factory,
         small_execution::prss::PRSSSetup,
     };
-    use kms_grpc::{
-        kms::v1::FheParameter,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
-    };
-    use rand::SeedableRng;
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {

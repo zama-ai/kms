@@ -65,17 +65,16 @@ crypto-bigint.workspace = true
 dashmap = { workspace = true, optional = true }
 error-utils.workspace = true
 futures = { workspace = true, optional = true }
-execution = { workspace = true, features = ["non-wasm"] }
+threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
 itertools.workspace = true
 lazy_static.workspace = true
-networking.workspace = true
+threshold-networking.workspace = true
 num-integer.workspace = true
 observability = { workspace = true, optional = true }
 paste.workspace = true
 rand.workspace = true
 serde.workspace = true
-session-id.workspace = true
 tfhe-csprng.workspace = true
 tfhe.workspace = true
 thread-handles.workspace = true
@@ -86,7 +85,7 @@ tonic.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-execution = { workspace = true, features = ["non-wasm", "testing"] }
+threshold-execution = { workspace = true, features = ["non-wasm", "testing"] }
 criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
 pprof.workspace = true
 rayon.workspace = true

@@ -9,7 +9,7 @@ use algebra::{
     PRSSConversions,
 };
 use error_utils::anyhow_error_and_log;
-use execution::{
+use threshold_execution::{
     constants::STATSEC,
     online::{
         preprocessing::{
@@ -150,8 +150,8 @@ mod tests {
         sharing::shamir::{RevealOp, ShamirSharings},
         structure_traits::{One, Ring, Zero},
     };
-    use execution::tests::helper::tests_and_benches::execute_protocol_small;
-    use execution::{
+    use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
+    use threshold_execution::{
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::small_session::SmallSession,
     };

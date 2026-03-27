@@ -8,11 +8,11 @@ use algebra::{
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
-use execution::online::preprocessing::PreprocessorFactory;
+use threshold_execution::online::preprocessing::PreprocessorFactory;
 use threshold_types::role::Role;
 
 use crate::choreography::grpc::GrpcChoreography;
-use execution::{
+use threshold_execution::{
     large_execution::{
         coinflip::RealCoinflip, double_sharing::RealDoubleSharing,
         local_double_share::RealLocalDoubleShare, local_single_share::RealLocalSingleShare,
@@ -31,7 +31,7 @@ use execution::{
         prss::RobustRealPrssInit,
     },
 };
-use networking::grpc::GrpcNetworkingManager;
+use threshold_networking::grpc::GrpcNetworkingManager;
 
 /// Moby that lies in all its broadcast as the Sender following
 /// [`MaliciousBroadcastSenderEcho`]

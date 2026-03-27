@@ -8,9 +8,11 @@ pub mod sending_service;
 pub mod tls;
 
 mod ggen {
+    #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_networking");
 }
 
 pub mod choreography_gen {
+    #![expect(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_choreography");
 }

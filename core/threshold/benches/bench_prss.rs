@@ -3,7 +3,8 @@ use std::sync::Arc;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use execution::{
+use rand::SeedableRng;
+use threshold_execution::{
     large_execution::vss::DummyVss,
     runtime::{
         sessions::{
@@ -17,11 +18,10 @@ use execution::{
         prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
     },
 };
-use networking::local::LocalNetworkingProducer;
-use rand::SeedableRng;
-use session_id::SessionId;
+use threshold_networking::local::LocalNetworkingProducer;
 use threshold_types::network::NetworkMode;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];

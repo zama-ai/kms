@@ -11,7 +11,6 @@ use observability::{
     telemetry::init_tracing,
 };
 use rand::{random, RngCore, SeedableRng};
-use session_id::SessionId;
 use threshold_experimental::{
     algebra::{
         levels::{LevelEll, LevelKsw},
@@ -22,6 +21,7 @@ use threshold_experimental::{
     constants::PLAINTEXT_MODULUS,
 };
 use threshold_fhe::{choreography::choreographer::ChoreoRuntime, conf::choreo::ChoreoConf};
+use threshold_types::session_id::SessionId;
 
 #[derive(Args, Debug)]
 struct PrssInitArgs {

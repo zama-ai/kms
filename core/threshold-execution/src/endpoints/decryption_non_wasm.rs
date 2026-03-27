@@ -773,7 +773,8 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
-    let session_id = session_id::SessionId::new(ct)?;
+    use threshold_types::session_id::SessionId;
+    let session_id = SessionId::new(ct)?;
 
     let mut set = JoinSet::new();
 

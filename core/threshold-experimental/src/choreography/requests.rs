@@ -2,7 +2,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 use crate::bgv::basics::LevelEllCiphertext;
-use session_id::SessionId;
+use threshold_types::session_id::SessionId;
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SupportedRing {

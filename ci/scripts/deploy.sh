@@ -33,15 +33,15 @@ DEPLOYMENT_TYPE="threshold"
 NUM_PARTIES="4"
 KMS_CORE_TAG="latest-dev"
 KMS_CLIENT_TAG="latest-dev"
-KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-service}"
-KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-client}"
+KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
 CLEANUP="false"
 BUILD_IMAGES="false"
 
 # Perf-testing defaults (can be overridden by env/args)
 KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
 TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
-SYNC_SECRETS_VERSION="0.2.1"
+SYNC_SECRETS_VERSION="0.2.3"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 

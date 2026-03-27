@@ -4,7 +4,6 @@ use anyhow::{bail, ensure};
 use attestation_doc_validation::attestation_doc::decode_attestation_document;
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
-use networking::tls::extract_subject_from_cert;
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 #[cfg(feature = "insecure")]
@@ -15,6 +14,7 @@ use rcgen::{
     PKCS_ECDSA_P256_SHA256,
 };
 use std::{sync::Arc, time::Duration};
+use threshold_networking::tls::extract_subject_from_cert;
 use tokio::sync::RwLock;
 #[cfg(feature = "insecure")]
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;

@@ -16,11 +16,11 @@ use crate::health_check::HealthCheckSession;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
+use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::{NetworkMode, Networking},
     party::{MpcIdentity, RoleAssignment},

@@ -54,6 +54,7 @@ async fn crs_gen(test_path: &Path) -> String {
         max_num_bits: 2048,
         epoch_id: Some(*DEFAULT_EPOCH_ID),
         context_id: Some(*DEFAULT_MPC_CONTEXT),
+        extra_data: None,
     });
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),

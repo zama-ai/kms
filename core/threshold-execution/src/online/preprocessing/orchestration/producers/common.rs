@@ -85,10 +85,10 @@ pub(crate) mod tests {
         sharing::share::Share,
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     };
-    use session_id::SessionId;
     use thread_handles::OsThreadGroup;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
+    use threshold_types::session_id::SessionId;
 
     pub type TripleChannels<R> = (Vec<Sender<Vec<Triple<R>>>>, Vec<Receiver<Vec<Triple<R>>>>);
     pub type ShareChannels<R> = (Vec<Sender<Vec<Share<R>>>>, Vec<Receiver<Vec<Share<R>>>>);

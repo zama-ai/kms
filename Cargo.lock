@@ -1217,9 +1217,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1228,9 +1228,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -4279,7 +4279,6 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serial_test",
- "session-id",
  "signature 2.2.0",
  "strum",
  "strum_macros",
@@ -4374,13 +4373,13 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "serde",
- "session-id",
  "strum",
  "strum_macros",
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
  "threshold-hashing",
+ "threshold-types",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -7029,18 +7028,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "session-id"
-version = "0.13.10-rc.0"
-dependencies = [
- "anyhow",
- "serde",
- "test-utils",
- "tfhe",
- "threshold-execution",
- "threshold-hashing",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7691,7 +7678,6 @@ dependencies = [
  "rstest",
  "serde",
  "serial_test",
- "session-id",
  "statrs",
  "strum",
  "tempfile",
@@ -7736,7 +7722,6 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
- "session-id",
  "tfhe",
  "tfhe-csprng",
  "thread-handles",
@@ -7787,7 +7772,6 @@ dependencies = [
  "rustls-webpki 0.103.9",
  "serde",
  "serial_test",
- "session-id",
  "strum",
  "strum_macros",
  "tempfile",
@@ -7842,7 +7826,6 @@ dependencies = [
  "oid-registry",
  "prost",
  "serde",
- "session-id",
  "sha2",
  "tfhe",
  "tfhe-versionable",

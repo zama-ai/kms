@@ -128,8 +128,8 @@ mod tests {
     use crate::bgv::runtime::BGVTestRuntime;
     use crate::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
     use aes_prng::AesRng;
-    use execution::runtime::test_runtime::generate_fixed_roles;
     use rand::{RngCore, SeedableRng};
+    use threshold_execution::runtime::test_runtime::generate_fixed_roles;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 

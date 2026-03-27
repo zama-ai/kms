@@ -2,11 +2,12 @@ use aes_prng::AesRng;
 use criterion::BenchmarkId;
 use criterion::{criterion_group, criterion_main, Criterion};
 use crypto_bigint::modular::ConstMontyParams;
-use execution::runtime::test_runtime::generate_fixed_roles;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::RngCore;
 use rand::SeedableRng;
+use threshold_execution::runtime::test_runtime::generate_fixed_roles;
+
 use threshold_experimental::algebra::levels::*;
 use threshold_experimental::algebra::ntt::N65536;
 use threshold_experimental::algebra::ntt::{Const, NTTConstants};

@@ -21,7 +21,7 @@ bc2wrap.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 dashmap.workspace = true
 error-utils.workspace = true
-execution.workspace = true
+threshold-execution.workspace = true
 futures.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
@@ -31,7 +31,7 @@ itertools.workspace = true
 k256.workspace = true
 lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
-networking = { workspace = true, optional = true }
+threshold-networking = { workspace = true, optional = true }
 observability = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
 paste.workspace = true
@@ -40,7 +40,6 @@ rand.workspace = true
 rcgen = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-session-id.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 test-utils = { workspace = true, optional = true }
@@ -78,7 +77,7 @@ tonic-prost-build.workspace = true
 # Maintain alphabetical order
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
 ctor.workspace = true
-execution = { workspace = true, features = ["testing"] }
+threshold-execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
@@ -186,10 +185,10 @@ harness = false
 [features]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["non-wasm", "execution/testing", "dep:tokio", "dep:test-utils"]
+testing = ["non-wasm", "threshold-execution/testing", "dep:tokio", "dep:test-utils"]
 slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 templating = ["minijinja"]
-choreographer = ["malicious_strategies", "networking/choreographer", "execution/malicious_strategies"]
+choreographer = ["malicious_strategies", "threshold-networking/choreographer", "threshold-execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 
@@ -197,8 +196,8 @@ malicious_strategies = ["testing"]
 # namely libraries that don't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
-	"execution/non-wasm",
-	"networking/non-wasm",
+	"threshold-execution/non-wasm",
+	"threshold-networking/non-wasm",
 
     "dep:attestation-doc-validation",
     "dep:backoff",
@@ -218,12 +217,12 @@ non-wasm = [
     "dep:x509-parser",
 ]
 
-extension_degree_3 = ["algebra/extension_degree_3", "execution/extension_degree_3"]
-extension_degree_4 = ["algebra/extension_degree_4", "execution/extension_degree_4"]
-extension_degree_5 = ["algebra/extension_degree_5", "execution/extension_degree_5"]
-extension_degree_6 = ["algebra/extension_degree_6", "execution/extension_degree_6"]
-extension_degree_7 = ["algebra/extension_degree_7", "execution/extension_degree_7"]
-extension_degree_8 = ["algebra/extension_degree_8", "execution/extension_degree_8"]
+extension_degree_3 = ["algebra/extension_degree_3", "threshold-execution/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4", "threshold-execution/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5", "threshold-execution/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6", "threshold-execution/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7", "threshold-execution/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8", "threshold-execution/extension_degree_8"]
 
 all_extension_degrees = [
     "extension_degree_3",

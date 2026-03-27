@@ -5,7 +5,6 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
-use execution::tfhe_internals::parameters::DKGParams;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
     CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
@@ -16,6 +15,7 @@ use kms_grpc::RequestId;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::FheTypes;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -162,6 +162,7 @@ pub(crate) async fn send_dec_reqs(
             context_id,
             key_id,
             None,
+            &[],
         )
         .unwrap();
     let mut join_set = JoinSet::new();

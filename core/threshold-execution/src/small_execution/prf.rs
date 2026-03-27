@@ -7,9 +7,9 @@ use algebra::structure_traits::Ring;
 pub use algebra::PRSSConversions;
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_types::commitment::KEY_BYTE_LEN;
+use threshold_types::session_id::SessionId;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrfKeyVersioned {

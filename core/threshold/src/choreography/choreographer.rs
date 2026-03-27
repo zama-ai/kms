@@ -3,21 +3,21 @@
 //! It is a trusted entity and should not be used with production kms-core.
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
-use execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use execution::tfhe_internals::parameters::DkgParamsAvailable;
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
-use execution::zk::ceremony::compute_witness_dim;
+use threshold_execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DkgParamsAvailable;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::compute_witness_dim;
 
 use algebra::base_ring::Z64;
-use execution::zk::ceremony::InternalPublicParameter;
-use networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::HashMap;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::zk::ceremony::InternalPublicParameter;
+use threshold_networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use threshold_types::party::Identity;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
@@ -29,7 +29,7 @@ use super::requests::{
     TfheType, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
     ThroughtputParams,
 };
-use networking::choreography_gen::{
+use threshold_networking::choreography_gen::{
     choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
     PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
     StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
@@ -146,6 +146,7 @@ impl ChoreoRuntime {
         Ok(())
     }
 
+    #[expect(clippy::too_many_arguments)]
     #[instrument(name = "DKG-Preproc Request", skip(self,session_id), fields(sid = ?session_id))]
     pub async fn initiate_preproc_keygen(
         &self,
@@ -317,6 +318,7 @@ impl ChoreoRuntime {
         Ok(pub_key)
     }
 
+    #[expect(clippy::too_many_arguments)]
     #[instrument(name = "DDec-Preproc Request", skip(self,session_id), fields(num_ctxts=?num_ctxts, ctxt_type=?ctxt_type, sid = ?session_id))]
     pub async fn initiate_preproc_decrypt(
         &self,

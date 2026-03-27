@@ -18,8 +18,6 @@ use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use execution::keyset_config::KeySetConfig;
-use execution::tfhe_internals::parameters::DKGParams;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::{EpochId, RequestId};
@@ -29,6 +27,9 @@ use observability::metrics_names::{
     OP_KEYGEN_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -678,6 +679,32 @@ pub(crate) mod tests {
                 preproc_id: Some(preproc_id.into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
+            };
+            let err = key_gen_impl(
+                &kms,
+                tonic::Request::new(request),
+                #[cfg(feature = "insecure")]
+                true,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // invalid epoch ID should fail
+        {
+            let request = KeyGenRequest {
+                params: Some(FheParameter::Test.into()),
+                keyset_config: None,
+                keyset_added_info: None,
+                request_id: Some(request_id.into()),
+                context_id: None,
+                preproc_id: Some(preproc_id.into()),
+                domain: Some(domain.clone()),
+                epoch_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid-epoch-id".to_string(),
+                }),
                 extra_data: vec![],
             };
             let err = key_gen_impl(

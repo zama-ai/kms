@@ -19,7 +19,7 @@ use crate::{
 };
 use algebra::sharing::share::Share;
 use error_utils::anyhow_error_and_log;
-use execution::{
+use threshold_execution::{
     config::BatchParams,
     online::{
         preprocessing::{

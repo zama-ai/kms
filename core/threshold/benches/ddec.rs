@@ -4,7 +4,12 @@ use algebra::{
     structure_traits::Ring,
 };
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use execution::{
+use pprof::criterion::{Output, PProfProfiler};
+use rand::{Rng, SeedableRng};
+use std::sync::Arc;
+use test_utils::read_element;
+use tfhe::{set_server_key, FheUint8};
+use threshold_execution::{
     constants::REAL_KEY_PATH,
     endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
     runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
@@ -13,11 +18,6 @@ use execution::{
         utils::expanded_encrypt,
     },
 };
-use pprof::criterion::{Output, PProfProfiler};
-use rand::{Rng, SeedableRng};
-use std::sync::Arc;
-use test_utils::read_element;
-use tfhe::{set_server_key, FheUint8};
 use threshold_types::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]

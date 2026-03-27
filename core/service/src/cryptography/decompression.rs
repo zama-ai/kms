@@ -82,7 +82,6 @@ mod test {
 
     use super::test_tools::{compress_serialize_versioned, safe_serialize_versioned};
     use super::tfhe_safe_deserialize_and_uncompress;
-    use execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
     use tfhe::integer::bigint::StaticUnsignedBigInt;
     use tfhe::integer::ciphertext::Expandable;
     use tfhe::named::Named;
@@ -101,6 +100,7 @@ mod test {
         FheUint512, FheUint64, FheUint8,
     };
     use tfhe::{Unversionize, Versionize};
+    use threshold_execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])

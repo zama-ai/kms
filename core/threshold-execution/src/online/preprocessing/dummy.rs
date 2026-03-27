@@ -40,6 +40,7 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng, SeedableRng};
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use tonic::async_trait;
 
 /// Struct for dummy preprocessing for use in interactive tests although it is constructed non-interactively.
@@ -104,7 +105,7 @@ impl Default for DummyPreprocessing {
             seed: 0,
             parameters: SessionParameters::new(
                 0,
-                session_id::SessionId::from(0u128),
+                SessionId::from(0u128),
                 Role::indexed_from_one(1),
                 role_assignments,
             )

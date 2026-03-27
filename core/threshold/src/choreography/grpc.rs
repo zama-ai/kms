@@ -1,7 +1,9 @@
 //! gRPC-based choreography.
 
-use networking::choreography_gen::choreography_server::{Choreography, ChoreographyServer};
-use networking::choreography_gen::{
+use threshold_networking::choreography_gen::choreography_server::{
+    Choreography, ChoreographyServer,
+};
+use threshold_networking::choreography_gen::{
     CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
     PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
     PrssInitRequest, PrssInitResponse, ReshareRequest, ReshareResponse, StatusCheckRequest,
@@ -25,59 +27,13 @@ use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
 use error_utils::anyhow_error_and_log;
-use execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
-use execution::endpoints::decryption::{
-    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
-    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
-    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
-    SnsRadixOrBoolCiphertext,
-};
-use execution::endpoints::decryption::{
-    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
-};
-use execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
-use execution::endpoints::reshare_sk::{
-    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
-};
-use execution::keyset_config::KeySetConfig;
-use execution::large_execution::offline::SecureLargePreprocessing;
-use execution::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
-use execution::network_value::BroadcastValue;
-use execution::online::gen_bits::SecureBitGenEven;
-use execution::online::preprocessing::dummy::DummyPreprocessing;
-use execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
-use execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
-use execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
-use execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
-use execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
-use execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
-use execution::online::preprocessing::{
-    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
-    PreprocessorFactory,
-};
-use execution::runtime::sessions::base_session::ToBaseSession;
-use execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
-use execution::runtime::sessions::large_session::LargeSession;
-use execution::runtime::sessions::session_parameters::{
-    GenericParameterHandles, SessionParameters,
-};
-use execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-use execution::small_execution::prf::PRSSConversions;
-use execution::small_execution::prss::PRSSInit;
-use execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
-use execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
-use execution::tfhe_internals::private_keysets::PrivateKeySet;
-use execution::tfhe_internals::public_keysets::FhePubKeySet;
-use execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use futures_util::{
     future::{join_all, try_join_all},
     TryFutureExt,
 };
 use itertools::Itertools;
-use networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
@@ -85,7 +41,55 @@ use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+use threshold_execution::endpoints::decryption::{
+    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
+    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
+    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
+    SnsRadixOrBoolCiphertext,
+};
+use threshold_execution::endpoints::decryption::{
+    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+};
+use threshold_execution::endpoints::keygen::{
+    OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen,
+};
+use threshold_execution::endpoints::reshare_sk::{
+    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+};
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::large_execution::offline::SecureLargePreprocessing;
+use threshold_execution::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
+use threshold_execution::network_value::BroadcastValue;
+use threshold_execution::online::gen_bits::SecureBitGenEven;
+use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
+use threshold_execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use threshold_execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
+use threshold_execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
+use threshold_execution::online::preprocessing::{
+    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
+    PreprocessorFactory,
+};
+use threshold_execution::runtime::sessions::base_session::ToBaseSession;
+use threshold_execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use threshold_execution::runtime::sessions::large_session::LargeSession;
+use threshold_execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
+use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+use threshold_execution::small_execution::prf::PRSSConversions;
+use threshold_execution::small_execution::prss::PRSSInit;
+use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
+use threshold_execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
+use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
+use threshold_networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 use threshold_types::{
     network::NetworkMode,
     party::{Identity, RoleAssignment},
@@ -2738,10 +2742,10 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
+    use threshold_execution::tfhe_internals::test_feature::insecure_initialize_key_material;
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    execution::tfhe_internals::test_feature::insecure_initialize_key_material(session, params, tag)
-        .await
+    insecure_initialize_key_material(session, params, tag).await
 }
 
 #[cfg(not(feature = "testing"))]

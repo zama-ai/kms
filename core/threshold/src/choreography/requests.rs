@@ -1,8 +1,8 @@
 use clap::ValueEnum;
-use execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use execution::tfhe_internals::parameters::DKGParams;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
+use threshold_execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_types::session_id::SessionId;
 
 use super::grpc::SupportedRing;
 

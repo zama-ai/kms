@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use networking::local::{LocalNetworking, LocalNetworkingProducer};
+use threshold_networking::local::{LocalNetworking, LocalNetworkingProducer};
 use threshold_types::network::NetworkMode;
 use threshold_types::role::Role;
 

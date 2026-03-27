@@ -23,8 +23,8 @@ pub mod tests_and_benches {
         },
         small_execution::prf::PRSSConversions,
     };
-    use session_id::SessionId;
     use threshold_types::network::{NetworkMode, Networking};
+    use threshold_types::session_id::SessionId;
 
     pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
         match role {
@@ -343,12 +343,12 @@ pub mod testing {
     };
     use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert};
-    use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
-    use session_id::SessionId;
     use std::{collections::HashSet, sync::Arc};
+    use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
+    use threshold_types::session_id::SessionId;
     use tokio::runtime::Runtime;
 
     /// Generates dummy parameters for unit tests with session ID = 1
@@ -426,15 +426,15 @@ pub mod tests {
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
-    use networking::local::LocalNetworkingProducer;
     use rand::SeedableRng;
-    use session_id::SessionId;
     use std::{
         collections::{HashMap, HashSet},
         sync::Arc,
     };
+    use threshold_networking::local::LocalNetworkingProducer;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};
+    use threshold_types::session_id::SessionId;
     use tokio::task::JoinError;
 
     #[derive(Default, Clone)]

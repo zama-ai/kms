@@ -24,7 +24,6 @@ observability = { workspace = true, optional = true }
 oid-registry.workspace = true
 prost.workspace = true
 serde.workspace = true
-session-id.workspace = true
 sha2.workspace = true
 tfhe-versionable.workspace = true
 thread-handles = { workspace = true, optional = true }
@@ -44,6 +43,7 @@ tracing.workspace = true
 x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
+threshold-execution = { workspace = true, features = ["testing"] }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -51,7 +51,6 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tracing-test.workspace = true
-execution = { workspace = true, features = ["testing"] }
 
 
 
@@ -62,7 +61,7 @@ tonic-prost-build.workspace = true
 default = ["non-wasm"]
 
 non-wasm = [
-	"execution/non-wasm",
+	"threshold-execution/non-wasm",
 
 	"dep:attestation-doc-validation",
 	"dep:backoff",
@@ -77,6 +76,6 @@ non-wasm = [
     "dep:tower",
 ]
 experimental = ["choreographer", "testing"]
-testing = ["non-wasm", "execution/testing"]
+testing = ["non-wasm", "threshold-execution/testing"]
 malicious_strategies = ["testing"]
 choreographer = ["malicious_strategies"]

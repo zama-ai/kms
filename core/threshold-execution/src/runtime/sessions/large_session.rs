@@ -3,8 +3,8 @@ use std::collections::{BTreeSet, HashSet};
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use session_id::SessionId;
 use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
 
 use crate::runtime::sessions::{
     base_session::{

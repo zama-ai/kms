@@ -2,20 +2,19 @@
 #![cfg(feature = "choreographer")]
 
 use clap::{Args, Parser, Subcommand};
-use execution::{
-    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
-    tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
-};
 use itertools::Itertools;
 use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
 use rand::{distributions::Uniform, random, Rng};
-use session_id::SessionId;
 use tfhe::{
     integer::BooleanBlock, set_server_key, CompactPublicKey, FheBool, FheUint128, FheUint16,
     FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
+};
+use threshold_execution::{
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
+    tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
 };
 use threshold_fhe::{
     choreography::{
@@ -25,6 +24,7 @@ use threshold_fhe::{
     },
     conf::choreo::ChoreoConf,
 };
+use threshold_types::session_id::SessionId;
 use tokio::time;
 
 #[derive(Args, Debug)]
