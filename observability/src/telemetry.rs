@@ -593,7 +593,7 @@ pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
     let parent_context = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(&headers_map))
     });
-    span.set_parent(parent_context);
+    let _ = span.set_parent(parent_context);
     span
 }
 
