@@ -656,7 +656,7 @@ mod tests {
     use std::time::Duration;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
-    use threshold_types::role::{Role, TwoSetsRole};
+    use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
     use threshold_types::session_id::SessionId;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1086,8 +1086,8 @@ mod tests {
     async fn test_run_network_task_does_not_drop_receiver_on_completed() {
         use super::ArcSendValueRequest;
         use super::GrpcSendingService;
-        use crate::networking::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
-        use crate::networking::ggen::{
+        use crate::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
+        use crate::ggen::{
             HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse, Status,
         };
         use backoff::ExponentialBackoff;
@@ -1154,16 +1154,15 @@ mod tests {
             }
         };
 
-        let client =
-            crate::networking::ggen::gnetworking_client::GnetworkingClient::with_interceptor(
-                channel,
-                observability::telemetry::ContextPropagator,
-            );
+        let client = crate::ggen::gnetworking_client::GnetworkingClient::with_interceptor(
+            channel,
+            observability::telemetry::ContextPropagator,
+        );
 
         // Create channel and shared state
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
         let completed_parties = Arc::new(DashSet::new());
-        let role_kind = algebra::role::Role::indexed_from_one(1).get_role_kind();
+        let role_kind = threshold_types::role::Role::indexed_from_one(1).get_role_kind();
 
         let backoff = ExponentialBackoff {
             max_elapsed_time: Some(Duration::from_secs(5)),
