@@ -22,8 +22,8 @@ use tonic::transport::Channel;
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
     external_sig: &[u8],
-    plaintexts: &Vec<TypedPlaintext>,
-    external_handles: Vec<Vec<u8>>,
+    plaintexts: &[TypedPlaintext],
+    external_handles: &[Vec<u8>],
     domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
@@ -65,7 +65,7 @@ fn check_external_decryption_signature(
         check_ext_pt_signature(
             &response.external_signature,
             &payload.plaintexts,
-            external_handles.to_owned(),
+            external_handles,
             domain.clone(),
             kms_addrs,
             extra_data,

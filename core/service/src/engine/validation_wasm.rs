@@ -24,6 +24,13 @@ use crate::{
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
+/// Groups EIP-712 external signature verification parameters.
+pub(crate) struct Eip712VerificationParams<'a> {
+    pub response_external_signature: &'a [u8],
+    pub response_extra_data: &'a [u8],
+    pub trusted_eip712_domain: &'a Eip712Domain,
+}
+
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
 
@@ -38,6 +45,8 @@ const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
 const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
+const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
+    "Extra data mismatch in user decryption";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 pub(crate) fn check_ext_user_decryption_signature(
@@ -46,12 +55,12 @@ pub(crate) fn check_ext_user_decryption_signature(
     request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
-    extra_data: &[u8],
 ) -> anyhow::Result<()> {
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
         anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
     })?;
+    let extra_data = request.extra_data();
     let message = compute_user_decrypt_message(payload, &unified_pk, extra_data)?;
     tracing::debug!(
         "Verifying external user decryption signature for UserDecryptResponseVerification"
@@ -64,16 +73,13 @@ pub(crate) fn check_ext_user_decryption_signature(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_user_decrypt_meta_data_and_signature(
     server_addresses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
     signature: &[u8],
-    external_signature: &[u8],
-    eip712_domain: &Eip712Domain,
-    extra_data: &[u8],
+    eip712_params: &Eip712VerificationParams,
 ) -> anyhow::Result<()> {
     let pivot_type = pivot_resp.fhe_types()?;
     let check_type = other_resp.fhe_types()?;
@@ -125,19 +131,24 @@ fn validate_user_decrypt_meta_data_and_signature(
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
         // check signature
-        if external_signature.is_empty() {
+        if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
             ));
         }
 
+        if eip712_params.response_extra_data != client_request.extra_data() {
+            return Err(anyhow_error_and_log(
+                ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+            ));
+        }
+
         check_ext_user_decryption_signature(
-            external_signature,
+            eip712_params.response_external_signature,
             other_resp,
             client_request,
-            eip712_domain,
+            eip712_params.trusted_eip712_domain,
             expected_addr,
-            extra_data,
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
@@ -227,10 +238,14 @@ where
         }
     }
 
-    // turn the values in the hashmap to a vector and sort by occurence
+    // Turn the values in the hashmap to a vector and sort by occurence.
+    // If there is a tie, we use the original index as tie breaker,
+    // which is why we compare on the occurence and then on the index.
+    // The lower index should come first, which is why we do b.1.cmp(a.1),
+    // to make sure the lowest index is selected in the end using next_back.
     let first = occurence_map
         .values()
-        .sorted_by(|a, b| a.0.cmp(&b.0))
+        .sorted_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
         .next_back();
 
     Ok(match first {
@@ -303,15 +318,18 @@ fn validate_user_decrypt_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
+        let eip712_params = Eip712VerificationParams {
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: eip712_domain,
+        };
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             server_addresses,
             client_request,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
-            &cur_resp.external_signature,
-            eip712_domain,
-            &cur_resp.extra_data,
+            &eip712_params,
         ) {
             tracing::warn!(
                 "User decryption validation failed for party {} with error: {e:?}",
@@ -454,8 +472,8 @@ mod tests {
     use super::{
         check_ext_user_decryption_signature, select_most_common_user_dec,
         validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
-        validate_user_decrypt_responses_against_request, DSEP_USER_DECRYPTION,
-        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        validate_user_decrypt_responses_against_request, Eip712VerificationParams,
+        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -493,19 +511,21 @@ mod tests {
         .unwrap();
 
         let domain = dummy_domain();
+        let extra_data = vec![1, 2, 3, 4];
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             domain.verifying_contract.unwrap(),
+            extra_data,
         );
 
         let payload = UserDecryptionResponsePayload {
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                fhe_type: 1,
+                fhe_type: tfhe::FheTypes::Uint4 as i32,
                 signcrypted_ciphertext: vec![1, 2, 3, 4],
                 external_handle: ciphertext_handle.clone(),
                 packing_factor: 1,
@@ -513,13 +533,12 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
-        let extra_data = vec![1, 2, 3, 4];
         let external_sig = compute_external_user_decrypt_signature(
             &sk0,
             &payload,
             &domain,
             &eph_client_pk,
-            &extra_data,
+            request.extra_data(),
         )
         .unwrap();
 
@@ -531,7 +550,6 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                &extra_data,
             )
             .unwrap_err()
             .to_string()
@@ -555,7 +573,6 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                &extra_data
             )
             .is_err());
         }
@@ -574,7 +591,6 @@ mod tests {
                 &request,
                 &bad_domain,
                 &kms_addrs[&1],
-                &extra_data
             )
             .is_err());
         }
@@ -589,7 +605,6 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                &extra_data
             )
             .unwrap_err()
             .to_string()
@@ -604,7 +619,6 @@ mod tests {
                 &request,
                 &domain,
                 &kms_addrs[&1],
-                &extra_data,
             )
             .unwrap();
         }
@@ -643,19 +657,21 @@ mod tests {
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
+        let extra_data = vec![1, 2, 3, 4];
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            extra_data.clone(),
         );
 
         let pivot_resp = UserDecryptionResponsePayload {
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                fhe_type: 1,
+                fhe_type: tfhe::FheTypes::Uint4 as i32,
                 signcrypted_ciphertext: vec![1, 2, 3, 4],
                 external_handle: ciphertext_handle.clone(),
                 packing_factor: 1,
@@ -663,7 +679,6 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
-        let extra_data = vec![1, 2, 3, 4];
         let external_signature = compute_external_user_decrypt_signature(
             &sk0,
             &pivot_resp,
@@ -682,15 +697,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -703,7 +721,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 2, // in the pivot the type is 1
+                    fhe_type: tfhe::FheTypes::Uint8 as i32, // in the pivot the type is 1
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -711,15 +729,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -732,7 +753,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // the digest should be [1, 2, 3, 4]
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -740,15 +761,18 @@ mod tests {
                 party_id: 1,
                 degree: 1,
             };
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -757,15 +781,18 @@ mod tests {
 
         // no signatures are provided
         {
+            let params = Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &[],
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -776,15 +803,18 @@ mod tests {
         {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 10;
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[],
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -795,15 +825,18 @@ mod tests {
         {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 2; // originally the ID is 1
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             assert!(validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &other_resp,
                 &[],
-                &external_signature,
-                &dummy_domain,
-                &extra_data
+                &params,
             )
             .unwrap_err()
             .to_string()
@@ -814,15 +847,18 @@ mod tests {
 
         // happy path for empty ECDSA, so we check external signature
         {
+            let params = Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
-                &external_signature,
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap();
         }
@@ -832,15 +868,18 @@ mod tests {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
+            let params = Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
                 &client_request,
                 &pivot_resp,
                 &pivot_resp,
                 &signature_buf,
-                &[],
-                &dummy_domain,
-                &extra_data,
+                &params,
             )
             .unwrap();
         }
@@ -885,6 +924,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![],
         );
 
         let resp1 = {
@@ -892,7 +932,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -921,7 +961,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -950,7 +990,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -979,7 +1019,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&4]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -1012,7 +1052,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1032,7 +1072,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1068,7 +1108,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1091,7 +1131,7 @@ mod tests {
                 &server_addresses,
                 &client_request,
                 &dummy_domain,
-                &agg_resp
+                &agg_resp,
             )
             .unwrap()
             .is_none());
@@ -1108,7 +1148,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1130,7 +1170,7 @@ mod tests {
                 &server_addresses,
                 &client_request,
                 &dummy_domain,
-                &agg_resp
+                &agg_resp,
             )
             .unwrap_err().to_string()
             .contains("Pivot user decrypt responses gave degree 0 which does not match expected threshold 1 for 4 known servers"));
@@ -1143,7 +1183,7 @@ mod tests {
                     verification_key: bc2wrap::serialize(pk).unwrap(),
                     digest,
                     signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                        fhe_type: 1,
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
                         signcrypted_ciphertext: vec![1, 2, 3, 4],
                         external_handle: ciphertext_handle.clone(),
                         packing_factor,
@@ -1173,7 +1213,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1229,7 +1269,7 @@ mod tests {
                     &server_addresses,
                     &client_request,
                     &dummy_domain,
-                    &agg_resp
+                    &agg_resp,
                 )
                 .unwrap()
                 .unwrap()
@@ -1277,6 +1317,7 @@ mod tests {
             enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![],
         );
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
@@ -1286,7 +1327,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -1315,7 +1356,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -1353,6 +1394,7 @@ mod tests {
                 enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
+                vec![],
             );
             assert!(validate_user_decrypt_responses_against_request(
                 &server_addresses,
@@ -1391,7 +1433,7 @@ mod tests {
                 verification_key: vec![],
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
@@ -1477,7 +1519,7 @@ mod tests {
                 verification_key: vec![],
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![],
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
