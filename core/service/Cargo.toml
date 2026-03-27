@@ -145,9 +145,9 @@ kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
-test-utils-service = { path = "./test-utils-service" }
 sysinfo.workspace = true
 tempfile.workspace = true
+test-utils-service = { path = "./test-utils-service" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
