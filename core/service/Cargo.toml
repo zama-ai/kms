@@ -157,7 +157,7 @@ tracing-test.workspace = true
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile", "dep:test-utils"]
+testing = ["dep:tempfile"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-networking/non-wasm",
@@ -176,6 +176,7 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
+    "dep:test-utils",
     "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
