@@ -35,7 +35,7 @@ use kms_lib::{
 };
 use std::{net::ToSocketAddrs, sync::Arc, thread};
 use thread_handles::init_rayon_thread_pool;
-use threshold_fhe::networking::tls::AttestedVerifier;
+use threshold_networking::tls::AttestedVerifier;
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
     client::{danger::DangerousClientConfigBuilder, ClientConfig},

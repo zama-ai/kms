@@ -100,7 +100,7 @@ mod test {
         FheUint512, FheUint64, FheUint8,
     };
     use tfhe::{Unversionize, Versionize};
-    use threshold_fhe::execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
+    use threshold_execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])

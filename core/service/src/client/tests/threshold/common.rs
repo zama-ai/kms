@@ -23,8 +23,8 @@ use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::commons::utils::ZipChecked;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]

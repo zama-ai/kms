@@ -7,11 +7,11 @@ use crate::{
     },
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
 use bip39::Mnemonic;
 use hashing::{hash_element, DomainSep};
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::str::FromStr;
+use threshold_types::role::Role;
 
 pub const DSEP_MNEMONIC_ENC: DomainSep = *b"MNEM_ENC";
 pub const DSEP_MNEMONIC_SIG: DomainSep = *b"MNEM_SIG";
@@ -70,8 +70,8 @@ where
 mod tests {
     use crate::backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng};
     use aes_prng::AesRng;
-    use algebra::role::Role;
     use rand::SeedableRng;
+    use threshold_types::role::Role;
 
     #[test]
     fn sunshine() {

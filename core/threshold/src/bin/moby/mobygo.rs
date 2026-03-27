@@ -12,6 +12,10 @@ use tfhe::{
     integer::BooleanBlock, set_server_key, CompactPublicKey, FheBool, FheUint128, FheUint16,
     FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
 };
+use threshold_execution::{
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
+    tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
+};
 use threshold_fhe::{
     choreography::{
         choreographer::{ChoreoRuntime, KeySetMaybeCompressed},
@@ -19,12 +23,8 @@ use threshold_fhe::{
         requests::{SessionType, TfheType, ThroughtputParams},
     },
     conf::choreo::ChoreoConf,
-    execution::{
-        endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
-        tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
-    },
-    session_id::SessionId,
 };
+use threshold_types::session_id::SessionId;
 use tokio::time;
 
 #[derive(Args, Debug)]

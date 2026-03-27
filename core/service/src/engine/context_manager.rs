@@ -28,7 +28,6 @@ use crate::{
     vault::storage::Storage,
 };
 use aes_prng::AesRng;
-use algebra::role::Role;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::Empty;
@@ -45,6 +44,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
+use threshold_types::role::Role;
 use tokio::sync::RwLock;
 use tonic::Response;
 

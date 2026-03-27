@@ -1,41 +1,47 @@
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
+        use std::collections::HashSet;
         use std::net::IpAddr;
+        use std::sync::{LazyLock, Mutex};
         use tokio::net::TcpListener;
 
-        fn is_reserved_test_port(port: u16) -> bool {
-            // These ports are intentionally kept out of the random allocator
-            // because Docker-based integration tests bind them explicitly. Letting
-            // isolated native tests land on the same ports makes CI flaky even
-            // when nextest serializes the Docker test groups.
-            matches!(
-                port,
-                9646..=9649 | 50001..=50006 | 50051 | 50100 | 50200 | 50300 | 50400 | 50500 | 50600
-            )
-        }
+        /// Tracks all ports handed out across concurrent calls to prevent duplicates.
+        /// Ports are never removed since this is test-only code and the caller
+        /// is not guaranteed to use the port immediately after receiving it.
+        static ALLOCATED_PORTS: LazyLock<Mutex<HashSet<u16>>> =
+            LazyLock::new(|| Mutex::new(HashSet::new()));
+
+        const MAX_PORT_RETRIES: usize = 200;
 
         /// Find [`n`] free ports in the range [from, to). Returns a vector (TcpListeners,port).
+        ///
+        /// Safe for concurrent use: uses a global set to ensure no two calls
+        /// ever return the same port, even if the TcpListener is later dropped.
         pub(crate) async fn get_listeners_random_free_ports(
             host: &IpAddr,
             n: usize,
         ) -> anyhow::Result<Vec<(TcpListener, u16)>> {
-            // Cap attempts to avoid an unbounded loop if the OS ephemeral range
-            // is unusually narrow or keeps returning reserved ports.
-            let max_attempts = n.saturating_mul(10).max(100);
-            let mut listeners_and_ports = Vec::with_capacity(n);
-            let mut attempts = 0usize;
-            while listeners_and_ports.len() < n {
-                anyhow::ensure!(
-                    attempts < max_attempts,
-                    "failed to find {n} non-reserved free ports after {attempts} attempts"
-                );
-                attempts += 1;
-                let listener = get_listener_free_tcp(host).await?;
-                let port = listener.local_addr().unwrap().port();
-                if is_reserved_test_port(port) {
+            let mut listeners_and_ports = Vec::new();
+            for _ in 0..n {
+                let mut retries = 0;
+                let (listener, port) = loop {
+                    let listener = get_listener_free_tcp(host).await?;
+                    let port = listener.local_addr().unwrap().port();
+                    let mut allocated = ALLOCATED_PORTS.lock().unwrap();
+                    if allocated.insert(port) {
+                        break (listener, port);
+                    }
+                    // Port was already handed out, retry
+                    // We do not handout duplicate ports because the caller
+                    // may not use the port the moment it gets handed out
+                    drop(allocated);
                     drop(listener);
-                    continue;
-                }
+                    retries += 1;
+                    anyhow::ensure!(
+                        retries < MAX_PORT_RETRIES,
+                        "failed to find a unique free port after {MAX_PORT_RETRIES} retries"
+                    );
+                };
                 listeners_and_ports.push((listener, port));
             }
             Ok(listeners_and_ports)
@@ -53,25 +59,42 @@ cfg_if::cfg_if! {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_reserved_test_ports() {
-        for port in [9646, 9649, 50001, 50006, 50051, 50100, 50200, 50600] {
-            assert!(is_reserved_test_port(port));
-        }
-
-        for port in [9645, 9650, 50000, 50007, 50050, 50052, 50099, 50101, 50601] {
-            assert!(!is_reserved_test_port(port));
-        }
-    }
-
     #[tokio::test]
     async fn test_random_free_ports() {
         let ip_addr = "127.0.0.1".parse().unwrap();
         let listeners = get_listeners_random_free_ports(&ip_addr, 10).await.unwrap();
 
         assert_eq!(listeners.len(), 10);
-        assert!(listeners
-            .iter()
-            .all(|(_, port)| !is_reserved_test_port(*port)));
+    }
+
+    #[tokio::test]
+    async fn test_random_free_ports_concurrent() {
+        use std::collections::HashSet;
+
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let num_tasks = 10;
+        let ports_per_task = 5;
+
+        let mut handles = Vec::new();
+        for _ in 0..num_tasks {
+            handles.push(tokio::spawn(async move {
+                get_listeners_random_free_ports(&ip_addr, ports_per_task)
+                    .await
+                    .unwrap()
+            }));
+        }
+
+        let mut all_ports = HashSet::new();
+        for handle in handles {
+            let listeners = handle.await.unwrap();
+            assert_eq!(listeners.len(), ports_per_task);
+            for (_, port) in &listeners {
+                assert!(
+                    all_ports.insert(*port),
+                    "duplicate port {port} found across concurrent calls"
+                );
+            }
+        }
+        assert_eq!(all_ports.len(), num_tasks * ports_per_task);
     }
 }

@@ -25,7 +25,7 @@ use kms_grpc::{
     RequestId,
 };
 use serial_test::serial;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::endpoints::decryption::DecryptionMode;
 use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]

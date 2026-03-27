@@ -612,7 +612,6 @@ mod kms_server_binary_test {
 #[cfg(test)]
 mod kms_custodian_binary_tests {
     use aes_prng::AesRng;
-    use algebra::role::Role;
     use assert_cmd::Command;
     use kms_grpc::{kms::v1::CustodianContext, RequestId};
     use kms_lib::{
@@ -637,6 +636,7 @@ mod kms_custodian_binary_tests {
     use rand::SeedableRng;
     use std::path::MAIN_SEPARATOR;
     use std::{collections::BTreeMap, path::Path, thread};
+    use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
         observability::telemetry::init_logging();

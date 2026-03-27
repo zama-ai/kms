@@ -623,7 +623,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
     use crate::vault::storage::StorageType;
     use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetConfig, KeySetType};
-    use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
+    use threshold_execution::tfhe_internals::test_feature::run_decompression_test;
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("decompression_keygen")

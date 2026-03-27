@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use algebra::role::Role;
 use itertools::Itertools;
 use kms_grpc::{
     identifiers::EpochId,
@@ -10,7 +9,8 @@ use kms_grpc::{
     ContextId, RequestId,
 };
 use serial_test::serial;
-use threshold_fhe::execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{transport::Channel, Response, Status};
 use tracing_test::traced_test;
