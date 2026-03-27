@@ -266,6 +266,10 @@ pub(crate) async fn run_decryption_centralized(
     // go through all requests and check the corresponding responses
     for req in &reqs {
         let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|resp| {
