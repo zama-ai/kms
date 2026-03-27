@@ -210,7 +210,7 @@ tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
 tonic-prost = "=0.14.5"  # prost codec for tonic gRPC - LOW RISK: hyperium team
 tonic-prost-build = "=0.14.5"  # gRPC code generation with prost - LOW RISK: hyperium team
-tonic-tls = { version = "=0.6.1", features = ["rustls"] }  # TLS support for tonic - LOW RISK: hyperium team
+tonic-tls = { version = "=0.6.1", features = ["rustls"] }  # TLS support for tonic - MEDIUM RISK: single developer
 tower = "=0.5.3"  # Service framework - LOW RISK: tower-rs team
 tower-http = "=0.6.8"  # HTTP middleware - LOW RISK: tower-rs team
 tracing = { version = "=0.1.44", features = ["log"] }  # Application instrumentation - LOW RISK: tokio-rs team
