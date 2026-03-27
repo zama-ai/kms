@@ -64,14 +64,16 @@ pub fn test_logging_enabled() -> bool {
         || std::env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled"
 }
 
-/// Build an `EnvFilter` for a test sink.
+/// Build an `EnvFilter` for a test output (console or file).
 ///
-/// Resolution order:
-/// 1. Sink-specific env override (`override_var`, e.g. `KMS_TEST_LOG_CONSOLE_FILTER`)
-/// 2. Shared override (`KMS_TEST_LOG_FILTER`)
+/// First match wins:
+/// 1. Output-specific: `KMS_TEST_LOG_CONSOLE_FILTER` / `KMS_TEST_LOG_FILE_FILTER`
+/// 2. Shared: `KMS_TEST_LOG_FILTER`
 /// 3. `RUST_LOG`
-/// 4. Preset selected by `KMS_TEST_LOG_MODE` (verbose -> verbose preset,
-///    otherwise `quiet_default`)
+/// 4. `KMS_TEST_LOG_MODE` preset (`verbose` → info, otherwise warn)
+///
+/// Levels 1–3 use `tracing` directive syntax. Level 4 is a keyword.
+/// See `docs/developer/observability.md` ("Testing") for full details.
 pub fn test_log_filter(override_var: &str, quiet_default: &str) -> EnvFilter {
     if let Ok(filter) = std::env::var(override_var) {
         return EnvFilter::new(filter);
@@ -125,6 +127,9 @@ pub struct TruncatingWriter<W> {
 const TRACE_TRUNCATION_MARKER: &[u8] = b"\n[truncated test trace output]\n";
 
 impl<W> TruncatingMakeWriter<W> {
+    /// Creates a truncating writer wrapper.
+    ///
+    /// `max_bytes = 0` disables truncation (no size limit).
     pub fn new(inner: W, max_bytes: usize) -> Self {
         Self {
             inner,

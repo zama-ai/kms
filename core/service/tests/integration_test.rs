@@ -119,6 +119,8 @@ mod kms_gen_keys_binary_test {
         // Integration tests run with quiet-by-default test logging, but these
         // subprocess assertions intentionally depend on child `info!` output.
         // Clear inherited filter overrides so the child's verbose preset wins.
+        // To override this for debugging, set `KMS_TEST_LOG_CONSOLE_FILTER`
+        // on this command with the same syntax as `RUST_LOG`.
         command
             .env("KMS_TEST_LOG_MODE", "verbose")
             .env_remove("KMS_TEST_LOG_FILTER")
