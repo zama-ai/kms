@@ -566,6 +566,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             self.max_elapsed_time.read().await,
             self.current_network_timeout.read().await,
         );
+
         *init_time + *network_timeout + *max_elapsed_time
     }
 
@@ -1018,7 +1019,6 @@ mod tests {
             let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
             let networking_server = networking.new_server(TlsExtensionGetter::default());
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
-
             let core_router = tonic::transport::Server::builder()
                 .timeout(Duration::from_secs(300))
                 .layer(core_grpc_layer)

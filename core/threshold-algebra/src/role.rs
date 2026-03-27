@@ -45,7 +45,6 @@ impl Display for RoleKind {
 }
 
 #[derive(Debug, /*Display,*/ Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-// #[display("Set1: {}, Set2: {}", role_set_1, role_set_2)]
 pub struct DualRole {
     pub role_set_1: Role,
     pub role_set_2: Role,
