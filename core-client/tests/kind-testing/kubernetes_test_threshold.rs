@@ -6,9 +6,11 @@
 
 use kms_core_client::*;
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use observability::telemetry::init_logging;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
+use tracing::info;
 
 fn root_path() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -35,9 +37,9 @@ async fn insecure_key_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
-    println!("Doing insecure key-gen");
+    info!("Doing insecure key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure key-gen done");
+    info!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
@@ -65,9 +67,9 @@ async fn crs_gen(test_path: &Path) -> String {
         download_all: false,
     };
 
-    println!("Doing CRS-gen");
+    info!("Doing CRS-gen");
     let crs_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("CRS-gen done");
+    info!("CRS-gen done");
     assert_eq!(crs_gen_results.len(), 1);
     let crs_id = match crs_gen_results.first().unwrap() {
         (Some(value), _) => value,
@@ -82,7 +84,7 @@ async fn crs_gen(test_path: &Path) -> String {
 // Having k8 in the name is also on purpose for the same reason.
 #[tokio::test]
 async fn test_k8s_threshld_insecure() {
-    init_testing();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let _key_id = insecure_key_gen(keys_folder).await;
@@ -91,7 +93,7 @@ async fn test_k8s_threshld_insecure() {
 
 #[tokio::test]
 async fn nightly_full_gen_tests_k8s_default_threshld_sequential_crs() {
-    init_testing();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id_1 = crs_gen(keys_folder).await;

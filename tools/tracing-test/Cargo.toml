@@ -1,0 +1,12 @@
+[package]
+name = "tracing-test"
+version.workspace = true
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "std"] }
+tracing-test-macro = { path = "../tracing-test-macro" }

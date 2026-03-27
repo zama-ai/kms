@@ -28,7 +28,7 @@ default-filter = 'not (binary(=integration_test_isolated) & test(/nightly_full_g
 
 [profile.ci.junit]
 path = "junit.xml"
-store-success-output = true
+store-success-output = false
 store-failure-output = true
 
 # Long timeout for tests that use production-sized FHE parameters (Default +
@@ -71,7 +71,7 @@ test-group = "k8s-integration"
 
 [profile.ci-nightly.junit]
 path = "junit.xml"
-store-success-output = true
+store-success-output = false
 store-failure-output = true
 
 # Long timeout + serialization for slow Default-param tests (same as ci profile).

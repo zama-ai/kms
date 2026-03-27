@@ -44,9 +44,11 @@
 use kms_core_client::*;
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use kms_lib::consts::DEFAULT_MPC_CONTEXT;
+use observability::telemetry::init_logging;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
+use tracing::info;
 
 // ============================================================================
 // TEST INFRASTRUCTURE
@@ -63,13 +65,11 @@ struct K8sTestContext {
 impl K8sTestContext {
     /// Create a new test context with the given test name.
     fn new(name: &'static str) -> Self {
-        init_testing();
+        init_logging();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        println!("\n========================================");
-        println!("[K8S-CENTRALIZED] TEST: {}", name);
-        println!("[K8S-CENTRALIZED] Workspace: {}", temp_dir.path().display());
-        println!("========================================\n");
+        info!("[K8S-CENTRALIZED] TEST: {}", name);
+        info!("[K8S-CENTRALIZED] Workspace: {}", temp_dir.path().display());
 
         Self {
             name,
@@ -112,7 +112,7 @@ impl K8sTestContext {
 
     /// Generate a key using InsecureKeyGen.
     async fn insecure_keygen(&self) -> String {
-        println!("[K8S-CENTRALIZED] Executing InsecureKeyGen...");
+        info!("[K8S-CENTRALIZED] Executing InsecureKeyGen...");
         let start = std::time::Instant::now();
 
         let results = self
@@ -127,7 +127,7 @@ impl K8sTestContext {
             .expect("InsecureKeyGen must return a key ID")
             .to_string();
 
-        println!(
+        info!(
             "[K8S-CENTRALIZED] ✅ KeyGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             key_id
@@ -137,7 +137,9 @@ impl K8sTestContext {
 
     /// Generate a CRS.
     async fn crs_gen(&self) -> String {
-        println!("[K8S-CENTRALIZED] Executing CrsGen (max_num_bits=2048) on default epoch and context...");
+        info!(
+            "[K8S-CENTRALIZED] Executing CrsGen (max_num_bits=2048) on default epoch and context..."
+        );
         let start = std::time::Instant::now();
 
         let results = self
@@ -155,7 +157,7 @@ impl K8sTestContext {
             .expect("CrsGen must return a CRS ID")
             .to_string();
 
-        println!(
+        info!(
             "[K8S-CENTRALIZED] ✅ CrsGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             crs_id
@@ -166,13 +168,11 @@ impl K8sTestContext {
     /// Mark test as passed and print summary.
     fn pass(self) {
         let duration = self.start_time.elapsed();
-        println!("\n========================================");
-        println!(
+        info!(
             "[K8S-CENTRALIZED] ✅ PASSED: {} ({:.2}s)",
             self.name,
             duration.as_secs_f64()
         );
-        println!("========================================\n");
     }
 }
 
@@ -206,6 +206,6 @@ async fn nightly_full_gen_tests_default_k8s_centralized_sequential_crs() {
 
     assert_ne!(crs1, crs2, "CRS IDs must be unique");
 
-    println!("[K8S-CENTRALIZED] ✅ Both CRS IDs are unique");
+    info!("[K8S-CENTRALIZED] ✅ Both CRS IDs are unique");
     ctx.pass();
 }
