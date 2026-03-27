@@ -92,7 +92,7 @@ validator.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 assert_cmd.workspace = true
-cc-tests-utils = { path = "./tests-utils" }
+test-utils-cc = { path = "./test-utils-cc" }
 futures.workspace = true
 # Self-import for integration tests
 kms-core-client = { workspace = true, features = ["testing"] }

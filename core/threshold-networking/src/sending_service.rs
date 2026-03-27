@@ -652,8 +652,10 @@ mod tests {
     };
     use crate::sending_service::NetworkSession;
     use std::collections::HashMap;
+    use std::net::IpAddr;
     use std::sync::{Arc, OnceLock};
     use std::time::Duration;
+    use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
     use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
@@ -662,18 +664,25 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_network_stack() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 7001, None);
+        let id_1 = Identity::new(format!("{ip_addr}"), port_1, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 7002, None);
+        let id_2 = Identity::new(format!("{ip_addr}"), port_2, None);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
         // Helper function to create and run a server
         async fn create_server(
             networking: &GrpcNetworkingManager,
+            ip_addr: IpAddr,
             port: u16,
         ) -> (
             tokio::sync::oneshot::Sender<()>,
@@ -688,7 +697,7 @@ mod tests {
                 .add_service(networking_server);
 
             let core_future = core_router.serve_with_shutdown(
-                format!("127.0.0.1:{port}").parse().unwrap(),
+                format!("{ip_addr}:{port}").parse().unwrap(),
                 async move {
                     let _ = server_terminate_rx.await;
                 },
@@ -759,7 +768,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, id_2.port()).await;
+                    create_server(&networking, ip_addr, id_2.port()).await;
 
                 tracing::info!("Trying to receive");
                 let msg = network_session.receive(&role_1).await.unwrap();
@@ -800,7 +809,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, id_2.port()).await;
+                    create_server(&networking, ip_addr, id_2.port()).await;
 
                 // Increase round counter to receive second message
                 network_session.increase_round_counter().await;
@@ -841,10 +850,16 @@ mod tests {
 
     #[tokio::test()]
     async fn test_network_session() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 8001, None);
+        let id_1 = Identity::new(format!("{ip_addr}"), port_1, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 8002, None);
+        let id_2 = Identity::new(format!("{ip_addr}"), port_2, None);
 
         let role_assignment = {
             let mut role_assignment = RoleAssignment::default();
@@ -978,19 +993,24 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_two_set_network() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 4).await.unwrap();
+        let ports: Vec<u16> = listeners.iter().map(|(_, p)| *p).collect();
+        drop(listeners);
+
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         // Create the roles from Set 1
         let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
-        let id_1_set_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let id_1_set_1 = Identity::new(format!("{ip_addr}"), ports[0], None);
         let role_2_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(2));
-        let id_2_set_1 = Identity::new("127.0.0.1".to_string(), 6002, None);
+        let id_2_set_1 = Identity::new(format!("{ip_addr}"), ports[1], None);
 
         // Create the roles from Set 2
         let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
-        let id_1_set_2 = Identity::new("127.0.0.1".to_string(), 6003, None);
+        let id_1_set_2 = Identity::new(format!("{ip_addr}"), ports[2], None);
         let role_2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
-        let id_2_set_2 = Identity::new("127.0.0.1".to_string(), 6004, None);
+        let id_2_set_2 = Identity::new(format!("{ip_addr}"), ports[3], None);
 
         role_assignment.insert(role_1_set_1, id_1_set_1.clone());
         role_assignment.insert(role_2_set_1, id_2_set_1.clone());
@@ -1023,7 +1043,7 @@ mod tests {
                 .timeout(Duration::from_secs(300))
                 .layer(core_grpc_layer)
                 .add_service(networking_server);
-            let core_future = core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
+            let core_future = core_router.serve(format!("{ip_addr}:{my_port}").parse().unwrap());
 
             // Spawn server
             let my_role = role;
@@ -1117,13 +1137,16 @@ mod tests {
 
         // Should not conflict with the other ports used in the tests from this file
         // TODO(zama-ai/kms-internal#2952): we should look into how to find ports for tests.
-        let myport = 6005;
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 1).await.unwrap();
+        let myport = listeners[0].1;
+        drop(listeners);
 
         let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
         let server_handle = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(GnetworkingServer::new(AlwaysCompletedServer))
-                .serve_with_shutdown(format!("127.0.0.1:{myport}").parse().unwrap(), async move {
+                .serve_with_shutdown(format!("{ip_addr}:{myport}").parse().unwrap(), async move {
                     let _ = server_terminate_rx.await;
                 })
                 .await
@@ -1131,7 +1154,7 @@ mod tests {
         });
 
         // Connect a client with the required interceptor type, retrying until the server is ready
-        let endpoint = format!("http://127.0.0.1:{myport}");
+        let endpoint = format!("http://{ip_addr}:{myport}");
         let connect_timeout = Duration::from_secs(5);
         let start = tokio::time::Instant::now();
         let channel = loop {

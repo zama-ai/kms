@@ -1,5 +1,5 @@
 [package]
-name = "tests-utils"
+name = "test-utils-service"
 version.workspace = true
 authors.workspace = true
 publish.workspace = true
