@@ -7887,6 +7887,7 @@ dependencies = [
  "prost",
  "serde",
  "sha2",
+ "test-utils",
  "tfhe",
  "tfhe-versionable",
  "thread-handles",

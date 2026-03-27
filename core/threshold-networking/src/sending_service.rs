@@ -647,17 +647,24 @@ mod tests {
     use threshold_types::network::{NetworkMode, Networking};
     use threshold_types::party::{Identity, RoleAssignment};
     use threshold_types::role::{Role, TwoSetsRole};
+    use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::session_id::SessionId;
 
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_network_stack() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 7001, None);
+        let id_1 = Identity::new("127.0.0.1".to_string(), port_1, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 7002, None);
+        let id_2 = Identity::new("127.0.0.1".to_string(), port_2, None);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
@@ -831,10 +838,16 @@ mod tests {
 
     #[tokio::test()]
     async fn test_network_session() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity::new("127.0.0.1".to_string(), 8001, None);
+        let id_1 = Identity::new("127.0.0.1".to_string(), port_1, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity::new("127.0.0.1".to_string(), 8002, None);
+        let id_2 = Identity::new("127.0.0.1".to_string(), port_2, None);
 
         let role_assignment = {
             let mut role_assignment = RoleAssignment::default();
@@ -968,19 +981,24 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn test_two_set_network() {
+        let ip_addr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 4).await.unwrap();
+        let ports: Vec<u16> = listeners.iter().map(|(_, p)| *p).collect();
+        drop(listeners);
+
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
         // Create the roles from Set 1
         let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
-        let id_1_set_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let id_1_set_1 = Identity::new("127.0.0.1".to_string(), ports[0], None);
         let role_2_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(2));
-        let id_2_set_1 = Identity::new("127.0.0.1".to_string(), 6002, None);
+        let id_2_set_1 = Identity::new("127.0.0.1".to_string(), ports[1], None);
 
         // Create the roles from Set 2
         let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
-        let id_1_set_2 = Identity::new("127.0.0.1".to_string(), 6003, None);
+        let id_1_set_2 = Identity::new("127.0.0.1".to_string(), ports[2], None);
         let role_2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
-        let id_2_set_2 = Identity::new("127.0.0.1".to_string(), 6004, None);
+        let id_2_set_2 = Identity::new("127.0.0.1".to_string(), ports[3], None);
 
         role_assignment.insert(role_1_set_1, id_1_set_1.clone());
         role_assignment.insert(role_2_set_1, id_2_set_1.clone());
