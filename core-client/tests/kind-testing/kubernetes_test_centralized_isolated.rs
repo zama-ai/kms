@@ -44,7 +44,7 @@
 use kms_core_client::*;
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use kms_lib::consts::DEFAULT_MPC_CONTEXT;
-use observability::telemetry::init_test_logging_once;
+use observability::telemetry::init_logging;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
@@ -65,7 +65,7 @@ struct K8sTestContext {
 impl K8sTestContext {
     /// Create a new test context with the given test name.
     fn new(name: &'static str) -> Self {
-        init_test_logging_once();
+        init_logging();
         let temp_dir = tempfile::tempdir().unwrap();
 
         info!("[K8S-CENTRALIZED] TEST: {}", name);

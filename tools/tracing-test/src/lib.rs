@@ -2,7 +2,7 @@
 //!
 //! - Use [`traced_test`] when tests need captured-log assertions via
 //!   `logs_contain(...)` / `logs_assert(...)`.
-//! - Use `observability::telemetry::init_test_logging_once()` for integration
+//! - Use `observability::telemetry::init_logging()` for integration
 //!   tests that only need stderr output and shared filter presets.
 //!
 //! Important: both modes install a global tracing subscriber. In a single test

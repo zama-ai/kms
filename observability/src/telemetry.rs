@@ -72,7 +72,7 @@ use tracing_test::config::{
 ///
 /// Important: tracing subscriber installation is process-global. If another
 /// initializer already installed a subscriber, this function becomes a no-op.
-pub fn init_test_logging_once() {
+pub fn init_logging() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         std::env::set_var("KMS_TEST_MODE", "1");

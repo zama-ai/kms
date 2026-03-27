@@ -20,7 +20,7 @@ use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
-use observability::telemetry::init_test_logging_once;
+use observability::telemetry::init_logging;
 use serial_test::serial;
 use std::fs::create_dir_all;
 use std::io::Write;
@@ -1003,7 +1003,7 @@ async fn custodian_backup_recovery<T: DockerComposeManager>(
 #[tokio::test]
 #[serial(docker)]
 async fn test_centralized_insecure(ctx: &DockerComposeCentralized) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, false).await;
@@ -1014,7 +1014,7 @@ async fn test_centralized_insecure(ctx: &DockerComposeCentralized) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id = crs_gen(ctx, keys_folder, false, Some("0xffff".to_string())).await;
@@ -1027,7 +1027,7 @@ async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralized) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
@@ -1041,7 +1041,7 @@ async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralized) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodian) {
-    init_test_logging_once();
+    init_logging();
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let temp_dir = tempfile::tempdir().unwrap();
@@ -1087,7 +1087,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_insecure(ctx: &DockerComposeThresholdDefault) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, false).await;
@@ -1409,7 +1409,7 @@ fn config_path_from_context(ctx: &impl DockerComposeManager) -> String {
 #[tokio::test]
 #[serial(docker)]
 async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
@@ -1434,7 +1434,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeTh
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
@@ -1459,7 +1459,7 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTe
 #[tokio::test]
 #[serial(docker)]
 async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdDefault) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
@@ -1471,7 +1471,7 @@ async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdDefa
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let res = join_all([
@@ -1487,7 +1487,7 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
@@ -1501,7 +1501,7 @@ async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdTest) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianTest) {
-    init_test_logging_once();
+    init_logging();
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
@@ -1553,7 +1553,7 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianTe
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = temp_dir.path();
     let context_path = temp_dir.path().join("mpc_context.bin");
@@ -1595,7 +1595,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = temp_dir.path();
     let context_path = temp_dir.path().join("mpc_context.bin");
@@ -1634,7 +1634,7 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoInitSixParty) {
-    init_test_logging_once();
+    init_logging();
     let config_path = ctx.root_path().join(ctx.config_path());
     let alternative_config_path = ctx.root_path().join(ctx.alternative_config_path());
 
@@ -1726,7 +1726,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = temp_dir.path();
     let context_path_set_1 = temp_dir.path().join("mpc_context_set_1.bin");
@@ -1979,7 +1979,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
     ctx: &DockerComposeThresholdDefault,
 ) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
@@ -2006,7 +2006,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
 async fn nightly_full_gen_tests_default_threshold_sequential_crs(
     ctx: &DockerComposeThresholdDefault,
 ) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
@@ -2021,7 +2021,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs(
 #[tokio::test]
 #[serial(docker)]
 async fn test_centralized_insecure_compressed_keygen(ctx: &DockerComposeCentralized) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, true).await;
@@ -2032,7 +2032,7 @@ async fn test_centralized_insecure_compressed_keygen(ctx: &DockerComposeCentrali
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_insecure_compressed_keygen(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let key_id = insecure_key_gen(ctx, keys_folder, true).await;
@@ -2043,7 +2043,7 @@ async fn test_threshold_insecure_compressed_keygen(ctx: &DockerComposeThresholdT
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
@@ -2074,7 +2074,7 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
 #[tokio::test]
 #[serial(docker)]
 async fn test_threshold_compressed_keygen_from_existing(ctx: &DockerComposeThresholdTest) {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);

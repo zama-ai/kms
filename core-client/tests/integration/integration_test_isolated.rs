@@ -234,7 +234,7 @@ use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
 use kms_lib::testing::prelude::*;
-use observability::telemetry::init_test_logging_once;
+use observability::telemetry::init_logging;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -1275,11 +1275,7 @@ config_path = "{}"
 // ============================================================================
 
 /// Execute a CLI command and extract the single request ID from the result.
-async fn execute_single_cmd(
-    config: &CmdConfig,
-    test_path: &Path,
-    label: &str,
-) -> Result<RequestId> {
+async fn run_cmd(config: &CmdConfig, test_path: &Path, label: &str) -> Result<RequestId> {
     info!("Doing {label}");
     let results = execute_cmd(config, test_path)
         .await
@@ -1350,7 +1346,7 @@ async fn insecure_key_gen_isolated(
         }),
         200,
     );
-    let id = execute_single_cmd(&config, test_path, "insecure key-gen").await?;
+    let id = run_cmd(&config, test_path, "insecure key-gen").await?;
     Ok(id.to_string())
 }
 
@@ -1400,7 +1396,7 @@ async fn crs_gen_isolated_with_params(
     };
 
     let config = cmd_config(config_path, command, max_iter);
-    let id = execute_single_cmd(&config, test_path, "CRS generation").await?;
+    let id = run_cmd(&config, test_path, "CRS generation").await?;
     Ok(id.to_string())
 }
 
@@ -1777,7 +1773,7 @@ async fn real_preproc_and_keygen_isolated(
     );
 
     let t0 = std::time::Instant::now();
-    let preproc_id = execute_single_cmd(&preproc_config, test_path, "preprocessing").await?;
+    let preproc_id = run_cmd(&preproc_config, test_path, "preprocessing").await?;
     info!(
         "Preprocessing done with ID {preproc_id:?} (elapsed: {:.1}s)",
         t0.elapsed().as_secs_f64()
@@ -1796,7 +1792,7 @@ async fn real_preproc_and_keygen_isolated(
     );
 
     let t1 = std::time::Instant::now();
-    let key_id = execute_single_cmd(&keygen_config, test_path, "key-gen").await?;
+    let key_id = run_cmd(&keygen_config, test_path, "key-gen").await?;
     info!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
 
     Ok(key_id.to_string())
@@ -1826,7 +1822,7 @@ async fn real_partial_preproc_and_keygen_isolated(
     );
 
     let t0 = std::time::Instant::now();
-    let preproc_id = execute_single_cmd(
+    let preproc_id = run_cmd(
         &preproc_config,
         test_path,
         &format!("partial preprocessing ({percentage_offline}%)"),
@@ -1847,7 +1843,7 @@ async fn real_partial_preproc_and_keygen_isolated(
     );
 
     let t1 = std::time::Instant::now();
-    let key_id = execute_single_cmd(&keygen_config, test_path, "key-gen").await?;
+    let key_id = run_cmd(&keygen_config, test_path, "key-gen").await?;
     info!("Key-gen done (elapsed: {:.1}s)", t1.elapsed().as_secs_f64());
 
     Ok(key_id.to_string())
@@ -1883,7 +1879,7 @@ async fn store_mpc_context_in_file_isolated(
 }
 
 /// Execute a CLI command and assert it returns exactly one result (ignoring the ID).
-async fn execute_single_cmd_no_id(config: &CmdConfig, test_path: &Path, label: &str) -> Result<()> {
+async fn run_cmd_no_id(config: &CmdConfig, test_path: &Path, label: &str) -> Result<()> {
     info!("Doing {label}");
     let results = execute_cmd(config, test_path)
         .await
@@ -1908,7 +1904,7 @@ async fn new_mpc_context_isolated(
         )),
         200,
     );
-    execute_single_cmd_no_id(&config, test_path, "new MPC context").await
+    run_cmd_no_id(&config, test_path, "new MPC context").await
 }
 
 /// Initialize PRSS for a context via CLI (isolated version)
@@ -1927,7 +1923,7 @@ async fn new_prss_isolated(
         }),
         200,
     );
-    execute_single_cmd_no_id(&config, test_path, "PRSS initialization").await
+    run_cmd_no_id(&config, test_path, "PRSS initialization").await
 }
 
 /// Helper to run preprocessing and keygen with context/epoch via CLI (isolated version).
@@ -1949,8 +1945,7 @@ async fn real_preproc_and_keygen_with_context_isolated(
         200,
     );
 
-    let preproc_id =
-        execute_single_cmd(&preproc_config, test_path, "preprocessing with context").await?;
+    let preproc_id = run_cmd(&preproc_config, test_path, "preprocessing with context").await?;
 
     let keygen_config = cmd_config(
         config_path,
@@ -1965,7 +1960,7 @@ async fn real_preproc_and_keygen_with_context_isolated(
         200,
     );
 
-    let key_id = execute_single_cmd(&keygen_config, test_path, "key-gen with context").await?;
+    let key_id = run_cmd(&keygen_config, test_path, "key-gen with context").await?;
 
     Ok((key_id.to_string(), preproc_id.to_string()))
 }
@@ -2027,7 +2022,7 @@ async fn new_custodian_context_isolated(
         }),
         200,
     );
-    execute_single_cmd(&config, test_path, "new custodian context")
+    run_cmd(&config, test_path, "new custodian context")
         .await
         .unwrap()
         .to_string()
@@ -2129,7 +2124,7 @@ async fn custodian_backup_init_isolated(
         }),
         200,
     );
-    execute_single_cmd(&config, test_path, "backup init")
+    run_cmd(&config, test_path, "backup init")
         .await
         .unwrap()
         .to_string()
@@ -2231,7 +2226,7 @@ async fn custodian_backup_recovery_isolated(
         }),
         200,
     );
-    execute_single_cmd(&config, test_path, "backup recovery")
+    run_cmd(&config, test_path, "backup recovery")
         .await
         .unwrap()
         .to_string()
@@ -2244,7 +2239,7 @@ async fn custodian_backup_recovery_isolated(
 /// Test centralized insecure key generation via CLI
 #[tokio::test]
 async fn test_centralized_insecure() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated centralized KMS server
     let (material_dir, _server, config_path) =
@@ -2269,7 +2264,7 @@ async fn test_centralized_insecure() -> Result<()> {
 /// Runs insecure key generation with `compressed=true` against a native in-process server.
 #[tokio::test]
 async fn test_centralized_insecure_compressed_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let (material_dir, _server, config_path) =
         setup_isolated_centralized_cli_test("centralized_insecure_compressed_keygen").await?;
@@ -2284,7 +2279,7 @@ async fn test_centralized_insecure_compressed_keygen() -> Result<()> {
 /// Test centralized CRS generation via CLI
 #[tokio::test]
 async fn test_centralized_crsgen_secure() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated centralized KMS server
     let (material_dir, _server, config_path) =
@@ -2306,7 +2301,7 @@ async fn test_centralized_crsgen_secure() -> Result<()> {
 /// Full restore validation is done in service/client tests.
 #[tokio::test]
 async fn test_centralized_restore_from_backup() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated centralized KMS server with backup vault
     let (material_dir, _server, config_path) =
@@ -2323,7 +2318,7 @@ async fn test_centralized_restore_from_backup() -> Result<()> {
 /// Test centralized custodian backup via CLI
 #[tokio::test]
 async fn test_centralized_custodian_backup() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let amount_custodians = 5;
     let custodian_threshold = 2;
@@ -2399,7 +2394,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_insecure() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
@@ -2420,7 +2415,7 @@ async fn test_threshold_insecure() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for test context) with PRSS enabled
     let (material_dir, _servers, config_path) =
@@ -2442,7 +2437,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for test context) with PRSS enabled
     let (material_dir, _servers, config_path) =
@@ -2476,7 +2471,7 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
 #[tokio::test]
 async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with Default FHE params
     let (material_dir, _servers, config_path) =
@@ -2519,7 +2514,7 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// with networking timeouts between parties.
 #[tokio::test]
 async fn test_threshold_concurrent_crs() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with Default FHE params
     let (material_dir, _servers, config_path) =
@@ -2574,7 +2569,7 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss("threshold_insecure_compressed_keygen", 4)
@@ -2596,7 +2591,7 @@ async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss("threshold_compressed_preproc_keygen", 4)
@@ -2622,7 +2617,7 @@ async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss("threshold_mpc_context_switch", 4).await?;
@@ -2672,7 +2667,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
 /// Full restore validation is done in service/client tests.
 #[tokio::test]
 async fn test_threshold_restore_from_backup() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) with backup vaults
     let (material_dir, _servers, config_path) =
@@ -2689,7 +2684,7 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 /// Test threshold custodian backup via CLI
 #[tokio::test]
 async fn test_threshold_custodian_backup() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     let amount_custodians = 5;
     let custodian_threshold = 2;
@@ -2787,7 +2782,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 #[serial]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Tuned for CI runtime budget with buffer.
     const PARTIAL_PREPROC_PERCENTAGE_OFFLINE: u32 = 1;
@@ -2825,7 +2820,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
 #[tokio::test]
 async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties for default context) with Default FHE params
     let (material_dir, _servers, config_path) =
@@ -2874,7 +2869,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 #[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) WITHOUT PRSS initialization
     // This simulates servers that need context and PRSS setup
@@ -2940,7 +2935,7 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 #[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup 6 servers with per-server peer configuration for party resharing
     let (material_dir, servers, config_path_1234, config_path_5634) =
@@ -3061,7 +3056,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_threshold_reshare() -> Result<()> {
-    init_test_logging_once();
+    init_logging();
 
     // Setup isolated threshold KMS servers (4 parties) WITHOUT PRSS initialization
     // This simulates servers that need context and PRSS setup
