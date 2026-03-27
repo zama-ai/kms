@@ -7,8 +7,12 @@ use crate::{
     cryptography::{
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
-        signatures::{internal_verify_sig, PublicSigKey, Signature},
+        signatures::{
+            internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
+        },
     },
+    engine::base::compute_public_decryption_message,
+    engine::validation::Eip712VerificationParams,
 };
 use alloy_dyn_abi::Eip712Domain;
 use hashing::DomainSep;
@@ -30,9 +34,9 @@ use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
-use threshold_fhe::execution::keyset_config::KeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::compute_witness_dim;
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
@@ -357,11 +361,18 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
+///
+/// Note that `eip712_params` needs to be optional because for some tests, e.g.,
+/// when the core-client just tried to query for a decryption result without knowing the
+/// original request, we will not have EIP-712 parameters.
+/// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
 fn validate_public_decrypt_meta_data(
     server_pks: &HashMap<u32, PublicSigKey>,
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
+    eip712_params: Option<&Eip712VerificationParams>,
+    ext_handles_bytes: &[Vec<u8>],
 ) -> anyhow::Result<bool> {
     if pivot_resp.request_id != other_resp.request_id {
         tracing::warn!(
@@ -403,6 +414,41 @@ fn validate_public_decrypt_meta_data(
         tracing::warn!("Signature on received public decryption response is not valid!");
         return Ok(false);
     }
+
+    // Verify the external (EIP-712) signature if params are provided
+    if let Some(params) = eip712_params {
+        if params.response_external_signature.is_empty() {
+            tracing::warn!("External signature is empty!");
+            return Ok(false);
+        }
+        let message = compute_public_decryption_message(
+            ext_handles_bytes,
+            &other_resp.plaintexts,
+            params.response_extra_data,
+        )?;
+        match recover_address_from_ext_signature(
+            &message,
+            params.trusted_eip712_domain,
+            params.response_external_signature,
+        ) {
+            Ok(recovered_addr) => {
+                let expected_addr = resp_verf_key.address();
+                if recovered_addr != expected_addr {
+                    tracing::warn!(
+                        "External signature address mismatch: recovered {} but expected {}",
+                        recovered_addr,
+                        expected_addr
+                    );
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to recover address from external signature: {e}");
+                return Ok(false);
+            }
+        }
+    }
+
     Ok(true)
 }
 
@@ -448,9 +494,20 @@ pub(crate) fn select_most_common_public_dec(
 
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
+///
+/// If Ok(None) is returned, it means there are no responses to verify.
+///
+/// If Ok(Some(vec![])) is returned, it means there were responses to
+/// verify but none of them pass the verification.
+///
+/// If Ok(Some(vec![...])) is returned, the values inside the vec are
+/// the verified response payloads.
 fn validate_public_decrypt_responses(
     server_pks: &HashMap<u32, PublicSigKey>,
     agg_resp: &[PublicDecryptionResponse],
+    eip712_domain: Option<&Eip712Domain>,
+    ext_handles_bytes: &[Vec<u8>],
+    extra_data: Option<&[u8]>,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
@@ -473,6 +530,13 @@ fn validate_public_decrypt_responses(
             }
         };
 
+        if let Some(expected_extra_data) = extra_data {
+            if cur_resp.extra_data != expected_extra_data {
+                tracing::warn!("Extra data mismatch in public decryption!");
+                continue;
+            }
+        }
+
         // check the uniqueness of verification key
         if verification_keys.contains(&cur_payload.verification_key) {
             tracing::warn!(
@@ -484,11 +548,18 @@ fn validate_public_decrypt_responses(
 
         // Validate that all the responses agree with the pivot on the static parts of the
         // response
+        let eip712_params = eip712_domain.map(|domain| Eip712VerificationParams {
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: domain,
+        });
         if !validate_public_decrypt_meta_data(
             server_pks,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
+            eip712_params.as_ref(),
+            ext_handles_bytes,
         )? {
             tracing::warn!("Some server did not provide the proper response!");
             continue;
@@ -520,8 +591,28 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
+    // Extract EIP-712 domain and external handles from request for external sig verification
+    let eip712_domain = match &request {
+        Some(req) => Some(optional_protobuf_to_alloy_domain(req.domain.as_ref())?),
+        None => None,
+    };
+    let ext_handles_bytes: Vec<Vec<u8>> = match &request {
+        Some(req) => req
+            .ciphertexts
+            .iter()
+            .map(|c| c.external_handle.clone())
+            .collect(),
+        None => vec![],
+    };
+    let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
     let resp_parsed_payloads = crate::some_or_err(
-        validate_public_decrypt_responses(server_pks, agg_resp)?,
+        validate_public_decrypt_responses(
+            server_pks,
+            agg_resp,
+            eip712_domain.as_ref(),
+            &ext_handles_bytes,
+            extra_data,
+        )?,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
     )?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
@@ -529,10 +620,14 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
             ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
         ));
     }
+
     match request {
         Some(req) => {
             let pivot_payload = resp_parsed_payloads[0].clone();
 
+            // NOTE: this error never happen since the number of handles
+            // is checked in `validate_public_decrypt_responses` so when we reach this point
+            // they should all match.
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
                 return Err(anyhow_error_and_log(
                     ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
@@ -761,9 +856,6 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         "Received new crs generation request"
     );
 
-    let epoch_id =
-        parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::CrsGenRequest)?;
-
     // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
     // to use max_num_bits that are not powers of 2 so we enforce it here.
@@ -779,10 +871,15 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
     let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
 
     // TODO(zama-ai/kms-internal/issues/2758)
-    // remove the default context when all of context is ready
+    // remove the default context and epoch when all of context is ready
     let context_id = match &req.context_id {
         Some(ctx) => parse_grpc_request_id(ctx, RequestIdParsingErr::Context)?,
         None => *DEFAULT_MPC_CONTEXT,
+    };
+
+    let epoch_id = match &req.epoch_id {
+        Some(epoch) => parse_grpc_request_id(epoch, RequestIdParsingErr::Epoch)?,
+        None => *DEFAULT_EPOCH_ID,
     };
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
@@ -898,10 +995,9 @@ mod tests {
     use super::{
         unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
         validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
+        verify_user_decrypt_eip712, Eip712VerificationParams, DSEP_PUBLIC_DECRYPTION,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
 
@@ -1215,7 +1311,7 @@ mod tests {
 
         let typed_ciphertext = TypedCiphertext {
             ciphertext,
-            fhe_type: 1,
+            fhe_type: tfhe::FheTypes::Uint4 as i32,
             ciphertext_format: 0,
             external_handle: vec![123],
         };
@@ -1292,7 +1388,7 @@ mod tests {
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 1,
+                fhe_type: tfhe::FheTypes::Uint4 as i32,
             }],
             request_id: request_id.clone(),
         };
@@ -1304,9 +1400,15 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
 
         // use a bad signature (malformed signature)
@@ -1315,9 +1417,15 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
-            assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err()
-            );
+            assert!(validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .is_err());
         }
 
         // use a bad signature (signing the wrong value)
@@ -1331,7 +1439,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: bad_request_id,
             };
@@ -1341,10 +1449,15 @@ mod tests {
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &bad_signature_buf)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &pivot,
+                &bad_signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
 
         // use a bad response (digest mismatch)
@@ -1358,7 +1471,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: bad_request_id,
             };
@@ -1367,10 +1480,15 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &bad_value,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
 
         // use a bad response (bad validation key)
@@ -1380,7 +1498,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id: request_id.clone(),
             };
@@ -1389,10 +1507,15 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &bad_value,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
 
         // use a bad response (mismatch plaintext)
@@ -1402,7 +1525,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id,
             };
@@ -1411,10 +1534,15 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&pks, &pivot, &bad_value, &signature_buf)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &bad_value,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
 
         // happy path
@@ -1422,9 +1550,15 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
-            assert!(
-                validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).unwrap()
-            );
+            assert!(validate_public_decrypt_meta_data(
+                &pks,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                None,
+                &[]
+            )
+            .unwrap());
         }
     }
 
@@ -1442,49 +1576,72 @@ mod tests {
                 .map(|(i, k)| (i as u32 + 1, k)),
         );
 
+        let alloy_domain = dummy_domain();
+        let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
+
         let request_id = Some(
             derive_request_id("test_validate_public_decrypt_responses")
                 .unwrap()
                 .into(),
         );
+        let extra_data_0 = vec![1, 2, 3, 4];
+        let extra_data_1 = vec![1, 2, 3, 4]; // same extra_data as resp0
+        let plaintexts = vec![TypedPlaintext {
+            bytes: vec![1],
+            fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
+        }];
+
+        // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: 1,
-                }],
+                plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
+            let external_signature = compute_external_pt_signature(
+                &sk0,
+                &ext_handles_bytes,
+                &plaintexts,
+                &extra_data_0,
+                &alloy_domain,
+            )
+            .unwrap();
+
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: vec![],
-                extra_data: vec![1, 2, 3, 4], // some extra data that is different from resp1
+                external_signature,
+                extra_data: extra_data_0.clone(),
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: 1,
-                }],
+                plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
+            let external_signature = compute_external_pt_signature(
+                &sk1,
+                &ext_handles_bytes,
+                &plaintexts,
+                &extra_data_1,
+                &alloy_domain,
+            )
+            .unwrap();
+
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: vec![],
-                extra_data: vec![],
+                external_signature,
+                extra_data: extra_data_1.clone(),
             }
         };
 
@@ -1497,20 +1654,32 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
-                    .unwrap()
-                    .unwrap()
-                    .len(),
+                validate_public_decrypt_responses(
+                    &pks,
+                    &bad_agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
                 1
             );
 
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
-                    .unwrap()
-                    .unwrap()
-                    .len(),
+                validate_public_decrypt_responses(
+                    &pks,
+                    &bad_agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
                 1
             );
         }
@@ -1519,10 +1688,16 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &bad_agg_resp)
-                    .unwrap()
-                    .unwrap()
-                    .len(),
+                validate_public_decrypt_responses(
+                    &pks,
+                    &bad_agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
                 1
             );
         }
@@ -1535,11 +1710,11 @@ mod tests {
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
-                            fhe_type: 1,
+                            fhe_type: tfhe::FheTypes::Uint8 as i32,
                         },
                         TypedPlaintext {
                             bytes: vec![1],
-                            fhe_type: 1,
+                            fhe_type: tfhe::FheTypes::Uint8 as i32,
                         },
                     ],
                     request_id,
@@ -1558,11 +1733,37 @@ mod tests {
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
-                    .unwrap()
-                    .unwrap()
-                    .len(),
+                validate_public_decrypt_responses(
+                    &pks,
+                    &agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
                 1
+            );
+        }
+
+        // one of the response has the wrong extra_data
+        {
+            let mut bad_resp = resp1.clone();
+            bad_resp.extra_data = vec![0];
+            let agg_resp = vec![resp0.clone(), bad_resp];
+            assert_eq!(
+                validate_public_decrypt_responses(
+                    &pks,
+                    &agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
+                1 // instead of 2
             );
         }
 
@@ -1570,10 +1771,16 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&pks, &agg_resp)
-                    .unwrap()
-                    .unwrap()
-                    .len(),
+                validate_public_decrypt_responses(
+                    &pks,
+                    &agg_resp,
+                    Some(&alloy_domain),
+                    &ext_handles_bytes,
+                    Some(&extra_data_0),
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
                 2
             );
         }
@@ -1596,7 +1803,7 @@ mod tests {
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let ciphertexts = vec![TypedCiphertext {
             ciphertext: vec![1, 2, 3, 4],
-            fhe_type: 2,
+            fhe_type: tfhe::FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3, 4],
             ciphertext_format: 1,
         }];
@@ -1604,7 +1811,9 @@ mod tests {
             .iter()
             .map(|c| c.external_handle.to_owned())
             .collect::<Vec<_>>();
-        let domain = dummy_domain();
+        let extra_data = vec![1, 2, 3];
+        let alloy_domain = dummy_domain();
+        let domain = Some(alloy_to_protobuf_domain(&alloy_domain).unwrap());
         let request = PublicDecryptionRequest {
             request_id: request_id.clone(),
             ciphertexts,
@@ -1613,8 +1822,8 @@ mod tests {
                     .unwrap()
                     .into(),
             ),
-            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
-            extra_data: vec![1, 2, 3],
+            domain: domain.clone(),
+            extra_data: extra_data.clone(),
             context_id: None,
             epoch_id: None,
         };
@@ -1622,7 +1831,7 @@ mod tests {
         let resp0 = {
             let plaintexts = vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 2,
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
             }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
@@ -1633,13 +1842,12 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
             let external_signature = compute_external_pt_signature(
                 &sk0,
-                ext_handles_bytes.clone(),
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
-                domain.clone(),
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1647,13 +1855,13 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature,
-                extra_data,
+                extra_data: extra_data.clone(),
             }
         };
         let resp1 = {
             let plaintexts = vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: 2,
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
             }];
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
@@ -1664,13 +1872,12 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let extra_data = vec![1, 2, 3]; // some extra data, independent of resp1
             let external_signature = compute_external_pt_signature(
-                &sk0,
-                ext_handles_bytes,
+                &sk1,
+                &ext_handles_bytes,
                 &plaintexts,
                 &extra_data,
-                domain,
+                &alloy_domain,
             )
             .unwrap();
 
@@ -1678,7 +1885,7 @@ mod tests {
                 signature: signature_buf,
                 payload: Some(payload),
                 external_signature,
-                extra_data,
+                extra_data: extra_data.clone(),
             }
         };
 
@@ -1710,47 +1917,6 @@ mod tests {
             .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP));
         }
 
-        // ciphertext count is wrong
-        {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let bad_request = PublicDecryptionRequest {
-                request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
-                // here we use two ciphertexts
-                ciphertexts: vec![
-                    TypedCiphertext {
-                        ciphertext: vec![1, 2, 3, 4],
-                        fhe_type: 1,
-                        external_handle: vec![1, 2, 3, 4],
-                        ciphertext_format: 1,
-                    },
-                    TypedCiphertext {
-                        ciphertext: vec![5, 6, 7, 8],
-                        fhe_type: 1,
-                        external_handle: vec![5, 6, 7, 8],
-                        ciphertext_format: 1,
-                    },
-                ],
-                key_id: Some(
-                    derive_request_id("PublicDecryptionRequest key_id")
-                        .unwrap()
-                        .into(),
-                ),
-                domain: None,
-                extra_data: vec![],
-                context_id: None,
-                epoch_id: None,
-            };
-            assert!(validate_public_decrypt_responses_against_request(
-                &pks,
-                Some(bad_request),
-                &agg_resp,
-                2
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT));
-        }
-
         // plaintext type is wrong
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
@@ -1767,8 +1933,8 @@ mod tests {
                         .unwrap()
                         .into(),
                 ),
-                domain: None,
-                extra_data: vec![],
+                domain: domain.clone(),
+                extra_data: extra_data.clone(),
                 context_id: None,
                 epoch_id: None,
             };
@@ -1783,6 +1949,20 @@ mod tests {
             .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE));
         }
 
+        // bad external signature
+        {
+            let mut bad_resp = resp1.clone();
+            bad_resp.external_signature[0] ^= 1;
+            let agg_resp = vec![resp0.clone(), bad_resp];
+            validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(request.clone()),
+                &agg_resp,
+                1,
+            )
+            .unwrap();
+        }
+
         // request ID
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
@@ -1795,7 +1975,7 @@ mod tests {
                 ),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
-                    fhe_type: 2,
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
@@ -1804,8 +1984,8 @@ mod tests {
                         .unwrap()
                         .into(),
                 ),
-                domain: None,
-                extra_data: vec![],
+                domain: domain.clone(),
+                extra_data: extra_data.clone(),
                 context_id: None,
                 epoch_id: None,
             };
@@ -1837,6 +2017,101 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn test_validate_public_decrypt_meta_response_with_eip712() {
+        let mut rng = AesRng::seed_from_u64(9999);
+        let (vk0, sk0) = gen_sig_keys(&mut rng);
+        let (vk1, _sk1) = gen_sig_keys(&mut rng);
+        let (vk2, _sk2) = gen_sig_keys(&mut rng);
+
+        let pks = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
+
+        let request_id = Some(
+            derive_request_id("test_validate_public_decrypt_meta_response_with_eip712")
+                .unwrap()
+                .into(),
+        );
+        let pivot = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![1],
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
+            }],
+            request_id: request_id.clone(),
+        };
+
+        let alloy_domain = dummy_domain();
+        let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
+        let extra_data = vec![1, 2, 3, 4];
+
+        let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
+
+        let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
+        let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
+
+        let external_signature = compute_external_pt_signature(
+            &sk0,
+            &ext_handles_bytes,
+            &pivot.plaintexts,
+            &extra_data,
+            &alloy_domain,
+        )
+        .unwrap();
+
+        let mut bad_external_signature = external_signature.clone();
+        bad_external_signature[0] ^= 1;
+
+        // return false for empty external signature
+        assert!(!validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
+
+        // return false for bad external signature
+        assert!(!validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &bad_external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
+
+        // happy path
+        assert!(validate_public_decrypt_meta_data(
+            &pks,
+            &pivot,
+            &pivot,
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+            &ext_handles_bytes
+        )
+        .unwrap());
     }
 
     #[test]
@@ -1875,7 +2150,7 @@ mod tests {
         );
         let plaintexts = vec![TypedPlaintext {
             bytes: vec![1],
-            fhe_type: 1,
+            fhe_type: tfhe::FheTypes::Uint4 as i32,
         }];
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
@@ -1911,7 +2186,7 @@ mod tests {
             resp1.payload.iter_mut().for_each(|x| {
                 x.plaintexts = vec![TypedPlaintext {
                     bytes: vec![0],
-                    fhe_type: 1,
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }]
             });
             let agg_resp = vec![resp0.clone(), resp1];

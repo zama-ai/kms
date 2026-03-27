@@ -20,8 +20,8 @@ use kms_grpc::{
 use serial_test::serial;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]

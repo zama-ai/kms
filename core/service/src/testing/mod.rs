@@ -101,6 +101,6 @@ pub mod prelude {
     pub use anyhow::{Context, Result};
 
     pub use crate::vault::storage::{file::FileStorage, Storage, StorageType};
-    pub use algebra::role::Role;
     pub use tempfile::TempDir;
+    pub use threshold_types::role::Role;
 }

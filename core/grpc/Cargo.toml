@@ -26,6 +26,7 @@ hex.workspace = true
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive", "rc"] }
+threshold-types.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
@@ -38,9 +39,6 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
 ] }
 tfhe-versionable.workspace = true
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "extension_degree_4",
-] }
 tracing = { workspace = true, features = ["log"] }
 wasm-bindgen.workspace = true
 

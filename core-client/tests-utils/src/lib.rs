@@ -103,6 +103,7 @@ impl DockerComposeCmd {
             | KMSMode::ThresholdCustodianTestParameter => {
                 &[50100, 50200, 50300, 50400, 50001, 50002, 50003, 50004]
             }
+            // Must match the port as defined in kms/docker-compose-core-centralized.yml
             KMSMode::Centralized | KMSMode::CentralizedCustodian => &[50051],
         }
     }

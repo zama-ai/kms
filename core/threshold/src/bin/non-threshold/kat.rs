@@ -13,7 +13,7 @@ use tfhe::{
     ClientKey, CompressedServerKey, FheUint64, Seed,
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
-use threshold_fhe::execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
+use threshold_execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
 
 const CLIENT_KEY_PATH: &str = "client_key.bin";
 const SERVER_KEY_PATH: &str = "server_key.bin";

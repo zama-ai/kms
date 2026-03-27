@@ -11,37 +11,34 @@ use crate::{
 
 // === External Crates ===
 use aes_prng::AesRng;
-use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold},
-};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     RequestId,
 };
+use threshold_execution::{
+    runtime::sessions::{
+        base_session::{BaseSession, TwoSetsBaseSession},
+        session_parameters::{
+            GenericParameterHandles, SessionParameters, TwoSetsSessionParameters,
+        },
+        small_session::SmallSession,
+    },
+    small_execution::prss::{DerivePRSSState, PRSSSetup},
+};
+use threshold_networking::{
+    grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
+};
+use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
+
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::{
-    execution::{
-        runtime::{
-            party::{Identity, MpcIdentity, RoleAssignment},
-            sessions::{
-                base_session::{BaseSession, TwoSetsBaseSession},
-                session_parameters::{
-                    GenericParameterHandles, SessionParameters, TwoSetsSessionParameters,
-                },
-                small_session::SmallSession,
-            },
-        },
-        small_execution::prss::{DerivePRSSState, PRSSSetup},
-    },
-    networking::{
-        grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
-        NetworkMode,
-    },
-    session_id::SessionId,
+use threshold_types::session_id::SessionId;
+use threshold_types::{
+    network::NetworkMode,
+    party::{Identity, MpcIdentity, RoleAssignment},
 };
 use tokio::sync::{Mutex, RwLock};
 use tonic::Code;
@@ -540,9 +537,8 @@ impl SessionMaker {
         session_id: SessionId,
         context_id: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<
-        threshold_fhe::execution::runtime::sessions::base_session::SingleSetNetworkingImpl,
-    > {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::SingleSetNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
 
         let (role_assignment, my_role) = {
@@ -581,9 +577,8 @@ impl SessionMaker {
         context_id_set1: ContextId,
         context_id_set2: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<
-        threshold_fhe::execution::runtime::sessions::base_session::TwoSetsNetworkingImpl,
-    > {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::TwoSetsNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
         let networking = nm
             .make_network_session(session_id, &role_assignment, my_role, network_mode)

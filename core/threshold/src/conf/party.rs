@@ -2,12 +2,11 @@
 //! Configuration file by default is under `config` folder.
 //!
 use super::Party;
-use crate::{
-    execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
-};
 use itertools::Itertools;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
+use threshold_execution::online::preprocessing::redis::RedisConf;
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tokio_rustls::rustls::{
     client::ClientConfig,
     pki_types::{CertificateDer, PrivateKeyDer},

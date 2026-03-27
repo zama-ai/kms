@@ -25,8 +25,8 @@ use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -443,6 +443,10 @@ pub async fn run_decryption_threshold_optionally_fail(
 
     for req in &reqs {
         let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|resp| {
@@ -453,6 +457,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                 }
             })
             .collect();
+
         // Compute threshold < amount_parties/3
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;

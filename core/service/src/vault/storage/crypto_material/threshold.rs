@@ -15,7 +15,7 @@ use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
     zk::CompactPkeCrs,
 };
-use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::{

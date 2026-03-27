@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::Zeroize;
 
-use super::super::{role::Role, structure_traits::Ring};
+use threshold_types::role::Role;
+
+use super::super::structure_traits::Ring;
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ShareVersioned<Z: Clone> {
@@ -203,7 +205,9 @@ impl<Z: Ring> Mul<u128> for Share<Z> {
 mod tests {
     use std::num::Wrapping;
 
-    use crate::{galois_rings::degree_4::ResiduePolyF4Z128, role::Role, sharing::share::Share};
+    use threshold_types::role::Role;
+
+    use crate::{galois_rings::degree_4::ResiduePolyF4Z128, sharing::share::Share};
 
     #[test]
     fn op_overload() {

@@ -87,8 +87,8 @@ use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponseP
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 use wasm_bindgen::{prelude::wasm_bindgen, JsError, JsValue};
 
 // Since wasm_bindgen is limited, namely it says

@@ -1,10 +1,11 @@
 pub mod base_ring;
 pub mod bivariate;
+pub mod commitment;
 pub mod error_correction;
 pub mod galois_fields;
 pub mod galois_rings;
 pub mod poly;
-pub mod role;
+pub mod randomness_check;
 pub mod sharing;
 pub mod structure_traits;
 pub mod syndrome;

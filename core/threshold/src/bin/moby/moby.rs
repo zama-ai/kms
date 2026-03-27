@@ -5,6 +5,7 @@ use observability::telemetry::init_tracing;
 use peak_alloc::PeakAlloc;
 use threshold_fhe::conf::party::PartyConf;
 use threshold_fhe::grpc;
+use threshold_fhe::malicious_moby::DefaultChoreoRoutingHelper;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]
@@ -92,8 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tracer_provider = init_tracing(&telemetry_config).await?;
 
+    // TODO(dp): Need a new binary that lives in `threshold-experimental` that does essentially
+    // the same thing as this `moby` binary, but uses `ExperimentalChoreoRoutingHelper` instead of `DefaultChoreoRoutingHelper`.
+    // Is it acceptable to have two binaries? `moby` and also `moby-stairway`? The alternative would be to move the `moby` binary to
+    // `threshold-experimental` and build it there.
+
     // Run the server and get the result
-    let result = grpc::server::run::<EXTENSION_DEGREE>(&settings).await;
+    let result = grpc::server::run::<EXTENSION_DEGREE>(&settings, DefaultChoreoRoutingHelper).await;
 
     // After the server has completed, shut down telemetry
     // Sleep to let some time for the process to export all the spans before shutdown

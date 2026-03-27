@@ -10,7 +10,7 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
     TAG_CONTEXT_ID, TAG_CRS_ID, TAG_PARTY_ID,
 };
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -440,7 +440,38 @@ mod tests {
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
-        // missing epoch ID
+        // TODO: re-enable the following tests after the default epoch fallback is removed in validation
+        // https://github.com/zama-ai/kms-internal/issues/2758
+        //
+        // // missing epoch ID
+        // {
+        //     let request = CrsGenRequest {
+        //         request_id: Some(req_id.into()),
+        //         epoch_id: None, // missing
+        //         context_id: None,
+        //         params: FheParameter::Test.into(),
+        //         domain: Some(domain),
+        //         extra_data: vec![],
+        //         max_num_bits: None,
+        //     };
+        //     let err = crs_gen_impl(&kms, Request::new(request), false)
+        //         .await
+        //         .unwrap_err();
+        //     assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        // }
+    }
+
+    // test the missing epoch ID case that is currently allowed with a warning, to make sure the default epoch fallback works, and to prepare for the future removal of the default epoch fallback
+    // TODO: remove following tests after the default epoch fallback is no longer used in validation
+    // https://github.com/zama-ai/kms-internal/issues/2758
+    #[tokio::test]
+    async fn default_epoch_id() {
+        let mut rng = AesRng::seed_from_u64(54321);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_default_epoch").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        // missing epoch ID should use default epoch with a warning, but not fail
         {
             let request = CrsGenRequest {
                 request_id: Some(req_id.into()),
@@ -451,10 +482,21 @@ mod tests {
                 extra_data: vec![],
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request), false)
+            let _req = crs_gen_impl(&kms, Request::new(request), false)
                 .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+                .unwrap();
+            let res = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                res.into_inner()
+                    .request_id
+                    .unwrap()
+                    .request_id
+                    .to_ascii_lowercase(),
+                req_id.as_str()
+            );
         }
     }
 
