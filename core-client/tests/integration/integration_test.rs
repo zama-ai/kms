@@ -4,7 +4,7 @@
 // TODO: Remove after full migration to isolated tests is complete.
 
 use assert_cmd::Command;
-use cc_tests_utils::{DockerCompose, KMSMode};
+use test_utils_cc::{DockerCompose, KMSMode};
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_core_client::*;
 use kms_grpc::identifiers::EpochId;

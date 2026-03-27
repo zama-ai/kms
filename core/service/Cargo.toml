@@ -123,6 +123,7 @@ tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
+test-utils = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["log"] }
 trait-variant.workspace = true
 url.workspace = true
@@ -144,9 +145,9 @@ kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
+test-utils-service = { path = "./test-utils-service" }
 sysinfo.workspace = true
 tempfile.workspace = true
-tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
@@ -156,7 +157,7 @@ tracing-test.workspace = true
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "dep:test-utils"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-networking/non-wasm",
