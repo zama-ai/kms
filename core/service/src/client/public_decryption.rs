@@ -1,13 +1,14 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::signatures::{internal_verify_sig, PublicSigKey, Signature};
 use crate::engine::validation::validate_public_decrypt_responses_against_request;
+use crate::engine::validation::PublicDecTrustedValidationContext;
 use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
-use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
 use kms_grpc::{EpochId, RequestId};
 
 impl Client {
@@ -61,12 +62,27 @@ impl Client {
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         use crate::engine::validation::select_most_common_public_dec;
 
-        validate_public_decrypt_responses_against_request(
-            self.get_server_pks()?,
-            request,
-            agg_resp,
-            min_agree_count,
-        )?;
+        let eip712_domain = match &request {
+            Some(req) => Some(optional_protobuf_to_alloy_domain(req.domain.as_ref())?),
+            None => None,
+        };
+        let ext_handles_bytes: Vec<Vec<u8>> = match &request {
+            Some(req) => req
+                .ciphertexts
+                .iter()
+                .map(|c| c.external_handle.clone())
+                .collect(),
+            None => vec![],
+        };
+        let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
+        let trusted_ctx = PublicDecTrustedValidationContext {
+            server_pks: self.get_server_pks()?,
+            eip712_domain: eip712_domain.as_ref(),
+            ext_handles_bytes: &ext_handles_bytes,
+            extra_data,
+            request: request.as_ref(),
+        };
+        validate_public_decrypt_responses_against_request(&trusted_ctx, agg_resp, min_agree_count)?;
 
         let pivot_payload = some_or_err(
             select_most_common_public_dec(min_agree_count as usize, agg_resp),
