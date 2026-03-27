@@ -1,7 +1,7 @@
 CLAUDE.md
 .claude/
 /target*
-/temp
+**/temp/*
 /keys
 /crs
 /test-material

@@ -344,7 +344,6 @@ mod tests {
         base_ring::{Z128, Z64},
         galois_rings::common::{pack_residue_poly, TryFromWrapper},
         poly::Poly,
-        role::Role,
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
@@ -359,6 +358,7 @@ mod tests {
     use rstest::rstest;
     use std::collections::HashSet;
     use std::num::Wrapping;
+    use threshold_types::role::Role;
 
     #[test]
     fn test_is_zero() {

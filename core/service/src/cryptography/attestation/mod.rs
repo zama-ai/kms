@@ -14,7 +14,7 @@ use rcgen::{
     PKCS_ECDSA_P256_SHA256,
 };
 use std::{sync::Arc, time::Duration};
-use threshold_fhe::networking::tls::extract_subject_from_cert;
+use threshold_networking::tls::extract_subject_from_cert;
 use tokio::sync::RwLock;
 #[cfg(feature = "insecure")]
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;

@@ -4,8 +4,8 @@ use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::*;
 
 /// For user decryption, we only use the Addr variant,

@@ -1,31 +1,16 @@
-#[cfg(feature = "non-wasm")]
-#[cfg(feature = "choreographer")]
+#[cfg(all(feature = "choreographer", feature = "non-wasm"))]
 pub mod choreography;
-pub mod commitment;
-pub mod execution;
-pub mod file_handling;
-#[cfg(feature = "non-wasm")]
-pub mod networking;
-pub mod session_id;
-#[cfg(any(test, feature = "testing"))]
-pub mod tests;
 #[cfg(feature = "non-wasm")]
 pub use tokio;
 #[cfg(all(feature = "non-wasm", feature = "measure_memory"))]
 pub mod allocator;
 #[cfg(feature = "non-wasm")]
 pub mod conf;
-#[cfg(feature = "experimental")]
-pub mod experimental;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
-#[cfg(any(test, feature = "malicious_strategies"))]
-pub mod malicious_execution;
 
 #[cfg(feature = "non-wasm")]
 pub mod tls_certs;
 
-pub trait ProtocolDescription {
-    const INDENT_STRING: &str = "   ";
-    fn protocol_desc(depth: usize) -> String;
-}
+#[cfg(all(feature = "choreographer", feature = "non-wasm"))]
+pub mod malicious_moby;
