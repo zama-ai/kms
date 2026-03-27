@@ -13,8 +13,8 @@ use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::fmt;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 
 /// Client data type
 ///

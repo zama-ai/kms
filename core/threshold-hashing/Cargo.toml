@@ -9,7 +9,6 @@ description = "Hashing utilities"
 
 [dependencies]
 anyhow.workspace = true
-tracing.workspace = true
 serde.workspace = true
 sha3.workspace = true
 bc2wrap.workspace = true

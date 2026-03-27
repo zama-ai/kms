@@ -27,18 +27,16 @@ use observability::{
 };
 use tfhe::FheTypes;
 use thread_handles::spawn_compute_bound;
-use threshold_fhe::{
-    execution::{
-        endpoints::decryption::{
-            decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-            LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
-            SmallOfflineNoiseFloodSession,
-        },
-        runtime::sessions::small_session::SmallSession,
-        tfhe_internals::private_keysets::PrivateKeySet,
+use threshold_execution::{
+    endpoints::decryption::{
+        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+        LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
+        SmallOfflineNoiseFloodSession,
     },
-    session_id::SessionId,
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::private_keysets::PrivateKeySet,
 };
+use threshold_types::session_id::SessionId;
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
@@ -100,7 +98,7 @@ pub struct SecureNoiseFloodDecryptor;
 impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     type Prep = SmallOfflineNoiseFloodSession<
         { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        threshold_fhe::execution::runtime::sessions::small_session::SmallSession<ResiduePolyF4Z128>,
+        threshold_execution::runtime::sessions::small_session::SmallSession<ResiduePolyF4Z128>,
     >;
 
     async fn decrypt<T>(
@@ -589,10 +587,10 @@ impl<
                 spawn_compute_bound(move || {
                     compute_external_pt_signature(
                         &sigkey,
-                        ext_handles_bytes,
+                        &ext_handles_bytes,
                         &pts,
                         &extra_data,
-                        eip712_domain,
+                        &eip712_domain,
                     )
                 })
                 .await
@@ -716,7 +714,7 @@ mod tests {
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::SeedableRng;
-    use threshold_fhe::execution::{
+    use threshold_execution::{
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
@@ -737,9 +735,7 @@ mod tests {
     impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
-                ResiduePolyF4Z128,
-            >,
+            SmallSession<ResiduePolyF4Z128>,
         >;
 
         async fn decrypt<T>(

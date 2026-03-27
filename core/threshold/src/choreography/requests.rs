@@ -1,8 +1,8 @@
-use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use crate::execution::tfhe_internals::parameters::DKGParams;
-use crate::session_id::SessionId;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use threshold_execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_types::session_id::SessionId;
 
 use super::grpc::SupportedRing;
 

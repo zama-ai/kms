@@ -1,7 +1,6 @@
 use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z64;
-use algebra::role::Role;
 use algebra::sharing::shamir::InputOp;
 use algebra::sharing::shamir::ShamirSharings;
 use algebra::sharing::share::Share;
@@ -10,19 +9,20 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 use std::num::Wrapping;
-use threshold_fhe::execution::endpoints::decryption::{
+use threshold_execution::endpoints::decryption::{
     secure_init_prep_bitdec_large_session, secure_init_prep_bitdec_small_session,
 };
-use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
-use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
-use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
-use threshold_fhe::execution::runtime::sessions::{
+use threshold_execution::online::bit_manipulation::bit_dec_batch;
+use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use threshold_execution::runtime::sessions::{
     large_session::LargeSession, small_session::SmallSession,
 };
-use threshold_fhe::networking::NetworkMode;
-use threshold_fhe::tests::helper::tests_and_benches::{
+use threshold_execution::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
+use threshold_types::network::NetworkMode;
+use threshold_types::role::Role;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

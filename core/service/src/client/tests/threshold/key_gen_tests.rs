@@ -28,9 +28,9 @@ cfg_if::cfg_if! {
     use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::Tagged;
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
-    use algebra::role::Role;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-    use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
+    use threshold_types::role::Role;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
+    use threshold_execution::tfhe_internals::test_feature::to_hl_client_key;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
 }}
@@ -59,7 +59,7 @@ use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
 use tfhe::core_crypto::commons::utils::ZipChecked;
 #[cfg(feature = "slow_tests")]
-use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
+use threshold_execution::tfhe_internals::test_feature::run_decompression_test;
 use tonic::{Response, Status};
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -100,7 +100,7 @@ impl TestKeyGenResult {
 
     fn sanity_check(&self) {
         use tfhe::prelude::FheDecrypt;
-        use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+        use threshold_execution::tfhe_internals::utils::expanded_encrypt;
         let (client_key, public_key, server_key) = match &self {
             TestKeyGenResult::DecompressionOnly(_) => {
                 /* cannot sanity check */
@@ -1207,7 +1207,7 @@ fn try_reconstruct_shares(
     Option<NoiseSquashingCompressionPrivateKey>,
 ) {
     use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
-    use threshold_fhe::execution::tfhe_internals::{
+    use threshold_execution::tfhe_internals::{
         private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
     };
 

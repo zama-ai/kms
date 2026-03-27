@@ -1,28 +1,26 @@
 use algebra::{
     base_ring::{Z128, Z64},
     galois_rings::degree_4::ResiduePolyF4,
-    role::Role,
     sharing::share::Share,
 };
 use ctor::ctor;
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
-use threshold_fhe::execution::online::{
+use threshold_execution::online::{
     preprocessing::{create_redis_factory, redis::RedisConf, PreprocessorFactory},
     triple::Triple,
 };
+use threshold_types::role::Role;
 
 #[cfg(feature = "testing")]
-use threshold_fhe::{
-    execution::{
-        endpoints::keygen::SecureOnlineDistributedKeyGen,
-        online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::parameters::DKGParams,
-    },
-    session_id::SessionId,
+use threshold_execution::{
+    endpoints::keygen::SecureOnlineDistributedKeyGen,
+    online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
+    runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+    tfhe_internals::parameters::DKGParams,
 };
+use threshold_types::session_id::SessionId;
 
 #[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};
@@ -244,15 +242,13 @@ fn test_dkg_orchestrator_large(
 ) {
     use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
     use itertools::Itertools;
+    use test_utils::write_element;
     use thread_handles::OsThreadGroup;
-    use threshold_fhe::{
-        execution::{
-            endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
-            online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
-        },
-        file_handling::tests::write_element,
-        networking::NetworkMode,
+    use threshold_execution::{
+        endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
+        online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
+    use threshold_types::network::NetworkMode;
 
     let params_basics_handles = params.get_params_basics_handle();
 
@@ -276,7 +272,7 @@ fn test_dkg_orchestrator_large(
         let rt_handle = rt.handle().clone();
         let tag = tag.clone();
         handles.add(thread::spawn(move || {
-            use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+            use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 
             let _guard = rt_handle.enter();
             println!("Thread created for party {party}");
@@ -349,7 +345,7 @@ fn test_dkg_orchestrator_large(
 #[cfg(feature = "testing")]
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
-    use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     let params = PARAMS_TEST_BK_SNS;
     let params = params.get_params_without_sns();
@@ -375,13 +371,11 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
-    use threshold_fhe::{
-        execution::online::preprocessing::{
-            dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing,
-            InMemoryBitDecPreprocessing, TriplePreprocessing,
-        },
-        tests::helper::testing::get_dummy_parameters_for_parties,
+    use threshold_execution::online::preprocessing::{
+        dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing,
+        InMemoryBitDecPreprocessing, TriplePreprocessing,
     };
+    use threshold_execution::tests::helper::testing::get_dummy_parameters_for_parties;
 
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(

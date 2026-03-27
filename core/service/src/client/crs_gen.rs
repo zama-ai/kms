@@ -17,7 +17,7 @@ use kms_grpc::ContextId;
 use kms_grpc::EpochId;
 use kms_grpc::RequestId;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
     pub fn crs_gen_request(
@@ -265,7 +265,7 @@ pub(crate) mod tests {
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();

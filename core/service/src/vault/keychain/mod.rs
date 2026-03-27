@@ -16,7 +16,7 @@ use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::networking::tls::ReleasePCRValues;
+use threshold_networking::tls::ReleasePCRValues;
 
 pub mod awskms;
 pub mod secretsharing;
@@ -217,7 +217,7 @@ pub mod tests {
         verify_root_key_measurements, RootKeyMeasurements,
     };
     use iam_rs::{IAMPolicy, IAMVersion};
-    use threshold_fhe::networking::tls::ReleasePCRValues;
+    use threshold_networking::tls::ReleasePCRValues;
 
     #[test]
     fn test_verify_root_key_measurements() {

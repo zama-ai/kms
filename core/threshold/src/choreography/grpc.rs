@@ -1,18 +1,15 @@
 //! gRPC-based choreography.
 
-pub mod proto_gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_choreography");
-}
-
-use self::proto_gen::choreography_server::{Choreography, ChoreographyServer};
-use self::proto_gen::{
-    CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
-    PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse, ReshareRequest,
-    ReshareResponse, StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest,
-    ThresholdDecryptResponse, ThresholdDecryptResultRequest, ThresholdDecryptResultResponse,
-    ThresholdKeyGenRequest, ThresholdKeyGenResponse, ThresholdKeyGenResultRequest,
-    ThresholdKeyGenResultResponse,
+use threshold_networking::choreography_gen::choreography_server::{
+    Choreography, ChoreographyServer,
+};
+use threshold_networking::choreography_gen::{
+    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
+    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
+    PrssInitRequest, PrssInitResponse, ReshareRequest, ReshareResponse, StatusCheckRequest,
+    StatusCheckResponse, ThresholdDecryptRequest, ThresholdDecryptResponse,
+    ThresholdDecryptResultRequest, ThresholdDecryptResultResponse, ThresholdKeyGenRequest,
+    ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
 
 #[cfg(feature = "measure_memory")]
@@ -22,58 +19,9 @@ use crate::choreography::requests::{
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
-use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
-use crate::execution::endpoints::decryption::{
-    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
-    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
-    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
-    SnsRadixOrBoolCiphertext,
-};
-use crate::execution::endpoints::decryption::{
-    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
-};
-use crate::execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
-use crate::execution::endpoints::reshare_sk::{
-    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
-};
-use crate::execution::keyset_config::KeySetConfig;
-use crate::execution::large_execution::offline::SecureLargePreprocessing;
-use crate::execution::online::gen_bits::SecureBitGenEven;
-use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
-use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
-use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
-use crate::execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
-use crate::execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
-use crate::execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
-use crate::execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
-use crate::execution::online::preprocessing::{
-    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
-    PreprocessorFactory,
-};
-use crate::execution::runtime::party::{Identity, RoleAssignment};
-use crate::execution::runtime::sessions::base_session::ToBaseSession;
-use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::sessions::large_session::LargeSession;
-use crate::execution::runtime::sessions::session_parameters::{
-    GenericParameterHandles, SessionParameters,
-};
-use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-use crate::execution::small_execution::prf::PRSSConversions;
-use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
-use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
-use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
-use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
-use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
-use crate::networking::{
-    constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager, value::BroadcastValue,
-    NetworkMode,
-};
-use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
 use algebra::base_ring::{Z128, Z64};
 use algebra::galois_rings::common::ResiduePoly;
-use algebra::role::Role;
 use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -84,7 +32,6 @@ use futures_util::{
     TryFutureExt,
 };
 use itertools::Itertools;
-use proto_gen::{CrsGenRequest, CrsGenResponse};
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -94,6 +41,59 @@ use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+use threshold_execution::endpoints::decryption::{
+    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
+    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
+    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
+    SnsRadixOrBoolCiphertext,
+};
+use threshold_execution::endpoints::decryption::{
+    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+};
+use threshold_execution::endpoints::keygen::{
+    OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen,
+};
+use threshold_execution::endpoints::reshare_sk::{
+    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+};
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::large_execution::offline::SecureLargePreprocessing;
+use threshold_execution::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
+use threshold_execution::network_value::BroadcastValue;
+use threshold_execution::online::gen_bits::SecureBitGenEven;
+use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
+use threshold_execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use threshold_execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
+use threshold_execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
+use threshold_execution::online::preprocessing::{
+    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
+    PreprocessorFactory,
+};
+use threshold_execution::runtime::sessions::base_session::ToBaseSession;
+use threshold_execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use threshold_execution::runtime::sessions::large_session::LargeSession;
+use threshold_execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
+use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+use threshold_execution::small_execution::prf::PRSSConversions;
+use threshold_execution::small_execution::prss::PRSSInit;
+use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
+use threshold_execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
+use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
+use threshold_networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
+use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
+use threshold_types::{
+    network::NetworkMode,
+    party::{Identity, RoleAssignment},
+};
 use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},
@@ -2680,9 +2680,7 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
-    sessions: Vec<B>,
-) {
+pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
@@ -2730,7 +2728,7 @@ pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHan
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
+pub async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
     fill_network_memory_info_multiple_sessions(vec![session]).await;
 }
 
@@ -2744,12 +2742,10 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
+    use threshold_execution::tfhe_internals::test_feature::insecure_initialize_key_material;
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::insecure_initialize_key_material(
-        session, params, tag,
-    )
-    .await
+    insecure_initialize_key_material(session, params, tag).await
 }
 
 #[cfg(not(feature = "testing"))]

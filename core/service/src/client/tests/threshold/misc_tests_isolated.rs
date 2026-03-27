@@ -15,7 +15,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::RequestId;
 #[cfg(feature = "slow_tests")]
 use serial_test::serial;
-use threshold_fhe::networking::grpc::GrpcServer;
+use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;

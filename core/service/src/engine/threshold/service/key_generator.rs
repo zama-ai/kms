@@ -28,7 +28,7 @@ use observability::{
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
-use threshold_fhe::execution::{
+use threshold_execution::{
     endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
     keyset_config as ddec_keyset_config,
     online::preprocessing::DKGPreprocessing,
@@ -115,9 +115,9 @@ use crate::engine::base::INSECURE_PREPROCESSING_ID;
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
-use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
-use threshold_fhe::execution::tfhe_internals::{
+use threshold_execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares,
     glwe_key::GlweSecretKeyShare,
     test_feature::{initialize_compressed_key_material, insecure_initialize_key_material},
@@ -794,15 +794,15 @@ impl<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >,
     ) -> anyhow::Result<DecompressionKey> {
-        use algebra::role::Role;
         use itertools::Itertools;
         use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, LweSecretKeyOwned};
-        use threshold_fhe::execution::{
+        use threshold_execution::{
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
                 to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,
             },
         };
+        use threshold_types::role::Role;
 
         let output_party = Role::indexed_from_one(INPUT_PARTY_ID);
 
@@ -1477,15 +1477,14 @@ mod tests {
         rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::rngs::OsRng;
-    use threshold_fhe::{
-        execution::{
-            online::preprocessing::dummy::DummyPreprocessing, small_execution::prss::PRSSSetup,
-        },
+    use threshold_execution::{
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
-        networking::NetworkMode,
+        online::preprocessing::dummy::DummyPreprocessing,
+        small_execution::prss::PRSSSetup,
     };
+    use threshold_types::network::NetworkMode;
 
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},

@@ -3,7 +3,7 @@
 //! well as minor differences, in particular to be able to measure memory
 //! complexity as required by NIST.
 
-#[path = "../../../utilities.rs"]
+#[path = "../../utilities.rs"]
 mod utilities;
 
 use aes_prng::AesRng;

@@ -7,7 +7,6 @@
 mod common;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use algebra::role::Role;
 use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
@@ -70,10 +69,11 @@ use std::{
     sync::Arc,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
-use threshold_fhe::{
-    execution::{small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet},
-    networking::tls::ReleasePCRValues,
+use threshold_execution::{
+    small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
 };
+use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::role::Role;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {

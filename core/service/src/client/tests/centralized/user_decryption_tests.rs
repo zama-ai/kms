@@ -18,7 +18,7 @@ use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::collections::HashMap;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 
 #[rstest::rstest]
@@ -372,7 +372,7 @@ pub(crate) async fn user_decryption_centralized(
             // want to introduce extra npm dependency.
 
             use kms_grpc::kms::v1::TypedPlaintext;
-            use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+            use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
             use crate::{
                 client::user_decryption_wasm::TestingUserDecryptionTranscript,
