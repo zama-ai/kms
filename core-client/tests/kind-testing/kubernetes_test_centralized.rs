@@ -6,7 +6,7 @@
 
 use kms_core_client::*;
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use observability::telemetry::init_test_logging_once;
+use observability::telemetry::init_logging;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;
@@ -84,7 +84,7 @@ async fn crs_gen(test_path: &Path) -> String {
 // Having k8 in the name is also on purpose for the same reason.
 #[tokio::test]
 async fn test_k8s_centralzd_insecure() {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let _key_id = insecure_key_gen(keys_folder).await;
@@ -93,7 +93,7 @@ async fn test_k8s_centralzd_insecure() {
 
 #[tokio::test]
 async fn nightly_full_gen_tests_k8s_default_centralzd_sequential_crs() {
-    init_test_logging_once();
+    init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id_1 = crs_gen(keys_folder).await;

@@ -637,7 +637,7 @@ mod kms_custodian_binary_tests {
     use std::{collections::BTreeMap, path::Path, thread};
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        observability::telemetry::init_test_logging_once();
+        observability::telemetry::init_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {

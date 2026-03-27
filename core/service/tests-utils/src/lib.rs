@@ -32,7 +32,7 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
             std::env::set_var("RUN_MODE", "integration");
-            ::observability::telemetry::init_test_logging_once();
+            ::observability::telemetry::init_logging();
             #fn_block
         }
     };
