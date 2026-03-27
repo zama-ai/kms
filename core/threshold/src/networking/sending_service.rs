@@ -654,6 +654,10 @@ mod tests {
     use tokio::task::JoinSet;
     use tokio::time::Instant;
 
+    use crate::execution;
+    use crate::execution::runtime::party::{
+        Identity, Role, RoleAssignment, RoleTrait, TwoSetsRole,
+    };
     use crate::networking::grpc::{
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
@@ -1097,8 +1101,8 @@ mod tests {
     async fn test_run_network_task_does_not_drop_receiver_on_completed() {
         use super::ArcSendValueRequest;
         use super::GrpcSendingService;
-        use crate::networking::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
-        use crate::networking::ggen::{
+        use crate::networking::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
+        use crate::networking::gen::{
             HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse, Status,
         };
         use backoff::ExponentialBackoff;
@@ -1166,7 +1170,7 @@ mod tests {
         };
 
         let client =
-            crate::networking::ggen::gnetworking_client::GnetworkingClient::with_interceptor(
+            crate::networking::gen::gnetworking_client::GnetworkingClient::with_interceptor(
                 channel,
                 observability::telemetry::ContextPropagator,
             );
@@ -1174,7 +1178,7 @@ mod tests {
         // Create channel and shared state
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
         let completed_parties = Arc::new(DashSet::new());
-        let role_kind = algebra::role::Role::indexed_from_one(1).get_role_kind();
+        let role_kind = execution::runtime::party::Role::indexed_from_one(1).get_role_kind();
 
         let backoff = ExponentialBackoff {
             max_elapsed_time: Some(Duration::from_secs(5)),
