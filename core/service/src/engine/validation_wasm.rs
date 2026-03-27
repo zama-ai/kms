@@ -298,6 +298,12 @@ fn select_most_common_user_dec(
     idx.and_then(|i| agg_resp[i].payload.clone())
 }
 
+/// Validates individual user decryption responses against a majority-vote pivot,
+/// checking metadata consistency, signatures, and degree constraints.
+///
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
 fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
@@ -441,6 +447,10 @@ fn validate_user_decrypt_responses(
 /// Validates the aggregated user decryption responses received from the servers
 /// against the given user decryption request. Returns the validated responses
 /// mapped to the server ID on success.
+///
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
 pub(crate) fn validate_user_decrypt_responses_against_request(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],

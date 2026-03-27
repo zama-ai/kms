@@ -504,13 +504,14 @@ pub(crate) fn select_most_common_public_dec(
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
 ///
-/// If Ok(None) is returned, it means there are no responses to verify.
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
-/// If Ok(Some(vec![])) is returned, it means there were responses to
-/// verify but none of them pass the verification.
-///
-/// If Ok(Some(vec![...])) is returned, the values inside the vec are
-/// the verified response payloads.
+/// # Returns
+/// * `Ok(None)` — no responses to verify.
+/// * `Ok(Some(vec![]))` — responses existed but none passed verification.
+/// * `Ok(Some(vec![...]))` — verified response payloads.
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
@@ -589,9 +590,13 @@ fn validate_public_decrypt_responses(
 /// - Signatures on responses are valid
 /// - That at least [min_agree_count] agree on the same payload
 ///
-/// In addition, if the original request is provided:
+/// In addition, if the original request is provided (via `trusted_ctx.request`):
 /// - The response matches the original request
-/// -
+///
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
+/// * `min_agree_count` — Trusted minimum number of agreeing responses required.
 pub(crate) fn validate_public_decrypt_responses_against_request(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
