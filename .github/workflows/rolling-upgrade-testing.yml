@@ -154,7 +154,7 @@ jobs:
         env:
           DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
           INPUT_OLD_TAG: ${{ inputs.old_image_tag || 'v0.13.3' }}
-          INPUT_NEW_TAG: ${{ inputs.new_image_tag || '560962e' }}
+          INPUT_NEW_TAG: ${{ inputs.new_image_tag || 'v0.13.10-rc.2' }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
 
@@ -191,8 +191,8 @@ jobs:
           OLD_KMS_CHART_VERSION: ${{ inputs.old_kms_chart_version || '1.5.1' }}
           NEW_KMS_CHART_VERSION: ${{ inputs.new_kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
-          FIRST_BATCH: ${{ inputs.first_batch_parties || '1,2' }}
-          SECOND_BATCH: ${{ inputs.second_batch_parties || '3,4' }}
+          FIRST_BATCH: ${{ inputs.first_batch_parties || '1,2,3,4,5' }}
+          SECOND_BATCH: ${{ inputs.second_batch_parties || '6,7,8,9' }}
           SYNC_SECRETS_CHART_VERSION: '0.2.1'
         run: |
           {
@@ -295,7 +295,7 @@ jobs:
             --deployment-type "${DEPLOYMENT_TYPE}" \
             --core-tag "${OLD_IMAGE_TAG}" \
             --client-tag "${OLD_IMAGE_TAG}" \
-            --num-parties 4 \
+            --num-parties 13 \
             --kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
@@ -350,6 +350,7 @@ jobs:
       - name: 'Step 3: Rolling upgrade - first batch'
         run: |
           echo "Upgrading first batch [${FIRST_BATCH}] to new tag: ${NEW_IMAGE_TAG}"
+          echo "Core-client will be upgraded to ${NEW_IMAGE_TAG} on all parties"
           chmod +x ci/scripts/rolling_upgrade.sh
           ./ci/scripts/rolling_upgrade.sh \
             --old-tag "${OLD_IMAGE_TAG}" \
@@ -357,11 +358,13 @@ jobs:
             --parties-to-upgrade "${FIRST_BATCH}" \
             --all-upgraded-parties "${FIRST_BATCH}" \
             --namespace "${NAMESPACE}" \
-            --num-parties 4 \
+            --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
             --old-kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+
+          echo "KMS_CORE_CLIENT_IMAGE_TAG=${NEW_IMAGE_TAG}" >> "$GITHUB_ENV"
 
       # ====================================================================
       # STEP 4: Run performance tests with 5/13 upgraded
@@ -397,7 +400,7 @@ jobs:
             -p old_version="${OLD_IMAGE_TAG}" \
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
-            -p num_total="4"
+            -p num_total="13"
 
           echo "Streaming mixed-5/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
@@ -418,7 +421,7 @@ jobs:
             --parties-to-upgrade "${SECOND_BATCH}" \
             --all-upgraded-parties "${ALL_UPGRADED}" \
             --namespace "${NAMESPACE}" \
-            --num-parties 4 \
+            --num-parties 13 \
             --deployment-type "${DEPLOYMENT_TYPE}" \
             --old-kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
@@ -459,7 +462,7 @@ jobs:
             -p old_version="${OLD_IMAGE_TAG}" \
             -p new_version="${NEW_IMAGE_TAG}" \
             -p num_upgraded="${NUM_UPGRADED}" \
-            -p num_total="4"
+            -p num_total="13"
 
           echo "Streaming mixed-9/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
@@ -483,7 +486,7 @@ jobs:
         if: always()
         run: |
           echo "Collecting logs from all KMS Core pods..."
-          for i in {1..4}; do
+          for i in {1..13}; do
             POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
             LOG_FILE="kms-core-${i}-logs.txt"
 

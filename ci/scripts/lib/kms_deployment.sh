@@ -1027,7 +1027,7 @@ upgrade_parties() {
             --values "${PEERS_VALUES}"
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsPeers.id="${i}"
-            --set kmsCoreClient.image.tag="${party_tag}"
+            --set kmsCoreClient.image.tag="${new_tag}"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
             --set kmsCore.image.name="${kms_image_name}"

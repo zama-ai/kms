@@ -251,51 +251,51 @@ spec:
             address="kms-core-4-core-4:50100"
             s3_endpoint="${S3_ENDPOINT}"
             object_folder="PUB-p4"
-            # [[cores]]
-            # party_id=5
-            # address="kms-core-5-core-5:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p5"
-            # [[cores]]
-            # party_id=6
-            # address="kms-core-6-core-6:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p6"
-            # [[cores]]
-            # party_id=7
-            # address="kms-core-7-core-7:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p7"
-            # [[cores]]
-            # party_id=8
-            # address="kms-core-8-core-8:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p8"
-            # [[cores]]
-            # party_id=9
-            # address="kms-core-9-core-9:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p9"
-            # [[cores]]
-            # party_id=10
-            # address="kms-core-10-core-10:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p10"
-            # [[cores]]
-            # party_id=11
-            # address="kms-core-11-core-11:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p11"
-            # [[cores]]
-            # party_id=12
-            # address="kms-core-12-core-12:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p12"
-            # [[cores]]
-            # party_id=13
-            # address="kms-core-13-core-13:50100"
-            # s3_endpoint="${S3_ENDPOINT}"
-            # object_folder="PUB-p13"
+            [[cores]]
+            party_id=5
+            address="kms-core-5-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-core-6-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-core-7-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-core-8-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-core-9-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-core-10-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-core-11-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-core-12-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-core-13-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
           EOF
 
           echo "=========================================="
@@ -391,14 +391,10 @@ spec:
               configMapKeyRef:
                 name: kms-enclave-ci-1
                 key: CORE_CLIENT__S3_ENDPOINT
-          # - name: NUM_MAJORITY
-          #   value: '5'
-          # - name: NUM_RECONSTRUCT
-          #   value: '9'
           - name: NUM_MAJORITY
-            value: '2'
+            value: '5'
           - name: NUM_RECONSTRUCT
-            value: '3'
+            value: '9'
           - name: DECRYPTION_MODE
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER
