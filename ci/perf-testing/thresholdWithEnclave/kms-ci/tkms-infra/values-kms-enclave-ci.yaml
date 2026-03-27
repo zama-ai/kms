@@ -31,7 +31,7 @@ kmsParties:
   tags:
     Environment: zws-dev
     ManagedBy: zama
-  replicas: 13
+  replicas: 4
   # matchExistingName allows to reference an existing public bucket vault if it already exists
   publicBucketVaultRef:
     # This is the existing name of the public bucket vault that will be used to reference

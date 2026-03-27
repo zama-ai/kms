@@ -450,9 +450,9 @@ spec:
                 name: kms-enclave-ci-1
                 key: CORE_CLIENT__S3_ENDPOINT
           - name: NUM_MAJORITY
-            value: '5'
+            value: '2'
           - name: NUM_RECONSTRUCT
-            value: '9'
+            value: '3'
           - name: DECRYPTION_MODE
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER

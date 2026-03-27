@@ -73,7 +73,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
           ##########################################################################
@@ -89,7 +89,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
                   value: "Default"
 
@@ -106,7 +106,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -123,7 +123,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
                   value: "Default"
 
@@ -140,7 +140,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "-a public-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -157,7 +157,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req100"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
+                  value: "-a user-decrypt from-args -d euint64 -k {{workflow.parameters.key-id}} -e ffffffffffffffff --num-requests 100"
                 - name: fhe-params
                   value: "Default"
 
@@ -391,10 +391,14 @@ spec:
               configMapKeyRef:
                 name: kms-enclave-ci-1
                 key: CORE_CLIENT__S3_ENDPOINT
+          # - name: NUM_MAJORITY
+          #   value: '5'
+          # - name: NUM_RECONSTRUCT
+          #   value: '9'
           - name: NUM_MAJORITY
-            value: '5'
+            value: '2'
           - name: NUM_RECONSTRUCT
-            value: '9'
+            value: '3'
           - name: DECRYPTION_MODE
             value: 'NoiseFloodSmall'
           - name: FHE_PARAMETER
