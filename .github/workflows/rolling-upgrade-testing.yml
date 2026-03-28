@@ -154,7 +154,7 @@ jobs:
         env:
           DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
           INPUT_OLD_TAG: ${{ inputs.old_image_tag || 'v0.13.3' }}
-          INPUT_NEW_TAG: ${{ inputs.new_image_tag || 'v0.13.10-rc.2' }}
+          INPUT_NEW_TAG: ${{ inputs.new_image_tag || '26e1273' }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
 
