@@ -927,3 +927,155 @@ generate_and_upload_tls_certs() {
         log_warn "Unknown target ${TARGET}, skipping certificate upload"
     fi
 }
+
+#=============================================================================
+# Rolling Upgrade: Upgrade Selected Parties
+#
+# Performs a partial upgrade of KMS parties during a rolling upgrade test.
+# First updates trustedReleases on ALL parties (so they accept TLS from both
+# old and new versions), then upgrades only the targeted parties' image tags.
+#
+# Required env vars: NAMESPACE, TARGET, DEPLOYMENT_TYPE, NUM_PARTIES,
+#                    HELM_RELEASE_PREFIX, ENABLE_TLS
+# Arguments:
+#   $1  - new image tag for upgraded parties
+#   $2  - old image tag for non-upgraded parties
+#   $3  - comma-separated list of party IDs to upgrade (e.g. "1,2,3,4,5")
+#   $4  - old PCR0 value
+#   $5  - old PCR1 value
+#   $6  - old PCR2 value
+#   $7  - new PCR0 value
+#   $8  - new PCR1 value
+#   $9  - new PCR2 value
+#   $10 - old KMS chart version (for non-upgraded parties)
+#   $11 - new KMS chart version (for upgraded parties)
+#=============================================================================
+upgrade_parties() {
+    local new_tag="$1"
+    local old_tag="$2"
+    local parties_csv="$3"
+    local old_pcr0="$4"
+    local old_pcr1="$5"
+    local old_pcr2="$6"
+    local new_pcr0="$7"
+    local new_pcr1="$8"
+    local new_pcr2="$9"
+    local old_chart_version="${10:-repository}"
+    local new_chart_version="${11:-repository}"
+
+    log_info "========================================="
+    log_info "Rolling Upgrade: Upgrading parties [${parties_csv}]"
+    log_info "  Old tag: ${old_tag}"
+    log_info "  New tag: ${new_tag}"
+    log_info "  Old chart version: ${old_chart_version}"
+    log_info "  New chart version: ${new_chart_version}"
+    log_info "  Old PCR0: ${old_pcr0:0:16}..."
+    log_info "  New PCR0: ${new_pcr0:0:16}..."
+    log_info "========================================="
+
+    # Parse upgraded party IDs into an array
+    IFS=',' read -ra UPGRADE_IDS <<< "${parties_csv}"
+    # Build a lookup set for quick membership test
+    declare -A upgrade_set
+    for id in "${UPGRADE_IDS[@]}"; do
+        upgrade_set[$(echo "${id}" | tr -d ' ')]=1
+    done
+
+    set_path_suffix
+
+    local kms_image_name="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+    if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+        kms_image_name="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
+    fi
+
+    local performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
+
+    # Re-generate peers config (unchanged, all 13 peers)
+    local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
+    generate_peers_config "${PEERS_VALUES}"
+
+    local threshold_value="4"
+    local wait_args=(--wait --wait-for-jobs --timeout=1200s)
+
+    #=========================================================================
+    # Phase 1: Update trustedReleases on ALL parties (old + new PCR entries)
+    # This must happen BEFORE any image is upgraded so that peers can verify
+    # TLS attestations from both old and new enclave versions.
+    #=========================================================================
+    log_info "Phase 1: Updating trustedReleases on all ${NUM_PARTIES} parties..."
+
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local party_tag="${old_tag}"
+        local party_chart_version="${old_chart_version}"
+        if [[ -n "${upgrade_set[${i}]+_}" ]]; then
+            party_tag="${new_tag}"
+            party_chart_version="${new_chart_version}"
+        fi
+
+        local helm_chart_location="${REPO_ROOT}/charts/kms-core"
+        local helm_version_args=()
+        if [[ "${party_chart_version}" != "repository" ]]; then
+            helm_chart_location="oci://hub.zama.org/ghcr/zama-ai/kms/charts/kms-core"
+            helm_version_args=(--version "${party_chart_version}")
+        fi
+
+        local release_name="${HELM_RELEASE_PREFIX}-${i}"
+        log_info "Updating party ${i}/${NUM_PARTIES} (tag=${party_tag}, chart=${party_chart_version})..."
+
+        local HELM_ARGS=(
+            --namespace "${NAMESPACE}"
+            --values "${PEERS_VALUES}"
+            --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
+            --set kmsPeers.id="${i}"
+            --set kmsCoreClient.image.tag="${new_tag}"
+            --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
+            --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
+            --set kmsCore.image.name="${kms_image_name}"
+            --set kmsCore.image.tag="${party_tag}"
+            --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
+            --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
+            --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
+            --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
+            --set kmsCore.thresholdMode.tls.enabled=true
+            --set kmsGenCertAndKeys.enabled=true
+            --set "kmsCore.thresholdMode.tls.trustedReleases[0].pcr0=${old_pcr0}"
+            --set "kmsCore.thresholdMode.tls.trustedReleases[0].pcr1=${old_pcr1}"
+            --set "kmsCore.thresholdMode.tls.trustedReleases[0].pcr2=${old_pcr2}"
+            --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr0=${new_pcr0}"
+            --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr1=${new_pcr1}"
+            --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr2=${new_pcr2}"
+        )
+
+        helm_upgrade_with_version "${release_name}" "${helm_chart_location}" \
+            "${HELM_ARGS[@]}" \
+            "${wait_args[@]}" &
+    done
+
+    log_info "Waiting for all ${NUM_PARTIES} party upgrades to complete..."
+    wait
+
+    #=========================================================================
+    # Phase 2: Wait for all pods to become ready
+    #=========================================================================
+    log_info "Phase 2: Waiting for all pods to be ready after rolling upgrade..."
+    sleep 30
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local pod_name="$(get_party_pod_name "${i}")"
+        log_info "Waiting for party ${i} pod: ${pod_name}"
+        kubectl wait --for=condition=ready pod "${pod_name}" \
+            -n "${NAMESPACE}" --timeout=600s
+    done
+
+    log_info "========================================="
+    log_info "Rolling upgrade complete."
+    log_info "  Upgraded parties [${parties_csv}] -> tag ${new_tag}"
+    local remaining=""
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        if [[ -z "${upgrade_set[${i}]+_}" ]]; then
+            [[ -n "${remaining}" ]] && remaining="${remaining},"
+            remaining="${remaining}${i}"
+        fi
+    done
+    log_info "  Remaining parties [${remaining}] -> tag ${old_tag}"
+    log_info "========================================="
+}
