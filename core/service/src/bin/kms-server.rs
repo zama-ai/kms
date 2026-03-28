@@ -480,7 +480,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     // private vault
-    let mut private_storage = make_storage(
+    let private_storage = make_storage(
         core_config
             .private_vault
             .as_ref()
