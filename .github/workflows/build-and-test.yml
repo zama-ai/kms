@@ -26,6 +26,8 @@ concurrency:
       github.event.action == 'labeled' &&
       startsWith(github.event.label.name, 'pr-preview-') &&
       'label-pr-preview' ||
+      github.event.action == 'labeled' &&
+      'label-other' ||
       'main'
     }}
   cancel-in-progress: true
