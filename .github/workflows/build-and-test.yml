@@ -27,6 +27,7 @@ concurrency:
       startsWith(github.event.label.name, 'pr-preview-') &&
       'label-pr-preview' ||
       github.event.action == 'labeled' &&
+      github.event.label.name != 'docker' &&
       'label-other' ||
       'main'
     }}
@@ -44,7 +45,8 @@ jobs:
         github.event.action == 'opened' ||
         github.event.action == 'synchronize' ||
         github.event.action == 'reopened' ||
-        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-'))
+        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'pr-preview-')) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'docker')
       )
     permissions:
       actions: read # Required to read workflow run information
@@ -72,7 +74,7 @@ jobs:
     needs: [docker-build]
     if: >-
       github.event_name == 'pull_request' &&
-      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
+      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'docker'))
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required for nested docker-build job (even if it doesn't run)
