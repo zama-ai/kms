@@ -43,7 +43,7 @@ authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.13.10-rc.0"
+version = "0.13.20-0"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 
@@ -157,13 +157,13 @@ nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
 oid-registry = "=0.8.1"  # OID registry for ASN.1 - LOW RISK: rusticata team
-opentelemetry = "=0.29.1"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
-opentelemetry-http = "=0.29.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
-opentelemetry-otlp = { version = "=0.29.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
-opentelemetry-prometheus = "=0.29.1"  # Prometheus metrics exporter - LOW RISK: CNCF project
-opentelemetry-semantic-conventions = "=0.29.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
-opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
-opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
+opentelemetry = "=0.31.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
+opentelemetry-http = "=0.31.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
+opentelemetry-otlp = { version = "=0.31.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
+opentelemetry-prometheus = "=0.31.0"  # Prometheus metrics exporter - LOW RISK: CNCF project (discontinued)
+opentelemetry-semantic-conventions = "=0.31.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
+opentelemetry-stdout = { version = "=0.31.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
+opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs", "metrics"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
@@ -171,7 +171,7 @@ pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }  # CPU p
 proc-macro2 = "=1.0.101"  # Proc macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 740M downloads
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintainers (AltSysrq, Centril), test-only dependency
-prost = "=0.13.5"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
+prost = "=0.14.3"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
 quote = "=1.0.40"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.5"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
 rasn = "=0.20.2"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
@@ -206,16 +206,17 @@ thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual 
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
-tonic = "=0.13.1"  # gRPC framework - LOW RISK: hyperium team
-tonic-build = "=0.13.1"  # gRPC code generation - LOW RISK: hyperium team
-tonic-health = "=0.13.1"  # gRPC health checking - LOW RISK: hyperium team
-tonic-tls = "=0.3.0"  # TLS support for tonic - LOW RISK: hyperium team
+tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
+tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
+tonic-prost = "=0.14.5"  # prost codec for tonic gRPC - LOW RISK: hyperium team
+tonic-prost-build = "=0.14.5"  # gRPC code generation with prost - LOW RISK: hyperium team
+tonic-tls = { version = "=0.6.1", features = ["rustls"] }  # TLS support for tonic - MEDIUM RISK: single developer
 tower = "=0.5.3"  # Service framework - LOW RISK: tower-rs team
 tower-http = "=0.6.8"  # HTTP middleware - LOW RISK: tower-rs team
 tracing = { version = "=0.1.44", features = ["log"] }  # Application instrumentation - LOW RISK: tokio-rs team
 tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
-tracing-opentelemetry = "=0.30.0"  # OpenTelemetry integration - LOW RISK: tokio-rs team
-tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
+tracing-opentelemetry = "=0.32.1"  # OpenTelemetry integration - LOW RISK: tokio-rs team
+tracing-subscriber = { version = "=0.3.22", features = ["fmt", "std"] }  # Tracing subscriber - LOW RISK: tokio-rs team
 tracing-test = "=0.2.5"  # Tracing test utilities - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads

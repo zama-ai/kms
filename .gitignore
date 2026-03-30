@@ -40,3 +40,6 @@ ci/kube-testing/certs/
 
 # Local values files for Kind testing
 ci/kube-testing/kms/local-values-*.yaml
+
+.mcp.json
+.fastembed*
