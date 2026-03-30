@@ -479,7 +479,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     // private vault
-    let mut private_storage = make_storage(
+    let private_storage = make_storage(
         core_config
             .private_vault
             .as_ref()
@@ -488,15 +488,6 @@ async fn main_exec() -> anyhow::Result<()> {
         s3_client.clone(),
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
-
-    // Migrate legacy FHE keys to epoch-aware format
-    let kms_type = match core_config.threshold {
-        Some(_) => KMSType::Threshold,
-        None => KMSType::Centralized,
-    };
-    migrate_to_0_13_10(&mut private_storage, kms_type)
-        .await
-        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     let attest_private_vault_root_key_policy = core_config
         .threshold
@@ -535,6 +526,16 @@ async fn main_exec() -> anyhow::Result<()> {
         storage: private_storage,
         keychain: private_keychain,
     };
+
+    // Migrate legacy FHE keys to epoch-aware format.
+    // Must run after Vault init so the keychain can decrypt AppKeyBlob-wrapped data from older versions.
+    let kms_type = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    migrate_to_0_13_10(&mut private_vault, kms_type)
+        .await
+        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
