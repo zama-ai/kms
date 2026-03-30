@@ -176,7 +176,6 @@ non-wasm = [
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",
-    "dep:test-utils",
     "dep:thread-handles",
     "dep:tokio",
     "dep:tokio-rustls",
