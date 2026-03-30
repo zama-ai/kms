@@ -1,3 +1,5 @@
+pub mod random_free_port;
+
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
 

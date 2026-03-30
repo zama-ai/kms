@@ -2111,10 +2111,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-tests-utils"
-version = "0.13.20-0"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4284,7 +4280,8 @@ dependencies = [
  "strum_macros",
  "sysinfo",
  "tempfile",
- "tests-utils",
+ "test-utils",
+ "test-utils-service",
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
@@ -4327,7 +4324,6 @@ dependencies = [
  "attestation-doc-validation",
  "bc2wrap",
  "bytes",
- "cc-tests-utils",
  "clap",
  "futures",
  "hex",
@@ -4345,6 +4341,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "test-context",
+ "test-utils-cc",
  "tfhe",
  "threshold-execution",
  "threshold-fhe",
@@ -7432,10 +7429,15 @@ dependencies = [
  "anyhow",
  "bc2wrap",
  "serde",
+ "tokio",
 ]
 
 [[package]]
-name = "tests-utils"
+name = "test-utils-cc"
+version = "0.13.20-0"
+
+[[package]]
+name = "test-utils-service"
 version = "0.13.20-0"
 dependencies = [
  "quote",
@@ -7827,6 +7829,7 @@ dependencies = [
  "prost",
  "serde",
  "sha2",
+ "test-utils",
  "tfhe",
  "tfhe-versionable",
  "thread-handles",
