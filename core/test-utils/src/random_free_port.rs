@@ -11,7 +11,8 @@ static ALLOCATED_PORTS: LazyLock<Mutex<HashSet<u16>>> =
 
 const MAX_PORT_RETRIES: usize = 200;
 
-/// Find [`n`] free ports in the range [from, to). Returns a vector (TcpListeners,port).
+/// Find [`n`] free TCP ports on the given host by binding to port 0 and letting the OS
+/// assign ephemeral ports. Returns a vector of `(TcpListener, port)` pairs.
 ///
 /// Safe for concurrent use: uses a global set to ensure no two calls
 /// ever return the same port, even if the TcpListener is later dropped.
