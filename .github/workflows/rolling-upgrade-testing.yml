@@ -1,17 +1,73 @@
 ##############################################################################
 # Rolling Upgrade Testing Workflow
 #
-# Tests partial rolling upgrades of KMS enclave nodes (thresholdWithEnclave).
-# Deploys 13 nodes on an old version, then upgrades 5/13, runs perf tests,
-# upgrades 9/13, and runs perf tests again.
+# Purpose
+# -------
+# Validates partial rolling upgrades of KMS enclave nodes (thresholdWithEnclave)
+# on the aws-perf cluster (namespace kms-ci). The cluster must behave correctly
+# while some parties run the old image and others the new image.
 #
-# This validates that the cluster operates correctly during mixed-version
-# states, including:
+# What mixed-version state exercises
+# ----------------------------------
 #   - Per-party AWS KMS key policy (recipientAttestationImageSHA384)
 #   - Dual trustedReleases PCR entries for TLS peer attestation
-#   - Per-party image tag upgrades
+#   - Per-party image tag upgrades (via ci/scripts/rolling_upgrade.sh)
 #
-# Triggers: Manual dispatch only
+# How it runs (high level)
+# ------------------------
+#   1. Optional: if workflow input build=true, call docker-build.yml to build the
+#      new image from the selected branch; its image_tag becomes the new tag.
+#   2. Start an EC2 runner (SLAB), then run the main job on it.
+#   3. Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
+#      (ci/scripts/deploy.sh --target aws-perf).
+#   4. Baseline Argo perf workflow: full test suite (insecure-key-gen + tests);
+#      extract key-id for later decrypt-only runs.
+#   5. First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
+#      (default 1-5); core-client moves to new tag on all parties as required.
+#   6. Argo rolling-upgrade workflow: decrypt-only perf with mixed cluster
+#      (label e.g. mixed-5-of-13).
+#   7. Second rolling upgrade: upgrade second_batch_parties (default 6-9);
+#      cumulative upgraded set is first_batch + second_batch (9/13).
+#   8. Argo rolling-upgrade workflow again (label e.g. mixed-9-of-13).
+#   9. Upload Argo and kms-core logs; helm/kubectl cleanup; stop runner.
+#
+# Triggers
+# --------
+#   workflow_dispatch only (manual run in GitHub Actions).
+#
+# Workflow inputs (workflow_dispatch)
+# -------------------------------------
+#   old_image_tag          (string, required)
+#                            Baseline KMS Core image tag for initial deploy.
+#   new_image_tag          (string, required)
+#                            Target KMS Core image tag after upgrades (ignored if
+#                            build=true; then docker-build output is used).
+#   build                  (boolean, default false)
+#                            If true, build new images via docker-build.yml and use
+#                            that tag as NEW; kms_branch applies to the build.
+#   kms_branch             (string, optional)
+#                            Branch to build from when build=true; also used with
+#                            new_kms_chart_version=repository for chart checkout.
+#   fhe_params             (choice Default|Test, default Test)
+#                            FHE parameters for preprocessing and keygen in Argo.
+#   old_kms_chart_version  (string, default 1.5.1)
+#                            KMS Helm chart version for the all-old deploy (step 3).
+#   new_kms_chart_version  (string, default repository)
+#                            KMS Helm chart for upgraded parties; use "repository"
+#                            to use charts from the checked-out branch.
+#   tkms_infra_chart_version (string, default 0.3.2)
+#                            TKMS Infra Helm chart version.
+#   first_batch_parties    (string, default 1,2,3,4,5)
+#                            Comma-separated party IDs for the first upgrade wave.
+#   second_batch_parties   (string, default 6,7,8,9)
+#                            Comma-separated party IDs for the second upgrade wave.
+#
+# Jobs
+# ----
+#   docker-build           Runs only when build=true; reusable docker-build.yml.
+#   start-runner           EC2 runner for the long-running test job.
+#   rolling-upgrade-testing Main steps above; timeout 2400 minutes.
+#   stop-runner            Stops the EC2 runner (always).
 ##############################################################################
 name: rolling-upgrade-testing
 
