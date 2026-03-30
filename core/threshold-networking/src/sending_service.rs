@@ -1135,8 +1135,6 @@ mod tests {
             }
         }
 
-        // Should not conflict with the other ports used in the tests from this file
-        // TODO(zama-ai/kms-internal#2952): we should look into how to find ports for tests.
         let ip_addr = "127.0.0.1".parse().unwrap();
         let listeners = get_listeners_random_free_ports(&ip_addr, 1).await.unwrap();
         let myport = listeners[0].1;
