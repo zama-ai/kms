@@ -1258,8 +1258,8 @@ impl<
             let context_id = context_id;
             let epoch_id = epoch_id;
             let meta_store = meta_store;
-            if do_prss {
-                if let Err(e) =
+            if do_prss
+                && let Err(e) =
                     Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
                         .await
                 {
@@ -1272,7 +1272,6 @@ impl<
                     );
                     return;
                 }
-            }
             if let Some(resharing_task) = resharing_task {
                 if let Err(e) = resharing_task.await {
                     let err = format!("Resharing failed during epoch creation: {e:?}");

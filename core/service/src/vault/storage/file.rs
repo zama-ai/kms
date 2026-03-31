@@ -397,13 +397,11 @@ impl StorageExt for FileStorage {
         tokio::fs::remove_file(&path).await?;
 
         // Remove the epoch directory if it's now empty
-        if let Some(epoch_dir) = path.parent() {
-            if let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await {
-                if entries.next_entry().await?.is_none() {
+        if let Some(epoch_dir) = path.parent()
+            && let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await
+                && entries.next_entry().await?.is_none() {
                     let _ = tokio::fs::remove_dir(epoch_dir).await;
                 }
-            }
-        }
         Ok(())
     }
 }

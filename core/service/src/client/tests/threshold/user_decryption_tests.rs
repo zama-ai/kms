@@ -730,9 +730,9 @@ async fn process_batch_threshold_user_decryption(
             // modify the responses if there are malicious parties
             // note that we also need to sign the modified payload
             responses.iter_mut().for_each(|resp| {
-                if let Some(payload) = &mut resp.payload {
-                    if let Some(mal_parties) = &malicious_parties {
-                        if mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
+                if let Some(payload) = &mut resp.payload
+                    && let Some(mal_parties) = &malicious_parties
+                        && mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
                         {
                             let orig_party_id = payload.party_id;
                             // Modify the party ID maliciously
@@ -750,8 +750,6 @@ async fn process_batch_threshold_user_decryption(
                             .unwrap();
                             resp.signature = sig.sig.to_vec();
                         }
-                    }
-                }
             });
 
             // test with all responses, some may be malicious

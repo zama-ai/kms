@@ -252,11 +252,10 @@ where
             if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
                 guarded_backup_vault.keychain.as_mut()
             {
-                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id() {
-                    if cur_backup_id == inner_context.context_id {
+                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                    && cur_backup_id == inner_context.context_id {
                         anyhow::bail!("A custodian context with the same context ID already exists in the backup vault!");
                     }
-                }
                 secret_share_keychain
                     .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
             } else {

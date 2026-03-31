@@ -26,16 +26,14 @@ fn kill_process(process_name: &str) {
 
     for (pid, process) in sys.processes() {
         // exe returns the path to the process
-        if let Some(path) = process.exe() {
-            if let Some(s) = path.to_str() {
-                if s.contains(process_name) {
+        if let Some(path) = process.exe()
+            && let Some(s) = path.to_str()
+                && s.contains(process_name) {
                     println!(
                         "killing process {process_name} with pid {pid}: ok={}",
                         process.kill()
                     );
                 }
-            }
-        }
     }
 }
 

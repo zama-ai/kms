@@ -209,20 +209,18 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
         if num_parties < 2 {
             anyhow::bail!("the number of parties should be larger or equal to 2");
         }
-        if let Some(id) = signing_key_party_id {
-            if id > num_parties {
+        if let Some(id) = signing_key_party_id
+            && id > num_parties {
                 anyhow::bail!(
                     "party ID ({}) cannot be greater than num_parties ({})",
                     id,
                     num_parties
                 );
             }
-        }
-        if let Some(id) = signing_key_party_id {
-            if id == 0 {
+        if let Some(id) = signing_key_party_id
+            && id == 0 {
                 anyhow::bail!("party ID cannot be 0",);
             }
-        }
         Ok(Self {
             pub_storages,
             priv_storages,

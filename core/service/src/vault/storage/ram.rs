@@ -118,11 +118,10 @@ impl StorageReaderExt for RamStorage {
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
         let mut res = HashSet::new();
         for ((_cur_data_id, cur_epoch_id), cur_data_type) in self.internal_storage.keys() {
-            if let Some(epoch_id) = cur_epoch_id {
-                if cur_data_type == data_type {
+            if let Some(epoch_id) = cur_epoch_id
+                && cur_data_type == data_type {
                     res.insert(*epoch_id);
                 }
-            }
         }
         Ok(res)
     }

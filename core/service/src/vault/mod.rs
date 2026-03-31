@@ -162,14 +162,13 @@ impl StorageReader for Vault {
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err() {
                 tracing::info!(
                     "No custodian context has been set yet! Returning empty set of data ids."
                 );
                 return Ok(HashSet::new());
             }
-        }
         self.storage
             .all_data_ids(&backup_type)
             .await
@@ -197,14 +196,13 @@ impl StorageReaderExt for Vault {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err() {
                 tracing::info!(
                     "No custodian context has been set yet! Returning empty set of data ids."
                 );
                 return Ok(HashSet::new());
             }
-        }
         self.storage
             .all_data_ids_at_epoch(epoch_id, &backup_type)
             .await
@@ -213,14 +211,13 @@ impl StorageReaderExt for Vault {
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err() {
                 tracing::info!(
                     "No custodian context has been set yet! Returning empty set of data ids."
                 );
                 return Ok(HashSet::new());
             }
-        }
         self.storage
             .all_epoch_ids_for_data(&backup_type)
             .await
@@ -289,14 +286,13 @@ impl StorageReaderExt for Vault {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err() {
                 tracing::info!(
                     "No custodian context has been set yet! Returning empty set of data ids."
                 );
                 return Ok(HashSet::new());
             }
-        }
         self.storage
             .all_data_ids_from_all_epochs(&backup_type)
             .await
