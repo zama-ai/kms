@@ -763,12 +763,8 @@ mod tests {
         .unwrap();
 
         // create dummy crypto storage
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            RamStorage::new(),
-            RamStorage::new(),
-            None,
-            HashMap::new(),
-        );
+        let crypto_storage =
+            ThresholdCryptoMaterialStorage::new(RamStorage::new(), RamStorage::new(), None);
 
         let context_info = ContextInfo {
             mpc_nodes: [
@@ -1116,12 +1112,8 @@ mod tests {
         .unwrap();
 
         // create dummy crypto storage
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            RamStorage::new(),
-            RamStorage::new(),
-            None,
-            HashMap::new(),
-        );
+        let crypto_storage =
+            ThresholdCryptoMaterialStorage::new(RamStorage::new(), RamStorage::new(), None);
 
         let context_info = ContextInfo {
             mpc_nodes: [

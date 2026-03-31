@@ -49,19 +49,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ThresholdCryptoMaterialStorage<PubS, PrivS>
 {
     /// Create a new cached storage device for threshold KMS.
-    pub fn new(
-        public_storage: PubS,
-        private_storage: PrivS,
-        backup_vault: Option<Vault>,
-        fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
-    ) -> Self {
+    pub fn new(public_storage: PubS, private_storage: PrivS, backup_vault: Option<Vault>) -> Self {
         Self {
             inner: CryptoMaterialStorage {
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
             },
-            fhe_keys: Arc::new(RwLock::new(fhe_keys)),
+            fhe_keys: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

@@ -1507,12 +1507,8 @@ mod tests {
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
         ) -> Self {
-            let crypto_storage = ThresholdCryptoMaterialStorage::new(
-                pub_storage,
-                priv_storage,
-                None,
-                HashMap::new(),
-            );
+            let crypto_storage =
+                ThresholdCryptoMaterialStorage::new(pub_storage, priv_storage, None);
 
             let tracker = Arc::new(TaskTracker::new());
             let rate_limiter = RateLimiter::default();

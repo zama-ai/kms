@@ -499,7 +499,7 @@ where
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new())));
+    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
@@ -521,12 +521,8 @@ where
     .await?;
 
     let private_storage_info = private_storage.info();
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        public_storage,
-        private_storage,
-        backup_storage,
-        HashMap::new(),
-    );
+    let crypto_storage =
+        ThresholdCryptoMaterialStorage::new(public_storage, private_storage, backup_storage);
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -576,7 +572,7 @@ where
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance().await,
         reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-        tracker: tracker.clone(),
+        tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
         _reshare: PhantomData,

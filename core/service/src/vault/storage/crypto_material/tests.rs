@@ -469,12 +469,8 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         .into();
 
     // Create a threshold storage with no keys in the cache and no keys in storage
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
+    let crypto_storage =
+        ThresholdCryptoMaterialStorage::new(FailingRamStorage::new(100), RamStorage::new(), None);
 
     // Try to read a non-existent key - should return an error
     let result = crypto_storage
@@ -535,12 +531,8 @@ fn setup_threshold_store(
     ThresholdFheKeys,
     FhePubKeySet,
 ) {
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
-        RamStorage::new(),
-        None,
-        HashMap::new(),
-    );
+    let crypto_storage =
+        ThresholdCryptoMaterialStorage::new(FailingRamStorage::new(100), RamStorage::new(), None);
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM
         .get_params_basics_handle()

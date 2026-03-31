@@ -1457,7 +1457,6 @@ pub(crate) mod tests {
                     RamStorage::new(),
                     RamStorage::new(),
                     None,
-                    HashMap::new(),
                 ),
                 reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),
                 tracker: Arc::new(TaskTracker::new()),
