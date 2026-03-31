@@ -63,12 +63,12 @@ jobs:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
-      KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
-      KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
-      KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
+      KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
+      KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
+      KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
       KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
       KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
-      IMAGE_REPO: 'ghcr.io/zama-ai/kms'
+      IMAGE_REPO: 'hub.zama.org/ghcr/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
       DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
