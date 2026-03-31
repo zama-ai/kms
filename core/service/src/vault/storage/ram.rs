@@ -1,15 +1,15 @@
 use super::{Storage, StorageReader};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt};
+use crate::vault::storage::{StorageExt, all_data_ids_from_all_epochs_impl};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
 use anyhow::anyhow;
-use kms_grpc::{identifiers::EpochId, RequestId};
-use serde::{de::DeserializeOwned, Serialize};
+use kms_grpc::{RequestId, identifiers::EpochId};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use tfhe::{
+    Unversionize, Versionize,
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
-    Unversionize, Versionize,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -50,7 +50,7 @@ impl StorageReader for RamStorage {
                     "Could not find data at (data_type: {}, data_id: {})",
                     data_type,
                     data_id
-                ))
+                ));
             }
         };
         let mut buf = std::io::Cursor::new(raw_data);
@@ -68,7 +68,7 @@ impl StorageReader for RamStorage {
                     "Could not decode data at ({}, {})",
                     data_id,
                     data_type
-                ))
+                ));
             }
         };
         Ok(raw_data.clone())
@@ -108,7 +108,7 @@ impl StorageReaderExt for RamStorage {
                     data_type,
                     data_id,
                     epoch_id
-                ))
+                ));
             }
         };
         let mut buf = std::io::Cursor::new(raw_data);
@@ -119,9 +119,10 @@ impl StorageReaderExt for RamStorage {
         let mut res = HashSet::new();
         for ((_cur_data_id, cur_epoch_id), cur_data_type) in self.internal_storage.keys() {
             if let Some(epoch_id) = cur_epoch_id
-                && cur_data_type == data_type {
-                    res.insert(*epoch_id);
-                }
+                && cur_data_type == data_type
+            {
+                res.insert(*epoch_id);
+            }
         }
         Ok(res)
     }
@@ -175,7 +176,7 @@ impl StorageReaderExt for RamStorage {
                     data_id,
                     epoch_id,
                     data_type
-                ))
+                ));
             }
         };
         Ok(raw_data.clone())

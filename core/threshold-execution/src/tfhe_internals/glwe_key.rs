@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tfhe::{
-    shortint::parameters::{GlweDimension, PolynomialSize},
     Versionize,
+    shortint::parameters::{GlweDimension, PolynomialSize},
 };
 use tfhe_versionable::VersionsDispatch;
 

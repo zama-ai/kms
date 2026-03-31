@@ -1,5 +1,5 @@
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::PubDataType, RequestId};
+use kms_grpc::{RequestId, rpc_types::PubDataType};
 use rand::SeedableRng;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
@@ -23,7 +23,7 @@ use crate::{
         rate_limiter::RateLimiterConfig,
     },
     vault::storage::{
-        file::FileStorage, read_context_at_id, read_versioned_at_request_id, StorageType,
+        StorageType, file::FileStorage, read_context_at_id, read_versioned_at_request_id,
     },
 };
 

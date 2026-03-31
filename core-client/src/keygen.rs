@@ -1,19 +1,19 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    dummy_domain, CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SharedKeyGenParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
+use kms_lib::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
@@ -424,7 +424,13 @@ pub(crate) fn check_standard_keyset_ext_signature(
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    tracing::info!("Checking external signature for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",key_id, prep_id, hex::encode(&server_key_digest), hex::encode(&public_key_digest));
+    tracing::info!(
+        "Checking external signature for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",
+        key_id,
+        prep_id,
+        hex::encode(&server_key_digest),
+        hex::encode(&public_key_digest)
+    );
 
     let sol_type = KeygenVerification::new_standard(
         prep_id,
@@ -459,7 +465,12 @@ pub(crate) fn check_compressed_keyset_ext_signature(
     let keyset_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
 
-    tracing::info!("Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={}",key_id, prep_id, hex::encode(&keyset_digest));
+    tracing::info!(
+        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={}",
+        key_id,
+        prep_id,
+        hex::encode(&keyset_digest)
+    );
 
     let sol_type = KeygenVerification::new_compressed(
         prep_id,

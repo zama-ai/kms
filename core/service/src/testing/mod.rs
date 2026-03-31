@@ -91,7 +91,7 @@ pub mod prelude {
 
     // Test utilities
     pub use super::utils::{
-        compute_cipher, compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+        EncryptionConfig, TestingPlaintext, compute_cipher, compute_cipher_from_stored_key,
     };
 
     // Common types
@@ -100,7 +100,7 @@ pub mod prelude {
     // Re-exports from anyhow for convenience
     pub use anyhow::{Context, Result};
 
-    pub use crate::vault::storage::{file::FileStorage, Storage, StorageType};
+    pub use crate::vault::storage::{Storage, StorageType, file::FileStorage};
     pub use tempfile::TempDir;
     pub use threshold_types::role::Role;
 }

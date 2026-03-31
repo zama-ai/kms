@@ -137,7 +137,9 @@ impl K8sTestContext {
 
     /// Generate a CRS.
     async fn crs_gen(&self) -> String {
-        println!("[K8S-CENTRALIZED] Executing CrsGen (max_num_bits=2048) on default epoch and context...");
+        println!(
+            "[K8S-CENTRALIZED] Executing CrsGen (max_num_bits=2048) on default epoch and context..."
+        );
         let start = std::time::Instant::now();
 
         let results = self

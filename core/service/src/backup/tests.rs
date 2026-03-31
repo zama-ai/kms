@@ -12,15 +12,15 @@ use crate::{
         encryption::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
-        signatures::{gen_sig_keys, PublicSigKey},
+        signatures::{PublicSigKey, gen_sig_keys},
     },
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{kms::v1::CustodianContext, RequestId};
+use kms_grpc::{RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
-use rand::{rngs::OsRng, SeedableRng};
+use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
 use threshold_types::role::Role;
 

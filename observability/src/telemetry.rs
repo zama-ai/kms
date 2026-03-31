@@ -1,17 +1,17 @@
-use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
+use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
 use crate::metrics::METRICS;
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
 use axum::Json;
 use axum::{
+    Router,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use opentelemetry::propagation::TextMapCompositePropagator;
-use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
+use opentelemetry::{KeyValue, global, propagation::Injector, trace::TracerProvider};
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_prometheus::exporter;
@@ -28,18 +28,18 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tonic::{
+    Status,
     metadata::{MetadataKey, MetadataMap, MetadataValue},
     service::Interceptor,
-    Status,
 };
-use tracing::{info, info_span, trace_span, Span};
+use tracing::{Span, info, info_span, trace_span};
 use tracing_appender::non_blocking;
 use tracing_appender::rolling::never;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::fmt::{layer, Layer};
+use tracing_subscriber::fmt::{Layer, layer};
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
 
 #[cfg(target_os = "linux")]
 use prometheus::process_collector::ProcessCollector;
@@ -238,9 +238,10 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
 
         // Create directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(&log_path).parent()
-            && !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+            && !parent.exists()
+        {
+            tokio::fs::create_dir_all(parent).await?;
+        }
 
         // Use a rolling file appender to prevent excessive file sizes
         let file_appender = never("", &log_path);
@@ -478,9 +479,10 @@ pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
     let mut headers_map = http::HeaderMap::new();
     for (k, v) in headers.iter() {
         if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes())
-            && let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes()) {
-                headers_map.insert(name, value);
-            }
+            && let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes())
+        {
+            headers_map.insert(name, value);
+        }
     }
 
     let request_id = headers
@@ -531,8 +533,9 @@ struct MetadataInjector<'a>(&'a mut MetadataMap);
 impl Injector for MetadataInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
         if let Ok(key) = MetadataKey::from_bytes(key.as_bytes())
-            && let Ok(val) = MetadataValue::try_from(&value) {
-                self.0.insert(key, val);
-            }
+            && let Ok(val) = MetadataValue::try_from(&value)
+        {
+            self.0.insert(key, val);
+        }
     }
 }

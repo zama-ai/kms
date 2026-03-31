@@ -2,7 +2,7 @@ use super::{
     coinflip::{Coinflip, SecureCoinflip},
     constants::DISPUTE_STAT_SEC,
     local_single_share::{
-        compute_check_values, look_for_disputes, verify_sender_challenge, MapsSharesChallenges,
+        MapsSharesChallenges, compute_check_values, look_for_disputes, verify_sender_challenge,
     },
     share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutputDouble},
 };
@@ -341,9 +341,10 @@ pub(crate) async fn verify_sharing<
         //Note that parties which are absent from one result_map or the other are already in newly_corrupt
         for (role, value_t) in result_map_t.iter() {
             if let Some(value_2t) = result_map_2t.get(role)
-                && value_2t != value_t {
-                    bcast_corrupts.insert(*role);
-                }
+                && value_2t != value_t
+            {
+                bcast_corrupts.insert(*role);
+            }
         }
 
         //Set 0 share for newly_corrupt senders and add them to corrupt set
@@ -396,7 +397,7 @@ pub(crate) mod tests {
     use crate::sharing::open::{RobustOpen, SecureRobustOpen};
 
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
     use crate::{
         large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
@@ -406,7 +407,7 @@ pub(crate) mod tests {
     use threshold_types::network::NetworkMode;
 
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

@@ -175,7 +175,7 @@ mod tests {
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use crate::{
         online::{
-            preprocessing::{dummy::DummyPreprocessing, RandomPreprocessing, TriplePreprocessing},
+            preprocessing::{RandomPreprocessing, TriplePreprocessing, dummy::DummyPreprocessing},
             triple::{mult, mult_list, open_list},
         },
         runtime::sessions::{
@@ -183,17 +183,17 @@ mod tests {
         },
     };
     #[cfg(feature = "extension_degree_3")]
-    use algebra::galois_rings::degree_3::{ResiduePolyF3Z128, ResiduePolyF3Z64};
+    use algebra::galois_rings::degree_3::{ResiduePolyF3Z64, ResiduePolyF3Z128};
     #[cfg(feature = "extension_degree_5")]
-    use algebra::galois_rings::degree_5::{ResiduePolyF5Z128, ResiduePolyF5Z64};
+    use algebra::galois_rings::degree_5::{ResiduePolyF5Z64, ResiduePolyF5Z128};
     #[cfg(feature = "extension_degree_6")]
-    use algebra::galois_rings::degree_6::{ResiduePolyF6Z128, ResiduePolyF6Z64};
+    use algebra::galois_rings::degree_6::{ResiduePolyF6Z64, ResiduePolyF6Z128};
     #[cfg(feature = "extension_degree_7")]
-    use algebra::galois_rings::degree_7::{ResiduePolyF7Z128, ResiduePolyF7Z64};
+    use algebra::galois_rings::degree_7::{ResiduePolyF7Z64, ResiduePolyF7Z128};
     #[cfg(feature = "extension_degree_8")]
-    use algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
+    use algebra::galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128};
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         structure_traits::Ring,
     };
     use paste::paste;

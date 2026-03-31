@@ -3,7 +3,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
-    telemetry::{init_telemetry, ConfigTracing, SdkMeterProvider, SdkTracerProvider},
+    telemetry::{ConfigTracing, SdkMeterProvider, SdkTracerProvider, init_telemetry},
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp, path::PathBuf};

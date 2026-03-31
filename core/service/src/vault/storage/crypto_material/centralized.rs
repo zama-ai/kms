@@ -7,9 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
+    RequestId,
     identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType},
-    RequestId,
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
@@ -21,11 +21,11 @@ use crate::{
     engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
-        storage::{
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id, Storage,
-            StorageExt,
-        },
         Vault,
+        storage::{
+            Storage, StorageExt, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
+        },
     },
 };
 

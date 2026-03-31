@@ -1,5 +1,5 @@
 use super::{
-    custodian::{InternalCustodianSetupMessage, HEADER},
+    custodian::{HEADER, InternalCustodianSetupMessage},
     error::BackupError,
     secretsharing,
 };
@@ -28,8 +28,8 @@ use algebra::{
 };
 use hashing::DomainSep;
 use kms_grpc::{
-    kms::v1::{OperatorBackupOutput, RecoveryRequest},
     RequestId,
+    kms::v1::{OperatorBackupOutput, RecoveryRequest},
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -561,7 +561,7 @@ impl Operator {
             None => {
                 return Err(BackupError::OperatorError(
                     "Operator has no signing key".to_string(),
-                ))
+                ));
             }
             Some(sk) => sk,
         };
@@ -750,10 +750,10 @@ fn validate_custodian_messages(
     verify_n_t(amount_custodians, threshold)?;
     if custodian_messages.len() != amount_custodians {
         tracing::warn!(
-                "An incorrect amount of custodian messages were received: expected at least {} but got {}",
-                amount_custodians,
-                custodian_messages.len()
-            );
+            "An incorrect amount of custodian messages were received: expected at least {} but got {}",
+            amount_custodians,
+            custodian_messages.len()
+        );
         if custodian_messages.len() < threshold + 1 {
             let msg = format!(
                 "Not enough custodian setup messages: expected at least {} but got {}",
@@ -796,14 +796,16 @@ fn validate_custodian_messages(
             }
         }
         if header != HEADER {
-            tracing::warn!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
+            tracing::warn!(
+                "Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}"
+            );
             continue;
         }
 
         if custodian_role.one_based() > amount_custodians {
             tracing::warn!(
-                    "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
-                );
+                "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
+            );
             continue;
         }
 
@@ -811,8 +813,8 @@ fn validate_custodian_messages(
             custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key))
         {
             tracing::warn!(
-                        "Duplicate custodian role in custodian setup message: {custodian_role}. Will use first value for this role"
-                    );
+                "Duplicate custodian role in custodian setup message: {custodian_role}. Will use first value for this role"
+            );
             let _ = custodian_keys.insert(custodian_role, old_val);
             continue;
         }
@@ -835,7 +837,7 @@ mod tests {
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::{gen_sig_keys, SigningSchemeType},
+            signatures::{SigningSchemeType, gen_sig_keys},
         },
         engine::base::derive_request_id,
     };
@@ -928,11 +930,13 @@ mod tests {
         // 1 is not less than 2/2
         let result = validate_custodian_messages(vec![], 1, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("t < n/2 is not satisfied"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("t < n/2 is not satisfied")
+        );
     }
 
     #[test]
@@ -958,11 +962,13 @@ mod tests {
         let msg = valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("Not enough custodian setup messages"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Not enough custodian setup messages")
+        );
     }
 
     #[tracing_test::traced_test]
@@ -1082,11 +1088,13 @@ mod tests {
         );
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("Not enough valid custodian setup messages"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Not enough valid custodian setup messages")
+        );
         assert!(logs_contain(
             "Invalid custodian role in custodian setup message"
         ));
@@ -1132,10 +1140,12 @@ mod tests {
             "Duplicate custodian role in custodian setup message"
         ));
         // Everyone shares the same role
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("Not enough valid custodian setup messages"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Not enough valid custodian setup messages")
+        );
     }
 }

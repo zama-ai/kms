@@ -59,13 +59,14 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             ).into() ));
         }
         if let Some(my_id) = conf.my_id
-            && my_id > num_parties {
-                tracing::warn!(
-                    "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
-                    my_id,
-                    num_parties
-                );
-            }
+            && my_id > num_parties
+        {
+            tracing::warn!(
+                "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
+                my_id,
+                num_parties
+            );
+        }
         for peer in peers {
             if peer.party_id > num_parties {
                 return Err(

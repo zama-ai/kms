@@ -89,7 +89,7 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
-use wasm_bindgen::{prelude::wasm_bindgen, JsError, JsValue};
+use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 // Since wasm_bindgen is limited, namely it says
 // structs with #[wasm_bindgen] cannot have lifetime or type parameters currently
@@ -336,7 +336,7 @@ pub fn ml_kem_pke_keygen() -> PrivateEncKeyMlKem512 {
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_get_pk(sk: &PrivateEncKeyMlKem512) -> PublicEncKeyMlKem512 {
-    PublicEncKeyMlKem512(PublicEncKey(sk.0 .0.encapsulation_key().clone()))
+    PublicEncKeyMlKem512(PublicEncKey(sk.0.0.encapsulation_key().clone()))
 }
 
 #[wasm_bindgen]
@@ -379,7 +379,7 @@ pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError
 pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8> {
     let mut rng = AesRng::from_entropy();
     bc2wrap::serialize(
-        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap(),
+        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0.0).unwrap(),
     )
     .unwrap()
 }
@@ -390,7 +390,7 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 #[wasm_bindgen]
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
     let ct: hybrid_ml_kem::HybridKemCt = deserialize_safe(ct).unwrap();
-    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0 .0).unwrap()
+    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0.0).unwrap()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]

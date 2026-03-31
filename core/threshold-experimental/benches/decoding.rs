@@ -6,10 +6,10 @@ use algebra::structure_traits::{FromU128, Sample};
 use algebra::{
     error_correction::error_correction,
     galois_fields::gf256::GF256,
-    galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
     sharing::shamir::ShamirSharings,
 };
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;

@@ -1,15 +1,15 @@
 use crate::s3_operations::fetch_public_elements;
-use crate::{dummy_domain, CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS};
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, safe_serialize_hash_element_versioned};
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -344,7 +344,7 @@ mod tests {
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
         consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
+        cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };

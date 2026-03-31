@@ -634,9 +634,9 @@ mod tests {
     };
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSession;
-    use crate::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
+    use crate::runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles};
     use crate::small_execution::prf::PRSSConversions;
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use algebra::structure_traits::{ErrorCorrect, Invert};
     use itertools::Itertools;

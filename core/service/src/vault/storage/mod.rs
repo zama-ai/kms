@@ -8,15 +8,15 @@ use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use enum_dispatch::enum_dispatch;
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     rpc_types::{PrivDataType, PubDataType},
-    RequestId,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{Unversionize, Versionize, named::Named};
 use tracing;
 
 pub mod crypto_material;
@@ -658,9 +658,11 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!(data, retrieved_store);
-        assert!(delete_at_request_id(storage, &req_id, data_type)
-            .await
-            .is_ok());
+        assert!(
+            delete_at_request_id(storage, &req_id, data_type)
+                .await
+                .is_ok()
+        );
         let reretrieved_store: anyhow::Result<TestType> =
             read_versioned_at_request_id(storage, &req_id, data_type).await;
         assert!(reretrieved_store.is_err());

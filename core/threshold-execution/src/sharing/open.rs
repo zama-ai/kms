@@ -22,8 +22,8 @@ use crate::{
 use algebra::{
     sharing::{
         shamir::{
-            fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync,
-            ShamirSharings,
+            ShamirSharings, fill_indexed_shares, reconstruct_w_errors_async,
+            reconstruct_w_errors_sync,
         },
         share::Share,
     },
@@ -557,8 +557,8 @@ pub(crate) mod test {
     use crate::sharing::open::ExternalOpeningInfo;
     use crate::small_execution::prf::PRSSConversions;
     use crate::tests::helper::tests::{
-        execute_protocol_small_w_malicious, execute_protocol_two_sets_w_malicious,
-        TestingParameters,
+        TestingParameters, execute_protocol_small_w_malicious,
+        execute_protocol_two_sets_w_malicious,
     };
     use algebra::{
         galois_rings::degree_4::ResiduePolyF4Z128,

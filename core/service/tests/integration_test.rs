@@ -1,8 +1,8 @@
-use assert_cmd::{assert::OutputAssertExt, Command};
+use assert_cmd::{Command, assert::OutputAssertExt};
 use kms_lib::consts::{
     KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
-use kms_lib::vault::storage::{file::FileStorage, StorageType};
+use kms_lib::vault::storage::{StorageType, file::FileStorage};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -28,12 +28,13 @@ fn kill_process(process_name: &str) {
         // exe returns the path to the process
         if let Some(path) = process.exe()
             && let Some(s) = path.to_str()
-                && s.contains(process_name) {
-                    println!(
-                        "killing process {process_name} with pid {pid}: ok={}",
-                        process.kill()
-                    );
-                }
+            && s.contains(process_name)
+        {
+            println!(
+                "killing process {process_name} with pid {pid}: ok={}",
+                process.kill()
+            );
+        }
     }
 }
 
@@ -307,8 +308,10 @@ mod kms_gen_keys_binary_test {
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr)
-            .contains("the number of parties should be larger or equal to 2"));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("the number of parties should be larger or equal to 2")
+        );
     }
 
     #[test]
@@ -335,8 +338,10 @@ mod kms_gen_keys_binary_test {
             .unwrap();
 
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr)
-            .contains("party ID (5) cannot be greater than num_parties (4)"));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("party ID (5) cannot be greater than num_parties (4)")
+        );
     }
 
     #[test]
@@ -364,8 +369,10 @@ mod kms_gen_keys_binary_test {
             .unwrap();
 
         assert!(output.status.success());
-        assert!(String::from_utf8_lossy(&output.stdout)
-            .contains("Successfully stored ethereum address 0x"));
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("Successfully stored ethereum address 0x")
+        );
     }
 
     #[cfg(feature = "s3_tests")]
@@ -582,16 +589,16 @@ mod kms_server_binary_test {
 mod kms_custodian_binary_tests {
     use aes_prng::AesRng;
     use assert_cmd::Command;
-    use kms_grpc::{kms::v1::CustodianContext, RequestId};
+    use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
         backup::{
+            KMS_CUSTODIAN, SEED_PHRASE_DESC,
             custodian::{
                 InternalCustodianContext, InternalCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
             },
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
-            KMS_CUSTODIAN, SEED_PHRASE_DESC,
         },
         cryptography::{
             encryption::{

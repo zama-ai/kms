@@ -515,9 +515,9 @@ mod tests {
     use rstest::rstest;
     use threshold_types::network::NetworkMode;
 
-    use crate::online::bit_manipulation::bit_dec_batch;
     use crate::online::bit_manipulation::BatchedBits;
     use crate::online::bit_manipulation::Bits;
+    use crate::online::bit_manipulation::bit_dec_batch;
     use crate::online::preprocessing::dummy::DummyPreprocessing;
     use crate::online::triple::open_list;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;

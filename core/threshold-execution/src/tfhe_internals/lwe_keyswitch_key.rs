@@ -1,19 +1,19 @@
 use itertools::Itertools;
 use std::slice::IterMut;
 use tfhe::{
+    Seed,
     core_crypto::{
         commons::{math::random::CompressionSeed, parameters::LweSize},
         entities::LweKeyswitchKeyOwned,
         prelude::SeededLweKeyswitchKeyOwned,
     },
     shortint::{
-        parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
         CiphertextModulus,
+        parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
     },
-    Seed,
 };
 
-use super::lwe_ciphertext::{opened_lwe_masks_bodies_to_tfhers_u64, LweCiphertextShare};
+use super::lwe_ciphertext::{LweCiphertextShare, opened_lwe_masks_bodies_to_tfhers_u64};
 use crate::{
     online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
     tfhe_internals::lwe_ciphertext::opened_lwe_bodies_to_seeded_tfhers_u64,

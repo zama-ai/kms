@@ -1,20 +1,20 @@
 // === Standard Library ===
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
 };
 
 use crate::{
     engine::{context::ContextInfo, utils::MetricedError},
-    vault::storage::{crypto_material::CryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{Storage, StorageExt, crypto_material::CryptoMaterialStorage},
 };
 
 // === External Crates ===
 use aes_prng::AesRng;
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
     RequestId,
+    identifiers::{ContextId, EpochId},
 };
 use threshold_execution::{
     runtime::sessions::{
@@ -98,7 +98,9 @@ impl SessionMaker {
         let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
         let all_prss = crypto_storage.read_all_prss_info().await?;
         if all_prss.is_empty() {
-            tracing::warn!("No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server");
+            tracing::warn!(
+                "No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server"
+            );
         }
         for (epoch_id, prss) in all_prss {
             session_maker.add_epoch(epoch_id.into(), prss).await;
@@ -326,9 +328,9 @@ impl SessionMaker {
                 let context_id_as_session_id = info.context_id().derive_session_id()?;
                 let release_pcrs = if info.pcr_values.is_empty() {
                     tracing::warn!(
-                    "No PCR values provided for context {}, attested TLS verification may be weakened",
-                    info.context_id()
-                );
+                        "No PCR values provided for context {}, attested TLS verification may be weakened",
+                        info.context_id()
+                    );
                     None
                 } else {
                     Some(info.pcr_values.iter().cloned().collect())
@@ -585,12 +587,12 @@ impl SessionMaker {
             .await?;
         tracing::debug!(
             "Getting networking for session_id={}, context_id_1={:?}, context_id_2={:?}, my_role={:?}, network_mode={:?}",
-                session_id,
-                context_id_set1,
-                context_id_set2,
-                my_role,
-                network_mode
-            );
+            session_id,
+            context_id_set1,
+            context_id_set2,
+            my_role,
+            network_mode
+        );
         Ok(networking)
     }
 
@@ -617,10 +619,19 @@ impl SessionMaker {
         let role_assignment_s2 = context_info_s2.role_assignment.clone().inner;
 
         let my_role_both_sets = match (context_info_s1.my_role, context_info_s2.my_role) {
-            (None, None) => return Err(anyhow::anyhow!("Trying to get parameters for a two sets session, but I am not part of any of the two context {} ,{}",context_id_set1,context_id_set2)),
+            (None, None) => {
+                return Err(anyhow::anyhow!(
+                    "Trying to get parameters for a two sets session, but I am not part of any of the two context {} ,{}",
+                    context_id_set1,
+                    context_id_set2
+                ));
+            }
             (None, Some(role)) => TwoSetsRole::Set2(role),
             (Some(role), None) => TwoSetsRole::Set1(role),
-            (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole{ role_set_1, role_set_2 }),
+            (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole {
+                role_set_1,
+                role_set_2,
+            }),
         };
 
         // Go over role_assignment_s1 and role_assignment_s2, if one of the value is common to both return

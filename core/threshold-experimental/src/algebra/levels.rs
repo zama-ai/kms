@@ -1,21 +1,21 @@
 use algebra::{
+    PRSSConversions,
     error_correction::error_correction,
-    poly::{lagrange_polynomials, Poly},
+    poly::{Poly, lagrange_polynomials},
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         ErrorCorrect, Field, FromU128, Invert, One, Ring, RingWithExceptionalSequence, Sample,
         ZConsts, Zero,
     },
-    PRSSConversions,
 };
-use crypto_bigint::impl_modulus;
-use crypto_bigint::modular::ConstMontyParams;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::Odd;
 use crypto_bigint::RandomMod;
 use crypto_bigint::Uint;
-use crypto_bigint::{U128, U1536, U192, U256, U320, U384, U448, U512, U576, U64, U640, U704, U768};
+use crypto_bigint::impl_modulus;
+use crypto_bigint::modular::ConstMontyParams;
+use crypto_bigint::{U64, U128, U192, U256, U320, U384, U448, U512, U576, U640, U704, U768, U1536};
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -27,9 +27,9 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::RwLock;
 
+use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
 use crate::algebra::crt::to_crt;
-use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::integers::{IntQ, ModReduction};
 use crate::gen_bits_odd::LargestPrimeFactor;
 
@@ -774,11 +774,7 @@ impl PRSSConversions for LevelKsw {
                 U1536::from_u128(value.unsigned_abs()).rem(Self::MODULUS.as_nz_ref()),
             ),
         };
-        if value < 0 {
-            res.neg()
-        } else {
-            res
-        }
+        if value < 0 { res.neg() } else { res }
     }
 }
 
@@ -840,11 +836,23 @@ impl LargestPrimeFactor for LevelKsw {
     /// - POW_2: corresponds to the S in the factorisation above
     /// - QUADRATIC_NON_RESIDUE_TO_ODD_DIV: corresponds to the quadratic non-residue above to the power Q
     fn largest_prime_factor_sqrt(v: &Self) -> Self {
-        const ODD_DIV : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
+        const ODD_DIV: FieldR = FieldR {
+            value: GenericModulus(U768::from_be_hex(
+                "000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035",
+            )),
+        };
 
-        const ODD_DIV_PLUS_ONE_DIV_TWO : FieldR = FieldR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
+        const ODD_DIV_PLUS_ONE_DIV_TWO: FieldR = FieldR {
+            value: GenericModulus(U768::from_be_hex(
+                "0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b",
+            )),
+        };
 
-        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: FieldR = FieldR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
+        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: FieldR = FieldR {
+            value: GenericModulus(U768::from_be_hex(
+                "1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877",
+            )),
+        };
 
         const POW_2: u128 = 17_u128;
 
@@ -915,11 +923,7 @@ impl PRSSConversions for LevelOne {
                 U128::from_u128(value.unsigned_abs()).rem(Self::MODULUS.as_nz_ref()),
             ),
         };
-        if value < 0 {
-            res.neg()
-        } else {
-            res
-        }
+        if value < 0 { res.neg() } else { res }
     }
 }
 
@@ -941,10 +945,21 @@ impl PRSSConversions for LevelOne {
 pub type Q = QProd15;
 pub type LevelEll = LevelFifteen;
 
-impl_modulus!(QR, U1536, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40001");
+impl_modulus!(
+    QR,
+    U1536,
+    "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40001"
+);
 type ConstMontyFormQR = crypto_bigint::modular::ConstMontyForm<QR, { U1536::LIMBS }>;
 impl_from_u128_big!(LevelKsw, U1536);
-impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000");
+impl_ring_level!(
+    LevelKsw,
+    U1536,
+    ModulusSize1536,
+    QR,
+    ConstMontyFormQR,
+    "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000"
+);
 
 pub type FieldOne = LevelOne;
 impl_modulus!(Q1, U128, "00000000400040000000001400140001");
@@ -1083,10 +1098,21 @@ impl_field_level!(
     "000100b700b60000"
 );
 
-impl_modulus!(QProd6, U384, "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700001");
+impl_modulus!(
+    QProd6,
+    U384,
+    "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700001"
+);
 type ConstMontyFormQProd6 = crypto_bigint::modular::ConstMontyForm<QProd6, { U384::LIMBS }>;
 impl_from_u128_big!(LevelSix, U384);
-impl_ring_level!(LevelSix, U384, ModulusSize384, QProd6, ConstMontyFormQProd6, "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700000");
+impl_ring_level!(
+    LevelSix,
+    U384,
+    ModulusSize384,
+    QProd6,
+    ConstMontyFormQProd6,
+    "00000000000040990d1fd6a6ca514e8a929c12d466a7417567d7a58d382aab3f6e453e3d6dc06c10bcf356f102700000"
+);
 
 impl_modulus!(Q7, U64, "0001010d010c0001");
 type ConstMontyFormQ7 = crypto_bigint::modular::ConstMontyForm<Q7, { U64::LIMBS }>;
@@ -1100,10 +1126,21 @@ impl_field_level!(
     "0001010d010c0000"
 );
 
-impl_modulus!(QProd7, U384, "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0001");
+impl_modulus!(
+    QProd7,
+    U384,
+    "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0001"
+);
 type ConstMontyFormQProd7 = crypto_bigint::modular::ConstMontyForm<QProd7, { U384::LIMBS }>;
 impl_from_u128_big!(LevelSeven, U384);
-impl_ring_level!(LevelSeven, U384, ModulusSize384, QProd7, ConstMontyFormQProd7, "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0000");
+impl_ring_level!(
+    LevelSeven,
+    U384,
+    ModulusSize384,
+    QProd7,
+    ConstMontyFormQProd7,
+    "40dcee3641555581a9b5bdfd2436f9c5682cba22b0b624c567c3d2249b91f00955d66e3871e9987f50f2e53e037c0000"
+);
 
 impl_modulus!(Q8, U64, "0001013501340001");
 type ConstMontyFormQ8 = crypto_bigint::modular::ConstMontyForm<Q8, { U64::LIMBS }>;
@@ -1117,10 +1154,21 @@ impl_field_level!(
     "0001013501340000"
 );
 
-impl_modulus!(QProd8, U448, "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00001");
+impl_modulus!(
+    QProd8,
+    U448,
+    "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00001"
+);
 type ConstMontyFormQProd8 = crypto_bigint::modular::ConstMontyForm<QProd8, { U448::LIMBS }>;
 impl_from_u128_big!(LevelEight, U448);
-impl_ring_level!(LevelEight, U448, ModulusSize448, QProd8, ConstMontyFormQProd8, "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00000");
+impl_ring_level!(
+    LevelEight,
+    U448,
+    ModulusSize448,
+    QProd8,
+    ConstMontyFormQProd8,
+    "0000412b392fd2a10ba56818b7b0faedee6633951dd7ac2aca891f50ffb83e1ff2ff0ed470d8b2110933dde38583b411543c17a304b00000"
+);
 
 impl_modulus!(Q9, U64, "0001014301420001");
 type ConstMontyFormQ9 = crypto_bigint::modular::ConstMontyForm<Q9, { U64::LIMBS }>;
@@ -1134,10 +1182,21 @@ impl_field_level!(
     "0001014301420000"
 );
 
-impl_modulus!(QProd9, U512, "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20001");
+impl_modulus!(
+    QProd9,
+    U512,
+    "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20001"
+);
 type ConstMontyFormQProd9 = crypto_bigint::modular::ConstMontyForm<QProd9, { U512::LIMBS }>;
 impl_from_u128_big!(LevelNine, U512);
-impl_ring_level!(LevelNine, U512, ModulusSize512, QProd9, ConstMontyFormQProd9, "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20000");
+impl_ring_level!(
+    LevelNine,
+    U512,
+    ModulusSize512,
+    QProd9,
+    ConstMontyFormQProd9,
+    "00000000417d730af255fc29418b878eb9f6fd4e557f0a77233ec16255fdef8f12011a5dca8c09d3adaeb416e49ac0e34a9f53a562c47f05f958fe4605f20000"
+);
 
 impl_modulus!(Q10, U64, "0001015301520001");
 type ConstMontyFormQ10 = crypto_bigint::modular::ConstMontyForm<Q10, { U64::LIMBS }>;
@@ -1151,10 +1210,21 @@ impl_field_level!(
     "0001015301520000"
 );
 
-impl_modulus!(QProd10, U576, "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440001");
+impl_modulus!(
+    QProd10,
+    U576,
+    "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440001"
+);
 type ConstMontyFormQProd10 = crypto_bigint::modular::ConstMontyForm<QProd10, { U576::LIMBS }>;
 impl_from_u128_big!(LevelTen, U576);
-impl_ring_level!(LevelTen, U576, ModulusSize576, QProd10, ConstMontyFormQProd10, "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440000");
+impl_ring_level!(
+    LevelTen,
+    U576,
+    ModulusSize576,
+    QProd10,
+    ConstMontyFormQProd10,
+    "00000000000041d42c80c17709f794bf3421c2597b5cd3e36d15de0c9447fe8845e7971e92b769c3231b38407676b968edb94004b5546e060435e95747c673319143d91d07440000"
+);
 
 impl_modulus!(Q11, U64, "0001016701660001");
 type ConstMontyFormQ11 = crypto_bigint::modular::ConstMontyForm<Q11, { U64::LIMBS }>;
@@ -1168,10 +1238,21 @@ impl_field_level!(
     "0001016701660000"
 );
 
-impl_modulus!(QProd11, U576, "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0001");
+impl_modulus!(
+    QProd11,
+    U576,
+    "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0001"
+);
 type ConstMontyFormQProd11 = crypto_bigint::modular::ConstMontyForm<QProd11, { U576::LIMBS }>;
 impl_from_u128_big!(LevelEleven, U576);
-impl_ring_level!(LevelEleven, U576, ModulusSize576, QProd11, ConstMontyFormQProd11, "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0000");
+impl_ring_level!(
+    LevelEleven,
+    U576,
+    ModulusSize576,
+    QProd11,
+    ConstMontyFormQProd11,
+    "42307d6738bcd5c947e97df4eb0b82cdd054d72da31e5863e22b71bc25bd3efcc3a1375ded06dab0a727d2265e00a6672bbb22bc62afd2966ec164a2ee5a170c6039039c08aa0000"
+);
 
 impl_modulus!(Q12, U64, "0001019101900001");
 type ConstMontyFormQ12 = crypto_bigint::modular::ConstMontyForm<Q12, { U64::LIMBS }>;
@@ -1185,10 +1266,21 @@ impl_field_level!(
     "0001019101900000"
 );
 
-impl_modulus!(QProd12, U640, "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0001");
+impl_modulus!(
+    QProd12,
+    U640,
+    "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0001"
+);
 type ConstMontyFormQProd12 = crypto_bigint::modular::ConstMontyForm<QProd12, { U640::LIMBS }>;
 impl_from_u128_big!(LevelTwelve, U640);
-impl_ring_level!(LevelTwelve, U640, ModulusSize640, QProd12, ConstMontyFormQProd12, "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0000");
+impl_ring_level!(
+    LevelTwelve,
+    U640,
+    ModulusSize640,
+    QProd12,
+    ConstMontyFormQProd12,
+    "000042982bc31330e90d4ca865f06a4dc66e74a978b3b8f8e2900d3876f909b9f492d6fe3794920a68d0c7f148929502e88686810212c693da14a1da4f4e72551f804c02ae9b203596518ecd0a3a0000"
+);
 
 impl_modulus!(Q13, U64, "0001019501940001");
 type ConstMontyFormQ13 = crypto_bigint::modular::ConstMontyForm<Q13, { U64::LIMBS }>;
@@ -1202,10 +1294,21 @@ impl_field_level!(
     "0001019501940000"
 );
 
-impl_modulus!(QProd13, U704, "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0001");
+impl_modulus!(
+    QProd13,
+    U704,
+    "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0001"
+);
 type ConstMontyFormQProd13 = crypto_bigint::modular::ConstMontyForm<QProd13, { U704::LIMBS }>;
 impl_from_u128_big!(LevelThirteen, U704);
-impl_ring_level!(LevelThirteen, U704, ModulusSize704, QProd13, ConstMontyFormQProd13, "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0000");
+impl_ring_level!(
+    LevelThirteen,
+    U704,
+    ModulusSize704,
+    QProd13,
+    ConstMontyFormQProd13,
+    "00000000430186e966f397e073a5888792741f898a15996d8f2d7497dc96a59b016225fe93bb5937bdd800bd4a3f94d0567ff564d47d557a3a65ce1f07e54cd13009c9d1df9f17a66f5b63e9e1004d861fa8b3ea0bce0000"
+);
 
 impl_modulus!(Q14, U64, "000101b301b20001");
 type ConstMontyFormQ14 = crypto_bigint::modular::ConstMontyForm<Q14, { U64::LIMBS }>;
@@ -1219,10 +1322,21 @@ impl_field_level!(
     "000101b301b20000"
 );
 
-impl_modulus!(QProd14, U768, "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800001");
+impl_modulus!(
+    QProd14,
+    U768,
+    "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800001"
+);
 type ConstMontyFormQProd14 = crypto_bigint::modular::ConstMontyForm<QProd14, { U768::LIMBS }>;
 impl_from_u128_big!(LevelFourteen, U768);
-impl_ring_level!(LevelFourteen, U768, ModulusSize768, QProd14, ConstMontyFormQProd14, "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800000");
+impl_ring_level!(
+    LevelFourteen,
+    U768,
+    ModulusSize768,
+    QProd14,
+    ConstMontyFormQProd14,
+    "000000000000437362f33e24827d95eaec463753e456f23045c17c7f64a74f1fb237d3c21d24214fcb88f12b6b01bd4dbd9a150a84450890c1e2aaf6c6d09cb16273e859acfc8ca768d284b293fc87ff72e4b0fdcdf5bc07317bb8d90d800000"
+);
 
 impl_modulus!(Q15, U64, "000101bb01ba0001");
 type ConstMontyFormQ15 = crypto_bigint::modular::ConstMontyForm<Q15, { U64::LIMBS }>;
@@ -1236,15 +1350,37 @@ impl_field_level!(
     "000101bb01ba0000"
 );
 
-impl_modulus!(QProd15, U768, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001");
+impl_modulus!(
+    QProd15,
+    U768,
+    "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001"
+);
 type ConstMontyFormQProd15 = crypto_bigint::modular::ConstMontyForm<QProd15, { U768::LIMBS }>;
 impl_from_u128_big!(LevelFifteen, U768);
-impl_ring_level!(LevelFifteen, U768, ModulusSize768, QProd15, ConstMontyFormQProd15, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000");
+impl_ring_level!(
+    LevelFifteen,
+    U768,
+    ModulusSize768,
+    QProd15,
+    ConstMontyFormQProd15,
+    "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000"
+);
 
-impl_modulus!(R, U768, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001");
+impl_modulus!(
+    R,
+    U768,
+    "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001"
+);
 type ConstMontyFormR = crypto_bigint::modular::ConstMontyForm<R, { U768::LIMBS }>;
 impl_from_u128_big!(FieldR, U768);
-impl_field_level!(FieldR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
+impl_field_level!(
+    FieldR,
+    U768,
+    ModulusSize768,
+    R,
+    ConstMontyFormR,
+    "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"
+);
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {
@@ -1252,7 +1388,11 @@ pub trait ScalingFactor {
 }
 
 impl ScalingFactor for LevelKsw {
-    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001"))};
+    const FACTOR: Self = Self {
+        value: GenericModulus(U1536::from_be_hex(
+            "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001",
+        )),
+    };
 }
 
 #[cfg(test)]

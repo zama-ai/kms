@@ -17,11 +17,11 @@ use crate::{
         runtime::sessions::{
             base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
-        small_execution::prf::{chi, phi, psi, PhiAes},
+        small_execution::prf::{PhiAes, chi, phi, psi},
     },
 };
 use algebra::{
-    bivariate::{compute_powers_list, MatrixMul},
+    bivariate::{MatrixMul, compute_powers_list},
     poly::Poly,
     structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
@@ -39,7 +39,7 @@ use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 use tonic::async_trait;
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 /// Trait to capture the primitives of the PRSS/PRZS after init.
 #[async_trait]
@@ -899,8 +899,10 @@ fn add_vote<Z: Ring, S: BaseSessionHandles>(
                 // If the role was not inserted then it was already present and hence the party is trying to vote multiple times
                 // and they should be marked as corrupt
                 session.add_corrupt(cur_role);
-                tracing::warn!("Party with role {:?} is trying to vote for the same prf value more than once and is thus malicious",
-                         cur_role.one_based());
+                tracing::warn!(
+                    "Party with role {:?} is trying to vote for the same prf value more than once and is thus malicious",
+                    cur_role.one_based()
+                );
             }
         }
         None => {
@@ -973,8 +975,10 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
                 for cur_role in prss_set.iter() {
                     if !roles_votes.contains(cur_role) {
                         session.add_corrupt(*cur_role);
-                        tracing::warn!("Party with role {:?} did not vote for the correct prf value and is thus malicious",
-                                 cur_role.one_based());
+                        tracing::warn!(
+                            "Party with role {:?} did not vote for the correct prf value and is thus malicious",
+                            cur_role.one_based()
+                        );
                     }
                 }
             }
@@ -1111,21 +1115,21 @@ mod tests {
     use crate::runtime::sessions::small_session::SmallSessionHandles;
     use crate::small_execution::agree_random::DSEP_AR;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
-    use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
+    use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
+    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
     use crate::tfhe_internals::utils::expanded_encrypt;
     use crate::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode},
+        endpoints::decryption::{DecryptionMode, threshold_decrypt64},
         runtime::{
             sessions::{session_parameters::GenericParameterHandles, small_session::SmallSession},
-            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+            test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         },
         small_execution::agree_random::{AbortSecureAgreeRandom, DummyAgreeRandom},
     };
     use aes_prng::AesRng;
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         randomness_check::execute_all_randomness_tests_loose,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -1140,7 +1144,7 @@ mod tests {
     use std::num::Wrapping;
     use std::sync::Arc;
     use test_utils::read_element;
-    use tfhe::{set_server_key, FheUint8};
+    use tfhe::{FheUint8, set_server_key};
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 
     use tokio::task::JoinSet;
@@ -1791,28 +1795,34 @@ mod tests {
 
         add_vote(&mut votes, &value, Role::indexed_from_one(3), &mut session).unwrap();
         // Check that the vote of `my_role` was added
-        assert!(votes
-            .get(&value)
-            .unwrap()
-            .contains(&Role::indexed_from_one(3)));
+        assert!(
+            votes
+                .get(&value)
+                .unwrap()
+                .contains(&Role::indexed_from_one(3))
+        );
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
         add_vote(&mut votes, &value, Role::indexed_from_one(2), &mut session).unwrap();
         // Check that role 2 also gets added
-        assert!(votes
-            .get(&value)
-            .unwrap()
-            .contains(&Role::indexed_from_one(2)));
+        assert!(
+            votes
+                .get(&value)
+                .unwrap()
+                .contains(&Role::indexed_from_one(2))
+        );
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
         // Check that party 3 gets added to the set of corruptions after trying to vote a second time
         add_vote(&mut votes, &value, Role::indexed_from_one(3), &mut session).unwrap();
-        assert!(votes
-            .get(&value)
-            .unwrap()
-            .contains(&Role::indexed_from_one(3)));
+        assert!(
+            votes
+                .get(&value)
+                .unwrap()
+                .contains(&Role::indexed_from_one(3))
+        );
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(3)));
         assert!(logs_contain(
             "is trying to vote for the same prf value more than once and is thus malicious"
@@ -2459,20 +2469,22 @@ mod tests {
         expected_result: Z,
         degree: usize,
     ) {
-        assert!(check_results
-            .into_iter()
-            .map(|check| {
-                let reconstruct = ShamirSharings::create(
-                    check
-                        .into_iter()
-                        .map(|(role, value)| Share::new(role, value))
-                        .collect::<Vec<_>>(),
-                )
-                .reconstruct(degree);
-                assert!(reconstruct.is_ok(), "Failed to reconstruct {reconstruct:?}");
-                reconstruct.unwrap()
-            })
-            .all(|reconstruct| reconstruct == expected_result));
+        assert!(
+            check_results
+                .into_iter()
+                .map(|check| {
+                    let reconstruct = ShamirSharings::create(
+                        check
+                            .into_iter()
+                            .map(|(role, value)| Share::new(role, value))
+                            .collect::<Vec<_>>(),
+                    )
+                    .reconstruct(degree);
+                    assert!(reconstruct.is_ok(), "Failed to reconstruct {reconstruct:?}");
+                    reconstruct.unwrap()
+                })
+                .all(|reconstruct| reconstruct == expected_result)
+        );
     }
 
     #[test]
@@ -2533,11 +2545,13 @@ mod tests {
             get_networkless_base_session_for_parties(parties, 0, Role::indexed_from_one(1));
         // Use an empty hash map to ensure that
         let psi_values = HashMap::new();
-        assert!(compute_party_shares::<ResiduePolyF4Z128, _>(
-            &psi_values,
-            &session,
-            ComputeShareMode::Prss
-        )
-        .is_err());
+        assert!(
+            compute_party_shares::<ResiduePolyF4Z128, _>(
+                &psi_values,
+                &session,
+                ComputeShareMode::Prss
+            )
+            .is_err()
+        );
     }
 }

@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
 use aes_prng::AesRng;
-use hashing::{hash_element, DomainSep};
+use hashing::{DomainSep, hash_element};
 use kms_grpc::{
+    RequestId,
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
         CustodianRecoveryRequest, Empty, NewCustodianContextRequest, OperatorBackupOutput,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    RequestId,
 };
 use kms_lib::{
     backup::{
@@ -20,7 +20,7 @@ use kms_lib::{
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-use crate::{s3_operations::fetch_kms_verification_keys, CoreClientConfig, CoreConf};
+use crate::{CoreClientConfig, CoreConf, s3_operations::fetch_kms_verification_keys};
 
 pub(crate) async fn do_get_operator_pub_keys(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
@@ -49,7 +49,11 @@ pub(crate) async fn do_get_operator_pub_keys(
             let dsep: DomainSep = *b"EQUALITY";
             let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
             let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
-            anyhow::bail!("Bad response: public key with hash {} does not match attestation document public key with hash {}", pk_hash, att_pk_hash)
+            anyhow::bail!(
+                "Bad response: public key with hash {} does not match attestation document public key with hash {}",
+                pk_hash,
+                att_pk_hash
+            )
         };
 
         backup_pks.push(hex::encode(pk.public_key.as_slice()));

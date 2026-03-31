@@ -12,7 +12,7 @@ use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
 use rand::SeedableRng;
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use std::sync::Arc;
 use strum_macros::Display;
 use tfhe::named::Named;

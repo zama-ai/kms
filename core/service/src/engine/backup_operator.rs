@@ -1,14 +1,14 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::consts::DEFAULT_EPOCH_ID;
-use crate::engine::base::{derive_request_id, CrsGenMetadata, KmsFheKeyHandles};
+use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::engine::utils::{query_key_material_availability, MetricedError};
+use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    delete_at_request_and_epoch_id, delete_at_request_id, read_versioned_at_request_id,
-    store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
+    StorageExt, StorageReaderExt, delete_at_request_and_epoch_id, delete_at_request_id,
+    read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
 };
 use crate::{
     anyhow_error_and_log,
@@ -27,21 +27,21 @@ use crate::{
         validation::RequestIdParsingErr,
     },
     vault::{
+        Vault,
         keychain::KeychainProxy,
         storage::{
-            crypto_material::CryptoMaterialStorage, store_versioned_at_request_id, Storage,
-            StorageReader,
+            Storage, StorageReader, crypto_material::CryptoMaterialStorage,
+            store_versioned_at_request_id,
         },
-        Vault,
     },
 };
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
+    RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::PubDataType,
-    RequestId,
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
@@ -175,10 +175,10 @@ where
             < (recovery_material.custodian_context().threshold as usize) + 1
         {
             return Err(anyhow::anyhow!(
-                        "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                        parsed_custodian_rec.len(),
-                        recovery_material.custodian_context().threshold
-                    ));
+                "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+                parsed_custodian_rec.len(),
+                recovery_material.custodian_context().threshold
+            ));
         }
 
         Ok((context_id, recovery_material, parsed_custodian_rec))
@@ -255,7 +255,9 @@ where
         if guarded_priv_key.is_some() {
             match inner.overwrite_ephemeral_key {
                 true => {
-                    tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
+                    tracing::warn!(
+                        "Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!"
+                    );
                 }
                 false => {
                     return Err(MetricedError::new(
@@ -368,7 +370,11 @@ where
                 match backup_vault.keychain {
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         // Amount of custodians get defined during context creation
-                        let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
+                        let amount_custodians = recovery_material
+                            .payload
+                            .custodian_context
+                            .custodian_nodes
+                            .len();
                         let operator = Operator::new_for_validating(
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             (*self.base_kms.verf_key()).clone(),
@@ -382,16 +388,31 @@ where
                                 tonic::Code::Internal,
                             )
                         })?;
-                        let custodian_outputs: Vec<InternalCustodianRecoveryOutput> = parsed_custodian_rec.values().cloned().collect();
-                        let serialized_dec_key = operator.verify_and_recover(&custodian_outputs, &recovery_material, context_id, &ephemeral_dec_key, &ephemeral_enc_key).map_err(|e| {
-                            MetricedError::new(
-                                OP_CUSTODIAN_BACKUP_RECOVERY,
-                                None,
-                                anyhow::anyhow!("Failed to verify the backup decryption request: {e}"),
-                                tonic::Code::Unauthenticated,
+                        let custodian_outputs: Vec<InternalCustodianRecoveryOutput> =
+                            parsed_custodian_rec.values().cloned().collect();
+                        let serialized_dec_key = operator
+                            .verify_and_recover(
+                                &custodian_outputs,
+                                &recovery_material,
+                                context_id,
+                                &ephemeral_dec_key,
+                                &ephemeral_enc_key,
                             )
-                        })?;
-                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
+                            .map_err(|e| {
+                                MetricedError::new(
+                                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                                    None,
+                                    anyhow::anyhow!(
+                                        "Failed to verify the backup decryption request: {e}"
+                                    ),
+                                    tonic::Code::Unauthenticated,
+                                )
+                            })?;
+                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
+                            std::io::Cursor::new(&serialized_dec_key),
+                            SAFE_SER_SIZE_LIMIT,
+                        )
+                        .map_err(|e| {
                             MetricedError::new(
                                 OP_CUSTODIAN_BACKUP_RECOVERY,
                                 None,
@@ -402,11 +423,12 @@ where
                         keychain.set_dec_key(Some(backup_dec_key));
                         Ok(Response::new(Empty {}))
                     }
-                    _ => Err(
-                        MetricedError::new(
+                    _ => Err(MetricedError::new(
                         OP_CUSTODIAN_BACKUP_RECOVERY,
                         None,
-                        anyhow::anyhow!("Backup vault is not setup with a keychain for custodian-based backup recovery"),
+                        anyhow::anyhow!(
+                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                        ),
                         tonic::Code::Unavailable,
                     )),
                 }
@@ -528,19 +550,19 @@ async fn filter_custodian_data(
             bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
         if current_verf_key != *my_verf_key {
             tracing::warn!(
-                    "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
-                    current_verf_key.address(),
-                    my_verf_key.address(),
-                );
+                "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
+                current_verf_key.address(),
+                my_verf_key.address(),
+            );
             continue;
         }
         if cur_recovery_output.custodian_role == 0
             || cur_recovery_output.custodian_role > custodian_recovery_outputs.len() as u64
         {
             tracing::warn!(
-                    "Received recovery output with invalid custodian role {}. The output will be ignored.",
-                    cur_recovery_output.custodian_role,
-                );
+                "Received recovery output with invalid custodian role {}. The output will be ignored.",
+                cur_recovery_output.custodian_role,
+            );
             continue;
         }
         let cur_verf = match recovery_material.custodian_context().custodian_nodes.get(
@@ -591,9 +613,9 @@ async fn filter_custodian_data(
                     std::collections::hash_map::Entry::Occupied(_) => {
                         /* do nothing if occupied */
                         tracing::warn!(
-                                    "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
-                                    current_verf_key.address(),
-                                );
+                            "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
+                            current_verf_key.address(),
+                        );
                     }
                     std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                         vacant_entry.insert(output);
@@ -602,19 +624,19 @@ async fn filter_custodian_data(
             }
             Err(e) => {
                 tracing::warn!(
-                            "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
-                                current_verf_key.address(),
-                        );
+                    "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
+                    current_verf_key.address(),
+                );
                 continue;
             }
         }
     }
     if parsed_custodian_rec.len() < 1 + recovery_material.custodian_context().threshold as usize {
         return Err(anyhow_error_and_log(format!(
-                "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                parsed_custodian_rec.len(),
-                recovery_material.custodian_context().threshold)
-            ));
+            "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+            parsed_custodian_rec.len(),
+            recovery_material.custodian_context().threshold
+        )));
     }
     Ok(parsed_custodian_rec)
 }
@@ -722,9 +744,9 @@ where
                 .await?
             {
                 tracing::warn!(
-                "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
-                data_type_enum
-            );
+                    "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
+                    data_type_enum
+                );
                 continue;
             }
             let cur_data: T = backup_vault
@@ -826,7 +848,9 @@ where
         && data_type_enum != PrivDataType::FhePrivateKey
         && data_type_enum != PrivDataType::CrsInfo
     {
-        anyhow::bail!("This method is only meant to be used for epoched material, but the provided data type is not epoched.");
+        anyhow::bail!(
+            "This method is only meant to be used for epoched material, but the provided data type is not epoched."
+        );
     }
     let epoch_ids = priv_storage
         .all_epoch_ids_for_data(&data_type_enum.to_string())
@@ -897,7 +921,9 @@ where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
     if data_type_enum == PrivDataType::FheKeyInfo || data_type_enum == PrivDataType::FhePrivateKey {
-        anyhow::bail!("This method is only meant to be used for non-epoched material, but the provided data type is epoched.");
+        anyhow::bail!(
+            "This method is only meant to be used for non-epoched material, but the provided data type is epoched."
+        );
     }
     let req_ids = priv_storage
         .all_data_ids(&data_type_enum.to_string())
@@ -946,7 +972,9 @@ where
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
                     backup_vault.lock().await;
                 if !keychain_initialized(&backup_vault).await {
-                    tracing::warn!("Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update.");
+                    tracing::warn!(
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
+                    );
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
@@ -1098,7 +1126,9 @@ pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'stat
             );
         }
         (Err(e1), Err(e2)) => {
-            tracing::warn!("Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+            tracing::warn!(
+                "Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}"
+            );
         }
     }
     Ok(())
@@ -1151,7 +1181,9 @@ async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
             );
         }
         (Err(e1), Err(e2)) => {
-            tracing::warn!("Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}");
+            tracing::warn!(
+                "Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}"
+            );
         }
     }
     Ok(())
@@ -1170,11 +1202,11 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vault::storage::{ram::RamStorage, tests::TestType, StorageProxy};
+    use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
-        backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
+        backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         cryptography::{
-            signatures::{gen_sig_keys, SigningSchemeType},
+            signatures::{SigningSchemeType, gen_sig_keys},
             signcryption::UnifiedSigncryption,
         },
         engine::base::derive_request_id,
@@ -1350,10 +1382,12 @@ mod tests {
         assert!(logs_contain(
             "Could not validate signcryption for custodian"
         ));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Only received 0 valid recovery outputs")); // Signatures are wrong so no valid outputs
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Only received 0 valid recovery outputs")
+        ); // Signatures are wrong so no valid outputs
     }
 
     #[tracing_test::traced_test]

@@ -9,10 +9,10 @@ use super::NoiseFloodPreprocessing;
 use crate::constants::LOG_B_SWITCH_SQUASH;
 use crate::constants::STATSEC;
 use crate::keyset_config::KeySetConfig;
-use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::online::preprocessing::BasePreprocessing;
 use crate::online::preprocessing::RandomPreprocessing;
 use crate::online::preprocessing::TriplePreprocessing;
+use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::online::secret_distributions::RealSecretDistributions;
 use crate::online::secret_distributions::SecretDistributions;
 use crate::online::triple::Triple;
@@ -26,7 +26,7 @@ use crate::tfhe_internals::parameters::DKGParams;
 use crate::tfhe_internals::parameters::TUniformBound;
 use aes_prng::AesRng;
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     poly::Poly,
     sharing::{
@@ -118,9 +118,9 @@ impl Default for DummyPreprocessing {
 
 #[async_trait]
 impl<
-        Z: ErrorCorrect + RingWithExceptionalSequence,
-        S: crate::runtime::sessions::base_session::BaseSessionHandles,
-    > Preprocessing<Z, S> for DummyPreprocessing
+    Z: ErrorCorrect + RingWithExceptionalSequence,
+    S: crate::runtime::sessions::base_session::BaseSessionHandles,
+> Preprocessing<Z, S> for DummyPreprocessing
 {
     async fn execute(
         &mut self,
@@ -530,7 +530,7 @@ mod tests {
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::get_base_session;
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
         structure_traits::Zero,
     };
@@ -539,12 +539,12 @@ mod tests {
     use threshold_types::network::NetworkMode;
 
     use super::Share;
-    use crate::online::preprocessing::dummy::reconstruct;
+    use crate::online::preprocessing::RandomPreprocessing;
+    use crate::online::preprocessing::TriplePreprocessing;
     use crate::online::preprocessing::dummy::DummyDebugPreprocessing;
     use crate::online::preprocessing::dummy::DummyPreprocessing;
     use crate::online::preprocessing::dummy::Role;
-    use crate::online::preprocessing::RandomPreprocessing;
-    use crate::online::preprocessing::TriplePreprocessing;
+    use crate::online::preprocessing::dummy::reconstruct;
     use crate::online::triple::Triple;
     use crate::runtime::sessions::{
         base_session::GenericBaseSessionHandles, session_parameters::GenericParameterHandles,

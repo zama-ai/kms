@@ -2,8 +2,8 @@ use aes_prng::AesRng;
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 use tfhe::{
-    core_crypto::prelude::{DefaultRandomGenerator, SecretRandomGenerator},
     Seed,
+    core_crypto::prelude::{DefaultRandomGenerator, SecretRandomGenerator},
 };
 
 /// Get a *secure* random number generator.

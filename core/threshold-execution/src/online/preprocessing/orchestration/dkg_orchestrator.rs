@@ -10,11 +10,11 @@ use crate::{
     keyset_config::KeySetConfig,
     online::{
         preprocessing::{
+            DKGPreprocessing, PreprocessorFactory,
             constants::{
                 BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE, TRACKER_LOG_PERCENTAGE,
             },
             orchestration::producer_traits::ProducerFactory,
-            DKGPreprocessing, PreprocessorFactory,
         },
         triple::Triple,
     },
@@ -26,7 +26,7 @@ use crate::{
     tfhe_internals::parameters::{DKGParams, NoiseInfo},
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve},
@@ -37,12 +37,12 @@ use num_integer::div_ceil;
 use std::sync::Arc;
 use tokio::{
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Mutex, RwLock,
+        mpsc::{Receiver, Sender, channel},
     },
     task::JoinSet,
 };
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 #[derive(Clone)]
 pub struct PreprocessingOrchestrator<Z> {

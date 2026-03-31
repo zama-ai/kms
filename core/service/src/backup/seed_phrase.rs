@@ -8,7 +8,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use bip39::Mnemonic;
-use hashing::{hash_element, DomainSep};
+use hashing::{DomainSep, hash_element};
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::str::FromStr;
 use threshold_types::role::Role;

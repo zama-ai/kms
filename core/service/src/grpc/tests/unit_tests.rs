@@ -38,9 +38,11 @@ async fn test_list_requests_with_unavailable_stores() {
 
     let status = response.unwrap_err();
     assert_eq!(status.code(), tonic::Code::Unavailable);
-    assert!(status
-        .message()
-        .contains("Key generation store not available"));
+    assert!(
+        status
+            .message()
+            .contains("Key generation store not available")
+    );
 }
 
 #[tokio::test]

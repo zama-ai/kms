@@ -1262,16 +1262,16 @@ impl<
                 && let Err(e) =
                     Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
                         .await
-                {
-                    let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                    let _ = update_err_req_in_meta_store(
-                        &mut meta_store.write().await,
-                        &epoch_id.into(),
-                        err,
-                        OP_NEW_EPOCH,
-                    );
-                    return;
-                }
+            {
+                let err = format!("PRSS initialization failed during epoch creation: {e:?}");
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    &epoch_id.into(),
+                    err,
+                    OP_NEW_EPOCH,
+                );
+                return;
+            }
             if let Some(resharing_task) = resharing_task {
                 if let Err(e) = resharing_task.await {
                     let err = format!("Resharing failed during epoch creation: {e:?}");

@@ -291,7 +291,10 @@ impl K8sTestContext {
 impl Drop for K8sTestContext {
     fn drop(&mut self) {
         if !self.passed && !std::thread::panicking() {
-            panic!("[K8S-THRESHOLD] TEST '{}' dropped without calling pass() — did the test actually run to completion?", self.name);
+            panic!(
+                "[K8S-THRESHOLD] TEST '{}' dropped without calling pass() — did the test actually run to completion?",
+                self.name
+            );
         }
     }
 }

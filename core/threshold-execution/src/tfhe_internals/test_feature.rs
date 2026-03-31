@@ -230,12 +230,12 @@ fn extract_key_containers(
     // Check compression key consistency
     if let Some(ks) = keyset
         && ks.get_raw_compression_client_key().is_none()
-            && params_basic_handle
-                .get_compression_decompression_params()
-                .is_some()
-        {
-            anyhow::bail!("Compression client key is missing when parameter is available")
-        }
+        && params_basic_handle
+            .get_compression_decompression_params()
+            .is_some()
+    {
+        anyhow::bail!("Compression client key is missing when parameter is available")
+    }
 
     let compression_sk_container64: Option<Vec<u64>> = match keyset {
         Some(s) => {

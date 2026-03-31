@@ -349,12 +349,11 @@ async fn main_exec() -> anyhow::Result<()> {
     let (mut core_config, tracer_provider, meter_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
     if let Some(t) = core_config.threshold.as_mut()
-        && args.ignore_peerlist {
-            tracing::warn!(
-                "Ignoring peerlist from configuration file as per command line argument"
-            );
-            t.peers = None;
-        };
+        && args.ignore_peerlist
+    {
+        tracing::warn!("Ignoring peerlist from configuration file as per command line argument");
+        t.peers = None;
+    };
 
     // Initialize the rayon pool used inside MPC protocols
     let num_rayon_threads = init_rayon_thread_pool(
@@ -617,9 +616,10 @@ async fn main_exec() -> anyhow::Result<()> {
         keychain.validate_recovery_material(&base_kms.verf_key())?;
     }
     if let Some(ref vault) = backup_vault
-        && let Some(ref keychain) = vault.keychain {
-            keychain.validate_recovery_material(&base_kms.verf_key())?;
-        }
+        && let Some(ref keychain) = vault.keychain
+    {
+        keychain.validate_recovery_material(&base_kms.verf_key())?;
+    }
 
     // compute corresponding public key and derive address from private sig key
     #[allow(deprecated)]
