@@ -17,6 +17,7 @@ use alloy_sol_types::Eip712Domain;
 use hashing::hash_element;
 use hashing::serialize_hash_element;
 use hashing::DomainSep;
+use hashing::HashingWriter;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
@@ -606,11 +607,11 @@ pub fn safe_serialize_hash_element_versioned<T>(
 where
     T: Serialize + tfhe::Versionize + tfhe::named::Named,
 {
-    let mut buf = Vec::new();
-    match tfhe::safe_serialization::safe_serialize(msg, &mut buf, SAFE_SER_SIZE_LIMIT) {
-        Ok(()) => Ok(hash_element(domain_separator, &buf)),
-        Err(e) => anyhow::bail!("Could not encode message due to error: {:?}", e),
-    }
+    let mut writer = HashingWriter::new(domain_separator);
+
+    tfhe::safe_serialization::safe_serialize(msg, &mut writer, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Could not serialize&hash element. Error: {e}"))?;
+    Ok(writer.finalize())
 }
 
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
