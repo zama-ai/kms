@@ -680,6 +680,9 @@ mod tests {
         },
     };
 
+    /// When `KMS_TEST_S3_ANON_BUCKET` is unset or empty, [`test_s3_anon`] uses this bucket (same as CI).
+    const DEFAULT_KMS_TEST_S3_ANON_BUCKET: &str = "zama-zws-dev-kms-ci-no-delete";
+
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
@@ -808,13 +811,15 @@ mod tests {
         let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
             .await
             .unwrap();
-        let pub_storage = ReadOnlyS3Storage::new(
-            s3_client,
-            "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
-            StorageType::PUB,
-            Some("PUB-p1"),
-        )
-        .unwrap();
+
+        // Listing requires a real bucket with anonymous ListObjects. Override with KMS_TEST_S3_ANON_BUCKET.
+        let bucket = match std::env::var("KMS_TEST_S3_ANON_BUCKET") {
+            Ok(b) if !b.is_empty() => b,
+            _ => DEFAULT_KMS_TEST_S3_ANON_BUCKET.to_string(),
+        };
+
+        let pub_storage =
+            ReadOnlyS3Storage::new(s3_client, bucket, StorageType::PUB, Some("PUB-p1")).unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
         // at least one public key should be present in the bucket

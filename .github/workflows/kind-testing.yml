@@ -395,7 +395,7 @@ jobs:
           if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in ${NEXTEST_OUT}"
             ls -R "${NEXTEST_OUT}"
-            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
+            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S%3N")" >> "$GITHUB_ENV"
             cp -Lpr "${NEXTEST_OUT}"/junit.xml /tmp/junit.xml
             echo "EXIT_CODE=0" >> "$GITHUB_ENV"
           else
