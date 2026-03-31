@@ -443,6 +443,10 @@ pub async fn run_decryption_threshold_optionally_fail(
 
     for req in &reqs {
         let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|resp| {
@@ -453,6 +457,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                 }
             })
             .collect();
+
         // Compute threshold < amount_parties/3
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;

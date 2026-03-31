@@ -1,5 +1,6 @@
 use hashing::{hash_element, DomainSep};
 use rand::{CryptoRng, Rng};
+
 use threshold_types::{
     commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
     role::Role,
