@@ -86,6 +86,36 @@ where
     Ok(hash_element(domain_separator, &to_hash))
 }
 
+pub struct HashingWriter {
+    hasher: Shake256,
+}
+
+impl HashingWriter {
+    pub fn new(domsep: &DomainSep) -> Self {
+        let mut hasher = Shake256::default();
+        hasher.update(domsep);
+        Self { hasher }
+    }
+
+    pub fn finalize(self) -> Vec<u8> {
+        let mut output_reader = self.hasher.finalize_xof();
+        let mut digest = vec![0u8; DIGEST_BYTES];
+        output_reader.read(&mut digest);
+        digest
+    }
+}
+
+impl std::io::Write for HashingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.hasher.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::DomainSep;

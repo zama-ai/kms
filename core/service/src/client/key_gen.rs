@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_KEY;
@@ -6,6 +8,8 @@ use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use hashing::hash_element;
+use hashing::SAFE_SER_SIZE_LIMIT;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms::v1::PreviousEpochInfo;
@@ -17,6 +21,7 @@ use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
@@ -192,20 +197,18 @@ impl Client {
         _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
-        let (server_key, public_key) = match tokio::try_join!(
-            self.retrieve_server_key_no_verification(key_gen_result, storage),
-            self.retrieve_public_key_no_verification(key_gen_result, storage)
-        )? {
-            (Some(sk), Some(pk)) => (sk, pk),
-            _ => {
-                return Ok(None);
-            }
-        };
-
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
+        let req_id = parse_optional_grpc_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::Other("invalid request id".into()),
+        )?;
+        let srv_data_type = PubDataType::ServerKey.to_string();
+        let pbl_data_type = PubDataType::PublicKey.to_string();
+        let (srvk_bytes, pblk_bytes) = tokio::try_join!(
+            storage.load_bytes(&req_id, &srv_data_type),
+            storage.load_bytes(&req_id, &pbl_data_type),
+        )?;
+        let server_key_digest = hash_element(&DSEP_PUBDATA_KEY, &srvk_bytes);
+        let public_key_digest = hash_element(&DSEP_PUBDATA_KEY, &pblk_bytes);
 
         let expected_server_key_digest = key_gen_result.key_digests.first().ok_or_else(|| {
             anyhow::anyhow!(
@@ -279,7 +282,10 @@ impl Client {
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
-
+        let server_key = safe_deserialize(Cursor::new(&srvk_bytes), SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let public_key = safe_deserialize(Cursor::new(&pblk_bytes), SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Some((server_key, public_key)))
     }
 
