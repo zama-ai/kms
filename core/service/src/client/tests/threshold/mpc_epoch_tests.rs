@@ -230,6 +230,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             false,
             crs_id,
             Some(2048),
+            None,
         )
         .await;
         assert_eq!(crs.len(), 1);

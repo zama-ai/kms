@@ -193,6 +193,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         true,
         &crs_req,
         Some(16),
+        test_path,
     )
     .await;
 
