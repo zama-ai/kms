@@ -808,13 +808,18 @@ mod tests {
         let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
             .await
             .unwrap();
-        let pub_storage = ReadOnlyS3Storage::new(
-            s3_client,
-            "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
-            StorageType::PUB,
-            Some("PUB-p1"),
-        )
-        .unwrap();
+
+        // Listing requires a real bucket with anonymous ListObjects.
+        // Set KMS_TEST_S3_ANON_BUCKET to run the integration assertion locally or in CI.
+        let Some(bucket) = std::env::var("KMS_TEST_S3_ANON_BUCKET")
+            .ok()
+            .filter(|b| !b.is_empty())
+        else {
+            return;
+        };
+
+        let pub_storage =
+            ReadOnlyS3Storage::new(s3_client, bucket, StorageType::PUB, Some("PUB-p1")).unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
         // at least one public key should be present in the bucket
