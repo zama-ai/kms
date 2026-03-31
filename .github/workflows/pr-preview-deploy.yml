@@ -296,7 +296,7 @@ jobs:
 
            :rocket: And launch your tests:
           \`\`\`bash
-          cargo nextest run --test ${TEST_NAME} --profile ci --no-fail-fast
+          cargo nextest run --test ${TEST_NAME} --profile ci --no-fail-fast  --features="kind_tests"
           \`\`\`
 
           You can connect to the core-client with:
