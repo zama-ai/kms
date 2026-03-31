@@ -98,20 +98,21 @@ pub async fn regenerate_central_keys(
     // ensure_central_keys_exist short-circuits on existing PublicKey, but we also
     // remove ServerKey and FhePrivateKey to avoid stale data from a previous run.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        let _ = pub_storage
+        if let Err(e) = pub_storage
             .delete_data(key_id, &PubDataType::PublicKey.to_string())
-            .await;
-        let _ = pub_storage
+            .await
+        {
+            anyhow::bail!("Failed to delete PublicKey for {key_id}: {e}");
+        }
+        if let Err(e) = pub_storage
             .delete_data(key_id, &PubDataType::ServerKey.to_string())
-            .await;
-        let _ = priv_storage
-            .delete_data_at_epoch(
-                key_id,
-                &DEFAULT_EPOCH_ID,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await;
+            .await
+        {
+            anyhow::bail!("Failed to delete ServerKey for {key_id}: {e}");
+        }
     }
+    // Delete the FhePrivateKey directory tree
+    remove_dir_if_exists(priv_storage.root_dir().join("FhePrivateKey")).await;
 
     // Regenerate FHE keys
     if !ensure_central_keys_exist(
