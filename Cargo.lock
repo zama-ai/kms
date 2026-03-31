@@ -8310,7 +8310,7 @@ dependencies = [
 
 [[package]]
 name = "tracing-test"
-version = "0.13.10-rc.0"
+version = "0.13.20-0"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -8319,7 +8319,7 @@ dependencies = [
 
 [[package]]
 name = "tracing-test-macro"
-version = "0.13.10-rc.0"
+version = "0.13.20-0"
 dependencies = [
  "proc-macro2",
  "quote",
