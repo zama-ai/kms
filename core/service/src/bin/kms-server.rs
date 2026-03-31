@@ -347,7 +347,7 @@ fn main() -> anyhow::Result<()> {
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let (mut core_config, tracer_provider, meter_provider) =
+    let (mut core_config, tracer_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
     if let Some(t) = core_config.threshold.as_mut() {
         if args.ignore_peerlist {
@@ -752,10 +752,6 @@ async fn main_exec() -> anyhow::Result<()> {
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
         eprintln!("Error shutting down tracer provider: {e}");
-    }
-
-    if let Err(e) = meter_provider.shutdown() {
-        eprintln!("Error shutting down meter provider: {e}");
     }
 
     Ok(())
