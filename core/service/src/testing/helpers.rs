@@ -6,10 +6,9 @@ use crate::consts::{
     DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
 };
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
-use crate::vault::storage::StorageExt;
 use crate::vault::storage::{file::FileStorage, Storage};
 use anyhow::Result;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::rpc_types::PubDataType;
 
 /// Create test material manager with workspace test-material path
 ///
