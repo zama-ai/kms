@@ -1,9 +1,11 @@
+use crate::metrics_names::{TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE};
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 /// Label keys for the duration histogram (must match all tag keys used by callers)
-const DURATION_LABEL_KEYS: &[&str] = &["operation", "party_id", "tfhe_type"];
+const DURATION_LABEL_KEYS: &[&str] = &[TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE];
 
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
@@ -15,14 +17,14 @@ pub struct CoreMetrics {
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
 
     // Histograms
-    duration_histogram: HistogramVec, // TODO currently not used
-    size_histogram: HistogramVec,     // TODO currently not used
+    duration_histogram: HistogramVec,
+    size_histogram: HistogramVec, // TODO currently not used
 
     // Gauges
     file_descriptor_gauge: IntGauge, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: IntGauge, // Number of socat file descriptors
-    socat_task_gauge: IntGauge,      // Number of socat file descriptors
-    task_gauge: IntGauge,            // Numbers active child processes of the KMS
+    socat_task_gauge: IntGauge, // Number of socat tasks
+    task_gauge: IntGauge, // Numbers active child processes of the KMS
 
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
@@ -35,11 +37,11 @@ pub struct CoreMetrics {
     meta_storage_user_dec_total_gauge: IntGauge, // Total number of user decryptions in meta storage
 
     // System metrics
-    total_cpus_gauge: IntGauge,     // Total number of CPUs
+    total_cpus_gauge: IntGauge, // Total number of CPUs
     process_cpu_usage_gauge: Gauge, // CPU load for the current process in percentage
-    total_memory_gauge: IntGauge,   // Total memory available
+    total_memory_gauge: IntGauge, // Total memory available
     process_memory_gauge: IntGauge, // Memory usage for the current process
-    cpu_load_gauge: Gauge,          // 1-minute average CPU load, divided by number of cores
+    cpu_load_gauge: Gauge, // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: IntGauge,
 
     // Trace guard for file-based logging
@@ -337,6 +339,8 @@ impl CoreMetrics {
         for (key, value) in extra_tags {
             if let Some(idx) = DURATION_LABEL_KEYS.iter().position(|k| k == key) {
                 values[idx] = value;
+            } else {
+                warn!(key, "ignoring unknown duration metric tag key");
             }
         }
         self.duration_histogram
