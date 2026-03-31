@@ -219,7 +219,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     assert!(crss[crss.len() - 1].priv_data_type == PrivDataType::CrsInfo);
 
     // Read CRS metadata from private storage for reference before recovery
-    let mut original_crs_metadata = Vec::new();
+    let mut original_crs_metadata = Vec::with_capacity(priv_storage_prefixes.len());
     for storage_prefix in priv_storage_prefixes.iter() {
         let cur_priv_store =
             FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
