@@ -90,8 +90,8 @@ pub async fn create_test_context_info_from_core_config(
             )
         })?;
         let (role, identity) = peer.into_role_identity();
-        if let Some(initial_id) = threshold_config.my_id {
-            if role.one_based() != initial_id {
+        if let Some(initial_id) = threshold_config.my_id
+            && role.one_based() != initial_id {
                 // this might be a misconfiguration, but useful for testing
                 // because threshold_config.my_id may be used as a storage prefix that
                 // must be different from the party ID in the peerlist to avoid collision
@@ -102,7 +102,6 @@ pub async fn create_test_context_info_from_core_config(
                     initial_id
                 );
             }
-        }
 
         let verification_key = verification_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!(

@@ -128,8 +128,8 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
             println!("  [OK] Valid {} config", type_str);
             println!("  [OK] Storage: {}", storage_type);
 
-            if type_str == "threshold" {
-                if let Some(threshold_conf) = &config_type.threshold {
+            if type_str == "threshold"
+                && let Some(threshold_conf) = &config_type.threshold {
                     // Report listen address for validation
                     println!(
                         "  [OK] Listen address: {}:{}",
@@ -206,7 +206,6 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                         total_nodes, min_nodes_for_healthy
                     ));
                 }
-            }
         }
         Err(e) => {
             result.config_valid = Some(ConfigValidation {
@@ -476,14 +475,13 @@ pub async fn run_full_check(
     }
 
     // Merge recommendations
-    if let Some(config_validation) = &result.config_valid {
-        if !config_validation.valid {
+    if let Some(config_validation) = &result.config_valid
+        && !config_validation.valid {
             result.overall_health = HealthStatus::Unhealthy;
             result
                 .recommendations
                 .insert(0, "Configuration validation failed".to_string());
         }
-    }
 
     Ok(result)
 }
