@@ -1508,6 +1508,7 @@ mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     {
+        ensure_test_data_setup();
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
