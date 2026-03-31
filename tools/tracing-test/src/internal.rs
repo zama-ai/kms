@@ -125,6 +125,13 @@ impl<S> Layer<S> for CaptureLayer
 where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
 {
+    /// Events emitted outside any span are intentionally dropped.
+    ///
+    /// `logs_contain` / `logs_assert` identify which test "owns" an event by
+    /// matching the span scope that `#[traced_test]` wraps around the test body.
+    /// An event with no active span cannot be attributed to any test, and
+    /// capturing it would cause non-deterministic assertion results when tests
+    /// run in parallel.
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let Some(scopes) = current_scope_names(&ctx) else {
             return;
