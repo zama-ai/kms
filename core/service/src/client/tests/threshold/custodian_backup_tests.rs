@@ -225,7 +225,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         let cur_meta: CrsGenMetadata = read_versioned_at_request_and_epoch_id(
             &cur_priv_store,
             &crs_req,
-            &*DEFAULT_EPOCH_ID,
+            &DEFAULT_EPOCH_ID,
             &PrivDataType::CrsInfo.to_string(),
         )
         .await
@@ -263,7 +263,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         let recovered_meta: CrsGenMetadata = read_versioned_at_request_and_epoch_id(
             &cur_priv_store,
             &crs_req,
-            &*DEFAULT_EPOCH_ID,
+            &DEFAULT_EPOCH_ID,
             &PrivDataType::CrsInfo.to_string(),
         )
         .await
@@ -532,6 +532,7 @@ async fn shutdown_servers_and_client(
 }
 
 #[cfg(feature = "insecure")]
+#[allow(clippy::type_complexity)]
 async fn run_full_custodian_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     mnemonics: Vec<String>,
