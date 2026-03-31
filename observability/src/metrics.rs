@@ -23,8 +23,8 @@ pub struct CoreMetrics {
     // Gauges
     file_descriptor_gauge: IntGauge, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: IntGauge, // Number of socat file descriptors
-    socat_task_gauge: IntGauge, // Number of socat tasks
-    task_gauge: IntGauge, // Numbers active child processes of the KMS
+    socat_task_gauge: IntGauge,      // Number of socat tasks
+    task_gauge: IntGauge,            // Numbers active child processes of the KMS
 
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
@@ -37,11 +37,11 @@ pub struct CoreMetrics {
     meta_storage_user_dec_total_gauge: IntGauge, // Total number of user decryptions in meta storage
 
     // System metrics
-    total_cpus_gauge: IntGauge, // Total number of CPUs
+    total_cpus_gauge: IntGauge,     // Total number of CPUs
     process_cpu_usage_gauge: Gauge, // CPU load for the current process in percentage
-    total_memory_gauge: IntGauge, // Total memory available
+    total_memory_gauge: IntGauge,   // Total memory available
     process_memory_gauge: IntGauge, // Memory usage for the current process
-    cpu_load_gauge: Gauge, // 1-minute average CPU load, divided by number of cores
+    cpu_load_gauge: Gauge,          // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: IntGauge,
 
     // Trace guard for file-based logging
