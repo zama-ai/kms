@@ -129,8 +129,8 @@ impl<Z: Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: Rob
             .zip(vec_share_y.iter())
             .zip(vec_double_share_v.iter())
             .map(|((x, y), v)| {
-                let res = *x * *y + v.degree_2t + Z::sample(session.rng());
-                res
+                
+                *x * *y + v.degree_2t + Z::sample(session.rng())
             })
             .collect_vec();
         network_vec_share_d.pop();

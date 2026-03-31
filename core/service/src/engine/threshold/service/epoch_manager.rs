@@ -21,21 +21,21 @@
 //! In particular, this means that parties must be aware of both contexts (the old one and the new one) even if
 //! they are not part of one of the two contexts.
 
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use alloy_dyn_abi::Eip712Domain;
 use futures_util::{
-    future::{join_all, BoxFuture},
     FutureExt, TryFutureExt,
+    future::{BoxFuture, join_all},
 };
 use itertools::Itertools;
 use kms_grpc::{
+    ContextId, EpochId,
     kms::v1::{
         CrsGenResult, DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, KeyGenResult,
         NewMpcEpochRequest, PreviousEpochInfo, RequestId,
     },
     rpc_types::{PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
-    ContextId, EpochId,
 };
 use observability::metrics_names::{OP_DESTROY_EPOCH, OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
@@ -67,34 +67,35 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
+            CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
             compute_info_compressed_keygen, compute_info_crs, compute_info_standard_keygen,
-            retrieve_parameters, CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS,
-            DSEP_PUBDATA_KEY,
+            retrieve_parameters,
         },
         threshold::service::{
+            PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
-                get_verified_crs_material, get_verified_fhe_public_materials,
-                VerifiedPublicMaterial,
+                VerifiedPublicMaterial, get_verified_crs_material,
+                get_verified_fhe_public_materials,
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
-            PublicKeyMaterial, ThresholdFheKeys,
         },
         traits::EpochManager,
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
+            parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
         },
     },
     util::{
-        meta_store::{retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore},
+        meta_store::{MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store},
         rate_limiter::RateLimiter,
     },
     vault::storage::{
+        Storage, StorageExt,
         crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
-        store_versioned_at_request_id, Storage, StorageExt,
+        store_versioned_at_request_id,
     },
 };
 
@@ -265,14 +266,14 @@ pub struct RealThresholdEpochManager<
 }
 
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
-            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
-            + Default
-            + 'static,
-        Reshare: ReshareSecretKeys + Default + 'static,
-    > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+        + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
+        + Default
+        + 'static,
+    Reshare: ReshareSecretKeys + Default + 'static,
+> RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     /// This will load all PRSS setups from storage into session maker.
     pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
@@ -478,7 +479,10 @@ impl<
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
+    ) -> Result<
+        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        MetricedError,
+    > {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let keys = self
@@ -764,7 +768,10 @@ impl<
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
-    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
+    ) -> Result<
+        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        MetricedError,
+    > {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let verified_fhe_public_materials = join_all(verified_previous_epoch.keys_info.iter().map(
@@ -859,7 +866,10 @@ impl<
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
-    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
+    ) -> Result<
+        impl Future<Output = anyhow::Result<()>> + use<PubS, PrivS, Init, Reshare>,
+        MetricedError,
+    > {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let verified_fhe_public_materials = join_all(verified_previous_epoch.keys_info.iter().map(
@@ -1079,7 +1089,11 @@ impl<
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
             previous_epoch.context_id,
             new_context_id,
-            previous_epoch.keys_info.iter().map(|k| &k.key_id).collect::<Vec<_>>(),
+            previous_epoch
+                .keys_info
+                .iter()
+                .map(|k| &k.key_id)
+                .collect::<Vec<_>>(),
             new_epoch_id
         );
 
@@ -1157,17 +1171,17 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
-            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
-            + Default
-            + 'static,
-        Reshare: ReshareSecretKeys + Default + 'static,
-    > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+        + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
+        + Default
+        + 'static,
+    Reshare: ReshareSecretKeys + Default + 'static,
+> EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
-    async fn new_mpc_epoch(
-        &self,
+    async fn new_mpc_epoch<'a>(
+        &'a self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         let permit = self.rate_limiter.start_new_epoch().await?;
@@ -1366,9 +1380,9 @@ impl<
                                 OP_GET_EPOCH_RESULT,
                                 Some(request_id),
                                 anyhow::anyhow!(
-                            "Resharing should not return legacy metadata for request ID {:?}",
-                            request_id
-                        ),
+                                    "Resharing should not return legacy metadata for request ID {:?}",
+                                    request_id
+                                ),
                                 tonic::Code::InvalidArgument,
                             ));
                         }
@@ -1423,12 +1437,12 @@ pub(crate) mod tests {
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
         },
         cryptography::signatures::gen_sig_keys,
-        engine::base::{derive_request_id, BaseKmsStruct},
+        engine::base::{BaseKmsStruct, derive_request_id},
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
+            StorageType,
             file::FileStorage,
             ram::{self, RamStorage},
-            StorageType,
         },
     };
     use aes_prng::AesRng;
@@ -1443,10 +1457,10 @@ pub(crate) mod tests {
     };
 
     impl<
-            Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
-                + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
-            Reshare: ReshareSecretKeys,
-        > RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
+        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+        Reshare: ReshareSecretKeys,
+    > RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
     {
         fn init_test(base_kms: BaseKmsStruct, session_maker: SessionMaker) -> Self {
             Self {
@@ -1988,7 +2002,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_destroy_epoch_success() {
         use crate::vault::storage::{
-            store_versioned_at_request_and_epoch_id, tests::TestType, StorageReaderExt,
+            StorageReaderExt, store_versioned_at_request_and_epoch_id, tests::TestType,
         };
 
         let mut rng = AesRng::seed_from_u64(42);

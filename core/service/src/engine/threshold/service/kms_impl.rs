@@ -4,21 +4,21 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
+    RequestId,
     identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    RequestId,
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
-use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
+use tfhe::{Versionize, core_crypto::prelude::LweKeyswitchKey, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen128,
     online::preprocessing::{
-        create_memory_factory, create_redis_factory,
-        orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
+        DKGPreprocessing, create_memory_factory, create_redis_factory,
+        orchestration::producer_traits::SecureSmallProducerFactory,
     },
     small_execution::prss::RobustSecurePrssInit,
     tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
@@ -35,7 +35,7 @@ use tokio::{
 };
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
-use tonic::transport::{server::TcpIncoming, Server};
+use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::{
     pb::health_server::{Health, HealthServer},
     server::HealthReporter,
@@ -55,7 +55,7 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context_manager::{ensure_default_threshold_context_in_storage, ThresholdContextManager},
+        context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
         threshold::{
             service::{
@@ -71,11 +71,11 @@ use crate::{
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
-        storage::{
-            crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
-        },
         Vault,
+        storage::{
+            Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+        },
     },
 };
 
@@ -382,7 +382,9 @@ where
     // Validate the recovery material against the provided verification key
     for (cur_req_id, cur_rec_material) in &validation_material {
         if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
+            anyhow::bail!(
+                "Validation material for context {cur_req_id} failed to validate against the verification key"
+            );
         }
     }
 
@@ -499,7 +501,7 @@ where
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &threshold_config.preproc_redis {
         None => create_memory_factory(),
-        Some(ref conf) => {
+        Some(conf) => {
             create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
         }
     };
@@ -607,8 +609,9 @@ where
             );
         } else {
             tracing::info!(
-            "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-            private_storage_info);
+                "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
+                private_storage_info
+            );
             epoch_manager
                 .init_prss(&default_context_id, &epoch_id_prss)
                 .await?;

@@ -1,17 +1,16 @@
 use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 use tfhe::{
+    Seed, Versionize,
     core_crypto::{
         commons::{math::random::CompressionSeed, traits::ParallelByteRandomGenerator},
         entities::LweCompactPublicKeyOwned,
         prelude::{SeededLweCompactPublicKey, SeededLweCompactPublicKeyOwned},
     },
     shortint::{
-        self,
+        self, CiphertextModulus,
         parameters::{CompactPublicKeyEncryptionParameters, LweDimension, PolynomialSize},
-        CiphertextModulus,
     },
-    Seed, Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
 
@@ -22,7 +21,7 @@ use crate::{
     },
     runtime::sessions::base_session::BaseSessionHandles,
     tfhe_internals::{
-        parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
+        parameters::{DKGParams, NoiseInfo, compute_min_max_hw},
         utils::compute_hamming_weight_lwe_sk,
     },
 };
@@ -325,6 +324,7 @@ mod tests {
     use rand::SeedableRng;
     use std::collections::HashMap;
     use tfhe::{
+        Seed,
         core_crypto::{
             algorithms::{
                 decrypt_lwe_ciphertext, encrypt_lwe_ciphertext_with_compact_public_key,
@@ -338,8 +338,7 @@ mod tests {
             seeders::new_seeder,
         },
         integer::parameters::DynamicDistribution,
-        shortint::{parameters::LweDimension, CiphertextModulus},
-        Seed,
+        shortint::{CiphertextModulus, parameters::LweDimension},
     };
     use tfhe_csprng::generators::SoftwareRandomGenerator;
 
@@ -368,7 +367,7 @@ mod tests {
     };
     use threshold_types::network::NetworkMode;
 
-    use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
+    use super::{LweSecretKeyShare, allocate_and_generate_new_lwe_compact_public_key};
 
     #[tokio::test]
     async fn test_pk_generation() {
@@ -397,7 +396,7 @@ mod tests {
             };
 
             let mpc_mask_generator = MPCMaskRandomGenerator {
-                gen: RandomGenerator::<SoftwareRandomGenerator>::new(Seed(seed)),
+                generator: RandomGenerator::<SoftwareRandomGenerator>::new(Seed(seed)),
             };
 
             let vec_tuniform_noise = RealSecretDistributions::t_uniform(

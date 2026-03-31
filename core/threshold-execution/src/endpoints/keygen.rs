@@ -311,13 +311,12 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
 
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
-        if Z::BIT_LENGTH == 64 {
-            if let DKGParams::WithSnS(_) = params {
+        if Z::BIT_LENGTH == 64
+            && let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
                     "Can not generate Switch and Squash key with in Z64".to_string(),
                 ));
             }
-        }
 
         if Z::BIT_LENGTH != params_basics_handle.get_dkg_mode().expected_bit_length() {
             return Err(anyhow_error_and_log(format!(

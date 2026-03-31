@@ -237,11 +237,10 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         );
 
         // Create directory if it doesn't exist
-        if let Some(parent) = std::path::Path::new(&log_path).parent() {
-            if !parent.exists() {
+        if let Some(parent) = std::path::Path::new(&log_path).parent()
+            && !parent.exists() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-        }
 
         // Use a rolling file appender to prevent excessive file sizes
         let file_appender = never("", &log_path);
@@ -478,11 +477,10 @@ pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
     let headers = request.headers();
     let mut headers_map = http::HeaderMap::new();
     for (k, v) in headers.iter() {
-        if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes()) {
-            if let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes()) {
+        if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes())
+            && let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes()) {
                 headers_map.insert(name, value);
             }
-        }
     }
 
     let request_id = headers
@@ -532,10 +530,9 @@ struct MetadataInjector<'a>(&'a mut MetadataMap);
 
 impl Injector for MetadataInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
-        if let Ok(key) = MetadataKey::from_bytes(key.as_bytes()) {
-            if let Ok(val) = MetadataValue::try_from(&value) {
+        if let Ok(key) = MetadataKey::from_bytes(key.as_bytes())
+            && let Ok(val) = MetadataValue::try_from(&value) {
                 self.0.insert(key, val);
             }
-        }
     }
 }

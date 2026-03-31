@@ -4,14 +4,13 @@ use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{KMSType, PubDataType};
 use kms_lib::{
     conf::{
-        init_conf, init_conf_kms_core_telemetry,
+        CoreConfig, init_conf, init_conf_kms_core_telemetry,
         threshold::{PeerConf, ThresholdPartyConf, TlsConf},
-        CoreConfig,
     },
     consts::SIGNING_KEY_ID,
     cryptography::{
         attestation::{
-            make_security_module, AutoRefreshCertResolver, CertResolver, SecurityModuleProxy,
+            AutoRefreshCertResolver, CertResolver, SecurityModuleProxy, make_security_module,
         },
         signatures::PrivateSigKey,
     },
@@ -22,15 +21,15 @@ use kms_lib::{
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
+        Vault,
         aws::build_aws_sdk_config,
         keychain::{
-            awskms::build_aws_kms_client, make_keychain_proxy, Keychain, RootKeyMeasurements,
+            Keychain, RootKeyMeasurements, awskms::build_aws_kms_client, make_keychain_proxy,
         },
         storage::{
-            crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
-            s3::build_s3_client, StorageReader, StorageType,
+            StorageReader, StorageType, crypto_material::get_core_signing_key, make_storage,
+            read_text_at_request_id, s3::build_s3_client,
         },
-        Vault,
     },
 };
 use std::{net::ToSocketAddrs, sync::Arc, thread};
@@ -38,8 +37,8 @@ use thread_handles::init_rayon_thread_pool;
 use threshold_networking::tls::AttestedVerifier;
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
-    client::{danger::DangerousClientConfigBuilder, ClientConfig},
-    crypto::{aws_lc_rs::default_provider as aws_lc_rs_default_provider, CryptoProvider},
+    client::{ClientConfig, danger::DangerousClientConfigBuilder},
+    crypto::{CryptoProvider, aws_lc_rs::default_provider as aws_lc_rs_default_provider},
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
     sign::{CertifiedKey, SingleCertAndKey},
@@ -171,7 +170,7 @@ async fn build_tls_config(
 
     let (cert_resolver, pcr8_expected, ignore_aws_ca_chain, attest_private_vault_root_key) =
         match tls_config {
-            TlsConf::Manual { ref cert, ref key } => {
+            TlsConf::Manual { cert, key } => {
                 tracing::info!(
                     "Using third-party TLS certificate without Nitro remote attestation"
                 );
@@ -179,8 +178,8 @@ async fn build_tls_config(
                     Some(peer) => cert.into_pem(peer)?,
                     None => {
                         tracing::info!(
-                        "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
-                    );
+                            "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
+                        );
                         cert.unchecked_pem()?
                     }
                 };
@@ -205,12 +204,12 @@ async fn build_tls_config(
             // running. The private key is not supplied, since it needs
             // to be generated inside an AWS Nitro enclave.
             TlsConf::Auto {
-                ref eif_signing_cert,
+                eif_signing_cert,
                 trusted_releases: _,
-                ref ignore_aws_ca_chain,
-                ref attest_private_vault_root_key,
-                ref renew_slack_after_expiration,
-                ref renew_fail_retry_timeout,
+                ignore_aws_ca_chain,
+                attest_private_vault_root_key,
+                renew_slack_after_expiration,
+                renew_fail_retry_timeout,
             } => {
                 let security_module = security_module
                     .as_ref()
@@ -226,8 +225,8 @@ async fn build_tls_config(
                                 Some(peer) => eif_signing_cert.into_pem(peer)?,
                                 None => {
                                     tracing::info!(
-                                    "No peerlist present, skipping TLS certificate validation against peerlist"
-                                );
+                                        "No peerlist present, skipping TLS certificate validation against peerlist"
+                                    );
                                     eif_signing_cert.unchecked_pem()?
                                 }
                             },
@@ -235,8 +234,8 @@ async fn build_tls_config(
                     }
                     None => {
                         tracing::info!(
-                        "Using TLS certificate with Nitro remote attestation signed by onboard CA"
-                    );
+                            "Using TLS certificate with Nitro remote attestation signed by onboard CA"
+                        );
                         let ca_cert_bytes = read_text_at_request_id(
                             public_vault,
                             &SIGNING_KEY_ID,
@@ -254,11 +253,11 @@ async fn build_tls_config(
                             #[allow(deprecated)]
                             let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
                             ensure!(
-                    **ca_pk == *sk_vk,
-                    "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
-                    hex::encode(*ca_pk),
-                    hex::encode(sk_vk)
-                        );
+                                **ca_pk == *sk_vk,
+                                "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
+                                hex::encode(*ca_pk),
+                                hex::encode(sk_vk)
+                            );
                         } else {
                             panic!("CA certificate public key isn't ECDSA");
                         };

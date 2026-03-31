@@ -531,11 +531,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj) {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
-                    }
                     reconstruction_vectors_single[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }
@@ -549,11 +548,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj) {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
-                    }
                     reconstruction_vectors_double_t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }
@@ -567,11 +565,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj) {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
-                    }
                     reconstruction_vectors_double_2t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }

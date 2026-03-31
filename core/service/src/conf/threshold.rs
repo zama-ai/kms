@@ -8,12 +8,12 @@ use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::online::preprocessing::redis::RedisConf;
 use threshold_networking::{
     grpc::CoreToCoreNetworkConfig,
-    tls::{extract_subject_from_cert, ReleasePCRValues},
+    tls::{ReleasePCRValues, extract_subject_from_cert},
 };
 use threshold_types::party::Identity;
 use threshold_types::role::Role;
 use validator::{Validate, ValidationError};
-use x509_parser::pem::{parse_x509_pem, Pem};
+use x509_parser::pem::{Pem, parse_x509_pem};
 
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
@@ -134,14 +134,14 @@ impl Default for TlsCert {
 impl TlsCert {
     pub fn unchecked_cert_string(&self) -> anyhow::Result<String> {
         match self {
-            TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path).map_err(|e| {
+            TlsCert::Path(cert_path) => std::fs::read_to_string(cert_path).map_err(|e| {
                 anyhow::anyhow!(
                     "Failed to open TLS cert file {}: {}",
                     cert_path.display(),
                     e
                 )
             }),
-            TlsCert::Pem(ref cert_bytes) => Ok(cert_bytes.to_string()),
+            TlsCert::Pem(cert_bytes) => Ok(cert_bytes.to_string()),
         }
     }
 
@@ -212,10 +212,10 @@ impl TlsKey {
 
     fn to_string(&self) -> anyhow::Result<String> {
         match self {
-            TlsKey::Path(ref key_path) => std::fs::read_to_string(key_path).map_err(|e| {
+            TlsKey::Path(key_path) => std::fs::read_to_string(key_path).map_err(|e| {
                 anyhow::anyhow!("Failed to open TLS key file {}: {}", key_path.display(), e)
             }),
-            TlsKey::Pem(ref key_bytes) => Ok(key_bytes.to_string()),
+            TlsKey::Pem(key_bytes) => Ok(key_bytes.to_string()),
         }
     }
 }

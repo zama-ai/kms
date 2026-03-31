@@ -1583,8 +1583,8 @@ mod tests {
 
         if let Some(set_2_session) = set_2_session {
             let reshare_result = reshare_result.unwrap().unwrap();
-            let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
-            opened_reshared
+            
+            open_list(&reshare_result, &set_2_session).await.unwrap()
         } else {
             assert!(reshare_result.unwrap().is_none());
             inner_secrets.unwrap()
