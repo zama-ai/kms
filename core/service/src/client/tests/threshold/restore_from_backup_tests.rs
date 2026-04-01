@@ -284,6 +284,7 @@ async fn test_insecure_threshold_crs_backup() {
         true, // insecure execution
         &req_id,
         Some(16),
+        None,
     )
     .await;
     // Generated crs, delete it from private storage
