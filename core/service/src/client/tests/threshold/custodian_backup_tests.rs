@@ -522,14 +522,13 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 #[cfg(feature = "insecure")]
 async fn shutdown_servers_and_client(
     kms_servers: HashMap<u32, ServerHandle>,
-    kms_clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    internal_client: Client,
+    _kms_clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    _internal_client: Client,
 ) {
     for (_, kms_server) in kms_servers {
         kms_server.assert_shutdown().await;
     }
-    drop(kms_clients);
-    drop(internal_client);
+    // here we will drop kms_clients and internal_client
 }
 
 #[cfg(feature = "insecure")]
