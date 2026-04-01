@@ -25,7 +25,8 @@ use crate::{
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
 /// Trusted client-side configuration used to validate server responses.
-/// All fields originate from the client's own configuration, not from network data.
+/// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
+/// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
     pub server_addresses: &'a HashMap<u32, Address>,
     pub client_request: &'a ParsedUserDecryptionRequest,
@@ -304,6 +305,15 @@ fn select_most_common_user_dec(
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
+///
+/// # Returns
+/// * `Ok(Some(payloads))` — More than `degree` responses passed validation;
+///   `payloads` contains the verified [`UserDecryptionResponsePayload`]s
+///   (pivot first, then the remaining valid responses).
+/// * `Ok(None)` — Validation could not succeed: either no responses were
+///   provided, no majority-vote pivot was found, or too few responses survived
+///   signature / metadata checks to exceed the degree threshold.
+/// * `Err(_)` — An unrecoverable error occurred during validation
 fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
@@ -311,6 +321,9 @@ fn validate_user_decrypt_responses(
     if agg_resp.is_empty() {
         tracing::warn!("There are no responses");
         return Ok(None);
+    }
+    if trusted_ctx.server_addresses.is_empty() {
+        anyhow::bail!("No servers configured in trusted user decryption context");
     }
 
     // Pick a pivot response
@@ -451,6 +464,16 @@ fn validate_user_decrypt_responses(
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
+///
+/// # Returns
+/// * `Ok(Some(payloads))` — All checks passed: individual response validation
+///   succeeded (see [`validate_user_decrypt_responses`]) **and** the pivot
+///   response's digest matches the expected link derived from the client request,
+///   confirming the responses correspond to the original request.
+/// * `Ok(None)` — The responses were individually valid but the request-linkage
+///   check failed (digest mismatch), meaning the responses do not belong to
+///   the given request.
+/// * `Err(_)` — An unrecoverable error from individual response validation.
 pub(crate) fn validate_user_decrypt_responses_against_request(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],

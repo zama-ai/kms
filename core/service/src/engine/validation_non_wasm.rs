@@ -41,7 +41,8 @@ use threshold_execution::zk::ceremony::compute_witness_dim;
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 /// Trusted client-side configuration used to validate public decryption server responses.
-/// All fields originate from the client's own configuration, not from network data.
+/// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
+/// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct PublicDecTrustedValidationContext<'a> {
     pub server_pks: &'a HashMap<u32, PublicSigKey>,
     pub eip712_domain: Option<&'a Eip712Domain>,
@@ -520,6 +521,10 @@ fn validate_public_decrypt_responses(
         tracing::warn!("There are no public decryption responses!");
         return Ok(None);
     }
+    if trusted_ctx.server_pks.is_empty() {
+        anyhow::bail!("No servers configured in trusted public decryption context");
+    }
+
     // Pick a pivot response
     let min_occurence = (trusted_ctx.server_pks.len() - 1) / 3 + 1; // note that this is floored division
     let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
