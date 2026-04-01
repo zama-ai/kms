@@ -1180,8 +1180,8 @@ impl<
     Reshare: ReshareSecretKeys + Default + 'static,
 > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
-    async fn new_mpc_epoch<'a>(
-        &'a self,
+    async fn new_mpc_epoch(
+        &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         let permit = self.rate_limiter.start_new_epoch().await?;
