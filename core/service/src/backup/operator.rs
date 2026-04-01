@@ -965,7 +965,7 @@ mod tests {
             .contains("Not enough custodian setup messages"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
@@ -985,7 +985,7 @@ mod tests {
         assert!(logs_contain("Invalid header in custodian setup message"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
@@ -1005,7 +1005,7 @@ mod tests {
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_timestamp_future() {
         let mut rng = AesRng::seed_from_u64(6);
@@ -1029,7 +1029,7 @@ mod tests {
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
@@ -1058,7 +1058,7 @@ mod tests {
         ));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
@@ -1092,7 +1092,7 @@ mod tests {
         ));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
@@ -1113,7 +1113,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_not_enough() {
         let mut rng = AesRng::seed_from_u64(8);

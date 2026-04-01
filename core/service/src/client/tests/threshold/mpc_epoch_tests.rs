@@ -8,12 +8,12 @@ use kms_grpc::{
     rpc_types::PubDataType,
     ContextId, RequestId,
 };
+use kms_test_tracing::traced_test;
 use serial_test::serial;
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{transport::Channel, Response, Status};
-use tracing_test::traced_test;
 
 use crate::{
     client::{
