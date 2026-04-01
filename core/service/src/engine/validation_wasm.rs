@@ -1081,7 +1081,7 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), resp4.clone()];
 
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1097,7 +1097,7 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), bad_resp];
 
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1108,7 +1108,7 @@ mod tests {
 
         // empty responses, should return None
         {
-            assert!(validate_user_decrypt_responses(&trusted_ctx, &[],)
+            assert!(validate_user_decrypt_responses(&trusted_ctx, &[])
                 .unwrap()
                 .is_none());
         }
@@ -1124,7 +1124,7 @@ mod tests {
             // We will have 2 accepted responses because
             // the third one does not have a payload
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1143,7 +1143,7 @@ mod tests {
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
-            assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+            assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                 .unwrap()
                 .is_none());
         }
@@ -1155,7 +1155,7 @@ mod tests {
             let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
 
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1214,7 +1214,7 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
 
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1266,7 +1266,7 @@ mod tests {
         {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
             assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
@@ -1399,7 +1399,7 @@ mod tests {
                 eip712_domain: &dummy_domain,
             };
             assert!(
-                validate_user_decrypt_responses_against_request(&bad_ctx, &agg_resp,)
+                validate_user_decrypt_responses_against_request(&bad_ctx, &agg_resp)
                     .unwrap()
                     .is_none()
             );
@@ -1414,7 +1414,7 @@ mod tests {
                 eip712_domain: &dummy_domain,
             };
             assert_eq!(
-                validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp,)
+                validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .unwrap()
                     .as_slice()
