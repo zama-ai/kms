@@ -1139,6 +1139,7 @@ pub(crate) mod tests {
     use threshold_execution::keyset_config::StandardKeySetConfig;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();

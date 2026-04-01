@@ -1,5 +1,5 @@
 [package]
-name = "cc-tests-utils"
+name = "test-utils-cc"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
