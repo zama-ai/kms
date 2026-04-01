@@ -31,10 +31,8 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = quote! {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
-            static INIT: std::sync::Once = std::sync::Once::new();
-            INIT.call_once(|| {
-                std::env::set_var("RUN_MODE", "integration");
-            });
+            std::env::set_var("RUN_MODE", "integration");
+            ::kms_test_tracing::init_logging();
             #fn_block
         }
     };
@@ -95,6 +93,7 @@ pub fn persistent_traces(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 // Enable trace persistence without changing execution environment
+                std::env::set_var("KMS_TEST_MODE", "1");
                 std::env::set_var("TRACE_PERSISTENCE", "enabled");
             });
             #fn_block

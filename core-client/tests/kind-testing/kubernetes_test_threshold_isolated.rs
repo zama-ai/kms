@@ -47,7 +47,9 @@
 
 use kms_core_client::*;
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use kms_test_tracing::init_logging;
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 // ============================================================================
 // TEST INFRASTRUCTURE
@@ -76,13 +78,11 @@ struct K8sTestContext {
 impl K8sTestContext {
     /// Create a new test context with the given test name.
     fn new(name: &'static str) -> Self {
-        init_testing();
+        init_logging();
         let temp_dir = tempfile::tempdir().unwrap();
 
-        println!("\n========================================");
-        println!("[K8S-THRESHOLD] TEST: {}", name);
-        println!("[K8S-THRESHOLD] Workspace: {}", temp_dir.path().display());
-        println!("========================================\n");
+        info!("[K8S-THRESHOLD] TEST: {}", name);
+        info!("[K8S-THRESHOLD] Workspace: {}", temp_dir.path().display());
 
         Self {
             name,
@@ -141,7 +141,7 @@ impl K8sTestContext {
 
     /// Generate a key using InsecureKeyGen.
     async fn insecure_keygen(&self) -> String {
-        println!("[K8S-THRESHOLD] Executing InsecureKeyGen...");
+        info!("[K8S-THRESHOLD] Executing InsecureKeyGen...");
         let start = std::time::Instant::now();
 
         let results = self
@@ -156,7 +156,7 @@ impl K8sTestContext {
             .expect("InsecureKeyGen must return a key ID")
             .to_string();
 
-        println!(
+        info!(
             "[K8S-THRESHOLD] ✅ KeyGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             key_id
@@ -173,7 +173,7 @@ impl K8sTestContext {
     /// for use in subsequent decrypt or comparison steps.
     async fn encrypt(&self, key_id: &str, plaintext: &str, data_type: FheType) -> EncryptionResult {
         let cipher_path = self.workspace().join(format!("ciphertext_{data_type}.bin"));
-        println!(
+        info!(
             "[K8S-THRESHOLD] Encrypting (key={}, plaintext={}, type={:?}) → {:?}",
             key_id, plaintext, data_type, cipher_path
         );
@@ -201,7 +201,7 @@ impl K8sTestContext {
             cipher_path.exists(),
             "Ciphertext file must have been written"
         );
-        println!("[K8S-THRESHOLD] ✅ Ciphertext written to {:?}", cipher_path);
+        info!("[K8S-THRESHOLD] ✅ Ciphertext written to {:?}", cipher_path);
         EncryptionResult {
             cipher_path,
             plaintext: plaintext.to_string(),
@@ -217,7 +217,7 @@ impl K8sTestContext {
     /// every party's decrypted bytes against the original plaintext stored in the file —
     /// panics on any mismatch. A successful return means decryption is correct.
     async fn public_decrypt_from_file(&self, enc: &EncryptionResult) {
-        println!(
+        info!(
             "[K8S-THRESHOLD] Decrypting {:?} via threshold MPC",
             enc.cipher_path
         );
@@ -240,7 +240,7 @@ impl K8sTestContext {
             !results.is_empty(),
             "PublicDecrypt must return at least one result"
         );
-        println!(
+        info!(
             "[K8S-THRESHOLD] ✅ Decryption verified in {:.2}s",
             start.elapsed().as_secs_f64()
         );
@@ -248,7 +248,7 @@ impl K8sTestContext {
 
     /// Generate a CRS.
     async fn crs_gen(&self) -> String {
-        println!("[K8S-THRESHOLD] Executing CrsGen (max_num_bits=2048) on default epoch...");
+        info!("[K8S-THRESHOLD] Executing CrsGen (max_num_bits=2048) on default epoch...");
         let start = std::time::Instant::now();
 
         let results = self
@@ -266,7 +266,7 @@ impl K8sTestContext {
             .expect("CrsGen must return a CRS ID")
             .to_string();
 
-        println!(
+        info!(
             "[K8S-THRESHOLD] ✅ CrsGen completed in {:.2}s: {}",
             start.elapsed().as_secs_f64(),
             crs_id
@@ -278,13 +278,11 @@ impl K8sTestContext {
     fn pass(mut self) {
         self.passed = true;
         let duration = self.start_time.elapsed();
-        println!("\n========================================");
-        println!(
+        info!(
             "[K8S-THRESHOLD] ✅ PASSED: {} ({:.2}s)",
             self.name,
             duration.as_secs_f64()
         );
-        println!("========================================\n");
     }
 }
 
@@ -335,7 +333,7 @@ async fn k8s_test_keygen_uniqueness() {
     assert_ne!(key1, key3, "Keys must be unique");
     assert_ne!(key2, key3, "Keys must be unique");
 
-    println!("[K8S-THRESHOLD] ✅ All 3 keys are unique");
+    info!("[K8S-THRESHOLD] ✅ All 3 keys are unique");
     ctx.pass();
 }
 
@@ -426,6 +424,6 @@ async fn k8s_test_crs_uniqueness() {
 
     assert_ne!(crs1, crs2, "CRS IDs must be unique");
 
-    println!("[K8S-THRESHOLD] ✅ Both CRS IDs are unique");
+    info!("[K8S-THRESHOLD] ✅ Both CRS IDs are unique");
     ctx.pass();
 }
