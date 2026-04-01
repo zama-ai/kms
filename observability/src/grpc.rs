@@ -147,7 +147,7 @@ pub fn extract_parent_span_id<T>(request: &Request<T>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing_test::traced_test;
+    use kms_test_tracing::traced_test;
 
     #[test]
     #[traced_test]

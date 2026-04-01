@@ -1,7 +1,7 @@
 // Keep the attribute macro in a separate crate because Rust requires
 // `#[proc_macro_attribute]` definitions to live in a proc-macro crate.
 // The macro injects the per-test scope and runtime initialization, while the
-// sibling `tracing-test` crate owns the shared subscriber and captured-log
+// sibling `kms-test-tracing` crate owns the shared subscriber and captured-log
 // state needed by `logs_contain(...)` assertions.
 //
 // Scope names are fully qualified via `concat!(module_path!(), "::", fn_name)`
@@ -19,8 +19,8 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let init = parse::<Stmt>(
         quote! {
-            tracing_test::internal::INITIALIZED.call_once(|| {
-                tracing_test::internal::init_subscriber();
+            kms_test_tracing::internal::INITIALIZED.call_once(|| {
+                kms_test_tracing::internal::init_subscriber();
             });
         }
         .into(),
@@ -47,7 +47,7 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[allow(dead_code)]
             fn logs_contain(val: &str) -> bool {
-                tracing_test::internal::logs_with_scope_contain(
+                kms_test_tracing::internal::logs_with_scope_contain(
                     concat!(module_path!(), "::", #fn_name),
                     val,
                 )
@@ -60,7 +60,7 @@ pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #[allow(dead_code)]
             fn logs_assert(f: impl Fn(&[&str]) -> std::result::Result<(), String>) {
-                match tracing_test::internal::logs_assert(
+                match kms_test_tracing::internal::logs_assert(
                     concat!(module_path!(), "::", #fn_name),
                     f,
                 ) {

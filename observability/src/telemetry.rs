@@ -24,7 +24,7 @@ use serde::Serialize;
 use std::{
     env,
     net::SocketAddr,
-    sync::{Arc, Once},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tonic::{
@@ -52,33 +52,10 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
-/// Stderr-only test logging with shared filter presets (no `#[traced_test]` capture buffer).
-///
-/// See [`tracing_test::config::try_init_test_stderr_subscriber`] for full documentation.
-pub use tracing_test::config::try_init_test_stderr_subscriber;
-use tracing_test::config::{
-    test_console_env_filter, test_log_max_bytes, test_logging_enabled, test_persistent_env_filter,
-    TruncatingMakeWriter,
+use kms_test_tracing::config::{
+    test_console_enabled, test_console_env_filter, test_log_max_bytes, test_logging_enabled,
+    test_persistent_env_filter, TruncatingMakeWriter,
 };
-
-/// Enables test-mode env defaults and initializes stderr test logging once.
-///
-/// This is intended as the shared entry point for integration-style tests to
-/// avoid repeating ad-hoc `Once` guards across crates.
-///
-/// Use this for tests that only need stderr output. For tests that assert on
-/// captured logs (`logs_contain(...)` / `logs_assert(...)`), use
-/// `tracing_test::traced_test` instead.
-///
-/// Important: tracing subscriber installation is process-global. If another
-/// initializer already installed a subscriber, this function becomes a no-op.
-pub fn init_logging() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        std::env::set_var("KMS_TEST_MODE", "1");
-        try_init_test_stderr_subscriber();
-    });
-}
 
 #[derive(Clone)]
 struct MetricsState {
@@ -306,7 +283,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with(file_layer)
             .with(env_filter);
 
-        if tracing_test::config::test_console_enabled() {
+        if test_console_enabled() {
             subscriber
                 .with(fmt_layer())
                 .try_init()

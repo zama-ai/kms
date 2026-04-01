@@ -189,13 +189,14 @@ let result = build_request(payload, request_id, config)
 
 ### Testing
 
-In this repository, test logging is handled by our in-repo `tracing-test`
-implementation (workspace crate at `tools/tracing-test`). It keeps the familiar
-`#[tracing_test::traced_test]` workflow and adds repo-specific controls for
-console/file logging. In practice, use one of these two paths:
+In this repository, test logging is handled by our in-repo `kms-test-tracing`
+crate (workspace path `tools/kms-test-tracing`; distinct from crates.io
+`tracing-test`). It keeps the familiar `#[kms_test_tracing::traced_test]`
+workflow and adds repo-specific controls for console/file logging. In practice,
+use one of these two paths:
 
-- `#[tracing_test::traced_test]` for log assertions (`logs_contain`, `logs_assert`)
-- `#[integration_test]` / `observability::telemetry::init_logging()` for
+- `#[kms_test_tracing::traced_test]` for log assertions (`logs_contain`, `logs_assert`)
+- `#[integration_test]` / `kms_test_tracing::init_logging()` for
   integration-style stderr output
 
 Filter resolution is "first match wins", per output:

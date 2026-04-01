@@ -24,7 +24,7 @@ use rand::{rngs::OsRng, SeedableRng};
 use std::collections::BTreeMap;
 use threshold_types::role::Role;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -349,7 +349,7 @@ fn full_flow_malicious_custodian_not_enough() {
     );
 }
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[test]
 fn full_flow_malicious_custodian_init() {
     let mut rng = AesRng::seed_from_u64(1337);

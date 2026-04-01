@@ -222,8 +222,8 @@ where
 /// [`crate::internal::try_init_traced_test_subscriber`] (or rely on the macro,
 /// which calls [`crate::internal::init_subscriber`] directly).
 ///
-/// Workspace convention: integration tests usually import this via
-/// `observability::telemetry::try_init_test_stderr_subscriber`.
+/// Workspace convention: integration tests usually call [`crate::init_logging`]
+/// or import [`try_init_test_stderr_subscriber`] from `kms_test_tracing::config`.
 ///
 /// Safe to call multiple times: if a global subscriber is already installed,
 /// the underlying `try_init` returns `Err` and that error is ignored.

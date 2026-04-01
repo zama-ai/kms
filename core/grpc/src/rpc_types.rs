@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_abi_encoding_fhevm() {
         // a batch with a single plaintext
         let pts_16: Vec<TypedPlaintext> = vec![TypedPlaintext::from_u16(16)];

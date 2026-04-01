@@ -3073,8 +3073,8 @@ name = "error-utils"
 version = "0.13.20-0"
 dependencies = [
  "anyhow",
+ "kms-test-tracing",
  "tracing",
- "tracing-test",
 ]
 
 [[package]]
@@ -4256,6 +4256,7 @@ dependencies = [
  "k256",
  "kms",
  "kms-grpc",
+ "kms-test-tracing",
  "lazy_static",
  "ml-kem",
  "nom 8.0.0",
@@ -4302,7 +4303,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
  "trait-variant",
  "url",
  "validator",
@@ -4331,6 +4331,7 @@ dependencies = [
  "kms",
  "kms-core-client",
  "kms-grpc",
+ "kms-test-tracing",
  "observability",
  "rand 0.8.5",
  "rcgen",
@@ -4367,6 +4368,7 @@ dependencies = [
  "bc2wrap",
  "cfg-if",
  "hex",
+ "kms-test-tracing",
  "prost",
  "rand 0.8.5",
  "serde",
@@ -4381,7 +4383,6 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
- "tracing-test",
  "wasm-bindgen",
 ]
 
@@ -4403,6 +4404,24 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "validator",
+]
+
+[[package]]
+name = "kms-test-tracing"
+version = "0.13.20-0"
+dependencies = [
+ "kms-test-tracing-macro",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "kms-test-tracing-macro"
+version = "0.13.20-0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -4938,6 +4957,7 @@ dependencies = [
  "axum",
  "config",
  "http 1.3.1",
+ "kms-test-tracing",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-http",
@@ -4960,7 +4980,6 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "tracing-test",
  "typed-builder",
  "uuid",
  "validator",
@@ -7669,6 +7688,7 @@ dependencies = [
  "futures",
  "futures-util",
  "itertools 0.14.0",
+ "kms-test-tracing",
  "mockall",
  "ndarray",
  "num-integer",
@@ -7696,7 +7716,6 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
- "tracing-test",
  "zeroize",
 ]
 
@@ -7823,6 +7842,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hyper-rustls 0.27.7",
+ "kms-test-tracing",
  "lazy_static",
  "observability",
  "oid-registry",
@@ -7844,7 +7864,6 @@ dependencies = [
  "tonic-tls",
  "tower",
  "tracing",
- "tracing-test",
  "x509-parser",
 ]
 
@@ -8306,24 +8325,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-test"
-version = "0.13.20-0"
-dependencies = [
- "tracing",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.13.20-0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]

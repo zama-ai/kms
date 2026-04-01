@@ -639,7 +639,7 @@ mod kms_custodian_binary_tests {
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        observability::telemetry::init_logging();
+        kms_test_tracing::init_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {
@@ -710,7 +710,7 @@ mod kms_custodian_binary_tests {
         let _verf_out = run_custodian_cli(verf_command);
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     #[serial_test::serial]
     async fn sunshine_decrypt_custodian() {

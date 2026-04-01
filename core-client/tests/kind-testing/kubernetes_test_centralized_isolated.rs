@@ -44,7 +44,7 @@
 use kms_core_client::*;
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use kms_lib::consts::DEFAULT_MPC_CONTEXT;
-use observability::telemetry::init_logging;
+use kms_test_tracing::init_logging;
 use std::path::Path;
 use std::path::PathBuf;
 use std::string::String;

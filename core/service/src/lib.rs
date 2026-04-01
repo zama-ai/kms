@@ -53,7 +53,7 @@ pub fn some_or_err<T>(input: Option<T>, error: String) -> anyhow::Result<T> {
 
 // NOTE: the below is copied from core/threshold
 // since the calling tracing from another crate
-// does not generate correct logs in tracing_test::traced_test
+// does not generate correct logs in kms_test_tracing::traced_test
 #[track_caller]
 pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::error!("Error in {}: {}", Location::caller(), msg);

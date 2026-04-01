@@ -25,7 +25,7 @@ mod tests {
     use super::{anyhow_error_and_log, anyhow_error_and_warn_log};
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_log() {
         let _ = anyhow_error_and_log("(test_log), msg");
         assert!(logs_contain("src/lib.rs"));
@@ -33,7 +33,7 @@ mod tests {
         assert!(logs_contain("Error in"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[test]
     fn test_warn_log() {
         let _ = anyhow_error_and_warn_log("(test_warn_log), msg");

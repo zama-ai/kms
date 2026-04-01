@@ -880,7 +880,7 @@ pub mod tests {
         storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
         let mut rng = AesRng::seed_from_u64(98765);
         let epoch1 = EpochId::new_random(&mut rng);
@@ -1082,7 +1082,7 @@ pub mod tests {
     /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
     /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
     /// `key_id` is used in both locations.
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
         storage: &mut S,
     ) {

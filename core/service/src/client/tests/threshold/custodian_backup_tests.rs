@@ -51,7 +51,7 @@ use alloy_primitives::Address;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use serial_test::serial;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -273,7 +273,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 }
 
 #[cfg(feature = "insecure")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -438,7 +438,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 }
 
 #[cfg(feature = "insecure")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test]
 #[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {

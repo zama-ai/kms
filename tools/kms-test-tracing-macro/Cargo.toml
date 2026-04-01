@@ -1,5 +1,5 @@
 [package]
-name = "tracing-test-macro"
+name = "kms-test-tracing-macro"
 version.workspace = true
 authors.workspace = true
 publish.workspace = true

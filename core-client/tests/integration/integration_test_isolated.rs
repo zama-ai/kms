@@ -234,7 +234,7 @@ use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
 use kms_lib::testing::prelude::*;
-use observability::telemetry::init_logging;
+use kms_test_tracing::init_logging;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;

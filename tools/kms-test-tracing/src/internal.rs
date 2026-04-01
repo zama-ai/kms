@@ -151,7 +151,7 @@ where
 ///
 /// Safe to call multiple times — [`INITIALIZED`] runs [`init_subscriber`] at most once.
 /// For stderr-only output (no capture), use [`crate::config::try_init_test_stderr_subscriber`]
-/// (`observability::telemetry::try_init_test_stderr_subscriber` in this repo).
+/// (`kms_test_tracing::config::try_init_test_stderr_subscriber` or `init_logging()`).
 pub fn try_init_traced_test_subscriber() {
     INITIALIZED.call_once(init_subscriber);
 }

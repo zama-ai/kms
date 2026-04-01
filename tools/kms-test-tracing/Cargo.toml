@@ -1,5 +1,5 @@
 [package]
-name = "tracing-test"
+name = "kms-test-tracing"
 version.workspace = true
 authors.workspace = true
 publish.workspace = true
@@ -9,4 +9,4 @@ license.workspace = true
 [dependencies]
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "std"] }
-tracing-test-macro = { path = "../tracing-test-macro" }
+kms-test-tracing-macro = { path = "../kms-test-tracing-macro" }

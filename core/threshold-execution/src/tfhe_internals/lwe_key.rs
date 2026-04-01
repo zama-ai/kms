@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(msg, decoded);
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_forced_hw_keygen_lwe() {
         // Params such that we need a key with HW between 4 and 6
