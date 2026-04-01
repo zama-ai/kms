@@ -43,6 +43,7 @@ tracing.workspace = true
 x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
+test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
 tfhe = { workspace = true, features = [
     "boolean",
