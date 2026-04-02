@@ -17,7 +17,6 @@ bc2wrap.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 const_format.workspace = true
-ctor = { workspace = true, optional = true }
 derive_more.workspace = true
 error-utils.workspace = true
 futures-util = { workspace = true, optional = true }
@@ -59,7 +58,6 @@ zeroize.workspace = true
 
 [dev-dependencies]
 async-std.workspace = true
-ctor.workspace = true
 futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
@@ -90,6 +88,6 @@ non-wasm = [
     "dep:tonic",
 ]
 
-testing = ["non-wasm", "dep:tokio", "dep:ctor", "dep:futures-util", "dep:futures", "dep:test-utils"]
+testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils"]
 slow_tests = ["testing", "algebra/all_extension_degrees"]
 malicious_strategies = ["testing"]

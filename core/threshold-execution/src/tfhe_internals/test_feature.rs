@@ -1205,7 +1205,10 @@ mod tests {
         set_server_key, FheUint8,
     };
 
-    use crate::{constants::REAL_KEY_PATH, tfhe_internals::test_feature::KeySet};
+    use crate::{
+        constants::REAL_KEY_PATH, tests::ensure_real_keys_setup,
+        tfhe_internals::test_feature::KeySet,
+    };
     use test_utils::read_element;
 
     // TODO does not work with test key. Enable if test keys get updated
@@ -1216,6 +1219,7 @@ mod tests {
 
     #[test]
     fn sunshine_hl_keys_real() {
+        ensure_real_keys_setup();
         sunshine_hl_keys(REAL_KEY_PATH);
     }
 
