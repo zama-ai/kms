@@ -27,10 +27,10 @@ use crate::{
 use kms_grpc::{
     kms::v1::Empty,
     metastore_status::v1::{
-        meta_store_status_service_server::MetaStoreStatusService, GetMetaStoreInfoResponse,
-        GetRequestStatusesRequest, GetRequestStatusesResponse, ListRequestsRequest,
-        ListRequestsResponse, MetaStoreInfo, MetaStoreType, RequestProcessingStatus,
-        RequestStatusInfo,
+        GetMetaStoreInfoResponse, GetRequestStatusesRequest, GetRequestStatusesResponse,
+        ListRequestsRequest, ListRequestsResponse, MetaStoreInfo, MetaStoreType,
+        RequestProcessingStatus, RequestStatusInfo,
+        meta_store_status_service_server::MetaStoreStatusService,
     },
 };
 
@@ -301,7 +301,11 @@ impl MetaStoreStatusServiceImpl {
         // Monitor pagination bounds
         tracing::debug!(
             "Pagination for {:?} store: total_requests={}, start_index={}, end_index={}, max_results={}",
-            store_type, request_ids.len(), start_index, end_index, max_results
+            store_type,
+            request_ids.len(),
+            start_index,
+            end_index,
+            max_results
         );
 
         let paginated_ids = if start_index < request_ids.len() {
@@ -310,7 +314,9 @@ impl MetaStoreStatusServiceImpl {
             // Edge case: pagination goes beyond available data
             tracing::warn!(
                 "Pagination start_index ({}) >= total requests ({}) for {:?} store - returning empty slice",
-                start_index, request_ids.len(), store_type
+                start_index,
+                request_ids.len(),
+                store_type
             );
             &[]
         };

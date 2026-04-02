@@ -6,18 +6,18 @@
 use assert_cmd::Command;
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_core_client::*;
-use kms_grpc::identifiers::EpochId;
-use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::ContextId;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
+use kms_grpc::identifiers::EpochId;
+use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
+use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
 use kms_test_tracing::init_logging;
@@ -30,7 +30,7 @@ use std::process::Output;
 use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
-use test_context::{test_context, AsyncTestContext};
+use test_context::{AsyncTestContext, test_context};
 use test_utils_cc::{DockerCompose, KMSMode};
 use tfhe::safe_serialization;
 use tfhe::zk::CompactPkeCrs;
@@ -1716,9 +1716,10 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         .await
         .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("Only 0/4 preproc requests succeeded"));
+        assert!(
+            err.to_string()
+                .contains("Only 0/4 preproc requests succeeded")
+        );
     }
 }
 
@@ -1959,9 +1960,10 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     )
     .await
     .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Only 0/4 preproc requests succeeded"));
+    assert!(
+        err.to_string()
+            .contains("Only 0/4 preproc requests succeeded")
+    );
 
     println!("Old epoch successfully destroyed and verified");
 }

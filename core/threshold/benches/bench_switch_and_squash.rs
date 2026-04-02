@@ -1,11 +1,11 @@
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use tfhe::{set_server_key, FheUint16, FheUint2, FheUint32, FheUint64, FheUint8};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use tfhe::{FheUint2, FheUint8, FheUint16, FheUint32, FheUint64, set_server_key};
 use threshold_execution::{
     random::get_rng,
     tfhe_internals::{
-        parameters::{DKGParams, BC_PARAMS_SNS},
+        parameters::{BC_PARAMS_SNS, DKGParams},
         test_feature::gen_key_set,
         utils::expanded_encrypt,
     },

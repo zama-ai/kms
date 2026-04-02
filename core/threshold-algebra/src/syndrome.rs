@@ -170,16 +170,16 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "extension_degree_7")]
-    use crate::galois_fields::gf128::GF128;
-    #[cfg(feature = "extension_degree_8")]
-    use crate::galois_fields::gf256::GF256;
+    #[cfg(feature = "extension_degree_3")]
+    use crate::galois_fields::gf8::GF8;
     #[cfg(feature = "extension_degree_5")]
     use crate::galois_fields::gf32::GF32;
     #[cfg(feature = "extension_degree_6")]
     use crate::galois_fields::gf64::GF64;
-    #[cfg(feature = "extension_degree_3")]
-    use crate::galois_fields::gf8::GF8;
+    #[cfg(feature = "extension_degree_7")]
+    use crate::galois_fields::gf128::GF128;
+    #[cfg(feature = "extension_degree_8")]
+    use crate::galois_fields::gf256::GF256;
     use crate::{
         galois_fields::gf16::GF16,
         poly::{gao_decoding, lagrange_interpolation},

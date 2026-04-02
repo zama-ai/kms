@@ -126,11 +126,11 @@ pub struct MaliciousPrssHonestInitRobustThenRandom<
 }
 
 impl<
-        A: ProtocolDescription,
-        V: ProtocolDescription,
-        Bcast: Broadcast,
-        Z: Default + Clone + Serialize,
-    > ProtocolDescription for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+    A: ProtocolDescription,
+    V: ProtocolDescription,
+    Bcast: Broadcast,
+    Z: Default + Clone + Serialize,
+> ProtocolDescription for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     fn protocol_desc(depth: usize) -> String {
         let indent = Self::INDENT_STRING.repeat(depth);
@@ -162,11 +162,11 @@ impl<A: Default, V: Default, Bcast: Broadcast + Default, Z: Default + Clone + Se
 
 #[async_trait]
 impl<
-        A: AgreeRandomFromShare + 'static,
-        V: Vss + 'static,
-        Bcast: Broadcast + 'static,
-        Z: ErrorCorrect + Invert + PRSSConversions,
-    > PRSSInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+    A: AgreeRandomFromShare + 'static,
+    V: Vss + 'static,
+    Bcast: Broadcast + 'static,
+    Z: ErrorCorrect + Invert + PRSSConversions,
+> PRSSInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
 
@@ -192,11 +192,11 @@ impl<
 }
 
 impl<
-        A: AgreeRandomFromShare + 'static,
-        V: Vss + 'static,
-        Bcast: Broadcast + 'static,
-        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
-    > DerivePRSSState<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+    A: AgreeRandomFromShare + 'static,
+    V: Vss + 'static,
+    Bcast: Broadcast + 'static,
+    Z: RingWithExceptionalSequence + Invert + PRSSConversions,
+> DerivePRSSState<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
     fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType {
@@ -227,11 +227,11 @@ impl<
 
 #[async_trait]
 impl<
-        A: AgreeRandomFromShare,
-        V: Vss,
-        Bcast: Broadcast,
-        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
-    > PRSSPrimitives<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+    A: AgreeRandomFromShare,
+    V: Vss,
+    Bcast: Broadcast,
+    Z: RingWithExceptionalSequence + Invert + PRSSConversions,
+> PRSSPrimitives<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     /// Always return some random value
     async fn prss_next_vec(&mut self, _party_id: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
@@ -302,11 +302,11 @@ pub struct MaliciousPrssHonestInitLieAll<A, V, Bcast: Broadcast, Z: Default + Cl
 }
 
 impl<
-        A: ProtocolDescription,
-        V: ProtocolDescription,
-        Bcast: Broadcast,
-        Z: Default + Clone + Serialize,
-    > ProtocolDescription for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
+    A: ProtocolDescription,
+    V: ProtocolDescription,
+    Bcast: Broadcast,
+    Z: Default + Clone + Serialize,
+> ProtocolDescription for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     fn protocol_desc(depth: usize) -> String {
         let indent = Self::INDENT_STRING.repeat(depth);
@@ -322,11 +322,11 @@ impl<
 
 #[async_trait]
 impl<
-        A: AgreeRandomFromShare + 'static,
-        V: Vss + 'static,
-        Bcast: Broadcast + 'static,
-        Z: ErrorCorrect + Invert + PRSSConversions,
-    > PRSSInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
+    A: AgreeRandomFromShare + 'static,
+    V: Vss + 'static,
+    Bcast: Broadcast + 'static,
+    Z: ErrorCorrect + Invert + PRSSConversions,
+> PRSSInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>;
 
@@ -351,11 +351,11 @@ impl<
 }
 
 impl<
-        A: AgreeRandomFromShare + 'static,
-        V: Vss + 'static,
-        Bcast: Broadcast + 'static,
-        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
-    > DerivePRSSState<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
+    A: AgreeRandomFromShare + 'static,
+    V: Vss + 'static,
+    Bcast: Broadcast + 'static,
+    Z: RingWithExceptionalSequence + Invert + PRSSConversions,
+> DerivePRSSState<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
     fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType {

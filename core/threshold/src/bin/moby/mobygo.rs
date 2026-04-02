@@ -7,10 +7,10 @@ use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use rand::{distributions::Uniform, random, Rng};
+use rand::{Rng, distributions::Uniform, random};
 use tfhe::{
-    integer::BooleanBlock, set_server_key, CompactPublicKey, FheBool, FheUint128, FheUint16,
-    FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
+    CompactPublicKey, FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128,
+    FheUint160, FheUint256, FheUint2048, integer::BooleanBlock, set_server_key,
 };
 use threshold_execution::{
     endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
@@ -444,7 +444,9 @@ async fn preproc_keygen_command(
         )
         .await?;
 
-    println!("Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}");
+    println!(
+        "Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}"
+    );
 
     Ok(())
 }
@@ -469,7 +471,9 @@ async fn threshold_keygen_command(
         )
         .await?;
 
-    println!("Threshold Key Generation started. The new key will be stored under session ID:  {session_id}");
+    println!(
+        "Threshold Key Generation started. The new key will be stored under session ID:  {session_id}"
+    );
 
     Ok(())
 }
@@ -489,10 +493,13 @@ async fn threshold_keygen_result_command(
         .await?;
 
     match &keys {
-        KeySetMaybeCompressed::Compressed(_) =>
-            println!("Storing a compressed keys, can be used for KATs."),
+        KeySetMaybeCompressed::Compressed(_) => {
+            println!("Storing a compressed keys, can be used for KATs.")
+        }
 
-        KeySetMaybeCompressed::Uncompressed(_) => println!("Storing an uncompressed key, can not be used for KATs, because FFT is not iso on different CPUs."),
+        KeySetMaybeCompressed::Uncompressed(_) => println!(
+            "Storing an uncompressed key, can not be used for KATs, because FFT is not iso on different CPUs."
+        ),
     }
 
     let serialized_pk = bc2wrap::serialize(&(params.session_id, keys))?;
@@ -524,7 +531,9 @@ async fn preproc_decrypt_command(
             choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
-    println!("Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}");
+    println!(
+        "Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}"
+    );
     Ok(())
 }
 

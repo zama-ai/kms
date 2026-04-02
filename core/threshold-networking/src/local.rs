@@ -17,8 +17,8 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use futures_util::future::{join, join4};
 use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Mutex,
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 
 /// A simple implementation of networking for local execution.
@@ -377,7 +377,10 @@ mod tests {
         let result2 = net_alice.send(value.clone(), &bob).await;
         assert!(result2.is_err());
         let error_msg = result2.unwrap_err().to_string();
-        assert!(error_msg
-            .contains(&format!("Trying to send to {bob} in round 0 more than once !").to_string()));
+        assert!(
+            error_msg.contains(
+                &format!("Trying to send to {bob} in round 0 more than once !").to_string()
+            )
+        );
     }
 }

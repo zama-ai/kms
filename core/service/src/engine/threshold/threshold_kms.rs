@@ -1,5 +1,5 @@
-use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::engine::Shutdown;
+use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use std::sync::Arc;
@@ -39,17 +39,17 @@ pub struct ThresholdKms<
 
 #[cfg(feature = "insecure")]
 impl<
-        EP: Sync,
-        UD: Sync,
-        PD: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        CM: Sync,
-        BO: Sync,
-    > ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
+    EP: Sync,
+    UD: Sync,
+    PD: Sync,
+    KG: Sync,
+    IKG: Sync,
+    PP: Sync,
+    CG: Sync,
+    ICG: Sync,
+    CM: Sync,
+    BO: Sync,
+> ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -90,17 +90,17 @@ impl<
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
-        EP: Sync,
-        UD: Sync,
-        PD: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        CM: Sync,
-        BO: Sync,
-    > Shutdown for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
+    EP: Sync,
+    UD: Sync,
+    PD: Sync,
+    KG: Sync,
+    IKG: Sync,
+    PP: Sync,
+    CG: Sync,
+    ICG: Sync,
+    CM: Sync,
+    BO: Sync,
+> Shutdown for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
         let health_reporter = self.health_reporter.clone();
@@ -142,17 +142,17 @@ impl<
 #[cfg(feature = "insecure")]
 #[allow(clippy::let_underscore_future)]
 impl<
-        EP: Sync,
-        UD: Sync,
-        PD: Sync,
-        KG: Sync,
-        IKG: Sync,
-        PP: Sync,
-        CG: Sync,
-        ICG: Sync,
-        CM: Sync,
-        BO: Sync,
-    > Drop for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
+    EP: Sync,
+    UD: Sync,
+    PD: Sync,
+    KG: Sync,
+    IKG: Sync,
+    PP: Sync,
+    CG: Sync,
+    ICG: Sync,
+    CM: Sync,
+    BO: Sync,
+> Drop for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn drop(&mut self) {
         // Start the shutdown and let it finish in the background

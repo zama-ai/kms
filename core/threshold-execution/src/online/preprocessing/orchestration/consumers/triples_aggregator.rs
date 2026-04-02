@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc::Receiver};
 
 use crate::online::{preprocessing::TriplePreprocessing, triple::Triple};
 use error_utils::anyhow_error_and_log;

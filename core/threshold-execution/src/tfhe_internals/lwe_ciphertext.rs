@@ -1,6 +1,7 @@
 use itertools::{EitherOrBoth, Itertools};
 use rayon::prelude::*;
 use tfhe::{
+    Seed,
     boolean::prelude::LweDimension,
     core_crypto::{
         commons::{
@@ -13,7 +14,6 @@ use tfhe::{
             SeededLweCiphertextList,
         },
     },
-    Seed,
 };
 
 use crate::{online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles};
@@ -274,8 +274,8 @@ mod tests {
             entities::{LweCiphertextOwned, LweSecretKeyOwned},
         },
         shortint::{
-            parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
             CiphertextModulus,
+            parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
@@ -306,7 +306,7 @@ mod tests {
     };
     use threshold_types::network::NetworkMode;
 
-    use super::{encrypt_lwe_ciphertext, LweCiphertextShare, LweSecretKeyShare};
+    use super::{LweCiphertextShare, LweSecretKeyShare, encrypt_lwe_ciphertext};
 
     #[tokio::test]
     async fn test_lwe_encryption() {

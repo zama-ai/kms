@@ -21,7 +21,7 @@ use threshold_types::session_id::SessionId;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 use super::grpc::SupportedRing;
 use super::requests::{
@@ -30,10 +30,10 @@ use super::requests::{
     ThroughtputParams,
 };
 use threshold_networking::choreography_gen::{
-    choreography_client::ChoreographyClient, CrsGenRequest, CrsGenResultRequest,
-    PreprocDecryptRequest, PreprocKeyGenRequest, PrssInitRequest, ReshareRequest,
-    StatusCheckRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
-    ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
+    CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, PreprocKeyGenRequest,
+    PrssInitRequest, ReshareRequest, StatusCheckRequest, ThresholdDecryptRequest,
+    ThresholdDecryptResultRequest, ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
+    choreography_client::ChoreographyClient,
 };
 
 pub struct ChoreoRuntime {

@@ -10,8 +10,8 @@ use crate::testing::utils::{get_health_client, get_status};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use std::collections::HashMap;
 use tonic::server::NamedService;
-use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
+use tonic_health::pb::health_check_response::ServingStatus;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "slow_tests")] {

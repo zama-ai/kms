@@ -11,22 +11,22 @@ use crate::{
 };
 use error_utils::anyhow_error_and_log;
 
-use crate::structure_traits::Field;
 use crate::PRSSConversions;
+use crate::structure_traits::Field;
 use threshold_types::role::Role;
 
 use crate::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_fields::common::syndrome_decoding_z2,
     sharing::shamir::{ShamirFieldPoly, ShamirSharings},
     sharing::share::Share,
 };
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use serde::{ser::SerializeTuple, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeTuple};
 use sha3::{
-    digest::{ExtendableOutput, Update, XofReader},
     Shake256,
+    digest::{ExtendableOutput, Update, XofReader},
 };
 use std::marker::PhantomData;
 use std::num::Wrapping;
@@ -455,11 +455,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> ResiduePoly<Z, EXTENSION_DEGREE
             .iter()
             .filter_map(|c| {
                 let bit = (*c) & ((Z::ONE << exp) - Z::ONE);
-                if bit == Z::ZERO {
-                    None
-                } else {
-                    Some(bit)
-                }
+                if bit == Z::ZERO { None } else { Some(bit) }
             })
             .collect();
 
@@ -807,7 +803,9 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSI
     /// a Mask for post-SnS decryption using extesion of Z64
     /// which is wrong
     fn from_i128(_value: i128) -> Self {
-        panic!("Trying to call from_i128 for a Galois extension of Z64. This should only happen for extensions of Z128.")
+        panic!(
+            "Trying to call from_i128 for a Galois extension of Z64. This should only happen for extensions of Z128."
+        )
     }
 }
 

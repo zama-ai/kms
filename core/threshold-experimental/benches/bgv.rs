@@ -1,6 +1,6 @@
 use aes_prng::AesRng;
 use criterion::BenchmarkId;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use crypto_bigint::modular::ConstMontyParams;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;

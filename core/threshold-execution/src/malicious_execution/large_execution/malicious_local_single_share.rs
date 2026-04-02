@@ -3,7 +3,7 @@ use crate::{
     large_execution::{
         coinflip::Coinflip,
         local_single_share::{
-            send_receive_pads, verify_sharing, LocalSingleShare, LOCAL_SINGLE_MAX_ITER,
+            LOCAL_SINGLE_MAX_ITER, LocalSingleShare, send_receive_pads, verify_sharing,
         },
         share_dispute::ShareDispute,
     },
@@ -113,11 +113,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 return Ok(shared_secrets.all_shares);
             }
         }
-        Err(anyhow_error_and_log(
-            format!(
-                "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`"
-            )
-        ))
+        Err(anyhow_error_and_log(format!(
+            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`"
+        )))
     }
 }
 
@@ -217,10 +215,8 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 return Ok(shared_secrets.all_shares);
             }
         }
-        Err(anyhow_error_and_log(
-                format!(
-                    "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
-                )
-        ))
+        Err(anyhow_error_and_log(format!(
+            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
+        )))
     }
 }

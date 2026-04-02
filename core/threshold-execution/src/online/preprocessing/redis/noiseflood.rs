@@ -6,8 +6,8 @@ use algebra::{
 use error_utils::anyhow_error_and_log;
 
 use super::{
-    fetch_correlated_randomness, store_correlated_randomness, CorrelatedRandomnessType,
-    RedisPreprocessing,
+    CorrelatedRandomnessType, RedisPreprocessing, fetch_correlated_randomness,
+    store_correlated_randomness,
 };
 use crate::online::preprocessing::NoiseFloodPreprocessing;
 use async_trait::async_trait;

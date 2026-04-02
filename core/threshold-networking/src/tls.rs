@@ -15,17 +15,17 @@ use std::{
 };
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use tokio_rustls::rustls::{
+    DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme,
     client::{
-        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
         WebPkiServerVerifier,
+        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     },
     crypto::{CryptoProvider, WebPkiSupportedAlgorithms},
     pki_types::{CertificateDer, ServerName, UnixTime},
     server::{
-        danger::{ClientCertVerified, ClientCertVerifier},
         WebPkiClientVerifier,
+        danger::{ClientCertVerified, ClientCertVerifier},
     },
-    DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme,
 };
 use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
 
@@ -168,7 +168,9 @@ Crypto provider should exist at this point"
             match trust_roots.get_mut(&mpc_identity) {
                 Some((_, _, contexts)) => {
                     if !contexts.insert(context_id) {
-                        tracing::warn!("MPC identity {mpc_identity} is already present in context {context_id}")
+                        tracing::warn!(
+                            "MPC identity {mpc_identity} is already present in context {context_id}"
+                        )
                     }
                 }
                 None => {
@@ -431,7 +433,11 @@ impl ClientCertVerifier for AttestedVerifier {
                 Error::General(e.to_string())
             })?;
         } else {
-            tracing::warn!("Skipping attestation document validation because do_validation={}, release_pcrs.is_empty={}", do_validation, release_pcrs.is_empty());
+            tracing::warn!(
+                "Skipping attestation document validation because do_validation={}, release_pcrs.is_empty={}",
+                do_validation,
+                release_pcrs.is_empty()
+            );
         }
 
         Ok(ClientCertVerified::assertion())
@@ -525,7 +531,9 @@ fn validate_wrapped_cert(
         if ignore_aws_ca_chain {
             let subject = extract_subject_from_cert(cert)?;
             tracing::warn!(
-                "Cannot validate CA chain for party {subject} attestation document at timestamp {}: {}", now.as_secs(), e
+                "Cannot validate CA chain for party {subject} attestation document at timestamp {}: {}",
+                now.as_secs(),
+                e
             );
             tracing::warn!(
                 "Party {} attestation document signing certificate: {:#?}",
@@ -553,7 +561,12 @@ fn validate_wrapped_cert(
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };
-    ensure!(*cert.public_key().raw == *attested_pk.as_slice(), "Bad certificate: subject public key info {} does not match attestation document public key info {}", hex::encode(cert.public_key().raw), hex::encode(attested_pk.as_slice()));
+    ensure!(
+        *cert.public_key().raw == *attested_pk.as_slice(),
+        "Bad certificate: subject public key info {} does not match attestation document public key info {}",
+        hex::encode(cert.public_key().raw),
+        hex::encode(attested_pk.as_slice())
+    );
 
     // check software release hashes
     let Some(pcr0) = attestation_doc.pcrs.get(&0) else {
@@ -618,7 +631,11 @@ fn validate_wrapped_cert(
         let party_cert_hash = hasher.finalize();
         #[allow(deprecated)]
         if party_cert_hash.as_slice() != pcr8.as_slice() {
-            bail!("Bad certificate: untrusted party certificate hash {} in attestation document, expected {}", hex::encode(party_cert_hash.as_slice()), hex::encode(pcr8.as_slice()))
+            bail!(
+                "Bad certificate: untrusted party certificate hash {} in attestation document, expected {}",
+                hex::encode(party_cert_hash.as_slice()),
+                hex::encode(pcr8.as_slice())
+            )
         }
     }
 

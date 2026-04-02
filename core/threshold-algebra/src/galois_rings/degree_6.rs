@@ -10,10 +10,10 @@ use std::{
 };
 
 use crate::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     bivariate::compute_powers,
     error_correction::MemoizedExceptionals,
-    galois_fields::gf64::{two_powers, GF64, GF64_FROM_GENERATOR, GF64_NEWTON_INNER_LOOP},
+    galois_fields::gf64::{GF64, GF64_FROM_GENERATOR, GF64_NEWTON_INNER_LOOP, two_powers},
     poly::{BitWiseEval, BitwisePoly},
     structure_traits::{
         BaseRing, One, QuotientMaximalIdeal, Ring, RingWithExceptionalSequence, Solve1, ZConsts,
@@ -304,7 +304,11 @@ where
                 }
                 Left(_coef_2) => {
                     // There are not enough powers supplied in the call, this can only happen in case of a bug
-                    panic!("Not enough powers supplied for bitwise evaluation. Only {:?} are supplied but {:?} are needed.", powers.len(), self.coefs().len());
+                    panic!(
+                        "Not enough powers supplied for bitwise evaluation. Only {:?} are supplied but {:?} are needed.",
+                        powers.len(),
+                        self.coefs().len()
+                    );
                 }
             }
         }
@@ -345,15 +349,15 @@ impl Monomials for ResiduePoly<Z128, 6> {
 mod tests {
     use super::*;
     use crate::{
-        base_ring::{Z128, Z64},
-        galois_rings::common::{pack_residue_poly, TryFromWrapper},
+        PRSSConversions,
+        base_ring::{Z64, Z128},
+        galois_rings::common::{TryFromWrapper, pack_residue_poly},
         poly::Poly,
         sharing::{
             shamir::{InputOp, RevealOp, ShamirSharings},
             share::Share,
         },
         structure_traits::{ErrorCorrect, Sample, Syndrome},
-        PRSSConversions,
     };
     use aes_prng::AesRng;
     use itertools::Itertools;
@@ -431,7 +435,7 @@ mod tests {
             #[case(Wrapping($u::MAX - 23) )]
             #[case(Wrapping($u::MAX - 1) )]
             #[case(Wrapping($u::MAX))]
-            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
+            #[case(Wrapping(rand::Rng::r#gen::<$u>(&mut rand::thread_rng())))]
             fn [<test_share_reconstruct_ $z:lower>](#[case] secret: $z) {
                 let threshold: usize = 5;
                 let num_parties = 9;
@@ -452,7 +456,7 @@ mod tests {
             #[case(Wrapping($u::MAX - 23 ))]
             #[case(Wrapping($u::MAX - 1 ))]
             #[case(Wrapping($u::MAX))]
-            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
+            #[case(Wrapping(rand::Rng::r#gen::<$u>(&mut rand::thread_rng())))]
             fn [<test_share_reconstruct_randomseed_ $z:lower>](#[case] secret: $z) {
                 let threshold: usize = 5;
                 let num_parties = 9;

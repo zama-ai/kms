@@ -1,12 +1,12 @@
-use crate::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::online::preprocessing::BasePreprocessing;
 use crate::online::preprocessing::BitPreprocessing;
 use crate::online::preprocessing::NoiseFloodPreprocessing;
 use crate::online::preprocessing::PreprocessorFactory;
 use crate::online::preprocessing::RandomPreprocessing;
 use crate::online::preprocessing::TriplePreprocessing;
+use crate::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::online::triple::Triple;
-use algebra::base_ring::{Z128, Z64};
+use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::Ring;
@@ -75,8 +75,8 @@ where
     }
 }
 
-pub fn memory_factory<const EXTENSION_DEGREE: usize>(
-) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+pub fn memory_factory<const EXTENSION_DEGREE: usize>()
+-> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -168,12 +168,12 @@ impl<Z: Ring> BasePreprocessing<Z> for InMemoryBasePreprocessing<Z> {}
 #[cfg(test)]
 mod tests {
 
-    use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::online::preprocessing::RandomPreprocessing;
     use crate::online::preprocessing::TriplePreprocessing;
+    use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::online::triple::Triple;
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::degree_4::ResiduePolyF4,
         sharing::share::Share,
     };

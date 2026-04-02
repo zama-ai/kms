@@ -8,7 +8,7 @@ use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
 };
-use g2p::{g2p, GaloisField};
+use g2p::{GaloisField, g2p};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;

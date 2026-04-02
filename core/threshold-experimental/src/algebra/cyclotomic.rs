@@ -1,7 +1,7 @@
 use crate::algebra::integers::{IntQ, ModReduction, ZeroCenteredRem};
-use crate::algebra::ntt::hadamard_product;
 use crate::algebra::ntt::Const;
 use crate::algebra::ntt::NTTConstants;
+use crate::algebra::ntt::hadamard_product;
 use crate::algebra::ntt::{ntt_inv, ntt_iter2};
 use crate::random::approximate_gaussian;
 use algebra::structure_traits::{One, ZConsts};

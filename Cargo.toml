@@ -43,7 +43,7 @@ exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", 
 [workspace.package]
 authors = ["Zama"]
 publish = true
-edition = "2021"
+edition = "2024"
 license = "BSD-3-Clause-Clear"
 version = "0.13.20-0"
 repository = "https://github.com/zama-ai/kms"

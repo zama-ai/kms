@@ -7,7 +7,7 @@ use crate::consts::{
 };
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
 use crate::vault::storage::StorageExt;
-use crate::vault::storage::{file::FileStorage, Storage};
+use crate::vault::storage::{Storage, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 

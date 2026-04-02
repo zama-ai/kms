@@ -20,8 +20,8 @@ use algebra::{
 use itertools::Itertools;
 use tfhe::{
     core_crypto::prelude::{
-        par_convert_standard_lwe_bootstrap_key_to_fourier, FourierLweBootstrapKey, LweBootstrapKey,
-        ParallelByteRandomGenerator, SeededLweBootstrapKey,
+        FourierLweBootstrapKey, LweBootstrapKey, ParallelByteRandomGenerator,
+        SeededLweBootstrapKey, par_convert_standard_lwe_bootstrap_key_to_fourier,
     },
     shortint::{
         list_compression::{

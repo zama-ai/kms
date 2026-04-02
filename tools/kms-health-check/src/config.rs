@@ -1,5 +1,5 @@
 use anyhow::Result;
-use kms_lib::conf::{init_conf, CoreConfig};
+use kms_lib::conf::{CoreConfig, init_conf};
 use observability::conf::Settings;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

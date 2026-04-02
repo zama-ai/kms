@@ -413,17 +413,17 @@ pub(crate) mod tests {
     use super::evaluate_w_new_roots;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
     use crate::{
         large_execution::share_dispute::{
-            interpolate_poly_w_punctures, RealShareDispute, ShareDispute,
+            RealShareDispute, ShareDispute, interpolate_poly_w_punctures,
         },
         runtime::sessions::large_session::LargeSession,
     };
     use aes_prng::AesRng;
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         poly::Poly,
         sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
         structure_traits::{ErrorCorrect, Invert, Ring, Zero},
@@ -531,10 +531,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
-                            assert_eq!(share_from_pj, &Z::ZERO);
-                        }
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj)
+                    {
+                        assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     reconstruction_vectors_single[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
@@ -549,10 +549,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
-                            assert_eq!(share_from_pj, &Z::ZERO);
-                        }
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj)
+                    {
+                        assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     reconstruction_vectors_double_t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
@@ -567,10 +567,10 @@ pub(crate) mod tests {
                         assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     //Check 0 if in dispute
-                    if let Some(dispute) = pi_disputes {
-                        if dispute.contains(role_pj) {
-                            assert_eq!(share_from_pj, &Z::ZERO);
-                        }
+                    if let Some(dispute) = pi_disputes
+                        && dispute.contains(role_pj)
+                    {
+                        assert_eq!(share_from_pj, &Z::ZERO);
                     }
                     reconstruction_vectors_double_2t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
@@ -738,14 +738,16 @@ pub(crate) mod tests {
         let msg = 42;
         let dispute_ids = vec![5, 6, 7];
         let mut rng = AesRng::seed_from_u64(0);
-        assert!(interpolate_poly_w_punctures(
-            &mut rng,
-            parties,
-            threshold,
-            dispute_ids.clone(),
-            ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
-        )
-        .is_err());
+        assert!(
+            interpolate_poly_w_punctures(
+                &mut rng,
+                parties,
+                threshold,
+                dispute_ids.clone(),
+                ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
+            )
+            .is_err()
+        );
     }
 
     fn execute_interpolate_poly_w_punctures(
@@ -787,13 +789,15 @@ pub(crate) mod tests {
         let msg = 42;
         let dispute_ids = vec![1, 2]; // too many disputes since the threshold is 1
         let mut rng = AesRng::seed_from_u64(0);
-        assert!(interpolate_poly_w_punctures(
-            &mut rng,
-            parties,
-            threshold,
-            dispute_ids.clone(),
-            ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
-        )
-        .is_err());
+        assert!(
+            interpolate_poly_w_punctures(
+                &mut rng,
+                parties,
+                threshold,
+                dispute_ids.clone(),
+                ResiduePolyF4::from_scalar(Wrapping::<u128>(msg)),
+            )
+            .is_err()
+        );
     }
 }

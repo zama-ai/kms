@@ -216,8 +216,8 @@ mod tests {
         },
         integer::parameters::DynamicDistribution,
         shortint::{
-            parameters::{DecompositionBaseLog, DecompositionLevelCount, PolynomialSize},
             CiphertextModulus,
+            parameters::{DecompositionBaseLog, DecompositionLevelCount, PolynomialSize},
         },
     };
 
