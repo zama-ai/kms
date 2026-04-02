@@ -594,3 +594,65 @@ impl Default for MetricsConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metric_families_match_allowlist() {
+        // Touch the lazy_static to ensure metrics are registered
+        let _ = &*METRICS;
+
+        // Seed Vec-type metrics so they appear in gather()
+        METRICS.increment_request_counter("_test");
+        METRICS.increment_error_counter("_test", "_test");
+        METRICS.observe_duration("_test", Duration::from_millis(0));
+        METRICS.observe_size("_test", 1.0);
+
+        let families = prometheus::gather();
+        let mut names: Vec<&str> = families.iter().map(|f| f.name()).collect();
+        names.sort();
+
+        // Exhaustive allowlist — update this when adding/removing metrics
+        let expected_metrics = vec![
+            "kms_active_sessions",
+            "kms_cpu_load",
+            "kms_file_descriptors",
+            "kms_inactive_sessions",
+            "kms_memory_usage",
+            "kms_meta_storage_pub_decryptions",
+            "kms_meta_storage_pub_decryptions_in_store",
+            "kms_meta_storage_user_decryptions",
+            "kms_meta_storage_user_decryptions_in_store",
+            "kms_network_rx_bytes_total",
+            "kms_network_tx_bytes_total",
+            "kms_operation_duration_ms",
+            "kms_operation_errors_total",
+            "kms_operations_total",
+            "kms_payload_size_bytes",
+            "kms_process_cpu_usage",
+            "kms_process_memory_usage",
+            "kms_rate_limiter_usage",
+            "kms_socat_file_descriptors",
+            "kms_socat_tasks",
+            "kms_tasks",
+            "kms_total_cpus",
+            "kms_total_memory",
+            "kms_version",
+            // process_* metrics come from the prometheus crate `process` feature.
+            "process_cpu_seconds_total",
+            "process_max_fds",
+            "process_open_fds",
+            "process_resident_memory_bytes",
+            "process_start_time_seconds",
+            "process_threads",
+            "process_virtual_memory_bytes",
+        ];
+
+        assert_eq!(
+            names, expected_metrics,
+            "Metric families changed. If intentional, update the allowlist in this test."
+        );
+    }
+}
