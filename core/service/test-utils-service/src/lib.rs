@@ -31,7 +31,7 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = quote! {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
-            std::env::set_var("RUN_MODE", "integration");
+            unsafe {std::env::set_var("RUN_MODE", "integration");}
             ::kms_test_tracing::init_logging();
             #fn_block
         }

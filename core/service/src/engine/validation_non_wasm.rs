@@ -542,7 +542,7 @@ fn validate_public_decrypt_responses(
             }
         };
 
-        if let Some(expected_extra_data) = extra_data
+        if let Some(expected_extra_data) = trusted_ctx.extra_data
             && cur_resp.extra_data != expected_extra_data
         {
             tracing::warn!("Extra data mismatch in public decryption!");
