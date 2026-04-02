@@ -1198,7 +1198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_migrate_prss_no_legacy_data_errors() {
         let mut storage = RamStorage::new();
         let num_parties = 4;
@@ -1211,7 +1211,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[expect(deprecated)]
     async fn test_migrate_prss_missing_z64_errors() {
         let mut storage = RamStorage::new();
@@ -1242,7 +1242,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[expect(deprecated)]
     async fn test_migrate_prss_missing_z128_errors() {
         let mut storage = RamStorage::new();
@@ -1318,7 +1318,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_migrate_context_no_legacy() {
         let mut storage = RamStorage::new();
         // No context stored, should skip gracefully
@@ -1413,7 +1413,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_migrate_combined_prss_no_data_ram() {
         let mut storage = RamStorage::new();
         let result = migrate_combined_prss_to_0_13_10(&mut storage).await;
@@ -1422,7 +1422,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_migrate_combined_prss_no_data_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();

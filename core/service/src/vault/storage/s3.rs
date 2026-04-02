@@ -705,7 +705,7 @@ mod tests {
         test_batch_helper_methods(&mut pub_storage).await;
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_epoch_methods_in_s3() {
         let mut priv_storage =
@@ -724,7 +724,7 @@ mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         let mut pub_storage = create_s3_storage(
@@ -786,7 +786,7 @@ mod tests {
             .await;
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
         let mut priv_storage = create_s3_storage(

@@ -430,12 +430,12 @@ pub(crate) mod tests {
     };
     use futures_util::future::join;
     use itertools::Itertools;
+    use kms_test_tracing::traced_test;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::{collections::HashSet, num::Wrapping};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
-    use tracing_test::traced_test;
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions

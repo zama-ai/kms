@@ -23,7 +23,7 @@ use threshold_types::role::Role;
 #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn default_decryption_threshold_with_sns_preprocessing(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -94,7 +94,7 @@ async fn default_decryption_threshold_with_crash(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[serial]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn default_user_decryption_threshold(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -135,7 +135,7 @@ async fn default_user_decryption_threshold(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[serial]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn default_user_decryption_threshold_sns_precompute(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -214,7 +214,7 @@ async fn default_user_decryption_threshold_with_crash(
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
@@ -233,7 +233,7 @@ async fn secure_threshold_sequential_crs_test(#[case] amount_parties: usize) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
@@ -269,7 +269,7 @@ async fn secure_threshold_sequential_crs_default(#[case] amount_parties: usize) 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
@@ -329,7 +329,7 @@ async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: us
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
@@ -350,7 +350,7 @@ async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
@@ -372,7 +372,7 @@ async fn secure_threshold_concurrent_compressed_keygen_test(#[case] amount_parti
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[rstest::rstest]
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]

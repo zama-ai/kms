@@ -1147,8 +1147,8 @@ mod tests {
     use tfhe::{FheUint8, set_server_key};
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 
+    use kms_test_tracing::traced_test;
     use tokio::task::JoinSet;
-    use tracing_test::traced_test;
 
     // async helper function that creates the prss setups
     async fn setup_prss_sess<Z: ErrorCorrect + Invert, P: PRSSInit<Z> + Clone + 'static>(

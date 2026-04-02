@@ -324,7 +324,7 @@ pub(crate) mod tests {
         verify_pp(&dkg_params, &crs);
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
         // Setup

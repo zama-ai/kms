@@ -1490,7 +1490,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn prss_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory

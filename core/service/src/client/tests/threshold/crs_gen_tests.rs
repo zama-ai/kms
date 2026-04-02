@@ -14,6 +14,7 @@ cfg_if::cfg_if! {
     use kms_grpc::RequestId;
     use serial_test::serial;
     use std::collections::HashMap;
+    use std::path::Path;
     use std::sync::Arc;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
@@ -104,6 +105,7 @@ pub(crate) async fn crs_gen(
                         insecure,
                         &cur_id,
                         max_bits,
+                        None,
                     )
                     .await;
                 }
@@ -124,6 +126,7 @@ pub(crate) async fn crs_gen(
                 insecure,
                 &cur_id,
                 max_bits,
+                None,
             )
             .await;
         }
@@ -139,6 +142,7 @@ pub async fn run_crs(
     insecure: bool,
     crs_req_id: &RequestId,
     max_bits: Option<u32>,
+    test_path: Option<&Path>,
 ) -> Vec<CrsInfo> {
     let dkg_param: WrappedDKGParams = parameter.into();
     let domain = dummy_domain();
@@ -150,7 +154,14 @@ pub async fn run_crs(
     for response in responses {
         response.unwrap();
     }
-    wait_for_crsgen_result(&vec![crs_req], kms_clients, internal_client, &dkg_param).await
+    wait_for_crsgen_result(
+        &vec![crs_req],
+        kms_clients,
+        internal_client,
+        &dkg_param,
+        test_path,
+    )
+    .await
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -198,6 +209,7 @@ pub async fn wait_for_crsgen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     param: &DKGParams,
+    test_path: Option<&Path>,
 ) -> Vec<CrsInfo> {
     let amount_parties = kms_clients.len();
     // wait a bit for the crs generation to finish
@@ -238,7 +250,7 @@ pub async fn wait_for_crsgen_result(
             .map(|(i, res)| {
                 (res, {
                     let prefix = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[i as usize - 1].as_deref();
-                    FileStorage::new(None, StorageType::PUB, prefix).unwrap()
+                    FileStorage::new(test_path, StorageType::PUB, prefix).unwrap()
                 })
             })
             .collect_vec();

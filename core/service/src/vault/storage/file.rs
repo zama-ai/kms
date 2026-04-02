@@ -553,7 +553,7 @@ pub mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         // Setup temporary directory and storage
@@ -591,7 +591,7 @@ pub mod tests {
         test_store_load_bytes_at_epoch(&mut storage).await;
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_file() {
         let temp_dir = tempfile::tempdir().unwrap();

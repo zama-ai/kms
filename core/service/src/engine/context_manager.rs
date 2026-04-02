@@ -1540,7 +1540,7 @@ mod tests {
         }
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_custodian_context() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
@@ -1707,7 +1707,7 @@ mod tests {
     }
 
     // Test to sanity check the overall flow of construction of material needed for backup
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);

@@ -831,7 +831,7 @@ mod test {
 
     /// Unit testing of [`reconstruct_d_values`]
     /// Test what happens when a party send a wrong type of value
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_wrong_type() {
         let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_from_one(1));

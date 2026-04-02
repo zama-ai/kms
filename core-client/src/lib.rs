@@ -53,7 +53,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
@@ -1361,12 +1361,6 @@ pub async fn encrypt(
     ))
 }
 
-static INIT_LOG: Once = Once::new();
-
-pub fn init_testing() {
-    INIT_LOG.call_once(setup_logging);
-}
-
 pub fn setup_logging() {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", "core-client.log");
     let file_and_stdout = file_appender.and(std::io::stdout);
@@ -1374,8 +1368,6 @@ pub fn setup_logging() {
     // read the RUST_LOG environment variable to set the logging level, or set to INFO as default
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
-
-    println!("Setting up logging with level: {log_level:?}");
 
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)

@@ -457,7 +457,7 @@ mod tests {
     use tfhe::xof_key_set::CompressedXofKeySet;
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_metriced_error_creation() {
         let error = MetricedError::new(
             "test_op",
@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_metriced_error_drop_logging() {
         let error = MetricedError::new(
             "test_op_drop",
@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_metriced_error_no_dropping() {
         let error = MetricedError::new(
             "test_no_drop",
@@ -611,7 +611,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn sanity_check_legacy_metadata_readability_only() {
         let mut rng = AesRng::seed_from_u64(46);
         let key_id = RequestId::new_random(&mut rng);
@@ -692,7 +692,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn sanity_check_crs_legacy_readability_only() {
         let mut rng = AesRng::seed_from_u64(72);
         let crs_id = RequestId::new_random(&mut rng);
