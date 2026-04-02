@@ -53,8 +53,6 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
 
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP: &str =
-    "Could not validate the aggregated public decryption responses";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP: &str =
     "Not enough correct public decryption responses to decrypt the data!";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
@@ -516,10 +514,10 @@ pub(crate) fn select_most_common_public_dec(
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
-) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
+) -> anyhow::Result<Vec<PublicDecryptionResponsePayload>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
-        return Ok(None);
+        return Ok(vec![]);
     }
     if trusted_ctx.server_pks.is_empty() {
         anyhow::bail!("No servers configured in trusted public decryption context");
@@ -587,7 +585,7 @@ fn validate_public_decrypt_responses(
         verification_keys.insert(cur_payload.verification_key.clone());
         resp_parsed_payloads.push(cur_payload.clone());
     }
-    Ok(Some(resp_parsed_payloads))
+    Ok(resp_parsed_payloads)
 }
 
 /// Validates the aggregated decryption response by checking:
@@ -607,10 +605,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
-    let resp_parsed_payloads = crate::some_or_err(
-        validate_public_decrypt_responses(trusted_ctx, agg_resp)?,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
-    )?;
+    let resp_parsed_payloads = validate_public_decrypt_responses(trusted_ctx, agg_resp)?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
         return Err(anyhow_error_and_log(
             ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
@@ -994,7 +989,6 @@ mod tests {
         verify_user_decrypt_eip712, Eip712VerificationParams, PublicDecTrustedValidationContext,
         DSEP_PUBLIC_DECRYPTION, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
 
@@ -1703,7 +1697,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1
             );
@@ -1712,7 +1705,6 @@ mod tests {
             bad_agg_resp.reverse();
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 1
@@ -1724,7 +1716,6 @@ mod tests {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 1
@@ -1764,7 +1755,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1
             );
@@ -1778,7 +1768,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1 // instead of 2
             );
@@ -1789,7 +1778,6 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 2
@@ -1915,7 +1903,7 @@ mod tests {
                 validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1)
                     .unwrap_err()
                     .to_string()
-                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP)
+                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP)
             );
         }
 

@@ -19,7 +19,6 @@ use crate::{
             internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
         },
     },
-    some_or_err,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
@@ -317,10 +316,10 @@ fn select_most_common_user_dec(
 fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
+) -> anyhow::Result<VerifiedUserDecryptionPayloads> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no responses");
-        return Ok(None);
+        return Ok(VerifiedUserDecryptionPayloads(vec![]));
     }
     if trusted_ctx.server_addresses.is_empty() {
         anyhow::bail!("No servers configured in trusted user decryption context");
@@ -450,11 +449,9 @@ fn validate_user_decrypt_responses(
     }
 
     if resp_parsed_payloads.len() <= pivot_payload.degree as usize {
-        tracing::warn!("Not enough correct responses to user-decrypt the data!");
-        Ok(None)
-    } else {
-        Ok(Some(VerifiedUserDecryptionPayloads(resp_parsed_payloads)))
+        anyhow::bail!("Not enough correct responses to user-decrypt the data!");
     }
+    Ok(VerifiedUserDecryptionPayloads(resp_parsed_payloads))
 }
 
 /// Validates the aggregated user decryption responses received from the servers
@@ -478,10 +475,7 @@ pub(crate) fn validate_user_decrypt_responses_against_request(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
 ) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
-    let resp_parsed = some_or_err(
-        validate_user_decrypt_responses(trusted_ctx, agg_resp)?,
-        "Could not validate the aggregated responses".to_string(),
-    )?;
+    let resp_parsed = validate_user_decrypt_responses(trusted_ctx, agg_resp)?;
     let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
     let pivot_resp = &resp_parsed.as_slice()[0];
     if expected_link != pivot_resp.digest {
@@ -1106,7 +1100,6 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 4
@@ -1122,18 +1115,18 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 3 // instead of 4
             );
         }
 
-        // empty responses, should return None
+        // empty responses, should return empty
         {
             assert!(validate_user_decrypt_responses(&trusted_ctx, &[])
                 .unwrap()
-                .is_none());
+                .as_slice()
+                .is_empty());
         }
 
         // empty payload
@@ -1148,7 +1141,6 @@ mod tests {
             // the third one does not have a payload
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
                     .unwrap()
                     .as_slice()
                     .len(),
@@ -1166,9 +1158,7 @@ mod tests {
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
-            assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                .unwrap()
-                .is_none());
+            assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp).is_err());
         }
 
         // one repsonse has a wrong degree, but should pass since majority is fine
@@ -1179,7 +1169,6 @@ mod tests {
 
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
                     .unwrap()
                     .as_slice()
                     .len(),
@@ -1239,7 +1228,6 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 2
@@ -1290,7 +1278,6 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
                     .unwrap()
                     .as_slice()
                     .len(),
