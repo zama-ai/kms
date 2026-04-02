@@ -1281,7 +1281,7 @@ mod tests {
         }
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_missing_cus_output() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1300,7 +1300,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1318,7 +1318,7 @@ mod tests {
         assert!(logs_contain("Cannot recover the backup decryption key"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1334,7 +1334,7 @@ mod tests {
         ));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_signature() {
         // Note there is no node information in the dummy material
@@ -1356,7 +1356,7 @@ mod tests {
             .contains("Only received 0 valid recovery outputs")); // Signatures are wrong so no valid outputs
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_missing_verification_key() {
         // Note there is no node information in the dummy material

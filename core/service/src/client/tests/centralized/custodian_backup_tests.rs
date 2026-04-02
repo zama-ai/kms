@@ -160,7 +160,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     assert_eq!(reread_crss, crss);
 }
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_decrypt_after_recovery_central() {
@@ -274,7 +274,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[serial]
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;

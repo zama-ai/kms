@@ -415,7 +415,7 @@ pub mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_ram() {
         let mut storage = RamStorage::new();
@@ -444,7 +444,7 @@ pub mod tests {
         test_all_data_ids_with_only_epoch_data(&mut storage).await;
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_ram_on_epoch() {
         let mut storage = RamStorage::new();

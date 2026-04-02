@@ -8,12 +8,12 @@ use kms_grpc::{
     rpc_types::PubDataType,
     ContextId, RequestId,
 };
+use kms_test_tracing::traced_test;
 use serial_test::serial;
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{transport::Channel, Response, Status};
-use tracing_test::traced_test;
 
 use crate::{
     client::{
@@ -230,6 +230,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             false,
             crs_id,
             Some(2048),
+            None,
         )
         .await;
         assert_eq!(crs.len(), 1);
