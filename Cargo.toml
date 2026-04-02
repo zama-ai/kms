@@ -207,6 +207,7 @@ thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual 
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
+toml = "=0.8.23"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
 tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
 tonic-prost = "=0.14.5"  # prost codec for tonic gRPC - LOW RISK: hyperium team
