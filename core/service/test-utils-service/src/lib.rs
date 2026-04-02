@@ -93,8 +93,8 @@ pub fn persistent_traces(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 // Enable trace persistence without changing execution environment
-                unsafe { 
-                  std::env::set_var("TRACE_PERSISTENCE", "enabled"); 
+                unsafe {
+                  std::env::set_var("TRACE_PERSISTENCE", "enabled");
                   std::env::set_var("KMS_TEST_MODE", "1");
                   std::env::set_var("TRACE_PERSISTENCE", "enabled");
                 };

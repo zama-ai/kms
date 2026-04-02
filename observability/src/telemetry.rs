@@ -53,8 +53,8 @@ pub trait ConfigTracing {
 }
 
 use kms_test_tracing::config::{
-    test_console_enabled, test_console_env_filter, test_log_max_bytes, test_logging_enabled,
-    test_persistent_env_filter, TruncatingMakeWriter,
+    TruncatingMakeWriter, test_console_enabled, test_console_env_filter, test_log_max_bytes,
+    test_logging_enabled, test_persistent_env_filter,
 };
 
 #[derive(Clone)]
@@ -245,12 +245,12 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         if let Some(parent) = std::path::Path::new(&log_path).parent()
             && !parent.exists()
         {
-          tokio::fs::create_dir_all(parent).await.with_context(|| {
-              format!(
-                  "Failed to create persistent trace directory {}",
-                  parent.display()
-              )
-          })?;
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!(
+                    "Failed to create persistent trace directory {}",
+                    parent.display()
+                )
+            })?;
         }
 
         // Use a rolling file appender to prevent excessive file sizes

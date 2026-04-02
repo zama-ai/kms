@@ -155,9 +155,9 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let test_path = Some(temp_dir.path());
 
     let req_new_cus: RequestId = derive_request_id(&format!(
-            "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
-        ))
-        .unwrap();
+        "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_crs_{amount_parties}_{amount_custodians}_{threshold}"
     ))

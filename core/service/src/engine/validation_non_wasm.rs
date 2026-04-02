@@ -989,16 +989,14 @@ mod tests {
     };
 
     use super::{
-        unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
-        validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712, Eip712VerificationParams, PublicDecTrustedValidationContext,
         DSEP_PUBLIC_DECRYPTION, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        Eip712VerificationParams, unpack_public_decrypt_req, unpack_user_decrypt_req,
-        validate_public_decrypt_meta_data, validate_public_decrypt_responses_against_request,
-        verify_max_num_bits, verify_user_decrypt_eip712,
+        Eip712VerificationParams, PublicDecTrustedValidationContext, unpack_public_decrypt_req,
+        unpack_user_decrypt_req, validate_public_decrypt_meta_data,
+        validate_public_decrypt_responses_against_request, verify_max_num_bits,
+        verify_user_decrypt_eip712,
     };
 
     #[test]
@@ -1428,14 +1426,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad signature (malformed signature)
@@ -1451,14 +1451,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .is_err()
+            );
         }
 
         // use a bad signature (signing the wrong value)
@@ -1489,14 +1491,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &bad_signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &bad_signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (digest mismatch)
@@ -1526,14 +1530,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (bad validation key)
@@ -1559,14 +1565,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (mismatch plaintext)
@@ -1592,14 +1600,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // happy path
@@ -1614,14 +1624,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
     }
 
@@ -2117,46 +2129,52 @@ mod tests {
         };
 
         // return false for empty external signature
-        assert!(!validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &[],
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            !validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &[],
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
 
         // return false for bad external signature
-        assert!(!validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &bad_external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            !validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &bad_external_signature,
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
 
         // happy path
-        assert!(validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &external_signature,
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
     }
 
     #[test]

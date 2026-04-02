@@ -18,7 +18,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt as tracing_fmt};
 
 pub static INITIALIZED: Once = Once::new();
 

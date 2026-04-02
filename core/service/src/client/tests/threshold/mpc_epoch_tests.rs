@@ -13,7 +13,7 @@ use serial_test::serial;
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
-use tonic::{transport::Channel, Response, Status};
+use tonic::{Response, Status, transport::Channel};
 
 use crate::{
     client::{
