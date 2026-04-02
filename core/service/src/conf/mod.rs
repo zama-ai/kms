@@ -3,7 +3,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
-    telemetry::{init_telemetry, ConfigTracing, SdkMeterProvider, SdkTracerProvider},
+    telemetry::{init_telemetry, ConfigTracing, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp, path::PathBuf};
@@ -219,11 +219,11 @@ pub async fn init_conf_kms_core_telemetry<
     T: Serialize + Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
 >(
     config_file: &str,
-) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
+) -> anyhow::Result<(T, SdkTracerProvider)> {
     let full_config: T = init_conf(config_file)?;
     full_config.validate()?;
-    let (tracer_provider, meter_provider) = init_telemetry(&full_config).await?;
-    Ok((full_config, tracer_provider, meter_provider))
+    let tracer_provider = init_telemetry(&full_config).await?;
+    Ok((full_config, tracer_provider))
 }
 
 #[cfg(test)]
