@@ -51,7 +51,7 @@ tfhe = { workspace = true, features = [
     "integer",
     "zk-pok",
 ] }
-tracing-test.workspace = true
+kms-test-tracing.workspace = true
 
 
 

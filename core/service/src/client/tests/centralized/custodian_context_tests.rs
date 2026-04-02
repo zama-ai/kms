@@ -12,7 +12,7 @@ use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
 use tonic::transport::Channel;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_new_custodian_context_central() {

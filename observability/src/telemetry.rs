@@ -52,6 +52,11 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
+use kms_test_tracing::config::{
+    test_console_enabled, test_console_env_filter, test_log_max_bytes, test_logging_enabled,
+    test_persistent_env_filter, TruncatingMakeWriter,
+};
+
 #[derive(Clone)]
 struct MetricsState {
     config: Arc<String>, // Store the config as a string for the /config endpoint
@@ -239,7 +244,12 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         // Create directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(&log_path).parent() {
             if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await?;
+                tokio::fs::create_dir_all(parent).await.with_context(|| {
+                    format!(
+                        "Failed to create persistent trace directory {}",
+                        parent.display()
+                    )
+                })?;
             }
         }
 
@@ -251,18 +261,14 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         // Explicitly ignore errors since we can still proceed with console logging if this fails
         METRICS.set_trace_guard(Box::new(guard));
 
-        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("info")
-                .add_directive("tonic=info".parse().unwrap())
-                .add_directive("h2=info".parse().unwrap())
-                .add_directive("tower=warn".parse().unwrap())
-                .add_directive("hyper=warn".parse().unwrap())
-                .add_directive("opentelemetry_sdk=warn".parse().unwrap())
-        });
+        let env_filter = test_persistent_env_filter();
 
         // Configure file output with JSON formatting for better machine parsing
         let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(non_blocking)
+            .with_writer(TruncatingMakeWriter::new(
+                non_blocking,
+                test_log_max_bytes(),
+            ))
             .with_target(true)
             .with_thread_ids(true)
             .with_thread_names(true)
@@ -273,14 +279,26 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_current_span(true) // Include current span in output
             .with_span_list(true); // Include span hierarchy
 
-        let console_layer = fmt_layer();
-
-        tracing_subscriber::registry()
+        let subscriber = tracing_subscriber::registry()
             .with(file_layer)
-            .with(console_layer)
-            .with(env_filter)
-            .try_init()
-            .context("Failed to initialize tracing")?;
+            .with(env_filter);
+
+        if test_console_enabled() {
+            subscriber
+                .with(fmt_layer())
+                .try_init()
+                .with_context(|| {
+                    format!(
+                        "Failed to initialize persistent test tracing with console output enabled and file output to {log_path}"
+                    )
+                })?;
+        } else {
+            subscriber.try_init().with_context(|| {
+                format!(
+                    "Failed to initialize persistent test tracing with file output to {log_path}"
+                )
+            })?;
+        }
 
         info!(
             "Integration test tracing initialized with file output to {}",
@@ -294,38 +312,45 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         .tracing_service_name()
         .unwrap_or("unknown-service")
         .to_string();
+    let service_name_for_logs = service_name.clone();
+    let tracing_endpoint = settings.tracing_endpoint().map(str::to_owned);
+    let tracing_otlp_timeout_ms = settings.tracing_otlp_timeout().as_millis();
+    let batch_override = settings.batch().map(|batch_conf| {
+        (
+            batch_conf.max_queue_size(),
+            batch_conf.scheduled_delay(),
+            batch_conf.max_export_batch_size(),
+        )
+    });
+    let sample_all_stdout_spans = std::env::var("RUST_LOG")
+        .map(|v| v == "trace")
+        .unwrap_or(false);
 
     // If no endpoint is configured, set up only console logging
-    let provider = if let Some(endpoint) = settings.tracing_endpoint() {
-        println!(
-            "Configuring OTLP Tracing exporter with endpoint: {} and tracing_otlp_timeout={}ms",
-            endpoint,
-            settings.tracing_otlp_timeout().as_millis()
-        );
-
+    let provider = if let Some(endpoint) = tracing_endpoint.as_deref() {
         // Create an exporter for OTLP
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .with_timeout(settings.tracing_otlp_timeout())
-            .build()?;
+            .build()
+            .with_context(|| {
+                format!(
+                    "Failed to build OTLP span exporter for endpoint {endpoint} with tracing_otlp_timeout={}ms",
+                    tracing_otlp_timeout_ms
+                )
+            })?;
 
         // Configure batch processing
-        let batch_config = if let Some(batch_conf) = settings.batch() {
-            println!(
-                "Configuring batch processing with: max_queue_size={}, scheduled_delay={}ms, max_export_batch_size={}",
-                batch_conf.max_queue_size(),
-                batch_conf.scheduled_delay().as_millis(),
-                batch_conf.max_export_batch_size(),
-            );
-
+        let batch_config = if let Some((max_queue_size, scheduled_delay, max_export_batch_size)) =
+            batch_override.as_ref()
+        {
             opentelemetry_sdk::trace::BatchConfigBuilder::default()
-                .with_max_queue_size(batch_conf.max_queue_size())
-                .with_scheduled_delay(batch_conf.scheduled_delay())
-                .with_max_export_batch_size(batch_conf.max_export_batch_size())
+                .with_max_queue_size(*max_queue_size)
+                .with_scheduled_delay(*scheduled_delay)
+                .with_max_export_batch_size(*max_export_batch_size)
                 .build()
         } else {
-            println!("Using default batch processing configuration");
             opentelemetry_sdk::trace::BatchConfigBuilder::default().build()
         };
 
@@ -340,7 +365,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
                     .with_attributes(vec![
                         KeyValue::new(
                             opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                            service_name,
+                            service_name.clone(),
                         ),
                         KeyValue::new(
                             "service.version".to_string(),
@@ -355,15 +380,11 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             )
             .build()
     } else {
-        println!("No tracing_endpoint is provided");
         SdkTracerProvider::builder()
             .with_sampler(
                 // When RUST_LOG=trace, sample everything
                 // Otherwise, sample nothing for OpenTelemetry
-                if std::env::var("RUST_LOG")
-                    .map(|v| v == "trace")
-                    .unwrap_or(false)
-                {
+                if sample_all_stdout_spans {
                     Sampler::AlwaysOn
                 } else {
                     Sampler::AlwaysOff
@@ -394,19 +415,28 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
     // Clone the provider to set it globally while keeping the original for explicit shutdown
     let tracer = provider.clone().tracer("kms-core");
 
-    let env_filter = match *ENVIRONMENT {
-        // For integration and local development, optionally use a more verbose filter
-        ExecutionEnvironment::Integration | ExecutionEnvironment::Local => {
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::new("info")
-                    .add_directive("tonic=info".parse().unwrap())
-                    .add_directive("h2=info".parse().unwrap())
-                    .add_directive("tower=warn".parse().unwrap())
-                    .add_directive("hyper=warn".parse().unwrap())
-                    .add_directive("opentelemetry_sdk=warn".parse().unwrap())
-            })
+    let env_filter = if test_logging_enabled() {
+        // Test mode: startup output is quiet by default, and filter selection
+        // is delegated to `test_console_env_filter()` (env overrides first,
+        // fallback preset last). The `info!` startup lines below run only after
+        // `try_init()` succeeds. If init fails, `.with_context(...)` on the `?`
+        // adds clear error details (service name, OTLP on/off).
+        test_console_env_filter()
+    } else {
+        match *ENVIRONMENT {
+            // For integration and local development, optionally use a more verbose filter
+            ExecutionEnvironment::Integration | ExecutionEnvironment::Local => {
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    EnvFilter::new("info")
+                        .add_directive("tonic=info".parse().unwrap())
+                        .add_directive("h2=info".parse().unwrap())
+                        .add_directive("tower=warn".parse().unwrap())
+                        .add_directive("hyper=warn".parse().unwrap())
+                        .add_directive("opentelemetry_sdk=warn".parse().unwrap())
+                })
+            }
+            _ => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         }
-        _ => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
     };
 
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -417,7 +447,43 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         .with(fmt_layer)
         .with(env_filter)
         .try_init()
-        .context("Failed to initialize tracing")?;
+        .with_context(|| match tracing_endpoint.as_deref() {
+            Some(endpoint) => format!(
+                "Failed to initialize tracing subscriber for service `{service_name_for_logs}` with OTLP endpoint {endpoint}"
+            ),
+            None => format!(
+                "Failed to initialize tracing subscriber for service `{service_name_for_logs}` without an OTLP endpoint"
+            ),
+        })?;
+
+    match (tracing_endpoint.as_deref(), batch_override.as_ref()) {
+        (Some(endpoint), Some((max_queue_size, scheduled_delay, max_export_batch_size))) => {
+            info!(
+                service_name = %service_name_for_logs,
+                endpoint = %endpoint,
+                tracing_otlp_timeout_ms = tracing_otlp_timeout_ms,
+                max_queue_size = *max_queue_size,
+                scheduled_delay_ms = scheduled_delay.as_millis(),
+                max_export_batch_size = *max_export_batch_size,
+                "Tracing initialized with OTLP exporter and custom batch processing"
+            );
+        }
+        (Some(endpoint), None) => {
+            info!(
+                service_name = %service_name_for_logs,
+                endpoint = %endpoint,
+                tracing_otlp_timeout_ms = tracing_otlp_timeout_ms,
+                "Tracing initialized with OTLP exporter and default batch processing"
+            );
+        }
+        (None, _) => {
+            info!(
+                service_name = %service_name_for_logs,
+                sample_all_spans = sample_all_stdout_spans,
+                "Tracing initialized without an OTLP endpoint; using stdout exporter"
+            );
+        }
+    }
 
     // Propagate both W3C tracecontext and baggage
     global::set_text_map_propagator(TextMapCompositePropagator::new(vec![
@@ -432,20 +498,17 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
 pub async fn init_telemetry<T: Serialize + ConfigTracing>(
     config: &T,
 ) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
-    println!("Starting telemetry initialization...");
     let telemetry_conf = config.telemetry().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("kms_core".to_string())
             .build()
     });
     // First initialize tracing as it's more critical
-    println!("Initializing tracing subsystem...");
     let tracer_provider = init_tracing(&telemetry_conf).await?;
 
     // Now that tracing is initialized, we can use info! tracing macros
     info!("Tracing initialization completed successfully");
 
-    println!("Initializing metrics subsystem...");
     let meter_provider = init_metrics(config)?;
     info!("Metrics initialization completed successfully");
 

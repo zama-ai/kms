@@ -663,7 +663,7 @@ mod tests {
     use threshold_types::session_id::SessionId;
 
     #[tokio::test(flavor = "multi_thread")]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_network_stack() {
         let ip_addr = "127.0.0.1".parse().unwrap();
         let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
@@ -990,9 +990,9 @@ mod tests {
         }
     }
 
-    // NOTE: we use tracing_test here since we're trying to debug a potential deadlock
+    // NOTE: we use kms_test_tracing here since we're trying to debug a potential deadlock
     #[tokio::test(flavor = "multi_thread")]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_two_set_network() {
         let ip_addr = "127.0.0.1".parse().unwrap();
         let listeners = get_listeners_random_free_ports(&ip_addr, 4).await.unwrap();
@@ -1102,7 +1102,7 @@ mod tests {
     /// subsequent sends on the `UnboundedSender` do not fail with "channel closed".
     /// See here for context: https://github.com/zama-ai/kms-internal/issues/2948
     #[tokio::test(flavor = "multi_thread")]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     async fn test_run_network_task_does_not_drop_receiver_on_completed() {
         use super::ArcSendValueRequest;
         use super::GrpcSendingService;

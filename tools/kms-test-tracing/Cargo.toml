@@ -1,0 +1,12 @@
+[package]
+name = "kms-test-tracing"
+version.workspace = true
+authors.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "std"] }
+kms-test-tracing-macro = { path = "../kms-test-tracing-macro" }
