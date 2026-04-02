@@ -55,6 +55,8 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP: &str =
     "Not enough correct public decryption responses to decrypt the data!";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP: &str =
+    "No responses to validate in public decryption!";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
     "The number of ciphertexts in the public decryption response is wrong";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK: &str =
@@ -508,16 +510,14 @@ pub(crate) fn select_most_common_public_dec(
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(None)` — no responses to verify.
-/// * `Ok(Some(vec![]))` — responses existed but none passed verification.
-/// * `Ok(Some(vec![...]))` — verified response payloads.
+/// * `Ok(vec![])` — no responses passed verification or there were no responses.
+/// * `Ok(vec![...])` — verified response payloads.
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<Vec<PublicDecryptionResponsePayload>> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no public decryption responses!");
-        return Ok(vec![]);
+        anyhow::bail!(format!("{}", ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP));
     }
     if trusted_ctx.server_pks.is_empty() {
         anyhow::bail!("No servers configured in trusted public decryption context");
@@ -1901,9 +1901,7 @@ mod tests {
             let agg_resp = vec![];
             assert!(
                 validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP)
+                    .is_err()
             );
         }
 

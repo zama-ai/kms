@@ -70,6 +70,7 @@ const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
 const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
     "Extra data mismatch in user decryption";
+const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in user decryption";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 pub(crate) fn check_ext_user_decryption_signature(
@@ -306,20 +307,17 @@ fn select_most_common_user_dec(
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(Some(payloads))` — More than `degree` responses passed validation;
+/// * `Ok(payloads)` — More than `degree` responses passed validation;
 ///   `payloads` contains the verified [`UserDecryptionResponsePayload`]s
 ///   (pivot first, then the remaining valid responses).
-/// * `Ok(None)` — Validation could not succeed: either no responses were
-///   provided, no majority-vote pivot was found, or too few responses survived
-///   signature / metadata checks to exceed the degree threshold.
+///   The caller should check if the list is empty.
 /// * `Err(_)` — An unrecoverable error occurred during validation
 fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
 ) -> anyhow::Result<VerifiedUserDecryptionPayloads> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no responses");
-        return Ok(VerifiedUserDecryptionPayloads(vec![]));
+        anyhow::bail!(format!("{}", ERR_VALIDATE_USER_DECRYPTION_NO_RESP));
     }
     if trusted_ctx.server_addresses.is_empty() {
         anyhow::bail!("No servers configured in trusted user decryption context");
@@ -476,7 +474,13 @@ pub(crate) fn validate_user_decrypt_responses_against_request(
     agg_resp: &[UserDecryptionResponse],
 ) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
     let resp_parsed = validate_user_decrypt_responses(trusted_ctx, agg_resp)?;
+    if resp_parsed.as_slice().is_empty() {
+        anyhow::bail!("VerifiedUserDecryptionPayloads is empty")
+    }
+
     let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
+
+    // Only index into the pivot if we've checked that the slice is not empty earlier
     let pivot_resp = &resp_parsed.as_slice()[0];
     if expected_link != pivot_resp.digest {
         tracing::warn!("The user decryption response is not linked to the correct request");
@@ -510,7 +514,8 @@ mod tests {
         dummy_domain,
         engine::validation_wasm::{
             ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
-            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
+            ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
         },
     };
 
@@ -1121,12 +1126,12 @@ mod tests {
             );
         }
 
-        // empty responses, should return empty
+        // empty responses, should return error
         {
             assert!(validate_user_decrypt_responses(&trusted_ctx, &[])
-                .unwrap()
-                .as_slice()
-                .is_empty());
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_NO_RESP));
         }
 
         // empty payload
