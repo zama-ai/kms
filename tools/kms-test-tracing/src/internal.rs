@@ -183,17 +183,14 @@ pub fn init_subscriber() {
                     .with_filter(test_console_env_filter()),
             )
             .try_init()
-        {
-            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
+            && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
                 eprintln!("[tracing-test] skipped global subscriber init (console+capture): {err}");
             }
-        }
     } else {
-        if let Err(err) = subscriber.try_init() {
-            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
+        if let Err(err) = subscriber.try_init()
+            && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
                 eprintln!("[tracing-test] skipped global subscriber init (capture): {err}");
             }
-        }
     }
 }
 

@@ -231,11 +231,9 @@ pub fn try_init_test_stderr_subscriber() {
         .with_ansi(false)
         .with_env_filter(test_console_env_filter())
         .try_init()
-    {
-        if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
+        && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
             eprintln!("[tracing-test] skipped stderr-only subscriber init: {err}");
         }
-    }
 }
 
 #[cfg(test)]
