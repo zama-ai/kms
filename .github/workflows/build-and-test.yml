@@ -17,19 +17,17 @@ on:
 
 permissions: {}
 
-# Controls concurrent workflow runs:
-# - Groups runs by PR head ref
-# - Cancels in-progress runs when new commits are pushed
+# Per-PR group + suffix: runs that should supersede each other use "ci"; unrelated
+# label events (e.g. CLA bot) use "noise" so they do not cancel an in-progress push
+# or pr-preview run. Push / synchronize / reopen always use "ci"; so do labeled
+# events that match docker-build (pr-preview-*, docker). Those now share one group
+# and cancel each other (fixing label-pr-preview vs synchronize split).
 concurrency:
   group: >-
-    build-and-test-${{ github.head_ref || github.run_id }}-${{
-      github.event.action == 'labeled' &&
-      startsWith(github.event.label.name, 'pr-preview-') &&
-      'label-pr-preview' ||
-      github.event.action == 'labeled' &&
-      github.event.label.name != 'docker' &&
-      'label-other' ||
-      'main'
+    build-and-test-${{ github.event.pull_request.number || github.run_id }}-${{
+      github.event.action != 'labeled' && 'ci' ||
+      github.event.action == 'labeled' && (startsWith(github.event.label.name, 'pr-preview-') || github.event.label.name == 'docker') && 'ci' ||
+      'noise'
     }}
   cancel-in-progress: true
 
