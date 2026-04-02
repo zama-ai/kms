@@ -13,7 +13,7 @@ use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
-use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, internal_sign};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -22,17 +22,17 @@ use crate::util::file_handling::write_element;
 #[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
 use crate::vault::storage::crypto_material::get_core_signing_key;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
+use kms_grpc::RequestId;
 #[cfg(feature = "wasm_tests")]
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-use kms_grpc::RequestId;
 use serial_test::serial;
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "wasm_tests")]
@@ -730,27 +730,25 @@ async fn process_batch_threshold_user_decryption(
             // modify the responses if there are malicious parties
             // note that we also need to sign the modified payload
             responses.iter_mut().for_each(|resp| {
-                if let Some(payload) = &mut resp.payload {
-                    if let Some(mal_parties) = &malicious_parties {
-                        if mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
-                        {
-                            let orig_party_id = payload.party_id;
-                            // Modify the party ID maliciously
-                            if payload.party_id == 1 {
-                                payload.party_id = amount_parties as u32;
-                            } else {
-                                payload.party_id -= 1;
-                            }
-                            let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
-                            let sig = internal_sign(
-                                &DSEP_USER_DECRYPTION,
-                                &sig_payload_vec,
-                                &server_private_keys[&orig_party_id],
-                            )
-                            .unwrap();
-                            resp.signature = sig.sig.to_vec();
-                        }
+                if let Some(payload) = &mut resp.payload
+                    && let Some(mal_parties) = &malicious_parties
+                    && mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
+                {
+                    let orig_party_id = payload.party_id;
+                    // Modify the party ID maliciously
+                    if payload.party_id == 1 {
+                        payload.party_id = amount_parties as u32;
+                    } else {
+                        payload.party_id -= 1;
                     }
+                    let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
+                    let sig = internal_sign(
+                        &DSEP_USER_DECRYPTION,
+                        &sig_payload_vec,
+                        &server_private_keys[&orig_party_id],
+                    )
+                    .unwrap();
+                    resp.signature = sig.sig.to_vec();
                 }
             });
 

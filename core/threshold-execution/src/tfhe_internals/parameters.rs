@@ -10,18 +10,18 @@ use tfhe::{
     core_crypto::commons::ciphertext_modulus::CiphertextModulus,
     integer::parameters::DynamicDistribution,
     shortint::{
-        parameters::{
-            list_compression::ClassicCompressionParameters,
-            noise_squashing::NoiseSquashingClassicParameters, CompactCiphertextListExpansionKind,
-            CompactPublicKeyEncryptionParameters, CompressionParameters, DecompositionBaseLog,
-            DecompositionLevelCount, GlweDimension, LweCiphertextCount, LweDimension,
-            ModulusSwitchNoiseReductionParams, NoiseEstimationMeasureBound,
-            NoiseSquashingCompressionParameters, NoiseSquashingParameters, PolynomialSize,
-            RSigmaFactor, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
-        },
-        prelude::ModulusSwitchType,
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
+        parameters::{
+            CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
+            CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
+            LweCiphertextCount, LweDimension, ModulusSwitchNoiseReductionParams,
+            NoiseEstimationMeasureBound, NoiseSquashingCompressionParameters,
+            NoiseSquashingParameters, PolynomialSize, RSigmaFactor, ShortintKeySwitchingParameters,
+            SupportedCompactPkeZkScheme, Variance, list_compression::ClassicCompressionParameters,
+            noise_squashing::NoiseSquashingClassicParameters,
+        },
+        prelude::ModulusSwitchType,
     },
 };
 
@@ -2119,11 +2119,11 @@ mod tests {
     use crate::{
         keyset_config::KeySetConfig,
         tfhe_internals::parameters::{
-            compute_min_trials, compute_prob_hw_within_range, BC_PARAMS_SNS,
+            BC_PARAMS_SNS, compute_min_trials, compute_prob_hw_within_range,
         },
     };
 
-    use super::{DkgParamsAvailable, BC_PARAMS_NO_SNS};
+    use super::{BC_PARAMS_NO_SNS, DkgParamsAvailable};
     use strum::IntoEnumIterator;
 
     #[test]

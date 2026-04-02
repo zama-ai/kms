@@ -33,7 +33,7 @@ where
                     return Err(anyhow_error_and_log(
                         "Expected Some(v) as an input argument for the input party, got None"
                             .to_string(),
-                    ))
+                    ));
                 }
             }
         };

@@ -14,41 +14,41 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
+use hashing::DomainSep;
 use hashing::hash_element;
 use hashing::serialize_hash_element;
-use hashing::DomainSep;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::abi_encode_plaintexts;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
+use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
     CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
-use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::FheUint80;
 use tfhe::integer::BooleanBlock;
+use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
-use tfhe::FheUint80;
 use tfhe::{
-    FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint4, FheUint512, FheUint64, FheUint8,
+    FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128, FheUint160,
+    FheUint256, FheUint512, FheUint1024, FheUint2048,
 };
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::Upgrade;
@@ -648,7 +648,9 @@ impl BaseKmsStruct {
     }
 
     pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
-        tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
+        tracing::warn!(
+            "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
+        );
         BaseKmsStruct {
             kms_type,
             sig_key: None,
@@ -1031,16 +1033,16 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{deserialize_to_low_level, TypedPlaintext};
+    use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
         dummy_domain,
         engine::{
             base::{
-                compute_external_signature_preprocessing, compute_info_standard_keygen,
-                compute_public_decryption_message, safe_serialize_hash_element_versioned,
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_signature_preprocessing,
+                compute_info_standard_keygen, compute_public_decryption_message,
+                safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
@@ -1051,13 +1053,13 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
     use kms_grpc::{
+        RequestId,
         kms::v1::CiphertextFormat,
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
-        RequestId,
     };
     use rand::{RngCore, SeedableRng};
     use tfhe::{
-        prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
+        FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
     use threshold_execution::{
         keyset_config::StandardKeySetConfig,
@@ -1253,22 +1255,26 @@ pub(crate) mod tests {
         safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
         // use the wrong type
-        assert!(deserialize_to_low_level(
-            FheTypes::Bool,
-            CiphertextFormat::SmallExpanded,
-            &ct_buf,
-            None,
-        )
-        .is_err());
+        assert!(
+            deserialize_to_low_level(
+                FheTypes::Bool,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                None,
+            )
+            .is_err()
+        );
 
         // should pass with the correct type
-        assert!(deserialize_to_low_level(
-            FheTypes::Uint32,
-            CiphertextFormat::SmallExpanded,
-            &ct_buf,
-            None,
-        )
-        .is_ok());
+        assert!(
+            deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                None,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1300,13 +1306,15 @@ pub(crate) mod tests {
             safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::BigExpanded,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::BigExpanded,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
 
             // should pass with the correct format
             deserialize_to_low_level(
@@ -1324,13 +1332,15 @@ pub(crate) mod tests {
             safe_serialize(&large_ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::SmallExpanded,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::SmallExpanded,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
 
             // should pass with the correct format
             deserialize_to_low_level(
@@ -1384,13 +1394,15 @@ pub(crate) mod tests {
 
         // setting decompression key to None should fail
         {
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::SmallCompressed,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::SmallCompressed,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
         }
 
         // should pass with the correct decompression key

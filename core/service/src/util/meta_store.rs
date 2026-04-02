@@ -123,7 +123,9 @@ impl<T: Clone> MetaStore<T> {
         if self.storage.len() >= self.capacity {
             // We have reached the capacity limit. Delete an old element.
             if self.complete_queue.len() <= self.min_cache {
-                return Err(anyhow_error_and_log("The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element."));
+                return Err(anyhow_error_and_log(
+                    "The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element.",
+                ));
             } else {
                 // Remove the first (oldest) element from the age queue
                 let old_request_id = some_or_err(
@@ -202,7 +204,9 @@ impl<T: Clone> MetaStore<T> {
                     // If we couldn't find it in complete_queue but it was completed,
                     // this indicates a potential invariant violation that we should log
                     if !found {
-                        tracing::error!("INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected");
+                        tracing::error!(
+                            "INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected"
+                        );
                     }
                 }
 
@@ -360,7 +364,9 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
         Ok(()) => true,
         Err(e) => {
             // We already logged the original error, so just log the update failure here as there is not much else we can do
-            tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}");
+            tracing::error!(
+                "Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}"
+            );
             false
         }
     }
@@ -416,8 +422,8 @@ pub async fn handle_res<T: Clone>(
                     Ok(result) => Ok(result),
                     Err(e) => {
                         let msg = format!(
-                                "Could not retrieve the result with request ID {req_id} since it finished with an error: {e}"
-                            );
+                            "Could not retrieve the result with request ID {req_id} since it finished with an error: {e}"
+                        );
                         tracing::warn!(msg);
                         bail!(msg);
                     }
@@ -478,8 +484,8 @@ async fn handle_res_metriced_with_timeout<T: Clone>(
                     Ok(result) => Ok(result),
                     Err(e) => {
                         let msg = format!(
-                                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
-                            );
+                            "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+                        );
                         tracing::warn!(msg);
                         Err(MetricedError::new(
                             metric_scope,
@@ -519,9 +525,11 @@ mod tests {
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
         // Data does not exist
         assert!(!meta_store.exists(&request_id));
-        assert!(meta_store
-            .update(&request_id, Ok("OK".to_string()))
-            .is_err());
+        assert!(
+            meta_store
+                .update(&request_id, Ok("OK".to_string()))
+                .is_err()
+        );
 
         meta_store.insert(&request_id).unwrap();
         // Data exits
@@ -529,9 +537,11 @@ mod tests {
         assert!(meta_store.update(&request_id, Ok("OK".to_string())).is_ok());
 
         // Re-update not allowed
-        assert!(meta_store
-            .update(&request_id, Ok("NOK".to_string()))
-            .is_err());
+        assert!(
+            meta_store
+                .update(&request_id, Ok("NOK".to_string()))
+                .is_err()
+        );
     }
 
     #[test]
@@ -541,18 +551,24 @@ mod tests {
         let request_id_2: RequestId = derive_request_id("2").unwrap();
         let request_id_3: RequestId = derive_request_id("3").unwrap();
         meta_store.insert(&request_id_1).unwrap();
-        assert!(meta_store
-            .update(&request_id_1, Err("Err1".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_1, Err("Err1".to_string()))
+                .is_ok()
+        );
         meta_store.insert(&request_id_2).unwrap();
-        assert!(meta_store
-            .update(&request_id_2, Ok("OK2".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_2, Ok("OK2".to_string()))
+                .is_ok()
+        );
         // The storage is full so we should kick the oldest element out
         meta_store.insert(&request_id_3).unwrap();
-        assert!(meta_store
-            .update(&request_id_3, Err("Err3".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_3, Err("Err3".to_string()))
+                .is_ok()
+        );
 
         // Validate the oldest element is removed
         assert!(!meta_store.exists(&request_id_1));

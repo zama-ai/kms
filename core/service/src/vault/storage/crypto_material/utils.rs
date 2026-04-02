@@ -9,17 +9,17 @@ use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
-    vault::storage::{read_all_data_versioned, Storage},
+    vault::storage::{Storage, read_all_data_versioned},
 };
 use aes_prng::AesRng;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_grpc::RequestId;
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fmt::Display;
-use tfhe::{named::Named, Unversionize};
+use tfhe::{Unversionize, named::Named};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::max_num_messages;
 
@@ -195,11 +195,15 @@ pub fn log_data_exists<T: Display, U: Display, V: Display>(
     match pub_storage_info {
         Some(pub_info) => tracing::info!(
             "{} with ID {} already exist for private storage \"{}\" and public storage \"{}\", skipping generation",
-            data_type, id, storage_info, pub_info
+            data_type,
+            id,
+            storage_info,
+            pub_info
         ),
         None => tracing::info!(
             "{} with ID {} already exist, skipping generation",
-            data_type, id
+            data_type,
+            id
         ),
     }
 }

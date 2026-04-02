@@ -1,7 +1,7 @@
 use crate::metrics::METRICS;
 use std::{cmp::max, ffi::OsStr, fs, time::Duration};
 use sysinfo::{
-    ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, MINIMUM_CPU_UPDATE_INTERVAL,
+    MINIMUM_CPU_UPDATE_INTERVAL, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
 };
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
@@ -14,8 +14,12 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     let total_ram = system.total_memory();
     METRICS.record_total_memory(total_ram);
     let free_ram = system.free_memory();
-    tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
-        num_cpus, total_ram, free_ram);
+    tracing::info!(
+        "Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
+        num_cpus,
+        total_ram,
+        free_ram
+    );
 
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
 
@@ -43,7 +47,9 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
                     METRICS.record_process_cpu_usage(process.cpu_usage() as f64);
                 }
             } else {
-                tracing::error!("Could not get current PID and hence cannot refresh process CPU usage for accurate reading. This may lead to inaccurate CPU usage metrics.");
+                tracing::error!(
+                    "Could not get current PID and hence cannot refresh process CPU usage for accurate reading. This may lead to inaccurate CPU usage metrics."
+                );
             }
 
             // Update memory metrics
@@ -95,7 +101,9 @@ fn get_file_descriptor_count() -> u64 {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(e) => {
-            tracing::error!("Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}");
+            tracing::error!(
+                "Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}"
+            );
             return 0;
         }
     };
@@ -113,14 +121,18 @@ fn get_task_count(system: &sysinfo::System) -> u64 {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(e) => {
-            tracing::error!("Could not get current PID and hence cannot evaluate amount of tasks. Using 0 by default. Error was: {e}");
+            tracing::error!(
+                "Could not get current PID and hence cannot evaluate amount of tasks. Using 0 by default. Error was: {e}"
+            );
             return 0;
         }
     };
     let process = match system.process(pid) {
         Some(process) => process,
         None => {
-            tracing::error!("Could not get current process info from sysinfo and hence cannot evaluate amount of tasks. Using 0 by default");
+            tracing::error!(
+                "Could not get current process info from sysinfo and hence cannot evaluate amount of tasks. Using 0 by default"
+            );
             return 0;
         }
     };
@@ -128,7 +140,8 @@ fn get_task_count(system: &sysinfo::System) -> u64 {
         Some(tasks) => tasks.len() as u64,
         None => {
             tracing::error!(
-                "System does not appear to be Linux and hence cannot get the amount of tasks. Using 0 by default");
+                "System does not appear to be Linux and hence cannot get the amount of tasks. Using 0 by default"
+            );
             0
         }
     }
@@ -143,7 +156,8 @@ fn get_socat_task_count(system: &sysinfo::System) -> u64 {
             Some(tasks) => tasks.len() as u64,
             None => {
                 tracing::error!(
-                "System does not appear to be Linux and hence cannot get the amount of socat tasks. Using 0 by default");
+                    "System does not appear to be Linux and hence cannot get the amount of socat tasks. Using 0 by default"
+                );
                 0
             }
         };

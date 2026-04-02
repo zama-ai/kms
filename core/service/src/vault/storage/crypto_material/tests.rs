@@ -2,15 +2,15 @@ use crate::{
     consts::DEFAULT_EPOCH_ID,
     cryptography::signatures::gen_sig_keys,
     dummy_domain,
-    engine::base::{derive_request_id, KeyGenMetadata},
+    engine::base::{KeyGenMetadata, derive_request_id},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::PubDataType, EpochId, RequestId};
+use kms_grpc::{EpochId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
+use tfhe::{CompactPublicKey, ConfigBuilder, ServerKey, shortint::ClassicPBSParameters};
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,

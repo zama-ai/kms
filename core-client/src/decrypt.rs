@@ -1,10 +1,10 @@
-use crate::{dummy_domain, dummy_handle, print_timings, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain, dummy_handle, print_timings};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
+    ContextId, EpochId, KeyId, RequestId,
     kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::protobuf_to_alloy_domain,
-    ContextId, EpochId, KeyId, RequestId,
 };
 use kms_lib::cryptography::encryption::PkeSchemeType;
 use kms_lib::{

@@ -1,5 +1,5 @@
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::degree_4::ResiduePolyF4,
     sharing::share::Share,
 };
@@ -8,7 +8,7 @@ use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
 use threshold_execution::online::{
-    preprocessing::{create_redis_factory, redis::RedisConf, PreprocessorFactory},
+    preprocessing::{PreprocessorFactory, create_redis_factory, redis::RedisConf},
     triple::Triple,
 };
 use threshold_types::role::Role;
@@ -17,7 +17,7 @@ use threshold_types::role::Role;
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen,
     online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
-    runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+    runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tfhe_internals::parameters::DKGParams,
 };
 use threshold_types::session_id::SessionId;
@@ -186,10 +186,12 @@ async fn test_fetch_more_than_stored() {
     bit_redis_preprocessing.append_bits(bits.clone());
     let fetched_bits = bit_redis_preprocessing.next_bit_vec(fetch_count);
 
-    assert!(fetched_bits
-        .unwrap_err()
-        .to_string()
-        .contains("Pop length error."));
+    assert!(
+        fetched_bits
+            .unwrap_err()
+            .to_string()
+            .contains("Pop length error.")
+    );
 }
 
 #[tokio::test]
@@ -372,8 +374,8 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_execution::online::preprocessing::{
-        dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing,
-        InMemoryBitDecPreprocessing, TriplePreprocessing,
+        BitDecPreprocessing, BitPreprocessing, InMemoryBitDecPreprocessing, TriplePreprocessing,
+        dummy::DummyPreprocessing,
     };
     use threshold_execution::tests::helper::testing::get_dummy_parameters_for_parties;
 

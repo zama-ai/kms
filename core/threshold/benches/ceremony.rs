@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use threshold_execution::{
     runtime::{
         sessions::session_parameters::GenericParameterHandles,
-        test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+        test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     },
     zk::ceremony::{Ceremony, SecureCeremony},
 };

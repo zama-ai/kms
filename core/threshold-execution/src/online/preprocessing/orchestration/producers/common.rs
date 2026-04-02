@@ -58,7 +58,7 @@ pub(crate) mod tests {
 
     use futures::future::join_all;
     use itertools::Itertools;
-    use tokio::sync::mpsc::{channel, Receiver, Sender};
+    use tokio::sync::mpsc::{Receiver, Sender, channel};
 
     use crate::{
         online::{
@@ -77,10 +77,10 @@ pub(crate) mod tests {
             },
             triple::Triple,
         },
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+        runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     };
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
         sharing::share::Share,
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},

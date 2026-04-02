@@ -75,9 +75,7 @@ macro_rules! retry_loop {
             }
         }
     }};
-    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
-        retry_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant)
-    }};
+    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{ retry_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant) }};
     ($func:expr) => {{
         retry_loop!(
             $func,
@@ -203,9 +201,7 @@ macro_rules! retry_fatal_loop {
             }
         }
     }};
-    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{
-        retry_fatal_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant)
-    }};
+    ($func:expr,$ms_sleep:expr,$max_iter:expr) => {{ retry_fatal_loop!($func, $ms_sleep, $max_iter, TimeoutStrategy::Constant) }};
     ($func:expr) => {{
         use $crate::{RETRY_MAX_ITER, RETRY_SLEEP_MS};
         retry_fatal_loop!($func, RETRY_SLEEP_MS, RETRY_MAX_ITER)

@@ -232,7 +232,7 @@ pub(crate) mod tests {
         runtime::sessions::large_session::LargeSession,
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

@@ -6,14 +6,14 @@ use algebra::{
     base_ring::Z128,
     galois_rings::{
         common::ResiduePoly,
-        degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
     },
     structure_traits::Ring,
 };
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    RequestId,
 };
 use observability::{
     metrics,
@@ -29,7 +29,7 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::Tagged;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_execution::{
-    endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
+    endpoints::keygen::{OnlineDistributedKeyGen, distributed_decompression_keygen_z128},
     keyset_config as ddec_keyset_config,
     online::preprocessing::DKGPreprocessing,
     runtime::sessions::{base_session::BaseSession, small_session::SmallSession},
@@ -49,34 +49,33 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
-            compute_info_compressed_keygen, compute_info_decompression_keygen,
-            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
-            DSEP_PUBDATA_KEY,
+            BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
+            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
             service::{
-                session::{validate_context_and_epoch, ImmutableSessionMaker},
                 PublicKeyMaterial, ThresholdFheKeys,
+                session::{ImmutableSessionMaker, validate_context_and_epoch},
             },
             traits::KeyGenerator,
         },
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, parse_optional_grpc_request_id, validate_key_gen_request,
-            RequestIdParsingErr,
+            RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
+            validate_key_gen_request,
         },
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, handle_res, retrieve_from_meta_store,
-            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store, MetaStore,
+            MetaStore, add_req_to_meta_store, handle_res, retrieve_from_meta_store,
+            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
     vault::storage::{
-        crypto_material::{CryptoMaterialReader, ThresholdCryptoMaterialStorage},
         Storage, StorageExt,
+        crypto_material::{CryptoMaterialReader, ThresholdCryptoMaterialStorage},
     },
 };
 
@@ -159,10 +158,10 @@ pub struct RealInsecureKeyGenerator<
 
 #[cfg(feature = "insecure")]
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    > RealInsecureKeyGenerator<PubS, PrivS, KG>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+> RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
@@ -184,10 +183,10 @@ impl<
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+> InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
         &self,
@@ -239,10 +238,10 @@ fn convert_to_bit(input: Vec<ResiduePolyF4Z128>) -> anyhow::Result<Vec<u64>> {
 }
 
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > RealKeyGenerator<PubS, PrivS, KG>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+> RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -365,7 +364,9 @@ impl<
                     };
                     match handle_res(handle, preproc_id).await {
                         Ok(_) => {
-                            tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
+                            tracing::info!(
+                                "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                            );
                         }
                         Err(e) => {
                             MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
@@ -799,7 +800,7 @@ impl<
         use threshold_execution::{
             sharing::open::{RobustOpen, SecureRobustOpen},
             tfhe_internals::test_feature::{
-                to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,
+                INPUT_PARTY_ID, to_hl_client_key, transfer_decompression_key,
             },
         };
         use threshold_types::role::Role;
@@ -927,7 +928,9 @@ impl<
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
                 {
-                    panic!("attempting to call insecure compression keygen when the insecure feature is not set");
+                    panic!(
+                        "attempting to call insecure compression keygen when the insecure feature is not set"
+                    );
                 }
                 #[cfg(feature = "insecure")]
                 {
@@ -1450,10 +1453,10 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+> KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(
         &self,
@@ -1474,7 +1477,7 @@ impl<
 mod tests {
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::rngs::OsRng;
     use threshold_execution::{
@@ -1496,10 +1499,10 @@ mod tests {
     use super::*;
 
     impl<
-            PubS: Storage + Sync + Send + 'static,
-            PrivS: StorageExt + Sync + Send + 'static,
-            KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-        > RealKeyGenerator<PubS, PrivS, KG>
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+    > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,
@@ -1904,10 +1907,11 @@ mod tests {
         let res = kg.key_gen(request).await.unwrap_err();
         assert_eq!(res.code(), tonic::Code::Internal);
 
-        assert!(res
-            .internal_err()
-            .to_string()
-            .contains(ERR_FAILED_TO_READ_EXISTING_TAG));
+        assert!(
+            res.internal_err()
+                .to_string()
+                .contains(ERR_FAILED_TO_READ_EXISTING_TAG)
+        );
     }
 
     #[tokio::test]

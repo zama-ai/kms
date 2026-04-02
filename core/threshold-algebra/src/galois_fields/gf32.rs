@@ -6,7 +6,7 @@ use crate::{
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use error_utils::anyhow_error_and_log;
-use g2p::{g2p, GaloisField};
+use g2p::{GaloisField, g2p};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc::Receiver};
 
 use crate::online::preprocessing::RandomPreprocessing;
 use algebra::sharing::share::Share;

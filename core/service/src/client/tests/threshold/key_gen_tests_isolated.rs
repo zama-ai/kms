@@ -20,9 +20,9 @@ use crate::client::tests::threshold::key_gen_tests::verify_keygen_responses;
 use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::dummy_domain;
-use crate::engine::base::derive_request_id;
 #[cfg(feature = "insecure")]
 use crate::engine::base::INSECURE_PREPROCESSING_ID;
+use crate::engine::base::derive_request_id;
 #[cfg(feature = "slow_tests")]
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;

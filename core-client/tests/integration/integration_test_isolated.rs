@@ -226,9 +226,9 @@
 use anyhow::Result;
 use futures::future::join_all;
 use kms_core_client::*;
+use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::KeyId;
 use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
@@ -258,7 +258,7 @@ use tfhe::safe_serialization::safe_serialize;
 // Additional imports for reshare test (only needed with threshold_tests feature)
 #[cfg(feature = "threshold_tests")]
 use kms_lib::engine::base::{
-    safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+    DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
 };
 #[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::{
@@ -885,8 +885,8 @@ async fn setup_party_resharing_servers(
     use kms_lib::conf::threshold::PeerConf;
     use kms_lib::testing::helpers::create_test_material_manager;
     use kms_lib::testing::material::TestMaterialSpec;
-    use kms_lib::vault::storage::file::FileStorage;
     use kms_lib::vault::storage::StorageType;
+    use kms_lib::vault::storage::file::FileStorage;
 
     let manager = create_test_material_manager();
 
@@ -933,7 +933,7 @@ async fn setup_party_resharing_servers(
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
     use kms_lib::consts::SIGNING_KEY_ID;
     use kms_lib::util::key_setup::{
-        ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
+        ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
     };
     let _ = ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,

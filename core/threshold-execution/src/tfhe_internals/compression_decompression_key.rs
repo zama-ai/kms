@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use tfhe::{
-    boolean::prelude::{GlweDimension, PolynomialSize},
-    shortint::parameters::{list_compression::ClassicCompressionParameters, CompressionParameters},
     Versionize,
+    boolean::prelude::{GlweDimension, PolynomialSize},
+    shortint::parameters::{CompressionParameters, list_compression::ClassicCompressionParameters},
 };
 use tfhe_versionable::VersionsDispatch;
 

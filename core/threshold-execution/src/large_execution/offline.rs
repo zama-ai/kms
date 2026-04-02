@@ -15,7 +15,7 @@ use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
 use threshold_types::protocol::ProtocolDescription;
 use tonic::async_trait;
-use tracing::{info_span, instrument, Instrument};
+use tracing::{Instrument, info_span, instrument};
 
 use super::double_sharing::{DoubleSharing, SecureDoubleSharing};
 use super::single_sharing::{SecureSingleSharing, SingleSharing};
@@ -61,11 +61,11 @@ impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
 }
 
 impl<
-        Z: Ring,
-        S: SingleSharing<Z> + Default,
-        D: DoubleSharing<Z> + Default,
-        RO: RobustOpen + Default,
-    > Default for RealLargePreprocessing<Z, S, D, RO>
+    Z: Ring,
+    S: SingleSharing<Z> + Default,
+    D: DoubleSharing<Z> + Default,
+    RO: RobustOpen + Default,
+> Default for RealLargePreprocessing<Z, S, D, RO>
 {
     fn default() -> Self {
         Self::new(S::default(), D::default(), RO::default())
@@ -79,12 +79,12 @@ pub type SecureLargePreprocessing<Z> =
 
 #[async_trait]
 impl<
-        Z: ErrorCorrect,
-        Ses: LargeSessionHandles,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        RO: RobustOpen,
-    > Preprocessing<Z, Ses> for RealLargePreprocessing<Z, S, D, RO>
+    Z: ErrorCorrect,
+    Ses: LargeSessionHandles,
+    S: SingleSharing<Z>,
+    D: DoubleSharing<Z>,
+    RO: RobustOpen,
+> Preprocessing<Z, Ses> for RealLargePreprocessing<Z, S, D, RO>
 {
     async fn execute(
         &mut self,
@@ -291,7 +291,7 @@ mod tests {
     use crate::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::tests::helper::{
-        tests::{execute_protocol_large_w_disputes_and_malicious, TestingParameters},
+        tests::{TestingParameters, execute_protocol_large_w_disputes_and_malicious},
         tests_and_benches::execute_protocol_large,
     };
     use crate::{
@@ -312,7 +312,7 @@ mod tests {
         small_execution::offline::Preprocessing,
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

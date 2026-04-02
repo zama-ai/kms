@@ -8,7 +8,7 @@ use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::{Monomials, ResiduePoly},
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Sample},

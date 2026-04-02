@@ -110,8 +110,8 @@ impl DockerComposeCmd {
 
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
-                     // Wait for the OS to release ports before starting new containers.
-                     // Without this, Docker Compose retries fail with "address already in use".
+        // Wait for the OS to release ports before starting new containers.
+        // Without this, Docker Compose retries fail with "address already in use".
         wait_for_ports_free(Self::ports_for_mode(self.mode), Duration::from_secs(120));
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
 
@@ -119,15 +119,15 @@ impl DockerComposeCmd {
         match self.mode {
             KMSMode::ThresholdDefaultParameter
             | KMSMode::Centralized
-            | KMSMode::CentralizedCustodian => {
+            | KMSMode::CentralizedCustodian => unsafe {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
-            }
+            },
             KMSMode::ThresholdTestParameter
             | KMSMode::ThresholdTestParameterNoInit
             | KMSMode::ThresholdTestParameterNoInitSixParty
-            | KMSMode::ThresholdCustodianTestParameter => {
+            | KMSMode::ThresholdCustodianTestParameter => unsafe {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
-            }
+            },
         }
 
         // build the docker compose command

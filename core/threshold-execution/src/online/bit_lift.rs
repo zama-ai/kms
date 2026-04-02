@@ -11,7 +11,7 @@ use crate::{
     runtime::sessions::base_session::BaseSessionHandles,
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::{Monomials, ResiduePoly},
     sharing::share::Share,
     structure_traits::{ErrorCorrect, FromU128},
@@ -124,7 +124,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
     use crate::{
         malicious_execution::online::malicious_bit_lift::{
@@ -133,14 +133,14 @@ mod tests {
         {
             online::{
                 bit_lift::{BitLift, SecureBitLift},
-                preprocessing::{dummy::DummyPreprocessing, BitPreprocessing},
+                preprocessing::{BitPreprocessing, dummy::DummyPreprocessing},
                 triple::open_list,
             },
             runtime::sessions::large_session::LargeSession,
         },
     };
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::{Monomials, ResiduePoly},
         sharing::share::Share,
         structure_traits::ErrorCorrect,

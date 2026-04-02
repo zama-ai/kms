@@ -7,7 +7,7 @@ use crate::testing::helpers::{create_test_material_manager, regenerate_central_k
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 use crate::util::key_setup::ensure_client_keys_exist;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use tempfile::TempDir;
@@ -111,8 +111,8 @@ impl CentralizedTestEnvBuilder {
         // Setup KMS server with optional backup vault
         let backup_vault = if self.with_backup_vault {
             use crate::conf::{Keychain, SecretSharingKeychain};
-            use crate::vault::keychain::make_keychain_proxy;
             use crate::vault::Vault;
+            use crate::vault::keychain::make_keychain_proxy;
             use std::fs;
 
             // Create BACKUP directory

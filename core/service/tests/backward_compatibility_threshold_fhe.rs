@@ -8,16 +8,15 @@ use common::load_and_unversionize;
 
 use aes_prng::AesRng;
 use algebra::{
-    galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring},
 };
 use backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
     PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
-    TestMetadataDD, TestType, Testcase,
+    TestMetadataDD, TestType, Testcase, data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{TestedModule, run_all_tests},
 };
 use kms_lib::engine::context::SoftwareVersion;
 use rand::{RngCore, SeedableRng};

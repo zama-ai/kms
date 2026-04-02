@@ -10,12 +10,12 @@ use algebra::{
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
-    RequestId,
 };
 use observability::{
     metrics::{self},
@@ -29,9 +29,9 @@ use tfhe::FheTypes;
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-        LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
-        SmallOfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        SecureOnlineNoiseFloodDecryption, SmallOfflineNoiseFloodSession,
+        decrypt_using_noiseflooding, secure_decrypt_using_bitdec,
     },
     runtime::sessions::small_session::SmallSession,
     tfhe_internals::private_keysets::PrivateKeySet,
@@ -48,28 +48,28 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
-            PubDecCallValues,
+            BaseKmsStruct, PubDecCallValues, compute_external_pt_signature,
+            deserialize_to_low_level,
         },
         threshold::{
-            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, validate_public_decrypt_req, RequestIdParsingErr,
-            DSEP_PUBLIC_DECRYPTION,
+            DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
+            validate_public_decrypt_req,
         },
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
-            update_req_in_meta_store, MetaStore,
+            MetaStore, add_req_to_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === Current Module Imports ===
@@ -144,15 +144,15 @@ pub struct RealPublicDecryptor<
 }
 
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor<
-                Prep = SmallOfflineNoiseFloodSession<
-                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                    SmallSession<ResiduePolyF4Z128>,
-                >,
-            > + 'static,
-    > RealPublicDecryptor<PubS, PrivS, Dec>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Dec: NoiseFloodDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+> RealPublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -240,7 +240,7 @@ impl<
                     None => {
                         return Err(anyhow!(
                             "Public Decryption with session ID {session_id} could not be retrieved"
-                        ))
+                        ));
                     }
                 };
                 tracing::info!(
@@ -258,15 +258,15 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor<
-                Prep = SmallOfflineNoiseFloodSession<
-                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                    SmallSession<ResiduePolyF4Z128>,
-                >,
-            > + 'static,
-    > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Dec: NoiseFloodDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+> PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip_all, fields(
         request_id = ?request.get_ref().request_id,
@@ -560,7 +560,9 @@ impl<
                         format!("Failed inner decryption {req_id} with err: {e:?}")
                     }
                     Err(e) => {
-                        format!("Failed join inner decryption threads on {req_id} with JoinError: {e:?}")
+                        format!(
+                            "Failed join inner decryption threads on {req_id} with JoinError: {e:?}"
+                        )
                     }
                 };
                 let _ = update_err_req_in_meta_store(
@@ -703,7 +705,11 @@ impl<
 fn format_public_request(request: &PublicDecryptionRequest) -> String {
     format!(
         "PublicDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {:?} }}",
-        request.request_id, request.key_id, request.context_id, request.epoch_id, request.ciphertexts.len()
+        request.request_id,
+        request.key_id,
+        request.context_id,
+        request.epoch_id,
+        request.ciphertexts.len()
     )
 }
 #[cfg(test)]
@@ -711,7 +717,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::TypedCiphertext,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{
@@ -760,15 +766,15 @@ mod tests {
     }
 
     impl<
-            PubS: Storage + Send + Sync + 'static,
-            PrivS: StorageExt + Send + Sync + 'static,
-            Dec: NoiseFloodDecryptor<
-                    Prep = SmallOfflineNoiseFloodSession<
-                        { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                        SmallSession<ResiduePolyF4Z128>,
-                    >,
-                > + 'static,
-        > RealPublicDecryptor<PubS, PrivS, Dec>
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
+        Dec: NoiseFloodDecryptor<
+                Prep = SmallOfflineNoiseFloodSession<
+                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                    SmallSession<ResiduePolyF4Z128>,
+                >,
+            > + 'static,
+    > RealPublicDecryptor<PubS, PrivS, Dec>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,

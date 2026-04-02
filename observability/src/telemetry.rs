@@ -1,17 +1,17 @@
-use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
+use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
 use crate::metrics::METRICS;
 use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
 use axum::Json;
 use axum::{
+    Router,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use opentelemetry::propagation::TextMapCompositePropagator;
-use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
+use opentelemetry::{KeyValue, global, propagation::Injector, trace::TracerProvider};
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
@@ -26,18 +26,18 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tonic::{
+    Status,
     metadata::{MetadataKey, MetadataMap, MetadataValue},
     service::Interceptor,
-    Status,
 };
-use tracing::{info, info_span, trace_span, Span};
+use tracing::{Span, info, info_span, trace_span};
 use tracing_appender::non_blocking;
 use tracing_appender::rolling::never;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::fmt::{layer, Layer};
+use tracing_subscriber::fmt::{Layer, layer};
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
 
 /// This is the HEADER key that will be used to store the request ID in the tracing context.
 pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
@@ -48,8 +48,8 @@ pub trait ConfigTracing {
 }
 
 use kms_test_tracing::config::{
-    test_console_enabled, test_console_env_filter, test_log_max_bytes, test_logging_enabled,
-    test_persistent_env_filter, TruncatingMakeWriter,
+    TruncatingMakeWriter, test_console_enabled, test_console_env_filter, test_log_max_bytes,
+    test_logging_enabled, test_persistent_env_filter,
 };
 
 #[derive(Clone)]
@@ -192,15 +192,15 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         );
 
         // Create directory if it doesn't exist
-        if let Some(parent) = std::path::Path::new(&log_path).parent() {
-            if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await.with_context(|| {
-                    format!(
-                        "Failed to create persistent trace directory {}",
-                        parent.display()
-                    )
-                })?;
-            }
+        if let Some(parent) = std::path::Path::new(&log_path).parent()
+            && !parent.exists()
+        {
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!(
+                    "Failed to create persistent trace directory {}",
+                    parent.display()
+                )
+            })?;
         }
 
         // Use a rolling file appender to prevent excessive file sizes
@@ -491,10 +491,10 @@ pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
     let headers = request.headers();
     let mut headers_map = http::HeaderMap::new();
     for (k, v) in headers.iter() {
-        if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes()) {
-            if let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes()) {
-                headers_map.insert(name, value);
-            }
+        if let Ok(name) = http::header::HeaderName::from_bytes(k.as_str().as_bytes())
+            && let Ok(value) = http::header::HeaderValue::from_bytes(v.as_bytes())
+        {
+            headers_map.insert(name, value);
         }
     }
 
@@ -545,10 +545,10 @@ struct MetadataInjector<'a>(&'a mut MetadataMap);
 
 impl Injector for MetadataInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
-        if let Ok(key) = MetadataKey::from_bytes(key.as_bytes()) {
-            if let Ok(val) = MetadataValue::try_from(&value) {
-                self.0.insert(key, val);
-            }
+        if let Ok(key) = MetadataKey::from_bytes(key.as_bytes())
+            && let Ok(val) = MetadataValue::try_from(&value)
+        {
+            self.0.insert(key, val);
         }
     }
 }

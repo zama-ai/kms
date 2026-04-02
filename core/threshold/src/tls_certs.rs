@@ -140,7 +140,7 @@ pub fn create_ca_cert_from_ca_keypair<S: rcgen::SigningKey>(
     // set distinguished name of CA cert
     let mut distinguished_name = DistinguishedName::new();
     distinguished_name.push(DnType::CommonName, ca_name); // this might be the one for docker deployment
-                                                          // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
+    // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
     cp.distinguished_name = distinguished_name;
 
     // Currently, we expect CA certificates to sign ephemeral TLS certificates
@@ -320,7 +320,7 @@ mod tests {
     use super::{create_core_certs, create_selfsigned_ca_cert, validate_ca_name};
     use rcgen::{Certificate, Issuer};
     use tokio_rustls::rustls::pki_types::UnixTime;
-    use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
+    use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
 
     fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> anyhow::Result<()> {
         let ee = EndEntityCert::try_from(leaf_cert.der())?;
@@ -361,12 +361,12 @@ mod tests {
 
         // check all core certs
         for c in core_certs {
-            let verif = signed_verify(&c.1 .1, &ca_cert);
+            let verif = signed_verify(&c.1.1, &ca_cert);
             // check that verification works for each core cert
             assert!(verif.is_ok(), "certificate validation failed!");
 
             // check that verification does not work for wrong CA cert
-            let verif = signed_verify(&c.1 .1, &ca_cert_wrong);
+            let verif = signed_verify(&c.1.1, &ca_cert_wrong);
             assert!(
                 verif.is_err(),
                 "certificate validation succeeded, but was expected to fail!"
@@ -394,12 +394,12 @@ mod tests {
         let core_certs = create_core_certs(ca_name, 2, &issuing_ca, false).unwrap();
         // check that verification works for self-signed CA
         for c in core_certs.iter() {
-            let verif = signed_verify(&c.1 .1, &ca_cert);
+            let verif = signed_verify(&c.1.1, &ca_cert);
             assert!(verif.is_ok(), "certificate validation failed!");
         }
         // check that verification does not work for wrong CA cert
         for c in core_certs {
-            let verif = signed_verify(&c.1 .1, &ca_cert_wrong);
+            let verif = signed_verify(&c.1.1, &ca_cert_wrong);
             assert!(
                 verif.is_err(),
                 "certificate validation succeeded, but was expected to fail!"

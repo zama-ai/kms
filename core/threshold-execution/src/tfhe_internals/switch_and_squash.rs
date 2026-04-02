@@ -39,10 +39,11 @@ mod tests {
 
     use num_traits::AsPrimitive;
     use tfhe::{
+        CompactCiphertextList, FheUint8, FheUint2048,
         core_crypto::{commons::traits::UnsignedInteger, entities::Plaintext},
         integer::bigint::U2048,
         prelude::{CiphertextList, FheDecrypt, FheEncrypt, SquashNoise},
-        set_server_key, CompactCiphertextList, FheUint2048, FheUint8,
+        set_server_key,
     };
 
     use crate::{

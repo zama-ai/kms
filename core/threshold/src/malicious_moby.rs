@@ -4,7 +4,7 @@ use tonic::transport::server::Router;
 
 use crate::grpc::server::{ChoreoRoutingHelper, SecureGrpcChoreography};
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
@@ -111,7 +111,7 @@ where
         // Read the strategy from the environment variable, defaulting to "secure"
         let strategy = std::env::var("MOBY_STRATEGY").unwrap_or_else(|_| "secure".to_owned());
 
-        let router = match strategy.as_str() {
+        match strategy.as_str() {
             "secure" => router.add_service(
                 SecureGrpcChoreography::new(my_role, networking, factory).into_server(),
             ),
@@ -123,7 +123,6 @@ where
                 GrpcChoreographyDropAll::new(my_role, networking, factory).into_server(),
             ),
             _ => panic!("Unknown moby strategy: {strategy}"),
-        };
-        router
+        }
     }
 }

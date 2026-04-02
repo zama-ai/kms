@@ -8,8 +8,8 @@ mod utilities;
 
 use aes_prng::AesRng;
 use rand::prelude::*;
-use tfhe::{prelude::*, set_server_key, CompactPublicKey, FheUint64, ReRandomizationContext};
-use utilities::{generate_tfhe_keys, set_plan, ALL_PARAMS};
+use tfhe::{CompactPublicKey, FheUint64, ReRandomizationContext, prelude::*, set_server_key};
+use utilities::{ALL_PARAMS, generate_tfhe_keys, set_plan};
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
@@ -78,7 +78,7 @@ fn main() {
     set_plan();
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    let transfer = |(ref mut from_amount, ref mut to_amount, ref mut amount, public_key): &mut (
+    let transfer = |(from_amount, to_amount, amount, public_key): &mut (
         FheUint64,
         FheUint64,
         FheUint64,
@@ -108,9 +108,9 @@ fn main() {
         set_server_key(server_key);
         let mut rng = AesRng::from_entropy();
 
-        let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
-        let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
-        let amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let from_amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
+        let to_amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
+        let amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
 
         // We take ownership in the closure, so the bench_memory function will clone all inputs
         bench_memory(

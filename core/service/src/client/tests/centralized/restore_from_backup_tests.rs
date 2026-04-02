@@ -12,17 +12,17 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id,
     util::key_setup::test_tools::{
-        purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
+        EncryptionConfig, TestingPlaintext, purge, purge_backup, purge_priv, purge_pub,
     },
     vault::storage::{
-        delete_all_at_request_id, delete_at_request_and_epoch_id, file::FileStorage, make_storage,
-        StorageReaderExt, StorageType,
+        StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
+        file::FileStorage, make_storage,
     },
 };
 use kms_grpc::{
+    RequestId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
-    RequestId,
 };
 use serial_test::serial;
 
@@ -104,10 +104,12 @@ async fn test_insecure_central_autobackup_after_deletion() {
     // Check the storage
     let backup_storage = make_storage(None, StorageType::BACKUP, None).unwrap();
     // Validate that the backup is constructed again
-    assert!(backup_storage
-        .data_exists_at_epoch(&key_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
-        .await
-        .unwrap());
+    assert!(
+        backup_storage
+            .data_exists_at_epoch(&key_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
+            .await
+            .unwrap()
+    );
     purge_priv(None, &[None]).await;
     purge_pub(None, &[None]).await;
 }
@@ -135,10 +137,12 @@ async fn nightly_test_insecure_central_crs_backup() {
     .await
     .unwrap();
     // Check that is has been removed
-    assert!(!priv_storage
-        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-        .await
-        .unwrap());
+    assert!(
+        !priv_storage
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap()
+    );
 
     // It will get auto-backed up at boot
     let (_kms_server, mut kms_client, _internal_client) =
@@ -160,17 +164,21 @@ async fn nightly_test_insecure_central_crs_backup() {
 
     let backup_storage: FileStorage = FileStorage::new(None, StorageType::BACKUP, None).unwrap();
     // Check the back up is still there
-    assert!(backup_storage
-        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-        .await
-        .unwrap());
+    assert!(
+        backup_storage
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap()
+    );
     // Check that the file has been restored
     let priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     // Check the back up is still there
-    assert!(priv_storage
-        .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-        .await
-        .unwrap());
+    assert!(
+        priv_storage
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap()
+    );
     purge_priv(None, &[None]).await;
     purge_pub(None, &[None]).await;
 }
