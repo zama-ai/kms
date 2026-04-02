@@ -9,7 +9,7 @@ use crate::cryptography::{
 };
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
-    DSEP_USER_DECRYPTION,
+    UserDecTrustedValidationContext, DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::{
@@ -224,15 +224,16 @@ impl Client {
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let ctx = UserDecTrustedValidationContext {
+            server_addresses: &self.get_server_addrs(),
+            client_request,
+            eip712_domain,
+        };
         let validated_resps = some_or_err(
-            validate_user_decrypt_responses_against_request(
-                &self.get_server_addrs(),
-                client_request,
-                eip712_domain,
-                agg_resp,
-            )?,
+            validate_user_decrypt_responses_against_request(&ctx, agg_resp)?,
             "Could not validate request".to_owned(),
-        )?;
+        )?
+        .into_inner();
         let degree = some_or_err(
             validated_resps.first(),
             "No valid responses parsed".to_string(),
