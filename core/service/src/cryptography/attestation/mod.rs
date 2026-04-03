@@ -10,8 +10,8 @@ use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256,
-    PKCS_ECDSA_P256_SHA256,
+    Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_ECDSA_P256K1_SHA256,
+    PublicKeyData,
 };
 use std::{sync::Arc, time::Duration};
 use threshold_networking::tls::extract_subject_from_cert;
@@ -19,15 +19,15 @@ use tokio::sync::RwLock;
 #[cfg(feature = "insecure")]
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio_rustls::rustls::{
+    SignatureScheme,
     client::ResolvesClientCert,
     crypto::CryptoProvider,
     pki_types::{PrivateKeyDer, UnixTime},
     server::{ClientHello, ResolvesServerCert},
     sign::{CertifiedKey, SingleCertAndKey},
-    SignatureScheme,
 };
 
-use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
+use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
 use x509_parser::{parse_x509_certificate, pem::Pem};
 
 pub mod nitro;
@@ -81,7 +81,10 @@ pub trait SecurityModule {
                     &private_vault_root_key_measurements,
                     &mut private_vault_root_key_measurements_bytes,
                 )?;
-                ensure!(private_vault_root_key_measurements_bytes.len() <= 1024, "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue");
+                ensure!(
+                    private_vault_root_key_measurements_bytes.len() <= 1024,
+                    "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue"
+                );
                 Some(private_vault_root_key_measurements_bytes)
             }
             None => {

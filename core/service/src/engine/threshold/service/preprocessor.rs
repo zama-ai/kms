@@ -4,9 +4,9 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    RequestId,
 };
 use observability::{
     metrics::{self, DurationGuard, METRICS},
@@ -18,10 +18,10 @@ use observability::{
 use threshold_execution::{
     keyset_config as ddec_keyset_config,
     online::preprocessing::{
+        PreprocessorFactory,
         orchestration::{
             dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
         },
-        PreprocessorFactory,
     },
     runtime::sessions::small_session::SmallSession,
     tfhe_internals::parameters::DKGParams,
@@ -37,16 +37,16 @@ use crate::{
     consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{compute_external_signature_preprocessing, BaseKmsStruct},
+        base::{BaseKmsStruct, compute_external_signature_preprocessing},
         threshold::{
-            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::KeyGenPreprocessor,
         },
         utils::MetricedError,
-        validation::{parse_grpc_request_id, validate_preproc_request, RequestIdParsingErr},
+        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
-        meta_store::{add_req_to_meta_store, retrieve_from_meta_store_with_timeout, MetaStore},
+        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout},
         rate_limiter::RateLimiter,
     },
 };
@@ -263,7 +263,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         #[cfg(feature = "insecure")]
         let handle_update = {
             use threshold_execution::online::preprocessing::{
-                dummy::DummyPreprocessing, DKGPreprocessing,
+                DKGPreprocessing, dummy::DummyPreprocessing,
             };
 
             match (handle_update, partial_params) {
@@ -478,15 +478,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
         if preproc_data.preprocessing_id != request_id {
             return Err(MetricedError::new(
-                        OP_KEYGEN_PREPROC_RESULT,
-                        Some(request_id),
-                        anyhow::anyhow!(
-                            "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
-                            request_id,
-                            preproc_data.preprocessing_id
-                        ),
-                        tonic::Code::Internal,
-                    ));
+                OP_KEYGEN_PREPROC_RESULT,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
+                    request_id,
+                    preproc_data.preprocessing_id
+                ),
+                tonic::Code::Internal,
+            ));
         }
 
         Ok(Response::new(KeyGenPreprocResult {
@@ -511,7 +511,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{

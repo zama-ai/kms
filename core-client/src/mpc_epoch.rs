@@ -1,14 +1,14 @@
 use crate::{
-    dummy_domain, keygen::check_standard_keyset_ext_signature,
-    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf, DigestKeySet,
-    NewEpochParameters, PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
+    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain,
+    keygen::check_standard_keyset_ext_signature, s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
+    RequestId,
     identifiers::EpochId,
     kms::v1::{DestroyMpcEpochRequest, FheParameter, KeyDigest, KeyInfo, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
-    RequestId,
 };
 use kms_lib::{
     client::client_wasm::Client,
@@ -241,12 +241,14 @@ pub(crate) async fn do_new_epoch(
             anyhow::ensure!(
                 resp_key_ids == expected_key_ids,
                 "Resharing response did not contain the expected key IDs! Got {:?}, but expected {:?}",
-                resp_key_ids, expected_key_ids
+                resp_key_ids,
+                expected_key_ids
             );
             anyhow::ensure!(
                 resp_preproc_ids == expected_preproc_ids,
                 "Resharing response did not contain the expected preprocessing IDs! Got {:?}, but expected {:?}",
-                resp_preproc_ids, expected_preproc_ids
+                resp_preproc_ids,
+                expected_preproc_ids
             );
             response_vec.push((core_conf, resp));
         }

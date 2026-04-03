@@ -11,9 +11,9 @@ use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMate
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
 use crate::util::key_setup::{
-    ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
+    ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist,
 };
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
@@ -135,7 +135,7 @@ impl ThresholdTestEnv {
         decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
     ) -> Result<crate::client::client_wasm::Client> {
         use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
-        use crate::vault::storage::{file::FileStorage, StorageType};
+        use crate::vault::storage::{StorageType, file::FileStorage};
 
         let material_path = self.material_dir.path();
         let party_count = self.clients.len();
@@ -332,8 +332,8 @@ impl ThresholdTestEnvBuilder {
         // Create backup vaults for each party if requested
         let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {
             use crate::conf::{Keychain, SecretSharingKeychain};
-            use crate::vault::keychain::make_keychain_proxy;
             use crate::vault::Vault;
+            use crate::vault::keychain::make_keychain_proxy;
             use std::fs;
 
             let mut vaults = Vec::new();

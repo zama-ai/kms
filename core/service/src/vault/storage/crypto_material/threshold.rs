@@ -7,9 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
+    RequestId,
     identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType},
-    RequestId,
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
@@ -24,11 +24,11 @@ use crate::{
     },
     util::meta_store::MetaStore,
     vault::{
-        storage::{
-            crypto_material::log_storage_success, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id, Storage, StorageExt, StorageReader,
-        },
         Vault,
+        storage::{
+            Storage, StorageExt, StorageReader, crypto_material::log_storage_success,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+        },
     },
 };
 
@@ -213,7 +213,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                            tracing::error!(
+                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
+                            );
                         } else {
                             log_storage_success(
                                 key_id,
@@ -226,7 +228,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        tracing::warn!(
+                            "No backup vault configured. Skipping backup of key material for request {key_id}"
+                        );
                         true
                     }
                 }
@@ -423,7 +427,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                            tracing::error!(
+                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
+                            );
                         } else {
                             log_storage_success(
                                 key_id,
@@ -436,7 +442,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        tracing::warn!(
+                            "No backup vault configured. Skipping backup of key material for request {key_id}"
+                        );
                         true
                     }
                 }

@@ -69,12 +69,12 @@ pub type SecureSmallPreprocessing = RealSmallPreprocessing<SyncReliableBroadcast
 
 #[async_trait]
 impl<
-        Z: ErrorCorrect,
-        // Note: Having the phantom data inside the struct definition
-        // allows us to define this trait constraint.
-        Ses: SmallSessionHandles<Z>,
-        BCast: Broadcast,
-    > Preprocessing<Z, Ses> for RealSmallPreprocessing<BCast>
+    Z: ErrorCorrect,
+    // Note: Having the phantom data inside the struct definition
+    // allows us to define this trait constraint.
+    Ses: SmallSessionHandles<Z>,
+    BCast: Broadcast,
+> Preprocessing<Z, Ses> for RealSmallPreprocessing<BCast>
 {
     async fn execute(
         &mut self,
@@ -249,10 +249,10 @@ where
             BroadcastValue::RingVector(cur_values) => {
                 if cur_values.len() != amount {
                     tracing::warn!(
-                            "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
-                            session.my_role().one_based(),
-                            cur_role.one_based()
-                        );
+                        "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
+                        session.my_role().one_based(),
+                        cur_role.one_based()
+                    );
                     session.add_corrupt(cur_role);
                     continue;
                 }
@@ -320,7 +320,8 @@ fn parse_d_shares<Z: Ring, Ses: BaseSessionHandles>(
                         tracing::warn!(
                             "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
                             session.my_role().one_based(),
-                            cur_role.one_based());
+                            cur_role.one_based()
+                        );
 
                         cur_map.insert(*cur_role, None);
                     }
@@ -415,7 +416,7 @@ mod test {
     use crate::small_execution::offline::reconstruct_d_values;
     use crate::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use crate::{
         network_value::BroadcastValue,
         {
@@ -433,7 +434,7 @@ mod test {
         },
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         randomness_check::execute_all_randomness_tests_loose,
         sharing::{
             shamir::{RevealOp, ShamirSharings},

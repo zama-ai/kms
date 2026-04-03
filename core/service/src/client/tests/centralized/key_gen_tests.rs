@@ -9,7 +9,7 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::purge;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReaderExt;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};

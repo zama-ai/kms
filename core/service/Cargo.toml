@@ -160,7 +160,7 @@ default = ["non-wasm"]
 testing = ["dep:tempfile"]
 non-wasm = [
     "kms-grpc/non-wasm",
-    "threshold-networking/non-wasm",
+    "dep:threshold-networking",
     "threshold-fhe/non-wasm",
 
     "dep:attestation-doc-validation",

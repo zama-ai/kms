@@ -17,7 +17,7 @@ use tfhe::CompactCiphertextList;
 use tfhe::CompactPublicKey;
 
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, FheUint64};
+use tfhe::{ClientKey, FheUint64, set_server_key};
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
 use crate::utilities::bench_memory;
@@ -47,8 +47,8 @@ fn bench_fhe_type<FheType>(
 
     let mut name = String::with_capacity(255);
 
-    let lhs = FheType::encrypt(rng.gen(), &client_key);
-    let rhs = FheType::encrypt(rng.gen(), &client_key);
+    let lhs = FheType::encrypt(rng.r#gen(), &client_key);
+    let rhs = FheType::encrypt(rng.r#gen(), &client_key);
     {
         write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
         let bench_fn = |(lhs, rhs): &mut (FheType, FheType)| &*lhs * &*rhs;
@@ -61,7 +61,7 @@ fn bench_fhe_type<FheType>(
     unset_server_key();
 
     {
-        let value = rng.gen();
+        let value = rng.r#gen();
         write!(name, "{bench_name}_encrypt_memory({type_name})").unwrap();
 
         let bench_fn = |(value, public_key): &mut (u64, CompactPublicKey)| {
@@ -74,7 +74,7 @@ fn bench_fhe_type<FheType>(
         name.clear();
     }
 
-    let lhs = FheType::encrypt(rng.gen(), &client_key);
+    let lhs = FheType::encrypt(rng.r#gen(), &client_key);
     {
         write!(name, "{bench_name}_decrypt_memory({type_name})").unwrap();
         let bench_fn =

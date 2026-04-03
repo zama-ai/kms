@@ -10,13 +10,13 @@ use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use rand::{random, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, random};
 use threshold_experimental::{
     algebra::{
         levels::{LevelEll, LevelKsw},
         ntt::{Const, N65536},
     },
-    bgv::basics::{bgv_pk_encrypt, PublicKey},
+    bgv::basics::{PublicKey, bgv_pk_encrypt},
     choreography::{choreographer::BgvChoreoExt, requests::SupportedRing},
     constants::PLAINTEXT_MODULUS,
 };
@@ -214,7 +214,9 @@ async fn preproc_keygen_command(
         )
         .await?;
 
-    println!("Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}");
+    println!(
+        "Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}"
+    );
     Ok(())
 }
 
@@ -236,7 +238,9 @@ async fn threshold_keygen_command(
         )
         .await?;
 
-    println!("Threshold Key Generation started. The new key will be stored under session ID:  {session_id}");
+    println!(
+        "Threshold Key Generation started. The new key will be stored under session ID:  {session_id}"
+    );
     Ok(())
 }
 

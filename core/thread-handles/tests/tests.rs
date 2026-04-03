@@ -1,9 +1,9 @@
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
-use thread_handles::{spawn_compute_bound, OsThreadGroup};
+use thread_handles::{OsThreadGroup, spawn_compute_bound};
 
 mod os_thread_group {
     use super::*;

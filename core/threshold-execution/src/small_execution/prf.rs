@@ -1,10 +1,10 @@
 use crate::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
+use aes::Aes128;
 #[allow(deprecated)]
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
-use aes::Aes128;
-use algebra::structure_traits::Ring;
 pub use algebra::PRSSConversions;
+use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
 use serde::{Deserialize, Serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -213,7 +213,7 @@ fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
 mod tests {
     use super::*;
     use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
-    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+    use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 
     #[test]
     fn test_phi() {

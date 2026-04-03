@@ -2,6 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
+    Seed,
     core_crypto::{
         commons::{
             generators::MaskRandomGenerator,
@@ -11,15 +12,14 @@ use tfhe::{
         },
         entities::LweBootstrapKeyOwned,
         prelude::{
-            decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator,
             SeededLweBootstrapKeyOwned, UnsignedTorus,
+            decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator,
         },
     },
     shortint::parameters::{
         CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, LweDimension,
         PolynomialSize,
     },
-    Seed,
 };
 use tfhe_csprng::seeders::XofSeed;
 

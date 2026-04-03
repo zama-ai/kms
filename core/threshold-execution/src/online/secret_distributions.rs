@@ -126,7 +126,7 @@ mod tests {
         },
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         structure_traits::Ring,
     };
     use threshold_types::network::NetworkMode;

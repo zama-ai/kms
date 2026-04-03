@@ -1,11 +1,11 @@
 use aes_prng::AesRng;
+use algebra::poly::Poly;
 use algebra::poly::lagrange_interpolation;
 use algebra::poly::lagrange_polynomials;
-use algebra::poly::Poly;
 use algebra::sharing::shamir::InputOp;
 use algebra::sharing::shamir::ShamirSharings;
 use algebra::structure_traits::FromU128;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;

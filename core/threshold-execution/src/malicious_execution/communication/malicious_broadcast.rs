@@ -7,8 +7,8 @@ use tonic::async_trait;
 use crate::{
     communication::{
         broadcast::{
-            cast_threshold_vote, gather_votes, receive_contribution_from_all_senders,
-            receive_echos_from_all_batched, Broadcast, RoleValueMap, SyncReliableBroadcast,
+            Broadcast, RoleValueMap, SyncReliableBroadcast, cast_threshold_vote, gather_votes,
+            receive_contribution_from_all_senders, receive_echos_from_all_batched,
         },
         p2p::send_to_all,
     },
@@ -108,7 +108,7 @@ impl Broadcast for MaliciousBroadcastSender {
             (_, _) => {
                 return Err(anyhow_error_and_log(
                     "A sender must have a value in reliable broadcast".to_string(),
-                ))
+                ));
             }
         }
 
@@ -257,7 +257,7 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
             (_, _) => {
                 return Err(anyhow_error_and_log(
                     "A sender must have a value in reliable broadcast".to_string(),
-                ))
+                ));
             }
         }
 

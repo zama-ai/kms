@@ -4,22 +4,20 @@
 use std::{
     io,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
-use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::writer::MakeWriter;
 
-pub const DEFAULT_TEST_CONSOLE_FILTER: &str =
-    "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
+pub const DEFAULT_TEST_CONSOLE_FILTER: &str = "warn,tonic=error,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
 
 pub const DEFAULT_TEST_VERBOSE_FILTER: &str =
     "info,tonic=info,h2=warn,hyper=warn,tower=warn,opentelemetry_sdk=warn,reqwest=warn,rustls=warn";
 
 // File-filter preset used only by the persistent trace sink in observability.
-pub const DEFAULT_TEST_FILE_FILTER: &str =
-    "warn,observability=info,kms_core_client=info,kms_lib=info,kms_server=info,kms_init=info,kms_gen_keys=info,kms_custodian=info,tonic=warn,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
+pub const DEFAULT_TEST_FILE_FILTER: &str = "warn,observability=info,kms_core_client=info,kms_lib=info,kms_server=info,kms_init=info,kms_gen_keys=info,kms_custodian=info,tonic=warn,h2=error,hyper=error,tower=error,opentelemetry_sdk=error,reqwest=error,rustls=error";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TestLogMode {
@@ -233,10 +231,9 @@ pub fn try_init_test_stderr_subscriber() {
         .with_ansi(false)
         .with_env_filter(test_console_env_filter())
         .try_init()
+        && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref())
     {
-        if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
-            eprintln!("[tracing-test] skipped stderr-only subscriber init: {err}");
-        }
+        eprintln!("[tracing-test] skipped stderr-only subscriber init: {err}");
     }
 }
 

@@ -17,7 +17,7 @@ use tfhe::CompactCiphertextList;
 use tfhe::CompactPublicKey;
 
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, FheUint64};
+use tfhe::{ClientKey, FheUint64, set_server_key};
 
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 use utilities::ALL_PARAMS;
@@ -43,14 +43,14 @@ fn bench_fhe_type<FheType>(
 {
     let mut rng = thread_rng();
 
-    let lhs = FheType::encrypt(rng.gen(), client_key);
-    let rhs = FheType::encrypt(rng.gen(), client_key);
+    let lhs = FheType::encrypt(rng.r#gen(), client_key);
+    let rhs = FheType::encrypt(rng.r#gen(), client_key);
 
     let mut name = String::with_capacity(255);
 
     //Added encrypt and decrypt that was not in original bench in tfhe-rs
     {
-        let value: u64 = rng.gen();
+        let value: u64 = rng.r#gen();
         write!(name, "encrypt({type_name})").unwrap();
         bench_group.bench_function(&name, |b| {
             b.iter(|| {

@@ -1,15 +1,15 @@
-use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
+use self::redis::{CorrelatedRandomnessType, RedisConf, redis_factory};
 use super::secret_distributions::{RealSecretDistributions, SecretDistributions};
 use super::triple::Triple;
 use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
 use crate::keyset_config::KeySetConfig;
 use crate::online::gen_bits::{BitGenEven, SecureBitGenEven};
-use crate::online::preprocessing::memory::{memory_factory, InMemoryBitPreprocessing};
+use crate::online::preprocessing::memory::{InMemoryBitPreprocessing, memory_factory};
 use crate::runtime::sessions::session_parameters::GenericParameterHandles;
 use crate::runtime::sessions::{base_session::BaseSession, small_session::SmallSession};
 use crate::small_execution::prss::PRSSPrimitives;
 use crate::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
-use algebra::base_ring::{Z128, Z64};
+use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use algebra::{sharing::share::Share, structure_traits::Ring};
@@ -389,8 +389,8 @@ pub trait PreprocessorFactory<const EXTENSION_DEGREE: usize>: Sync + Send {
 }
 
 /// Returns a default factory for the global preprocessor
-pub fn create_memory_factory<const EXTENSION_DEGREE: usize>(
-) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
+pub fn create_memory_factory<const EXTENSION_DEGREE: usize>()
+-> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,

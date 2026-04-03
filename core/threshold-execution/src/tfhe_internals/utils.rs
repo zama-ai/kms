@@ -4,11 +4,11 @@ use std::collections::HashMap;
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
 use itertools::Itertools;
-use tfhe::boolean::prelude::PolynomialSize;
 use tfhe::HlCompactable;
+use tfhe::boolean::prelude::PolynomialSize;
 use tfhe::{
-    core_crypto::prelude::Numeric, prelude::Tagged, CompactCiphertextList, CompactPublicKey,
-    HlExpandable,
+    CompactCiphertextList, CompactPublicKey, HlExpandable, core_crypto::prelude::Numeric,
+    prelude::Tagged,
 };
 
 use crate::online::triple::{open, open_list};
@@ -292,7 +292,7 @@ pub mod tests {
     use crate::tfhe_internals::private_keysets::PrivateKeySet;
     use crate::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
         sharing::share::Share,
         structure_traits::{ErrorCorrect, Ring},

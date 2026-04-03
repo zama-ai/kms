@@ -26,7 +26,7 @@ use tfhe::{
     },
 };
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
-use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
+use tfhe_zk_pok::curve_api::{CurveGroupOps, bls12_446 as curve};
 use thread_handles::spawn_compute_bound;
 use threshold_types::session_id::SessionId;
 use tracing::instrument;
@@ -972,7 +972,7 @@ mod tests {
                 base_session::GenericBaseSessionHandles, large_session::LargeSession,
                 session_parameters::GenericParameterHandles,
             },
-            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+            test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         },
         tfhe_internals::parameters::BC_PARAMS_NO_SNS,
     };
@@ -986,7 +986,7 @@ mod tests {
 
     use crate::malicious_execution::zk::ceremony::InsecureCeremony;
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
 
     use threshold_types::network::NetworkMode;
@@ -1354,138 +1354,172 @@ mod tests {
             let bad_sid = SessionId::from(2); // originally it was 1
 
             // dlog check failed because input to Hash has the wrong session ID
-            assert!(verify_proof(&pp1, &proof1, 1, bad_sid)
-                .unwrap_err()
-                .to_string()
-                .contains("dlog check failed"));
+            assert!(
+                verify_proof(&pp1, &proof1, 1, bad_sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dlog check failed")
+            );
         }
         {
             let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
 
             // dlog check failed because input to Hash has the wrong round number
-            assert!(verify_proof(&pp1, &proof1, 11, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("dlog check failed"));
+            assert!(
+                verify_proof(&pp1, &proof1, 11, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dlog check failed")
+            );
         }
         {
             let proof = make_partial_proof_deterministic(&pp1, &tau1, 0, &r, sid);
-            assert!(verify_proof(&pp1, &proof, 0, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("bad round number"));
+            assert!(
+                verify_proof(&pp1, &proof, 0, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bad round number")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.h_pok += curve::Zp::ONE;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("dlog check failed"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dlog check failed")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.s_pok += curve::Zp::ONE;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("dlog check failed"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dlog check failed")
+            );
         }
         {
             // note that tau=0
             let proof = make_partial_proof_deterministic(&pp1, &curve::ZeroizeZp::ZERO, 1, &r, sid);
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("non-degenerative check failed"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("non-degenerative check failed")
+            );
         }
         {
             let pp1 = make_degenerative_pp(n);
             let proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("non-degenerative check failed"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("non-degenerative check failed")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s.push(curve::G1::GENERATOR);
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("crs length check failed (g)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s.push(curve::G2::GENERATOR);
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("crs length check failed (g_hat)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("crs length check failed (g_hat)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n + 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (1)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (1)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n - 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (1)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (1)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[1] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (1)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (1)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[2] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (2)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (2)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[2 * n - 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (2)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (2)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[2] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (2)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (2)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[n - 1] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("well-formedness check failed (2)"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("well-formedness check failed (2)")
+            );
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n] = curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof, 1, sid)
-                .unwrap_err()
-                .to_string()
-                .contains("the list of G1s is not correctly punctured"));
+            assert!(
+                verify_proof(&pp1, &proof, 1, sid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("the list of G1s is not correctly punctured")
+            );
         }
     }
 

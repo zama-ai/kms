@@ -26,7 +26,7 @@ use error_utils::anyhow_error_and_log;
 
 use super::{
     glwe_ciphertext::{
-        encrypt_glwe_ciphertext_assign, get_batch_param_glwe_enc, GlweCiphertextShare,
+        GlweCiphertextShare, encrypt_glwe_ciphertext_assign, get_batch_param_glwe_enc,
     },
     glwe_key::GlweSecretKeyShare,
     parameters::EncryptionType,
@@ -394,17 +394,17 @@ mod tests {
             entities::{GgswCiphertext, GlweSecretKeyOwned},
         },
         shortint::{
+            CiphertextModulus,
             parameters::{
                 DecompositionBaseLog, DecompositionLevelCount, GlweDimension, PolynomialSize,
             },
-            CiphertextModulus,
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 
-    use super::{encrypt_constant_ggsw_ciphertext, ggsw_encode_message, GgswCiphertextShare};
+    use super::{GgswCiphertextShare, encrypt_constant_ggsw_ciphertext, ggsw_encode_message};
 
     //Test encryption with our code, decryption with tfhe-rs
     //Note that this does not really test the whole ggsw encryption, as decryption

@@ -3,7 +3,7 @@ use crate::online::preprocessing::BitPreprocessing;
 use crate::online::preprocessing::PreprocessorFactory;
 use crate::online::preprocessing::TriplePreprocessing;
 use crate::online::triple::Triple;
-use algebra::base_ring::{Z128, Z64};
+use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve};
@@ -553,7 +553,7 @@ pub mod tests {
 
     use crate::online::triple::Triple;
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_fields::gf16::GF16,
         galois_rings::degree_4::ResiduePolyF4,
         sharing::share::Share,

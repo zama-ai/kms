@@ -6,10 +6,10 @@
 use crate::anyhow_error_and_warn_log;
 use crate::engine::base::KmsFheKeyHandles;
 use crate::vault::storage::crypto_material::traits::PrivateCryptoMaterialReader;
-use crate::vault::storage::{read_versioned_at_request_and_epoch_id, StorageReaderExt};
+use crate::vault::storage::{StorageReaderExt, read_versioned_at_request_and_epoch_id};
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::RequestId;
 
 #[tonic::async_trait]
 impl PrivateCryptoMaterialReader for KmsFheKeyHandles {

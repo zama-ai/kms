@@ -1,12 +1,12 @@
 use anyhow::anyhow;
 use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
-use kms_grpc::{identifiers::EpochId, rpc_types::PrivDataType, RequestId};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
 use storage::{Storage, StorageProxy, StorageReader};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{Unversionize, Versionize, named::Named};
 
 #[cfg(feature = "non-wasm")]
 use crate::vault::storage::StorageExt;
@@ -162,13 +162,13 @@ impl StorageReader for Vault {
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
-                tracing::info!(
-                    "No custodian context has been set yet! Returning empty set of data ids."
-                );
-                return Ok(HashSet::new());
-            }
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err()
+        {
+            tracing::info!(
+                "No custodian context has been set yet! Returning empty set of data ids."
+            );
+            return Ok(HashSet::new());
         }
         self.storage
             .all_data_ids(&backup_type)
@@ -197,13 +197,13 @@ impl StorageReaderExt for Vault {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
-                tracing::info!(
-                    "No custodian context has been set yet! Returning empty set of data ids."
-                );
-                return Ok(HashSet::new());
-            }
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err()
+        {
+            tracing::info!(
+                "No custodian context has been set yet! Returning empty set of data ids."
+            );
+            return Ok(HashSet::new());
         }
         self.storage
             .all_data_ids_at_epoch(epoch_id, &backup_type)
@@ -213,13 +213,13 @@ impl StorageReaderExt for Vault {
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
-                tracing::info!(
-                    "No custodian context has been set yet! Returning empty set of data ids."
-                );
-                return Ok(HashSet::new());
-            }
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err()
+        {
+            tracing::info!(
+                "No custodian context has been set yet! Returning empty set of data ids."
+            );
+            return Ok(HashSet::new());
         }
         self.storage
             .all_epoch_ids_for_data(&backup_type)
@@ -289,13 +289,13 @@ impl StorageReaderExt for Vault {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
-            if secret_share_keychain.get_current_backup_id().is_err() {
-                tracing::info!(
-                    "No custodian context has been set yet! Returning empty set of data ids."
-                );
-                return Ok(HashSet::new());
-            }
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref()
+            && secret_share_keychain.get_current_backup_id().is_err()
+        {
+            tracing::info!(
+                "No custodian context has been set yet! Returning empty set of data ids."
+            );
+            return Ok(HashSet::new());
         }
         self.storage
             .all_data_ids_from_all_epochs(&backup_type)
@@ -475,7 +475,10 @@ pub(crate) fn storage_prefix_safety(
         }
     };
     if print_warning {
-        let msg = format!("The storage prefix {} starts with a different storage type {}. This may lead to confusion.", prefix, storage_type);
+        let msg = format!(
+            "The storage prefix {} starts with a different storage type {}. This may lead to confusion.",
+            prefix, storage_type
+        );
         tracing::warn!(msg);
         anyhow::bail!(msg);
     }
@@ -485,7 +488,7 @@ pub(crate) fn storage_prefix_safety(
 #[cfg(test)]
 pub mod tests {
     use super::VaultDataType;
-    use kms_grpc::{rpc_types::PrivDataType, RequestId};
+    use kms_grpc::{RequestId, rpc_types::PrivDataType};
 
     #[test]
     fn regression_test_vault_data_type_serialization() {

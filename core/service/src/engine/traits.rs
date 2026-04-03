@@ -1,6 +1,6 @@
 use hashing::DomainSep;
-use kms_grpc::kms::v1::*;
 use kms_grpc::ContextId;
+use kms_grpc::kms::v1::*;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;

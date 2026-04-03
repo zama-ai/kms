@@ -3,8 +3,8 @@ use crate::{
     large_execution::{
         coinflip::Coinflip,
         local_double_share::{
-            format_output, send_receive_pads_double, verify_sharing, DoubleShares,
-            LocalDoubleShare, LOCAL_DOUBLE_MAX_ITER,
+            DoubleShares, LOCAL_DOUBLE_MAX_ITER, LocalDoubleShare, format_output,
+            send_receive_pads_double, verify_sharing,
         },
         share_dispute::ShareDispute,
     },
@@ -171,11 +171,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 return format_output(shared_secrets_double);
             }
         }
-        Err(anyhow_error_and_log(
-                format!(
-                    "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousSenderLocalDoubleShare`",
-                )
-        ))
+        Err(anyhow_error_and_log(format!(
+            "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousSenderLocalDoubleShare`",
+        )))
     }
 }
 
@@ -246,10 +244,8 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 return format_output(shared_secrets_double);
             }
         }
-        Err(anyhow_error_and_log(
-                format!(
-                    "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousReceiverLocalDoubleShare`",
-            )
-        ))
+        Err(anyhow_error_and_log(format!(
+            "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `MaliciousReceiverLocalDoubleShare`",
+        )))
     }
 }

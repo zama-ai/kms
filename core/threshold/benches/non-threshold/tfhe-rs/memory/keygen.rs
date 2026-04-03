@@ -3,8 +3,8 @@ mod utilities;
 
 use crate::utilities::generate_tfhe_keys;
 use crate::utilities::set_plan;
-use utilities::bench_memory;
 use utilities::ALL_PARAMS;
+use utilities::bench_memory;
 
 #[global_allocator]
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
