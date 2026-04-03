@@ -30,11 +30,12 @@ fn kill_process(process_name: &str) {
             && let Some(s) = path.to_str()
             && s.contains(process_name)
         {
-            tracing::error!(
+            tracing::info!(
                 process_name = %process_name,
                 pid = %pid,
-                "Failed to kill matching process during integration test cleanup"
+                "Killing matching process during integration test cleanup"
             );
+            process.kill();
         }
     }
 }
