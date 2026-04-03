@@ -680,9 +680,6 @@ mod tests {
         },
     };
 
-    /// When `KMS_TEST_S3_ANON_BUCKET` is unset or empty, [`test_s3_anon`] uses this bucket (same as CI).
-    const DEFAULT_KMS_TEST_S3_ANON_BUCKET: &str = "zama-zws-dev-kms-ci-no-delete";
-
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
@@ -805,24 +802,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_s3_anon() {
-        let url = "https://s3.eu-west-1.amazonaws.com/";
-        let region = find_region_from_s3_url(&url.to_string()).unwrap();
-        assert_eq!(region, "eu-west-1");
-        let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
+        let prefix = std::stringify!(test_s3_anon);
+        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+        storage
+            .store_bytes(b"fake-pk", &RequestId::default(), "PublicKey")
             .await
             .unwrap();
 
-        // Listing requires a real bucket with anonymous ListObjects. Override with KMS_TEST_S3_ANON_BUCKET.
-        let bucket = match std::env::var("KMS_TEST_S3_ANON_BUCKET") {
-            Ok(b) if !b.is_empty() => b,
-            _ => DEFAULT_KMS_TEST_S3_ANON_BUCKET.to_string(),
-        };
+        // Build an anonymous client pointing at local MinIO
+        let s3_client =
+            build_anonymous_s3_client(Url::parse(AWS_S3_ENDPOINT).unwrap(), AWS_REGION.to_string())
+                .await
+                .unwrap();
 
-        let pub_storage =
-            ReadOnlyS3Storage::new(s3_client, bucket, StorageType::PUB, Some("PUB-p1")).unwrap();
+        let pub_storage = ReadOnlyS3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-        // at least one public key should be present in the bucket
         assert!(!public_key_ids.is_empty());
     }
 }
