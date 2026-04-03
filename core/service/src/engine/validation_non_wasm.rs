@@ -517,7 +517,7 @@ fn validate_public_decrypt_responses(
     agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<Vec<PublicDecryptionResponsePayload>> {
     if agg_resp.is_empty() {
-        anyhow::bail!(format!("{}", ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP));
+        anyhow::bail!(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP);
     }
     if trusted_ctx.server_pks.is_empty() {
         anyhow::bail!("No servers configured in trusted public decryption context");
@@ -978,7 +978,8 @@ mod tests {
                 RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
             validation_non_wasm::{
-                select_most_common_public_dec, validate_public_decrypt_responses,
+                ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, select_most_common_public_dec,
+                validate_public_decrypt_responses,
             },
         },
     };
@@ -1937,7 +1938,9 @@ mod tests {
             let agg_resp = vec![];
             assert!(
                 validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1)
-                    .is_err()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP)
             );
         }
 
