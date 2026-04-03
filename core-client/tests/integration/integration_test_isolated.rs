@@ -2210,24 +2210,8 @@ struct StrictCheckedInCoreToml {
     config_path: Option<String>,
 }
 
-fn clear_core_client_env_overrides() {
-    let keys: Vec<String> = std::env::vars()
-        .map(|(k, _)| k)
-        .filter(|k| k.starts_with("CORE_CLIENT__"))
-        .collect();
-    // SAFETY: `remove_var` is unsafe on some platforms if the environment is read concurrently.
-    // These tests use `#[serial]` and only clear `CORE_CLIENT__*` keys before fixture loads.
-    unsafe {
-        for k in keys {
-            std::env::remove_var(&k);
-        }
-    }
-}
-
 #[test]
-#[serial]
 fn config_conformance_client_local_centralized() {
-    clear_core_client_env_overrides();
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_centralized.toml");
     let raw =
@@ -2242,9 +2226,12 @@ fn config_conformance_client_local_centralized() {
     assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
     assert_eq!(strict.cores.len(), 1);
     assert_eq!(strict.cores[0].party_id, 1);
+    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
+    // the load.  This avoids the need for unsafe env::remove_var and lets the
+    // test run concurrently with other tests that read the environment.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))
-        .env_prefix("CORE_CLIENT")
+        .env_prefix("_CONF_TEST_NOOP")
         .build()
         .init_conf()
         .expect("Settings::init_conf for client_local_centralized.toml");
@@ -2254,9 +2241,7 @@ fn config_conformance_client_local_centralized() {
 }
 
 #[test]
-#[serial]
 fn config_conformance_client_local_threshold() {
-    clear_core_client_env_overrides();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_threshold.toml");
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
@@ -2270,9 +2255,10 @@ fn config_conformance_client_local_threshold() {
     assert_eq!(strict.cores.len(), 4);
     assert_eq!(strict.cores[0].party_id, 1);
     assert_eq!(strict.cores[3].party_id, 4);
+    // Use an inert env_prefix — see config_conformance_client_local_centralized.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))
-        .env_prefix("CORE_CLIENT")
+        .env_prefix("_CONF_TEST_NOOP")
         .build()
         .init_conf()
         .expect("Settings::init_conf for client_local_threshold.toml");
