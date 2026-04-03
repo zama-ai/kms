@@ -229,12 +229,15 @@ use kms_core_client::*;
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
+use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
 use kms_lib::testing::prelude::*;
 use kms_test_tracing::init_logging;
+use observability::conf::Settings;
+use serde::Deserialize;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -245,6 +248,7 @@ use tempfile::TempDir;
 #[cfg(feature = "threshold_tests")]
 use tfhe::zk::CompactPkeCrs;
 use tracing::info;
+use validator::Validate;
 
 // Additional imports for custodian and threshold tests
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
@@ -268,6 +272,16 @@ use kms_lib::util::key_setup::test_tools::{
 // ============================================================================
 // UTILITY HELPERS
 // ============================================================================
+
+/// Serialize a validated `CoreClientConfig` to TOML for isolated test fixtures.
+fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
+    cfg.validate()
+        .map_err(|e| anyhow::anyhow!("CoreClientConfig validation failed: {e}"))?;
+    let toml_str = toml::to_string_pretty(cfg)
+        .map_err(|e| anyhow::anyhow!("TOML serialization failed: {e}"))?;
+    write(path, toml_str)?;
+    Ok(())
+}
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -330,16 +344,8 @@ async fn setup_isolated_centralized_cli_test_with_custodian_backup(
 /// - Paths are dynamic (unique TempDir per test)
 /// - This ensures complete test isolation
 ///
-/// See `core-client/config/client_local_centralized.toml` for the reference format.
-///
-/// TODO (Issue #2900): Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
-///
-/// This would require (preliminary estimation):
-/// 1. Adding a `storage` field to `CoreClientConfig` (currently only in deserialization)
-/// 2. Implementing `Serialize` for the storage config section
-/// 3. Using `toml::to_string()` to generate the config file
-///
-/// Benefits: Type-safe config generation, compile-time validation, easier maintenance.
+/// Output matches the production client schema (`CoreClientConfig`); see
+/// `core-client/config/client_local_centralized.toml` for the reference shape.
 fn generate_centralized_cli_config(
     material_dir: &TempDir,
     server: &ServerHandle,
@@ -349,30 +355,22 @@ fn generate_centralized_cli_config(
     // Canonicalize the path to resolve symlinks (e.g., /var -> /private/var on macOS)
     // This ensures the CLI client uses the same path as the FileStorage
     let canonical_path = material_dir.path().canonicalize()?;
-    let config_content = format!(
-        r#"
-kms_type = "centralized"
-num_majority = 1
-num_reconstruct = 1
-fhe_params = "{fhe_params:?}"
-
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{path}"
-
-[[cores]]
-party_id = 1
-address = "localhost:{port}"
-s3_endpoint = "file://{path}"
-object_folder = "PUB"
-"#,
-        fhe_params = fhe_params,
-        path = canonical_path.display(),
-        port = server.service_port,
-    );
-    write(&config_path, config_content)?;
+    let cfg = CoreClientConfig {
+        kms_type: KmsType::Centralized,
+        cores: vec![CoreConf {
+            party_id: 1,
+            address: format!("localhost:{}", server.service_port),
+            s3_endpoint: format!("file://{}", canonical_path.display()),
+            object_folder: "PUB".to_string(),
+            private_object_folder: None,
+            config_path: None,
+        }],
+        decryption_mode: None,
+        num_majority: 1,
+        num_reconstruct: 1,
+        fhe_params: Some(fhe_params),
+    };
+    write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
 }
 
@@ -638,10 +636,8 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 /// - Party count varies between tests (4, 6, etc.)
 /// - This ensures complete test isolation
 ///
-/// See `core-client/config/client_local_threshold.toml` for the reference format.
-///
-/// TODO (Issue #2900): Refactor to use `CoreClientConfig` struct with TOML serialization instead of format strings.
-/// See the TODO in `generate_centralized_cli_config` for details.
+/// Client output matches `CoreClientConfig`; see `core-client/config/client_local_threshold.toml`.
+/// Per-party `compose_*.toml` server configs are still built as minimal string templates.
 fn generate_threshold_cli_config(
     material_dir: &kms_lib::testing::material::TestMaterialHandle,
     servers: &HashMap<u32, ServerHandle>,
@@ -650,24 +646,10 @@ fn generate_threshold_cli_config(
 ) -> Result<PathBuf> {
     let config_path = material_dir.path().join("client_config.toml");
     let majority = party_count / 2 + 1;
-    let mut config_content = format!(
-        r#"
-kms_type = "threshold"
-num_majority = {majority}
-num_reconstruct = {majority}
-fhe_params = "{fhe_params:?}"
-
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{path}"
-"#,
-        path = material_dir.path().display()
-    );
 
     // Create minimal server config files for each party (needed for MPC context creation)
     let threshold_value = party_count.div_ceil(3) - 1;
+    let mut cores = Vec::with_capacity(party_count);
 
     for i in 1..=party_count {
         let server = servers
@@ -746,27 +728,25 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
 
         write(&server_config_path, server_config_content)?;
 
-        // Add core config to client config with config_path
-        config_content.push_str(&format!(
-            r#"
-[[cores]]
-party_id = {}
-address = "localhost:{}"
-s3_endpoint = "file://{}"
-object_folder = "PUB-p{}"
-private_object_folder = "PRIV-p{}"
-config_path = "{}"
-"#,
-            i,
-            server.service_port,
-            material_dir.path().display(),
-            i,
-            i,
-            server_config_path.display()
-        ));
+        cores.push(CoreConf {
+            party_id: i,
+            address: format!("localhost:{}", server.service_port),
+            s3_endpoint: format!("file://{}", material_dir.path().display()),
+            object_folder: format!("PUB-p{i}"),
+            private_object_folder: Some(format!("PRIV-p{i}")),
+            config_path: Some(server_config_path),
+        });
     }
 
-    write(&config_path, config_content)?;
+    let cfg = CoreClientConfig {
+        kms_type: KmsType::Threshold,
+        cores,
+        decryption_mode: None,
+        num_majority: majority,
+        num_reconstruct: majority,
+        fhe_params: Some(fhe_params),
+    };
+    write_core_client_toml(&config_path, &cfg)?;
     Ok(config_path)
 }
 
@@ -1176,65 +1156,33 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
     // Generate CLI config for context 1 (servers 1,2,3,4)
     let fhe_params = FheParameter::Test;
     let config_path_1234 = material_dir.path().join("client_config_1234.toml");
-    let mut config_content_1234 = format!(
-        r#"
-kms_type = "threshold"
-num_majority = 2
-num_reconstruct = 3
-fhe_params = "{fhe_params:?}"
-decryption_mode = "NoiseFloodSmall"
-
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{path}"
-"#,
-        path = material_dir.path().display()
-    );
-
-    for i in 1..=4 {
-        let server = servers.get(&(i as u32)).unwrap();
-        let server_config_path = material_dir.path().join(format!("compose_{}.toml", i));
-        config_content_1234.push_str(&format!(
-            r#"
-[[cores]]
-party_id = {}
-address = "localhost:{}"
-s3_endpoint = "file://{}"
-object_folder = "PUB-p{}"
-private_object_folder = "PRIV-p{}"
-config_path = "{}"
-"#,
-            i,
-            server.service_port,
-            material_dir.path().display(),
-            i,
-            i,
-            server_config_path.display()
-        ));
-    }
-    std::fs::write(&config_path_1234, config_content_1234)?;
+    let cores_1234: Vec<CoreConf> = (1..=4)
+        .map(|i| {
+            let server = servers.get(&(i as u32)).unwrap();
+            let server_config_path = material_dir.path().join(format!("compose_{i}.toml"));
+            CoreConf {
+                party_id: i,
+                address: format!("localhost:{}", server.service_port),
+                s3_endpoint: format!("file://{}", material_dir.path().display()),
+                object_folder: format!("PUB-p{i}"),
+                private_object_folder: Some(format!("PRIV-p{i}")),
+                config_path: Some(server_config_path),
+            }
+        })
+        .collect();
+    let cfg_1234 = CoreClientConfig {
+        kms_type: KmsType::Threshold,
+        cores: cores_1234,
+        decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
+        num_majority: 2,
+        num_reconstruct: 3,
+        fhe_params: Some(fhe_params),
+    };
+    write_core_client_toml(&config_path_1234, &cfg_1234)?;
 
     // Generate CLI config for context 2 (servers 5,6,4,3 as parties 1,2,3,4)
     // Note: servers 3 and 4 swap roles compared to context 1
     let config_path_5634 = material_dir.path().join("client_config_5634.toml");
-    let mut config_content_5634 = format!(
-        r#"
-kms_type = "threshold"
-num_majority = 2
-num_reconstruct = 3
-fhe_params = "{fhe_params:?}"
-decryption_mode = "NoiseFloodSmall"
-
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{path}"
-"#,
-        path = material_dir.path().display()
-    );
 
     // Map: MPC party_id -> (physical server_id, compose config path)
     // Party 1 -> Server 5, Party 2 -> Server 6, Party 3 -> Server 4 (swapped), Party 4 -> Server 3 (swapped)
@@ -1245,27 +1193,29 @@ file_storage_path = "{path}"
         (3, 4, compose_4_ctx2_path.clone()), // server 4 as party 3
         (4, 3, compose_3_ctx2_path.clone()), // server 3 as party 4
     ];
-    for (party_id, server_id, config_path) in &ctx2_cores {
-        let server = servers.get(server_id).unwrap();
-        config_content_5634.push_str(&format!(
-            r#"
-[[cores]]
-party_id = {}
-address = "localhost:{}"
-s3_endpoint = "file://{}"
-object_folder = "PUB-p{}"
-private_object_folder = "PRIV-p{}"
-config_path = "{}"
-"#,
-            party_id, // MPC party ID (1-4)
-            server.service_port,
-            material_dir.path().display(),
-            server_id, // Physical server ID for storage
-            server_id,
-            config_path.display()
-        ));
-    }
-    std::fs::write(&config_path_5634, config_content_5634)?;
+    let cores_5634: Vec<CoreConf> = ctx2_cores
+        .iter()
+        .map(|(party_id, server_id, compose_path)| {
+            let server = servers.get(server_id).unwrap();
+            CoreConf {
+                party_id: *party_id,
+                address: format!("localhost:{}", server.service_port),
+                s3_endpoint: format!("file://{}", material_dir.path().display()),
+                object_folder: format!("PUB-p{server_id}"),
+                private_object_folder: Some(format!("PRIV-p{server_id}")),
+                config_path: Some(compose_path.clone()),
+            }
+        })
+        .collect();
+    let cfg_5634 = CoreClientConfig {
+        kms_type: KmsType::Threshold,
+        cores: cores_5634,
+        decryption_mode: Some(DecryptionMode::NoiseFloodSmall),
+        num_majority: 2,
+        num_reconstruct: 3,
+        fhe_params: Some(fhe_params),
+    };
+    write_core_client_toml(&config_path_5634, &cfg_5634)?;
 
     Ok((material_dir, servers, config_path_1234, config_path_5634))
 }
@@ -2230,6 +2180,91 @@ async fn custodian_backup_recovery_isolated(
         .await
         .unwrap()
         .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Checked-in client config conformance (strict TOML schema + runtime loader)
+// ---------------------------------------------------------------------------
+
+/// Mirror of shipped client TOML layout: unknown top-level or `[[cores]]` keys fail the test.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictCheckedInCoreClientToml {
+    kms_type: String,
+    num_majority: usize,
+    num_reconstruct: usize,
+    decryption_mode: Option<String>,
+    fhe_params: Option<String>,
+    cores: Vec<StrictCheckedInCoreToml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Presence validated by deny_unknown_fields; only party_id asserted in tests
+struct StrictCheckedInCoreToml {
+    party_id: usize,
+    address: String,
+    s3_endpoint: String,
+    object_folder: String,
+    private_object_folder: Option<String>,
+    config_path: Option<String>,
+}
+
+#[test]
+fn config_conformance_client_local_centralized() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_centralized.toml");
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw).expect(
+        "strict TOML parse of client_local_centralized.toml failed (unknown or extra keys?)",
+    );
+    assert_eq!(strict.kms_type, "centralized");
+    assert_eq!(strict.num_majority, 1);
+    assert_eq!(strict.num_reconstruct, 1);
+    assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
+    assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
+    assert_eq!(strict.cores.len(), 1);
+    assert_eq!(strict.cores[0].party_id, 1);
+    // Use an inert env_prefix so no stray CORE_CLIENT__* env vars can pollute
+    // the load.  This avoids the need for unsafe env::remove_var and lets the
+    // test run concurrently with other tests that read the environment.
+    let loaded: CoreClientConfig = Settings::builder()
+        .path(path.to_str().expect("utf8 path"))
+        .env_prefix("_CONF_TEST_NOOP")
+        .build()
+        .init_conf()
+        .expect("Settings::init_conf for client_local_centralized.toml");
+    assert_eq!(loaded.kms_type, KmsType::Centralized);
+    assert_eq!(loaded.cores.len(), 1);
+    assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
+}
+
+#[test]
+fn config_conformance_client_local_threshold() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/client_local_threshold.toml");
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let strict: StrictCheckedInCoreClientToml = toml::from_str(&raw)
+        .expect("strict TOML parse of client_local_threshold.toml failed (unknown or extra keys?)");
+    assert_eq!(strict.kms_type, "threshold");
+    assert_eq!(strict.num_majority, 2);
+    assert_eq!(strict.num_reconstruct, 3);
+    assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
+    assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
+    assert_eq!(strict.cores.len(), 4);
+    assert_eq!(strict.cores[0].party_id, 1);
+    assert_eq!(strict.cores[3].party_id, 4);
+    // Use an inert env_prefix — see config_conformance_client_local_centralized.
+    let loaded: CoreClientConfig = Settings::builder()
+        .path(path.to_str().expect("utf8 path"))
+        .env_prefix("_CONF_TEST_NOOP")
+        .build()
+        .init_conf()
+        .expect("Settings::init_conf for client_local_threshold.toml");
+    assert_eq!(loaded.kms_type, KmsType::Threshold);
+    assert_eq!(loaded.cores.len(), 4);
+    assert_eq!(loaded.fhe_params, Some(FheParameter::Test));
 }
 
 // ============================================================================
