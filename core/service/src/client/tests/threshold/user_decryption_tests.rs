@@ -720,6 +720,7 @@ async fn process_batch_threshold_user_decryption(
                             &responses[1..],
                             enc_pk,
                             enc_sk,
+                            None,
                         )
                         .unwrap(),
                 )
@@ -754,7 +755,14 @@ async fn process_batch_threshold_user_decryption(
 
             // test with all responses, some may be malicious
             let final_result = internal_client
-                .process_user_decryption_resp(&client_req, &domain, &responses, enc_pk, enc_sk)
+                .process_user_decryption_resp(
+                    &client_req,
+                    &domain,
+                    &responses,
+                    enc_pk,
+                    enc_sk,
+                    None,
+                )
                 .unwrap();
 
             if let Some(res) = result_from_dropped_response {

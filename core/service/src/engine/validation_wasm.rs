@@ -30,6 +30,7 @@ pub(crate) struct UserDecTrustedValidationContext<'a> {
     pub server_addresses: &'a HashMap<u32, Address>,
     pub client_request: &'a ParsedUserDecryptionRequest,
     pub eip712_domain: &'a Eip712Domain,
+    pub threshold: Option<usize>,
 }
 
 /// User decryption response payloads that have passed validation
@@ -326,7 +327,9 @@ fn validate_user_decrypt_responses(
     }
 
     // Pick a pivot response
-    let threshold = (trusted_ctx.server_addresses.len() - 1) / 3; // Note that this is floored division.
+    let threshold = trusted_ctx
+        .threshold
+        .unwrap_or_else(|| (trusted_ctx.server_addresses.len() - 1) / 3); // Note that this is floored division.
     let min_occurence = threshold + 1; // We need t+1 responses at least to find the pivot response.
     let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
@@ -513,7 +516,8 @@ mod tests {
             compute_external_user_decrypt_signature,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PublicSigKey, gen_sig_keys, internal_sign,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
+                internal_sign,
             },
         },
         dummy_domain,
@@ -756,6 +760,7 @@ mod tests {
             server_addresses: &server_addresses,
             client_request: &client_request,
             eip712_domain: &dummy_domain,
+            threshold: None,
         };
 
         // incorrect length
@@ -1005,6 +1010,7 @@ mod tests {
             server_addresses: &server_addresses,
             client_request: &client_request,
             eip712_domain: &dummy_domain,
+            threshold: None,
         };
 
         let resp1 = {
@@ -1460,6 +1466,7 @@ mod tests {
                 server_addresses: &server_addresses,
                 client_request: &bad_client_request,
                 eip712_domain: &dummy_domain,
+                threshold: None,
             };
             assert!(
                 validate_user_decrypt_responses_against_request(&bad_ctx, &agg_resp)
@@ -1475,6 +1482,7 @@ mod tests {
                 server_addresses: &server_addresses,
                 client_request: &client_request,
                 eip712_domain: &dummy_domain,
+                threshold: None,
             };
             assert_eq!(
                 validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
@@ -1612,6 +1620,157 @@ mod tests {
             assert_eq!(
                 select_most_common_user_dec(2, &agg_resp),
                 resp0.payload.clone()
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_user_decrypt_responses_with_custom_threshold() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let (vk1, sk1) = gen_sig_keys(&mut rng);
+        let (vk2, sk2) = gen_sig_keys(&mut rng);
+        let (vk3, sk3) = gen_sig_keys(&mut rng);
+        let (vk4, sk4) = gen_sig_keys(&mut rng);
+        let (vk5, sk5) = gen_sig_keys(&mut rng);
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
+            [vk1, vk2, vk3, vk4, vk5]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
+        let server_addresses = pks
+            .iter()
+            .map(|(i, pk)| (*i, pk.address()))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
+
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
+
+        let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
+
+        let dummy_domain = dummy_domain();
+        let ciphertext_handle = vec![5, 6, 7, 8];
+
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &eph_client_pk,
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        let client_request = ParsedUserDecryptionRequest::new(
+            None,
+            client_vk.address(),
+            enc_key_buf,
+            vec![CiphertextHandle::new(ciphertext_handle.clone())],
+            dummy_domain.verifying_contract.unwrap(),
+            vec![],
+        );
+
+        let sks = [&sk1, &sk2, &sk3, &sk4, &sk5];
+        let make_resp =
+            |party_id: u32, sk: &PrivateSigKey, digest: Vec<u8>| -> UserDecryptionResponse {
+                let payload = UserDecryptionResponsePayload {
+                    verification_key: bc2wrap::serialize(&pks[&party_id]).unwrap(),
+                    digest,
+                    signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
+                        signcrypted_ciphertext: vec![1, 2, 3, 4],
+                        external_handle: ciphertext_handle.clone(),
+                        packing_factor: 1,
+                    }],
+                    party_id,
+                    degree: 1,
+                };
+                let external_signature = compute_external_user_decrypt_signature(
+                    sk,
+                    &payload,
+                    &dummy_domain,
+                    &eph_client_pk,
+                    &[],
+                )
+                .unwrap();
+                UserDecryptionResponse {
+                    signature: vec![],
+                    external_signature,
+                    payload: Some(payload),
+                    extra_data: vec![],
+                }
+            };
+
+        let digest = vec![1, 2, 3, 4];
+
+        // Test 1: happy path with threshold=Some(1), all 5 responses valid.
+        // Note: party_id 5 is filtered because degree=1 means max party_id is degree*3+1=4.
+        {
+            let trusted_ctx = UserDecTrustedValidationContext {
+                server_addresses: &server_addresses,
+                client_request: &client_request,
+                eip712_domain: &dummy_domain,
+                threshold: Some(1),
+            };
+            let agg_resp: Vec<_> = (1..=5)
+                .map(|i| make_resp(i, sks[i as usize - 1], digest.clone()))
+                .collect();
+
+            assert_eq!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
+                4
+            );
+        }
+
+        // Test 2: 2 responses have different digests, 3 match;
+        // threshold=Some(1) means min_occurence=2, so 3 matching is enough
+        {
+            let trusted_ctx = UserDecTrustedValidationContext {
+                server_addresses: &server_addresses,
+                client_request: &client_request,
+                eip712_domain: &dummy_domain,
+                threshold: Some(1),
+            };
+            let agg_resp = vec![
+                make_resp(1, &sk1, digest.clone()),
+                make_resp(2, &sk2, digest.clone()),
+                make_resp(3, &sk3, digest.clone()),
+                make_resp(4, &sk4, vec![9, 9, 9, 9]),
+                make_resp(5, &sk5, vec![8, 8, 8, 8]),
+            ];
+
+            assert_eq!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
+                3
+            );
+        }
+
+        // Test 3: all responses have different digests, no 2 match;
+        // threshold=Some(1) means min_occurence=2, so pivot selection fails
+        {
+            let trusted_ctx = UserDecTrustedValidationContext {
+                server_addresses: &server_addresses,
+                client_request: &client_request,
+                eip712_domain: &dummy_domain,
+                threshold: Some(1),
+            };
+            let agg_resp = vec![
+                make_resp(1, &sk1, vec![1, 1, 1, 1]),
+                make_resp(2, &sk2, vec![2, 2, 2, 2]),
+                make_resp(3, &sk3, vec![3, 3, 3, 3]),
+                make_resp(4, &sk4, vec![4, 4, 4, 4]),
+                make_resp(5, &sk5, vec![5, 5, 5, 5]),
+            ];
+
+            let result = validate_user_decrypt_responses(&trusted_ctx, &agg_resp);
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Cannot find user decryption pivot")
             );
         }
     }

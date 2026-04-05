@@ -54,6 +54,7 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
+        threshold: Option<usize>,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         // The condition below decides whether we'll parse the response
         // in the centralized mode or threshold mode.
@@ -82,6 +83,7 @@ impl Client {
                 agg_resp,
                 enc_key,
                 dec_key,
+                threshold,
             )
         }
     }
@@ -223,11 +225,13 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
+        threshold: Option<usize>,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let ctx = UserDecTrustedValidationContext {
             server_addresses: &self.get_server_addrs(),
             client_request,
             eip712_domain,
+            threshold,
         };
         let validated_resps = some_or_err(
             validate_user_decrypt_responses_against_request(&ctx, agg_resp)?,

@@ -444,6 +444,7 @@ pub(crate) async fn user_decryption_centralized(
                     &responses,
                     enc_pk,
                     enc_sk,
+                    None,
                 )
                 .unwrap()
         } else {

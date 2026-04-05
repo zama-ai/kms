@@ -518,6 +518,7 @@ pub fn process_user_decryption_resp_from_js(
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
     verify: bool,
+    threshold: Option<usize>,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
         .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
@@ -541,6 +542,7 @@ pub fn process_user_decryption_resp_from_js(
         enc_pk,
         enc_sk,
         verify,
+        threshold,
     );
     // Need to convert to BE for JS, evrerything is internally represented as LE
     match le_res {
@@ -585,6 +587,7 @@ pub fn process_user_decryption_resp(
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
     verify: bool,
+    threshold: Option<usize>,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
     let user_decrypt_resp = if verify {
@@ -598,6 +601,7 @@ pub fn process_user_decryption_resp(
             &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            threshold,
         )
     } else {
         client.insecure_process_user_decryption_resp(
