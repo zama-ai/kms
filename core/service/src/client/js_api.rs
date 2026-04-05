@@ -517,8 +517,8 @@ pub fn process_user_decryption_resp_from_js(
     agg_resp: JsValue,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
-    verify: bool,
     threshold: Option<usize>,
+    verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
         .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
@@ -586,8 +586,8 @@ pub fn process_user_decryption_resp(
     agg_resp: Vec<UserDecryptionResponse>,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
-    verify: bool,
     threshold: Option<usize>,
+    verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
     let user_decrypt_resp = if verify {
@@ -598,15 +598,15 @@ pub fn process_user_decryption_resp(
         client.process_user_decryption_resp(
             &request,
             &eip712_domain,
-            &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
             threshold,
+            &agg_resp,
         )
     } else {
         client.insecure_process_user_decryption_resp(
-            &agg_resp,
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            &agg_resp,
         )
     };
     match user_decrypt_resp {

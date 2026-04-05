@@ -717,10 +717,10 @@ async fn process_batch_threshold_user_decryption(
                         .process_user_decryption_resp(
                             &client_req,
                             &domain,
-                            &responses[1..],
                             enc_pk,
                             enc_sk,
                             None,
+                            &responses[1..],
                         )
                         .unwrap(),
                 )
@@ -758,10 +758,10 @@ async fn process_batch_threshold_user_decryption(
                 .process_user_decryption_resp(
                     &client_req,
                     &domain,
-                    &responses,
                     enc_pk,
                     enc_sk,
                     None,
+                    &responses,
                 )
                 .unwrap();
 
@@ -776,7 +776,7 @@ async fn process_batch_threshold_user_decryption(
             let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
                 Some(
                     internal_client
-                        .insecure_process_user_decryption_resp(&responses[1..], enc_sk)
+                        .insecure_process_user_decryption_resp(enc_sk, &responses[1..])
                         .unwrap(),
                 )
             } else {
@@ -785,7 +785,7 @@ async fn process_batch_threshold_user_decryption(
 
             // test with all responses
             let final_result = internal_client
-                .insecure_process_user_decryption_resp(&responses, enc_sk)
+                .insecure_process_user_decryption_resp(enc_sk, &responses)
                 .unwrap();
             if let Some(res) = result_from_dropped_response {
                 assert_eq!(res, final_result)
