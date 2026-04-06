@@ -1,12 +1,12 @@
 use crate::online::{
     preprocessing::{
-        memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
         BasePreprocessing, BitPreprocessing, RandomPreprocessing, TriplePreprocessing,
+        memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
     },
     triple::Triple,
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
     structure_traits::Ring,

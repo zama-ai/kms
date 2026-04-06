@@ -134,13 +134,15 @@ mod tests {
         let parties = 3;
         let params = get_dummy_parameters_for_parties(parties, 0, Role::indexed_from_one(1));
         // Same amount of parties and threshold, which is not allowed
-        assert!(SessionParameters::new(
-            parties as u8,
-            params.session_id(),
-            params.my_role(),
-            params.roles().clone(),
-        )
-        .is_err());
+        assert!(
+            SessionParameters::new(
+                parties as u8,
+                params.session_id(),
+                params.my_role(),
+                params.roles().clone(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -149,12 +151,14 @@ mod tests {
         let mut params = get_dummy_parameters_for_parties(parties, 1, Role::indexed_from_one(1));
         // remove my role
         params.roles.remove(&Role::indexed_from_one(1));
-        assert!(SessionParameters::new(
-            params.threshold(),
-            params.session_id(),
-            params.my_role(),
-            params.roles().clone(),
-        )
-        .is_err());
+        assert!(
+            SessionParameters::new(
+                params.threshold(),
+                params.session_id(),
+                params.my_role(),
+                params.roles().clone(),
+            )
+            .is_err()
+        );
     }
 }

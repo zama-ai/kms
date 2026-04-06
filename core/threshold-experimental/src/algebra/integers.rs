@@ -1,9 +1,9 @@
 use crate::algebra::levels::CryptoModulus;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
+use crypto_bigint::U2304;
 use crypto_bigint::Uint;
 use crypto_bigint::Zero;
-use crypto_bigint::U2304;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Add;
@@ -37,11 +37,7 @@ impl IntQ {
     }
 
     pub fn sign(&self) -> i8 {
-        if self.is_negative {
-            -1
-        } else {
-            1
-        }
+        if self.is_negative { -1 } else { 1 }
     }
 
     pub fn from_i64(x: i64) -> Self {

@@ -49,6 +49,7 @@ Release
 | [`docker-build.yml`](docker-build.yml) | Reusable Docker build | Called by other workflows, releases |
 | [`kind-testing.yml`](kind-testing.yml) | Kind cluster integration tests | Called by build-and-test, nightly |
 | [`performance-testing.yml`](performance-testing.yml) | Performance benchmarks | Manual, nightly |
+| [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Enclave rolling upgrade (mixed-version) perf tests | Manual only |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Called by build-and-test |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, nightly |
 
@@ -535,6 +536,63 @@ The workflow now uses `ci/scripts/deploy.sh` which:
 - name: Deploy KMS using unified script
   run: ./ci/scripts/deploy.sh --target aws-perf ...
   # Script handles all waiting internally!
+```
+
+---
+
+## 🔄 Rolling Upgrade Testing
+
+[`.github/workflows/rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml)
+
+End-to-end test of **partial rolling upgrades** for `thresholdWithEnclave`: deploy 13 parties on an **old** KMS Core image, upgrade two configurable batches to a **new** image, and run Argo performance workflows in **mixed-version** states (default progression: all old → 5/13 upgraded → 9/13 upgraded). Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
+
+### Trigger Types
+
+| Trigger | Timing | Purpose |
+|---------|--------|---------|
+| 🔄 **Manual Dispatch** | On demand | Rolling upgrade scenarios with chosen old/new tags and batches |
+
+### Workflow Parameters
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| **old_image_tag** | (required) | Baseline KMS Core image tag for the initial full deploy |
+| **new_image_tag** | (required) | Target KMS Core image tag for upgraded parties (ignored when `build=true`) |
+| **build** | `false` | Build a new image with `docker-build.yml`; use build output as the new tag |
+| **kms_branch** | (optional) | Branch for `build=true` and/or chart checkout when `new_kms_chart_version` is `repository` |
+| **fhe_params** | `Test` | `Default` or `Test` — FHE parameters for Argo keygen/preprocessing |
+| **old_kms_chart_version** | `1.5.1` | KMS Helm chart version for the all-old deployment |
+| **new_kms_chart_version** | `repository` | KMS Helm chart for upgraded parties; version string or `repository` for repo charts |
+| **tkms_infra_chart_version** | `0.3.2` | TKMS Infra Helm chart version |
+| **first_batch_parties** | `1,2,3,4,5` | Comma-separated party IDs for the first upgrade wave |
+| **second_batch_parties** | `6,7,8,9` | Comma-separated party IDs for the second upgrade wave |
+
+### Jobs
+
+| Job | Purpose | Notes |
+|-----|---------|--------|
+| **docker-build** | Optional image build | Runs only when `build=true`; calls reusable `docker-build.yml` |
+| **start-runner** | EC2 runner (SLAB) | `small-instance` profile for the long test job |
+| **rolling-upgrade-testing** | Deploy, baseline perf, two upgrade batches, mixed perf, cleanup | Uses `aws-perf`, namespace `kms-ci`, Argo workflows under `ci/perf-testing/argo-workflow/` |
+| **stop-runner** | Tear down EC2 runner | Runs `always()` after the main job |
+
+### Job and step flow
+
+```mermaid
+graph TD
+    dispatch[workflow_dispatch] --> buildChoice{build_true}
+    buildChoice -->|yes| dockerBuild[docker_build]
+    buildChoice -->|no| startRunner[start_runner]
+    dockerBuild --> startRunner
+    startRunner --> mainJob[rolling_upgrade_testing]
+    mainJob --> step1[deploy_13_nodes_old]
+    step1 --> step2[baseline_perf_tests]
+    step2 --> step3[upgrade_first_batch]
+    step3 --> step4[perf_tests_mixed_first_batch]
+    step4 --> step5[upgrade_second_batch]
+    step5 --> step6[perf_tests_mixed_second_batch]
+    step6 --> cleanup[cleanup]
+    mainJob --> stopRunner[stop_runner]
 ```
 
 ---

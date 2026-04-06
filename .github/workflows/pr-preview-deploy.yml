@@ -63,12 +63,12 @@ jobs:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
-      KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
-      KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
-      KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
+      KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
+      KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
+      KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
       KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
       KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
-      IMAGE_REPO: 'ghcr.io/zama-ai/kms'
+      IMAGE_REPO: 'hub.zama.org/ghcr/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
       DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
@@ -216,6 +216,17 @@ jobs:
             kubectl create namespace "${NAMESPACE}"
           fi
 
+      # ======================================================================
+      # RBAC: Tailscale group kms-dev-access (same pattern as zws-dev k8s-access)
+      # ======================================================================
+      - name: Grant kms-dev-access RBAC on preview namespace
+        run: |
+          kubectl create rolebinding kms-dev-binding \
+            --clusterrole=admin \
+            --group=kms-dev-access \
+            -n "${NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Checkout Project KMS
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -285,7 +296,7 @@ jobs:
 
            :rocket: And launch your tests:
           \`\`\`bash
-          cargo nextest run --test ${TEST_NAME} --profile ci --no-fail-fast
+          cargo nextest run --test ${TEST_NAME} --profile ci --no-fail-fast  --features="kind_tests"
           \`\`\`
 
           You can connect to the core-client with:

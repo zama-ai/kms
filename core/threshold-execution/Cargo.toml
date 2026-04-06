@@ -81,8 +81,7 @@ extension_degree_7 = ["algebra/extension_degree_7"]
 extension_degree_8 = ["algebra/extension_degree_8"]
 
 non-wasm = [
-	"threshold-networking/non-wasm",
-
+    "dep:threshold-networking",
     "dep:tfhe-zk-pok",
     "dep:redis",
     "dep:thread-handles",

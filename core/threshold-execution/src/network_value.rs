@@ -12,7 +12,7 @@ use crate::{
 };
 use algebra::structure_traits::{Ring, Zero};
 use error_utils::anyhow_error_and_log;
-use hashing::{serialize_hash_element, DomainSep};
+use hashing::{DomainSep, serialize_hash_element};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 #[cfg(any(test, feature = "testing"))]

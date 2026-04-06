@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_8::ResiduePolyF8Z128;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use threshold_execution::{
     large_execution::vss::DummyVss,

@@ -4,9 +4,9 @@ use tonic::async_trait;
 use tracing::instrument;
 
 use algebra::{
+    PRSSConversions,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, ZConsts},
-    PRSSConversions,
 };
 use error_utils::anyhow_error_and_log;
 use threshold_execution::{

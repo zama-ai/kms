@@ -342,7 +342,9 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
                 != *session.roles()
             {
                 newly_corrupt.insert(*role_pi);
-                tracing::warn!("[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set");
+                tracing::warn!(
+                    "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
+                );
                 continue;
             }
 
@@ -362,7 +364,9 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
                     != &Z::ZERO
                 {
                     newly_corrupt.insert(*role_pi);
-                    tracing::warn!("[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt");
+                    tracing::warn!(
+                        "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
+                    );
                     break;
                 }
             }
@@ -427,7 +431,9 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
                     match receiver_value {
                         Some(rcv_value) if *rcv_value == sender_value => {}
                         _ => {
-                            tracing::warn!("Parties {role_receiver} and Sender {role_sender} disagree on the checking value. Add a dispute");
+                            tracing::warn!(
+                                "Parties {role_receiver} and Sender {role_sender} disagree on the checking value. Add a dispute"
+                            );
                             session.add_dispute(role_receiver, role_sender);
                             everything_ok = false;
                         }
@@ -457,7 +463,7 @@ pub(crate) mod tests {
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::large_session::{LargeSession, LargeSessionHandles};
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
     #[cfg(feature = "slow_tests")]
     use crate::{
@@ -470,7 +476,7 @@ pub(crate) mod tests {
         sharing::open::{RobustOpen, SecureRobustOpen},
     };
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

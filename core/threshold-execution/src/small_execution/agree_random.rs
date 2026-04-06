@@ -1,5 +1,5 @@
 use super::{
-    prf::{xor_u8_arr_in_place, PrfKey},
+    prf::{PrfKey, xor_u8_arr_in_place},
     prss::create_sets,
 };
 use crate::{
@@ -16,13 +16,13 @@ use algebra::{
 use anyhow::Context;
 use async_trait::async_trait;
 use error_utils::{anyhow_error_and_log, log_error_wrapper};
-use hashing::{hash_element, hash_element_w_size, DomainSep};
+use hashing::{DomainSep, hash_element, hash_element_w_size};
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
 use threshold_types::role::Role;
 use threshold_types::{
-    commitment::{Commitment, Opening, KEY_BYTE_LEN},
+    commitment::{Commitment, KEY_BYTE_LEN, Opening},
     protocol::ProtocolDescription,
 };
 use tracing::instrument;
@@ -521,7 +521,7 @@ fn verify_and_xor_keys(
                         .pop()
                         .with_context(|| log_error_wrapper("could not find my own key!"))?
                         .0
-                         .0,
+                        .0,
                 );
 
             //Consider others' keys for this set
@@ -534,7 +534,7 @@ fn verify_and_xor_keys(
                 })?;
 
                 // check that randomnes was properly committed to in the first round
-                match verify(&ko.0 .0, p, session_id, round_id, &com, &ko.1) {
+                match verify(&ko.0.0, p, session_id, round_id, &com, &ko.1) {
                     Ok(_) => {}
                     Err(_) => {
                         return Err(anyhow_error_and_log(format!(
@@ -544,7 +544,7 @@ fn verify_and_xor_keys(
                 }
 
                 // XOR verified external value
-                xor_u8_arr_in_place(&mut s, &ko.0 .0);
+                xor_u8_arr_in_place(&mut s, &ko.0.0);
             }
         }
 
@@ -626,15 +626,15 @@ fn compute_party_sets(my_role: Role, all_roles: &[Role], threshold: usize) -> Ve
 #[cfg(test)]
 mod tests {
     use super::{
-        check_and_unpack_coms, check_rcv_len, verify_and_xor_keys, AbortSecureAgreeRandom,
-        AgreeRandom, AgreeRandomFromShare, DummyAgreeRandom, PassiveSecureAgreeRandom,
-        RobustRealAgreeRandom, RobustSecureAgreeRandom,
+        AbortSecureAgreeRandom, AgreeRandom, AgreeRandomFromShare, DummyAgreeRandom,
+        PassiveSecureAgreeRandom, RobustRealAgreeRandom, RobustSecureAgreeRandom,
+        check_and_unpack_coms, check_rcv_len, verify_and_xor_keys,
     };
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use algebra::commitment::commitment_inner_hash;
     use threshold_types::{
-        commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
+        commitment::{COMMITMENT_BYTE_LEN, Commitment, KEY_BYTE_LEN, Opening},
         network::NetworkMode,
         role::Role,
     };
@@ -654,7 +654,7 @@ mod tests {
                 check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
                 verify_keys_equal,
             },
-            prf::{xor_u8_arr_in_place, PRSSConversions, PrfKey},
+            prf::{PRSSConversions, PrfKey, xor_u8_arr_in_place},
             prss::create_sets,
         },
     };

@@ -7,9 +7,9 @@ use tfhe::{
     core_crypto::commons::ciphertext_modulus::CiphertextModulus,
     shortint::{
         parameters::{
-            noise_squashing::NoiseSquashingClassicParameters, CompactCiphertextListExpansionKind,
-            CompactPublicKeyEncryptionParameters, NoiseSquashingParameters,
-            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
+            CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
+            NoiseSquashingParameters, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
+            noise_squashing::NoiseSquashingClassicParameters,
         },
         prelude::*,
     },

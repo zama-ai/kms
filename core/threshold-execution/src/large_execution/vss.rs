@@ -1170,15 +1170,15 @@ pub(crate) mod tests {
     use crate::runtime::sessions::large_session::LargeSession;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::runtime::sessions::small_session::SmallSession;
-    use crate::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
+    use crate::runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles};
     use crate::small_execution::prf::PRSSConversions;
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use algebra::{
         bivariate::BivariateEval,
-        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z64, ResiduePolyF4Z128},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,

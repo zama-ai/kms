@@ -26,8 +26,8 @@ cfg_if::cfg_if! {
     }
 }
 use tonic::server::NamedService;
-use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
+use tonic_health::pb::health_check_response::ServingStatus;
 
 /// Check that the centralized health service is serving as soons as boot is completed.
 #[tokio::test]
@@ -212,11 +212,13 @@ async fn test_largecipher() {
     }
     // Check that we get a server error instead of a server crash
     assert_eq!(response.as_ref().unwrap_err().code(), tonic::Code::Internal);
-    assert!(response
-        .err()
-        .unwrap()
-        .message()
-        .contains("Failed on requestID"));
+    assert!(
+        response
+            .err()
+            .unwrap()
+            .message()
+            .contains("Failed on requestID")
+    );
     tracing::info!("aborting");
     kms_server.assert_shutdown().await;
 }

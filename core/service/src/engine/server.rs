@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tonic::transport::{server::TcpIncoming, Server};
+use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 use tower_http::classify::{GrpcCode, GrpcFailureClass};

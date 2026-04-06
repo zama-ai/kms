@@ -3,12 +3,12 @@
 //! This module provides the implementation of the CryptoMaterialReader trait
 //! for the CompactPublicKey type, enabling it to be read from storage.
 
-use crate::vault::storage::{read_versioned_at_request_id, StorageReader};
+use crate::vault::storage::{StorageReader, read_versioned_at_request_id};
 use crate::{
     anyhow_error_and_warn_log, vault::storage::crypto_material::traits::CryptoMaterialReader,
 };
-use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::RequestId;
+use kms_grpc::rpc_types::PubDataType;
 use tfhe::CompactPublicKey;
 
 #[tonic::async_trait]

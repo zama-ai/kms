@@ -4,12 +4,12 @@ use itertools::Itertools;
 use num_integer::div_ceil;
 use tokio::{
     sync::{
-        mpsc::{Receiver, Sender},
         Mutex, RwLock,
+        mpsc::{Receiver, Sender},
     },
     task::JoinSet,
 };
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 use crate::{
     algebra::levels::LevelKsw,

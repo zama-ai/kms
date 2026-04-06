@@ -2,12 +2,12 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{
-    read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id, StorageExt,
+    StorageExt, read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
 };
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
-use kms_grpc::ContextId;
 use threshold_execution::small_execution::prss::PRSSSetup;
 
 lazy_static::lazy_static! {
@@ -199,7 +199,11 @@ where
             // Removes obsolete keys that have already been converted
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
-            tracing::error!("Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion", key_id, legacy_epoch_id);
+            tracing::error!(
+                "Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion",
+                key_id,
+                legacy_epoch_id
+            );
         }
     }
     Ok(())
@@ -305,9 +309,15 @@ so there is no legacy PRSS state to migrate.",
                 (*LEGACY_DEFAULT_EPOCH_ID)
             );
         }
-        (Err(e), Ok(_)) => tracing::error!("Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"),
-        (Ok(_), Err(e)) => tracing::error!("Failed to read legacy PRSS Z64 from file with error: {e}, but was able to read Z128, skipping migration since we don't have the full data"),
-        (Err(_e), Err(e)) => tracing::error!("Failed to read both legacy PRSS Z128 and Z64 from file with errors: Z128 error: {_e}, Z64 error: {e}, skipping migration"),
+        (Err(e), Ok(_)) => tracing::error!(
+            "Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"
+        ),
+        (Ok(_), Err(e)) => tracing::error!(
+            "Failed to read legacy PRSS Z64 from file with error: {e}, but was able to read Z128, skipping migration since we don't have the full data"
+        ),
+        (Err(_e), Err(e)) => tracing::error!(
+            "Failed to read both legacy PRSS Z128 and Z64 from file with errors: Z128 error: {_e}, Z64 error: {e}, skipping migration"
+        ),
     }
     Ok(())
 }
@@ -514,8 +524,8 @@ mod tests {
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
-        store_context_at_id, store_versioned_at_request_id, Storage, StorageExt, StorageReader,
-        StorageReaderExt, StorageType,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
+        store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
     use std::str::FromStr;
@@ -565,14 +575,18 @@ mod tests {
 
         // Verify data exists at the new (legacy) epoch location
         let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
-        assert!(storage
-            .data_exists_at_epoch(&key_id_1, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap());
-        assert!(storage
-            .data_exists_at_epoch(&key_id_2, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_1, &legacy_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_2, &legacy_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
 
         // Verify the data content is preserved
         let migrated_data_1 = storage
@@ -622,10 +636,12 @@ mod tests {
 
         // Verify data exists at the new epoch location
         let legacy_epoch_id: EpochId = *LEGACY_DEFAULT_EPOCH_ID;
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
 
         // Verify the data content is preserved
         let migrated_data = storage
@@ -963,10 +979,12 @@ mod tests {
             .unwrap();
 
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     /// Test with no legacy keys at all
@@ -1087,13 +1105,15 @@ mod tests {
 
         // Verify PrssSetupCombined was created at the legacy epoch ID (where we asked it to store)
         let legacy_epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
-        assert!(storage
-            .data_exists(
-                &legacy_epoch_id.into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists(
+                    &legacy_epoch_id.into(),
+                    &PrivDataType::PrssSetupCombined.to_string(),
+                )
+                .await
+                .unwrap()
+        );
 
         // Verify legacy PRSS data was deleted
         let prss_128_id = derive_request_id(&format!(
@@ -1106,14 +1126,18 @@ mod tests {
             legacy_epoch_id, num_parties, threshold,
         ))
         .unwrap();
-        assert!(!storage
-            .data_exists(&prss_128_id, &PrivDataType::PrssSetup.to_string())
-            .await
-            .unwrap());
-        assert!(!storage
-            .data_exists(&prss_64_id, &PrivDataType::PrssSetup.to_string())
-            .await
-            .unwrap());
+        assert!(
+            !storage
+                .data_exists(&prss_128_id, &PrivDataType::PrssSetup.to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .data_exists(&prss_64_id, &PrivDataType::PrssSetup.to_string())
+                .await
+                .unwrap()
+        );
 
         // Verify the combined PRSS can be read back with correct metadata
         let combined: PRSSSetupCombined = read_versioned_at_request_id(
@@ -1146,13 +1170,15 @@ mod tests {
 
         // PrssSetupCombined should still exist
         let epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
-        assert!(storage
-            .data_exists(
-                &epoch_id.into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists(
+                    &epoch_id.into(),
+                    &PrivDataType::PrssSetupCombined.to_string(),
+                )
+                .await
+                .unwrap()
+        );
 
         // The newly written legacy data should NOT have been deleted
         // (because the migration returned early)
@@ -1163,10 +1189,12 @@ mod tests {
         .unwrap();
         #[expect(deprecated)]
         let prss_data_type = PrivDataType::PrssSetup.to_string();
-        assert!(storage
-            .data_exists(&prss_128_id, &prss_data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists(&prss_128_id, &prss_data_type)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1253,13 +1281,15 @@ mod tests {
 
         // Store context under the legacy context ID
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
-        assert!(storage
-            .data_exists(
-                &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
-                &PrivDataType::ContextInfo.to_string(),
-            )
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists(
+                    &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .unwrap()
+        );
 
         migrate_context_before_0_13_10(&mut storage).await.unwrap();
 
@@ -1276,13 +1306,15 @@ mod tests {
         assert_eq!(migrated.mpc_nodes.len(), num_parties);
 
         // Legacy context should be deleted
-        assert!(!storage
-            .data_exists(
-                &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
-                &PrivDataType::ContextInfo.to_string(),
-            )
-            .await
-            .unwrap());
+        assert!(
+            !storage
+                .data_exists(
+                    &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1360,20 +1392,24 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(storage
-            .data_exists(
-                &(*DEFAULT_EPOCH_ID).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap());
-        assert!(!storage
-            .data_exists(
-                &(*LEGACY_DEFAULT_EPOCH_ID).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists(
+                    &(*DEFAULT_EPOCH_ID).into(),
+                    &PrivDataType::PrssSetupCombined.to_string(),
+                )
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .data_exists(
+                    &(*LEGACY_DEFAULT_EPOCH_ID).into(),
+                    &PrivDataType::PrssSetupCombined.to_string(),
+                )
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1440,14 +1476,18 @@ mod tests {
 
         // Keys should now exist at DEFAULT_EPOCH_ID
         let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
-        assert!(storage
-            .data_exists_at_epoch(&key_id_1, &default_epoch_id, &data_type)
-            .await
-            .unwrap());
-        assert!(storage
-            .data_exists_at_epoch(&key_id_2, &default_epoch_id, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_1, &default_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_2, &default_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
 
         // Verify data content is preserved
         let loaded_1 = storage
@@ -1677,24 +1717,32 @@ mod tests {
             .unwrap();
 
         // Legacy epoch keys should be deleted
-        assert!(!storage
-            .data_exists_at_epoch(&key_id_1, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
-        assert!(!storage
-            .data_exists_at_epoch(&key_id_2, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            !storage
+                .data_exists_at_epoch(&key_id_1, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage
+                .data_exists_at_epoch(&key_id_2, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
 
         // DEFAULT_EPOCH_ID data should still exist
-        assert!(storage
-            .data_exists_at_epoch(&key_id_1, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
-        assert!(storage
-            .data_exists_at_epoch(&key_id_2, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_1, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id_2, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     /// Test that legacy epoch keys are deleted when DEFAULT_EPOCH_ID counterparts exist (centralized)
@@ -1723,15 +1771,19 @@ mod tests {
             .unwrap();
 
         // Legacy epoch key should be deleted
-        assert!(!storage
-            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            !storage
+                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
         // DEFAULT_EPOCH_ID data should still exist
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     /// Test with no legacy epoch keys — nothing to remove
@@ -1767,10 +1819,12 @@ mod tests {
             .unwrap();
 
         // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     // RAM storage tests — remove_old_keys_for_0_13_20
@@ -1856,10 +1910,12 @@ mod tests {
             .unwrap();
 
         // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1882,10 +1938,12 @@ mod tests {
             .unwrap();
 
         // FHE key should be migrated to LEGACY_DEFAULT_EPOCH_ID
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1941,10 +1999,12 @@ mod tests {
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
 
         // Key should still exist at epoch
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1976,10 +2036,12 @@ mod tests {
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
 
         // Epoch data still present
-        assert!(storage
-            .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
-            .await
-            .unwrap());
+        assert!(
+            storage
+                .data_exists_at_epoch(&key_id, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

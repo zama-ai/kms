@@ -197,7 +197,7 @@ malicious_strategies = ["testing"]
 # or uses tokio
 non-wasm = [
 	"threshold-execution/non-wasm",
-	"threshold-networking/non-wasm",
+	"dep:threshold-networking",
 
     "dep:attestation-doc-validation",
     "dep:backoff",

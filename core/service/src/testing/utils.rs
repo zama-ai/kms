@@ -1,14 +1,14 @@
 use crate::conf::{self, Keychain};
 use crate::util::key_setup::FhePublicKey;
+use crate::vault::Vault;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    make_storage, read_versioned_at_request_id, StorageReader, StorageType,
+    StorageReader, StorageType, make_storage, read_versioned_at_request_id,
 };
-use crate::vault::Vault;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
@@ -17,9 +17,9 @@ use tfhe::prelude::SquashNoise;
 use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{
-    FheBool, FheTypes, FheUint128, FheUint16, FheUint160, FheUint256, FheUint32, FheUint64,
-    FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
-    Unversionize, Versionize,
+    FheBool, FheTypes, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128, FheUint160,
+    FheUint256, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible,
+    ServerKey, Unversionize, Versionize,
 };
 use threshold_execution::tfhe_internals::utils::expanded_encrypt;
 
@@ -418,14 +418,14 @@ pub mod setup {
     #[cfg(feature = "slow_tests")]
     use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
     use crate::util::key_setup::{
-        ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
-        ThresholdSigningKeyConfig,
+        ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
+        ensure_client_keys_exist,
     };
     use crate::{
         consts::{
             KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
-            TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
+            TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -434,10 +434,10 @@ pub mod setup {
             ensure_threshold_crs_exists, ensure_threshold_keys_exist,
             ensure_threshold_server_signing_keys_exist,
         },
-        vault::storage::{file::FileStorage, StorageType},
+        vault::storage::{StorageType, file::FileStorage},
     };
-    use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
+    use kms_grpc::identifiers::EpochId;
     use std::path::Path;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
 
@@ -513,9 +513,9 @@ pub mod setup {
     async fn default_material(path: Option<&Path>) {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
-            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
-            DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P,
+            DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
         };
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
@@ -682,16 +682,20 @@ async fn test_purge() {
     let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
 
     // Check no keys exist
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        central_pub_storage
+            .all_data_ids(&PubDataType::VerfKey.to_string())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        central_priv_storage
+            .all_data_ids(&PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Create keys to be deleted
     assert!(
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
@@ -722,16 +726,20 @@ async fn test_purge() {
     )
     .await;
     // Check the keys were deleted
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        central_pub_storage
+            .all_data_ids(&PubDataType::VerfKey.to_string())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        central_priv_storage
+            .all_data_ids(&PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // ============================================================================

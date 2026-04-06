@@ -39,7 +39,7 @@ pub struct MPCNoiseRandomGenerator<Z: BaseRing, const EXTENSION_DEGREE: usize> {
 }
 
 pub struct MPCMaskRandomGenerator<Gen: ParallelByteRandomGenerator> {
-    pub gen: RandomGenerator<Gen>,
+    pub generator: RandomGenerator<Gen>,
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE> {
@@ -111,7 +111,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
 impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     pub fn new_from_seed(seed: XofSeed) -> Self {
         Self {
-            gen: RandomGenerator::<Gen>::new(seed),
+            generator: RandomGenerator::<Gen>::new(seed),
         }
     }
     pub fn fill_slice_with_random_mask_custom_mod<Z: BaseRing>(
@@ -121,8 +121,8 @@ impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     ) {
         for element in output_mask.iter_mut() {
             let randomness = match randomness_type {
-                EncryptionType::Bits64 => u64::generate_one(&mut self.gen, Uniform) as u128,
-                EncryptionType::Bits128 => u128::generate_one(&mut self.gen, Uniform),
+                EncryptionType::Bits64 => u64::generate_one(&mut self.generator, Uniform) as u128,
+                EncryptionType::Bits128 => u128::generate_one(&mut self.generator, Uniform),
             };
             *element = Z::from_u128(randomness);
         }
@@ -180,9 +180,9 @@ impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         n_child: usize,
         mask_bytes: usize,
     ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
-        let mask_iter = self.gen.par_try_fork(n_child, mask_bytes)?;
+        let mask_iter = self.generator.par_try_fork(n_child, mask_bytes)?;
         // We return a proper iterator.
-        Ok(mask_iter.map(|gen| Self { gen }))
+        Ok(mask_iter.map(|generator| Self { generator }))
     }
 }
 

@@ -9,8 +9,8 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{parse, ItemFn, Stmt};
+use quote::{ToTokens, quote};
+use syn::{ItemFn, Stmt, parse};
 
 #[proc_macro_attribute]
 pub fn traced_test(_attr: TokenStream, item: TokenStream) -> TokenStream {

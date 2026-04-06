@@ -22,13 +22,13 @@ pub use preprocessing::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::conf::{init_conf, CoreConfig};
+    use crate::conf::{CoreConfig, init_conf};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
     use crate::engine::context::{NodeInfo, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::vault::storage::store_versioned_at_request_id;
     use crate::{
-        cryptography::signatures::{gen_sig_keys, PublicSigKey},
+        cryptography::signatures::{PublicSigKey, gen_sig_keys},
         engine::centralized::central_kms::RealCentralizedKms,
         vault::storage::ram::RamStorage,
     };

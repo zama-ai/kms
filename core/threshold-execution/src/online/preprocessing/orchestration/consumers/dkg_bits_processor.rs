@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc::Receiver};
 use tracing::instrument;
 
 use crate::{

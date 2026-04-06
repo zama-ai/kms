@@ -6,7 +6,7 @@ use std::{collections::HashMap, time::Duration};
 use threshold_types::party::Identity;
 use threshold_types::role::RoleTrait;
 use tokio::task::JoinSet;
-use tonic::{service::interceptor::InterceptedService, transport::Channel, Status};
+use tonic::{Status, service::interceptor::InterceptedService, transport::Channel};
 
 pub struct HealthCheckSession<R: RoleTrait> {
     /// My own [`Identity`]

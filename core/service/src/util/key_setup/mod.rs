@@ -26,17 +26,17 @@ cfg_if::cfg_if! {
 }
 
 use crate::client::client_non_wasm::ClientDataType;
-use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
-    file::FileStorage, read_all_data_versioned, store_text_at_request_id,
-    store_versioned_at_request_id, Storage, StorageReader, StorageType,
+    Storage, StorageReader, StorageType, file::FileStorage, read_all_data_versioned,
+    store_text_at_request_id, store_versioned_at_request_id,
 };
 use itertools::Itertools;
 use k256::pkcs8::EncodePrivateKey;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -828,7 +828,9 @@ where
                     .await?;
                 }
             } else {
-                tracing::error!("Failed to regenerate CA certificate from existing server signing key for party {i}")
+                tracing::error!(
+                    "Failed to regenerate CA certificate from existing server signing key for party {i}"
+                )
             };
 
             continue;

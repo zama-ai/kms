@@ -1,13 +1,13 @@
-use crate::engine::base::{CrsGenMetadata, KeyGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-use crate::vault::storage::{read_versioned_at_request_id, StorageExt, StorageReader};
+use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
+use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
 use hashing::hash_element;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
-use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    map_tonic_code_to_metric_err_tag, ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY,
+    ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -444,7 +444,7 @@ impl From<MetricedError> for Status {
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
-    use crate::engine::base::{safe_serialize_hash_element_versioned, KeyGenMetadataInner};
+    use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::store_versioned_at_request_id;

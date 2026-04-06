@@ -5,7 +5,7 @@ use algebra::sharing::shamir::InputOp;
 use algebra::sharing::shamir::ShamirSharings;
 use algebra::sharing::share::Share;
 use algebra::structure_traits::Ring;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;

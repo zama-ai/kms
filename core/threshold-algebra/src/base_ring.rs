@@ -21,7 +21,7 @@ macro_rules! ring_impl {
 
         impl Sample for $z {
             fn sample<R: Rng>(rng: &mut R) -> Self {
-                rng.gen::<$z>()
+                rng.r#gen::<$z>()
             }
         }
 

@@ -7,7 +7,7 @@ use kms_grpc::{
 };
 #[cfg(feature = "testing")]
 use kms_lib::{
-    conf::{init_conf, CoreConfig},
+    conf::{CoreConfig, init_conf},
     engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
@@ -19,8 +19,8 @@ use tonic::transport::Channel;
 use crate::CoreConf;
 #[cfg(feature = "testing")]
 use crate::{
-    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
     CoreClientConfig,
+    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
 };
 
 #[cfg(feature = "testing")]
@@ -90,18 +90,18 @@ pub async fn create_test_context_info_from_core_config(
             )
         })?;
         let (role, identity) = peer.into_role_identity();
-        if let Some(initial_id) = threshold_config.my_id {
-            if role.one_based() != initial_id {
-                // this might be a misconfiguration, but useful for testing
-                // because threshold_config.my_id may be used as a storage prefix that
-                // must be different from the party ID in the peerlist to avoid collision
-                tracing::warn!(
-                    "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
-                    c.party_id,
-                    role.one_based(),
-                    initial_id
-                );
-            }
+        if let Some(initial_id) = threshold_config.my_id
+            && role.one_based() != initial_id
+        {
+            // this might be a misconfiguration, but useful for testing
+            // because threshold_config.my_id may be used as a storage prefix that
+            // must be different from the party ID in the peerlist to avoid collision
+            tracing::warn!(
+                "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
+                c.party_id,
+                role.one_based(),
+                initial_id
+            );
         }
 
         let verification_key = verification_keys.get(&role.one_based()).ok_or_else(|| {

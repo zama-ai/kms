@@ -7,15 +7,15 @@ use crate::{
 };
 use ml_kem::EncodedSizeUser;
 use ml_kem::KemCore;
-use ml_kem::{MlKem1024, MlKem512};
+use ml_kem::{MlKem512, MlKem1024};
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use strum_macros::Display;
 use tfhe::{
+    Versionize,
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
-    Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
 use zeroize::{Zeroize, ZeroizeOnDrop};

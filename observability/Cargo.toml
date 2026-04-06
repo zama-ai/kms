@@ -15,10 +15,9 @@ axum.workspace = true
 config.workspace = true
 http.workspace = true
 lazy_static.workspace = true
-opentelemetry = { workspace = true, features = ["metrics"] }
+opentelemetry.workspace = true
 opentelemetry-http.workspace = true
 opentelemetry-otlp.workspace = true
-opentelemetry-prometheus.workspace = true
 opentelemetry-semantic-conventions.workspace = true
 opentelemetry-stdout.workspace = true
 opentelemetry_sdk.workspace = true

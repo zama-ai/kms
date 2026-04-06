@@ -17,8 +17,8 @@ use algebra::{
 use error_utils::anyhow_error_and_log;
 
 use super::{
-    correlated_randomness_len, fetch_correlated_randomness, store_correlated_randomness,
-    RedisPreprocessing,
+    RedisPreprocessing, correlated_randomness_len, fetch_correlated_randomness,
+    store_correlated_randomness,
 };
 
 #[async_trait]

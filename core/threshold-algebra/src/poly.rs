@@ -696,9 +696,10 @@ pub fn gao_decoding<F: Field>(
 
     // abort early if we have too many errors
     if q0.deg() > max_errs {
-        return Err(anyhow_error_and_log(
-            format!("Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.", q0.deg())
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.",
+            q0.deg()
+        )));
     }
 
     // h is called f_1(x) in the Gao paper.
@@ -709,7 +710,11 @@ pub fn gao_decoding<F: Field>(
             "Gao decoding failure: Division remainder is not zero but {rem:?}."
         )))
     } else if h.deg() >= k {
-        Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be at most {}.", h.deg(), k-1)))
+        Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Division result is of too high degree {}, but should be at most {}.",
+            h.deg(),
+            k - 1
+        )))
     } else {
         Ok(h)
     }

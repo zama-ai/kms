@@ -10,8 +10,8 @@ use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 
 use serde::{
-    de::{SeqAccess, Visitor},
     Deserialize,
+    de::{SeqAccess, Visitor},
 };
 
 // Taken from https://github.com/serde-rs/serde/issues/1937#issuecomment-812137971
