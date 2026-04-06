@@ -101,7 +101,6 @@ serial_test.workspace = true
 test-context.workspace = true
 threshold-networking.workspace = true
 toml.workspace = true
-url.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
