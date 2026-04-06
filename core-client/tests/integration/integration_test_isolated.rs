@@ -283,6 +283,104 @@ fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
     Ok(())
 }
 
+/// Mock PCR value used for TLS auto mode in test configs.
+/// This must match the value the test enclave mock expects.
+const MOCK_PCR: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f";
+
+/// Build a minimal `CoreConfig` for a threshold test party.
+///
+/// Constructing the config programmatically provides compile-time guarantees
+/// that the generated TOML matches the `CoreConfig` schema (which uses
+/// `#[serde(deny_unknown_fields)]`).
+fn build_test_core_config(
+    service_port: u16,
+    mpc_port: u16,
+    my_id: usize,
+    threshold_value: u8,
+    server_id: usize,
+    material_path: &Path,
+    peers: Vec<kms_lib::conf::threshold::PeerConf>,
+) -> kms_lib::conf::CoreConfig {
+    use kms_lib::conf::threshold::{ThresholdPartyConf, TlsConf};
+    use kms_lib::conf::{
+        AWSConfig, CoreConfig, FileStorage, S3Storage, ServiceEndpoint, Storage, VaultConfig,
+    };
+    use threshold_networking::tls::ReleasePCRValues;
+
+    let mock_pcr_bytes = hex::decode(MOCK_PCR).expect("MOCK_PCR must be valid hex");
+
+    CoreConfig {
+        service: ServiceEndpoint {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: service_port,
+            timeout_secs: 30,
+            grpc_max_message_size: 104_857_600,
+        },
+        telemetry: None,
+        aws: Some(AWSConfig {
+            region: "us-east-1".to_string(),
+            role_arn: None,
+            imds_endpoint: None,
+            sts_endpoint: None,
+            s3_endpoint: Some("http://dev-s3-mock:9000".parse().expect("valid URL")),
+            awskms_endpoint: None,
+        }),
+        public_vault: Some(VaultConfig {
+            storage: Storage::S3(S3Storage {
+                bucket: "kms-public".to_string(),
+                prefix: Some(format!("PUB-p{server_id}")),
+            }),
+            keychain: None,
+        }),
+        private_vault: Some(VaultConfig {
+            storage: Storage::File(FileStorage {
+                path: material_path.join(format!("PRIV-p{server_id}")),
+                prefix: None,
+            }),
+            keychain: None,
+        }),
+        backup_vault: None,
+        rate_limiter_conf: None,
+        threshold: Some(ThresholdPartyConf {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: mpc_port,
+            tls: Some(TlsConf::Auto {
+                eif_signing_cert: None,
+                trusted_releases: vec![ReleasePCRValues {
+                    pcr0: mock_pcr_bytes.clone(),
+                    pcr1: mock_pcr_bytes.clone(),
+                    pcr2: mock_pcr_bytes,
+                }],
+                ignore_aws_ca_chain: None,
+                attest_private_vault_root_key: None,
+                renew_slack_after_expiration: None,
+                renew_fail_retry_timeout: None,
+            }),
+            threshold: threshold_value,
+            my_id: Some(my_id),
+            dec_capacity: 100,
+            min_dec_cache: 10,
+            preproc_redis: None,
+            num_sessions_preproc: Some(2),
+            peers: Some(peers),
+            core_to_core_net: None,
+            decryption_mode: DecryptionMode::NoiseFloodSmall,
+        }),
+        internal_config: None,
+        mock_enclave: Some(true),
+    }
+}
+
+/// Validate and serialize a `CoreConfig` to TOML, writing it to the given path.
+fn write_core_config_toml(path: &Path, cfg: &kms_lib::conf::CoreConfig) -> Result<()> {
+    cfg.validate()
+        .map_err(|e| anyhow::anyhow!("CoreConfig validation failed: {e}"))?;
+    let toml_str = toml::to_string_pretty(cfg)
+        .map_err(|e| anyhow::anyhow!("CoreConfig TOML serialization failed: {e}"))?;
+    write(path, toml_str)?;
+    Ok(())
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -637,18 +735,21 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 /// - This ensures complete test isolation
 ///
 /// Client output matches `CoreClientConfig`; see `core-client/config/client_local_threshold.toml`.
-/// Per-party `compose_*.toml` server configs are still built as minimal string templates.
+/// Per-party `compose_*.toml` server configs are built from typed `CoreConfig` structs
+/// to ensure compile-time schema compatibility.
 fn generate_threshold_cli_config(
     material_dir: &kms_lib::testing::material::TestMaterialHandle,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
     fhe_params: FheParameter,
 ) -> Result<PathBuf> {
+    use kms_lib::conf::threshold::PeerConf;
+
     let config_path = material_dir.path().join("client_config.toml");
     let majority = party_count / 2 + 1;
 
-    // Create minimal server config files for each party (needed for MPC context creation)
-    let threshold_value = party_count.div_ceil(3) - 1;
+    // Create server config files for each party (needed for MPC context creation)
+    let threshold_value = (party_count.div_ceil(3) - 1) as u8;
     let mut cores = Vec::with_capacity(party_count);
 
     for i in 1..=party_count {
@@ -658,75 +759,33 @@ fn generate_threshold_cli_config(
 
         let server_config_path = material_dir.path().join(format!("compose_{}.toml", i));
 
-        // Build peer list for this party
-        let mut peers_config = String::new();
-        for j in 1..=party_count {
-            let peer_server = servers.get(&(j as u32)).unwrap();
-            let mpc_port = peer_server
-                .mpc_port
-                .expect("MPC port should be set for threshold server");
-            peers_config.push_str(&format!(
-                r#"
-[[threshold.peers]]
-party_id = {}
-address = "127.0.0.1"
-mpc_identity = "kms-core-{}.local"
-port = {}
-"#,
-                j, j, mpc_port
-            ));
-        }
+        // Build typed peer list for this party
+        let peers: Vec<PeerConf> = (1..=party_count)
+            .map(|j| {
+                let peer_server = servers.get(&(j as u32)).unwrap();
+                PeerConf {
+                    party_id: j,
+                    address: "127.0.0.1".to_string(),
+                    mpc_identity: Some(format!("kms-core-{j}.local")),
+                    port: peer_server
+                        .mpc_port
+                        .expect("MPC port should be set for threshold server"),
+                    tls_cert: None,
+                    verification_address: None,
+                }
+            })
+            .collect();
 
-        // Create minimal server config with mock enclave PCR values
-        // Include public_vault and aws sections for MPC context creation
-        let server_config_content = format!(
-            r#"
-mock_enclave = true
-
-[service]
-listen_address = "127.0.0.1"
-listen_port = {}
-timeout_secs = 30
-grpc_max_message_size = 104857600
-
-[public_vault.storage.s3]
-bucket = "kms-public"
-prefix = "PUB-p{}"
-
-[private_vault.storage.file]
-path = "{}/PRIV-p{}"
-
-[aws]
-region = "us-east-1"
-s3_endpoint = "http://dev-s3-mock:9000"
-
-[threshold]
-my_id = {}
-threshold = {}
-listen_address = "127.0.0.1"
-listen_port = {}
-dec_capacity = 100
-min_dec_cache = 10
-num_sessions_preproc = 2
-decryption_mode = "NoiseFloodSmall"
-
-[[threshold.tls.auto.trusted_releases]]
-pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-{}
-"#,
+        let core_config = build_test_core_config(
             server.service_port,
-            i, // prefix for public_vault
-            material_dir.path().display(),
-            i, // PRIV-p{i}
-            i, // my_id
-            threshold_value,
             server.mpc_port.expect("MPC port should be set"),
-            peers_config
+            i,
+            threshold_value,
+            i,
+            material_dir.path(),
+            peers,
         );
-
-        write(&server_config_path, server_config_content)?;
+        write_core_config_toml(&server_config_path, &core_config)?;
 
         cores.push(CoreConf {
             party_id: i,
@@ -1030,7 +1089,7 @@ async fn setup_party_resharing_servers(
         }
     };
 
-    // Helper: generate a compose config file for a given server in a given context
+    // Generate a typed compose config file for a given server in a given context.
     let write_compose_config = |config_path: &Path,
                                 server_id: usize,
                                 my_party_id: usize,
@@ -1038,70 +1097,34 @@ async fn setup_party_resharing_servers(
                                 party_to_server: &dyn Fn(usize) -> u32|
      -> Result<()> {
         let server = servers.get(&(server_id as u32)).unwrap();
-        let mut peers_config = String::new();
-        for peer in peers.iter() {
-            let peer_server_id = party_to_server(peer.party_id);
-            let peer_server = servers.get(&peer_server_id).unwrap();
-            let mpc_port = peer_server.mpc_port.expect("MPC port should be set");
-            peers_config.push_str(&format!(
-                r#"
-[[threshold.peers]]
-party_id = {}
-address = "127.0.0.1"
-mpc_identity = "kms-core-{}.local"
-port = {}
-"#,
-                peer.party_id, peer_server_id, mpc_port
-            ));
-        }
 
-        let content = format!(
-            r#"
-mock_enclave = true
+        // Build typed peer list, resolving each peer's MPC port from the physical server
+        let typed_peers: Vec<PeerConf> = peers
+            .iter()
+            .map(|peer| {
+                let peer_server_id = party_to_server(peer.party_id);
+                let peer_server = servers.get(&peer_server_id).unwrap();
+                PeerConf {
+                    party_id: peer.party_id,
+                    address: "127.0.0.1".to_string(),
+                    mpc_identity: Some(format!("kms-core-{peer_server_id}.local")),
+                    port: peer_server.mpc_port.expect("MPC port should be set"),
+                    tls_cert: None,
+                    verification_address: None,
+                }
+            })
+            .collect();
 
-[service]
-listen_address = "127.0.0.1"
-listen_port = {}
-timeout_secs = 30
-grpc_max_message_size = 104857600
-
-[public_vault.storage.s3]
-bucket = "kms-public"
-prefix = "PUB-p{}"
-
-[private_vault.storage.file]
-path = "{}/PRIV-p{}"
-
-[aws]
-region = "us-east-1"
-s3_endpoint = "http://dev-s3-mock:9000"
-
-[threshold]
-my_id = {}
-threshold = {}
-listen_address = "127.0.0.1"
-listen_port = {}
-dec_capacity = 100
-min_dec_cache = 10
-num_sessions_preproc = 2
-decryption_mode = "NoiseFloodSmall"
-
-[[threshold.tls.auto.trusted_releases]]
-pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-{}
-"#,
+        let core_config = build_test_core_config(
             server.service_port,
-            server_id,
-            material_dir.path().display(),
-            server_id,
-            my_party_id,
-            threshold_value,
             server.mpc_port.expect("MPC port should be set"),
-            peers_config
+            my_party_id,
+            threshold_value as u8,
+            server_id,
+            material_dir.path(),
+            typed_peers,
         );
-        std::fs::write(config_path, content)?;
+        write_core_config_toml(config_path, &core_config)?;
         Ok(())
     };
 
@@ -2253,8 +2276,9 @@ fn config_conformance_client_local_threshold() {
     assert_eq!(strict.decryption_mode.as_deref(), Some("NoiseFloodSmall"));
     assert_eq!(strict.fhe_params.as_deref(), Some("Test"));
     assert_eq!(strict.cores.len(), 4);
-    assert_eq!(strict.cores[0].party_id, 1);
-    assert_eq!(strict.cores[3].party_id, 4);
+    for (i, core) in strict.cores.iter().enumerate() {
+        assert_eq!(core.party_id, i + 1);
+    }
     // Use an inert env_prefix — see config_conformance_client_local_centralized.
     let loaded: CoreClientConfig = Settings::builder()
         .path(path.to_str().expect("utf8 path"))

@@ -4347,6 +4347,7 @@ dependencies = [
  "threshold-execution",
  "threshold-fhe",
  "threshold-hashing",
+ "threshold-networking",
  "tokio",
  "tokio-rustls 0.26.2",
  "toml",
@@ -4355,6 +4356,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "validator",
 ]
 
