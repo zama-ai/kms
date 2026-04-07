@@ -20,7 +20,7 @@ use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
-use kms_test_tracing::init_logging;
+use observability::test_config::init_test_logging as init_logging;
 use serial_test::serial;
 use std::fs::create_dir_all;
 use std::io::Write;

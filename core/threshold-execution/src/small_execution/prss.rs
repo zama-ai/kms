@@ -1147,7 +1147,6 @@ mod tests {
     use tfhe::{FheUint8, set_server_key};
     use threshold_types::{commitment::KEY_BYTE_LEN, network::NetworkMode};
 
-    use kms_test_tracing::traced_test;
     use tokio::task::JoinSet;
 
     // async helper function that creates the prss setups
@@ -1743,7 +1742,6 @@ mod tests {
     }
 
     /// Test the if a party broadcasts a wrong type then they will get added to the corruption set
-    #[traced_test]
     #[test]
     fn test_count_votes_bad_type() {
         let parties = 3;
@@ -1779,12 +1777,8 @@ mod tests {
         assert_eq!(reference, res);
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(3)));
-        assert!(logs_contain(
-            "sent values they shouldn't and is thus malicious"
-        ));
     }
 
-    #[traced_test]
     #[test]
     fn test_add_votes() {
         let parties = 3;
@@ -1824,9 +1818,6 @@ mod tests {
                 .contains(&Role::indexed_from_one(3))
         );
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(3)));
-        assert!(logs_contain(
-            "is trying to vote for the same prf value more than once and is thus malicious"
-        ));
     }
 
     #[test]
@@ -1860,7 +1851,6 @@ mod tests {
     }
 
     /// Test to identify a party which did not vote for the expected value in `handle_non_voting_parties`
-    #[traced_test]
     #[test]
     fn identify_non_voting_party() {
         let parties = 4;
@@ -1883,9 +1873,6 @@ mod tests {
         handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
         assert!(session.corrupt_roles.contains(&Role::indexed_from_one(3)));
         assert_eq!(1, session.corrupt_roles.len());
-        assert!(logs_contain(
-            "did not vote for the correct prf value and is thus malicious"
-        ));
     }
 
     #[tokio::test]

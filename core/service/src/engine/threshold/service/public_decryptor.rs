@@ -939,7 +939,6 @@ mod tests {
         public_decryptor.set_bucket_size(100);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);

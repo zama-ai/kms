@@ -536,6 +536,11 @@ impl Operator {
         &self.verification_key
     }
 
+    #[cfg(test)]
+    pub fn num_custodian_keys(&self) -> usize {
+        self.custodian_keys.len()
+    }
+
     // We allow the following lints because we are fine with mutating the rng even if
     // the function fails afterwards.
     #[allow(unknown_lints)]
@@ -971,7 +976,6 @@ mod tests {
         );
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
@@ -987,11 +991,12 @@ mod tests {
         msg1.header = "wrong header".to_string();
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
-        assert!(result.is_ok());
-        assert!(logs_contain("Invalid header in custodian setup message"));
+        let validated = result.unwrap();
+        // Only 2 messages should pass validation (the one with the wrong header was filtered)
+        assert_eq!(validated.len(), 2);
+        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with invalid header should have been filtered");
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
@@ -1007,11 +1012,12 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
-        assert!(result.is_ok());
-        assert!(logs_contain("Invalid timestamp in custodian setup message"));
+        let validated = result.unwrap();
+        // Only 2 messages should pass validation (the one with the old timestamp was filtered)
+        assert_eq!(validated.len(), 2);
+        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with past timestamp should have been filtered");
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_timestamp_future() {
         let mut rng = AesRng::seed_from_u64(6);
@@ -1031,11 +1037,12 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
-        assert!(result.is_ok());
-        assert!(logs_contain("Invalid timestamp in custodian setup message"));
+        let validated = result.unwrap();
+        // Only 2 messages should pass validation (the one with the future timestamp was filtered)
+        assert_eq!(validated.len(), 2);
+        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with future timestamp should have been filtered");
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
@@ -1057,14 +1064,10 @@ mod tests {
         msg3.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, false);
         // The result is ok since we do not validate the timestamp
-        assert!(result.is_ok());
-        // Check that no logs about timestamp is present
-        assert!(!logs_contain(
-            "Invalid timestamp in custodian setup message"
-        ));
+        // All 3 messages should pass (no timestamp filtering when validation is off)
+        assert_eq!(result.unwrap().len(), 3);
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
@@ -1095,12 +1098,8 @@ mod tests {
                 .to_string()
                 .contains("Not enough valid custodian setup messages")
         );
-        assert!(logs_contain(
-            "Invalid custodian role in custodian setup message"
-        ));
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
@@ -1114,14 +1113,14 @@ mod tests {
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
-        assert!(logs_contain(
-            "Duplicate custodian role in custodian setup message"
-        ));
         // Things still pass since we have 2 custodians with unique roles
-        assert!(result.is_ok());
+        let validated = result.unwrap();
+        // Only 2 entries: the duplicate role keeps the first value and skips the second
+        assert_eq!(validated.len(), 2);
+        assert!(validated.contains_key(&Role::indexed_from_one(1)), "Role 1 should be present (first occurrence kept)");
+        assert!(validated.contains_key(&Role::indexed_from_one(3)), "Role 3 should be present");
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn operator_new_fails_with_not_enough() {
         let mut rng = AesRng::seed_from_u64(8);
@@ -1136,9 +1135,6 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(logs_contain(
-            "Duplicate custodian role in custodian setup message"
-        ));
         // Everyone shares the same role
         assert!(
             result

@@ -2704,7 +2704,6 @@ pub mod tests {
     #[tokio::test]
     #[serial_test::serial]
     #[cfg(feature = "slow_tests")]
-    #[kms_test_tracing::traced_test]
     async fn integration_compressed_keygen_from_existing_private_keyset_bk_sns_f4() {
         integration_keygen_from_existing_test_bk_sns::<4>(true).await
     }

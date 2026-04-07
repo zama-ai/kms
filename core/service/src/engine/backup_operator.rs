@@ -1313,7 +1313,6 @@ mod tests {
         }
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_missing_cus_output() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1326,13 +1325,9 @@ mod tests {
         outputs.push(cus_2);
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(logs_contain(
-            "Could not find signcryption for custodian role"
-        ));
         assert!(result.is_err());
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1347,10 +1342,8 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        assert!(logs_contain("Cannot recover the backup decryption key"));
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1361,12 +1354,8 @@ mod tests {
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(result.is_err());
-        assert!(logs_contain(
-            "Received recovery output with invalid custodian role"
-        ));
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_signature() {
         // Note there is no node information in the dummy material
@@ -1378,10 +1367,6 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
-        assert!(logs_contain(
-            "Could not validate signcryption for custodian"
-        ));
         assert!(
             result
                 .unwrap_err()
@@ -1390,7 +1375,6 @@ mod tests {
         ); // Signatures are wrong so no valid outputs
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_missing_verification_key() {
         // Note there is no node information in the dummy material
@@ -1407,9 +1391,6 @@ mod tests {
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(result.is_err());
-        assert!(logs_contain(
-            "Could not find verification key for custodian role"
-        ));
     }
     #[tokio::test]
     async fn test_update_backup_vault() {

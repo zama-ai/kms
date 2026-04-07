@@ -411,7 +411,6 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 /// 4. Verifies the other 3 parties complete successfully
 /// 5. Waits for session timeout, then sends the request to party 3
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
-#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
 #[serial]

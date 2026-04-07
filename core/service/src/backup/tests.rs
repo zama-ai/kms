@@ -24,7 +24,6 @@ use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
 use threshold_types::role::Role;
 
-#[kms_test_tracing::traced_test]
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -64,10 +63,9 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(operator.is_ok());
-        assert!(logs_contain(
-            "Invalid header in custodian setup message from custodian 1"
-        ));
+        let operator = operator.unwrap();
+        // The invalid-header message should have been filtered out
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
     }
 
     // use the wrong timestamp, setup should not fail
@@ -82,10 +80,9 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(operator.is_ok());
-        assert!(logs_contain(
-            "Invalid timestamp in custodian setup message from custodian 2"
-        ));
+        let operator = operator.unwrap();
+        // The invalid-timestamp message should have been filtered out
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
     }
 }
 
@@ -349,7 +346,6 @@ fn full_flow_malicious_custodian_not_enough() {
     );
 }
 
-#[kms_test_tracing::traced_test]
 #[test]
 fn full_flow_malicious_custodian_init() {
     let mut rng = AesRng::seed_from_u64(1337);
@@ -373,6 +369,8 @@ fn full_flow_malicious_custodian_init() {
             custodian_count,
         )
         .unwrap();
+        // Verify the missing custodian was detected (only 4 of 5 accepted)
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
         let res = operator.secret_share_and_signcrypt(
@@ -382,11 +380,6 @@ fn full_flow_malicious_custodian_init() {
         );
         assert!(res.is_ok());
     }
-    // Check that we indeed get a warning about the malicious custodian
-    assert!(logs_contain(
-        "An incorrect amount of custodian messages were received"
-    ));
-    assert!(logs_contain("Could not find custodian keys for role 2"));
 }
 
 #[test]

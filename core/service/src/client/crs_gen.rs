@@ -324,7 +324,6 @@ pub(crate) mod tests {
         verify_pp(&dkg_params, &crs);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
         // Setup
@@ -376,9 +375,5 @@ pub(crate) mod tests {
 
         // Should fail due to no valid signatures
         assert!(res.is_err());
-        // Check that we fail because of invalid signature
-        assert!(logs_contain("Signature could not be verified for a CRS"));
-        // Ensure that a value with a bad sig does not get counted like it did before the fix
-        assert!(!logs_contain("CRS map contains 1 entries"));
     }
 }

@@ -47,7 +47,7 @@
 
 use kms_core_client::*;
 use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use kms_test_tracing::init_logging;
+use observability::test_config::init_test_logging as init_logging;
 use std::path::{Path, PathBuf};
 use tracing::info;
 

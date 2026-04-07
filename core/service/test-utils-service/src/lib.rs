@@ -32,7 +32,7 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
             unsafe {std::env::set_var("RUN_MODE", "integration");}
-            ::kms_test_tracing::init_logging();
+            ::observability::test_config::init_test_logging();
             #fn_block
         }
     };

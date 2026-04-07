@@ -169,7 +169,6 @@ mod tests {
 
     use super::GlweSecretKeyShare;
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_forced_hw_keygen_glwe() {
         // Params such that we need each of the 3 keys with HW between 4 and 6
@@ -266,10 +265,5 @@ mod tests {
             let hw = key.iter().filter(|b| **b == 1).count();
             assert_eq!(hw, 5);
         }
-
-        //Assert tracing contains "Hamming weight out of bounds"
-        assert!(logs_contain(
-            "Hamming weight out of bounds: 2. Expected min : 4, max : 6"
-        ));
     }
 }

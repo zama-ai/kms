@@ -25,20 +25,29 @@ mod tests {
     use super::{anyhow_error_and_log, anyhow_error_and_warn_log};
 
     #[test]
-    #[kms_test_tracing::traced_test]
     fn test_log() {
-        let _ = anyhow_error_and_log("(test_log), msg");
-        assert!(logs_contain("src/lib.rs"));
-        assert!(logs_contain("(test_log), msg"));
-        assert!(logs_contain("Error in"));
+        let err = anyhow_error_and_log("(test_log), msg");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("src/lib.rs"),
+            "expected caller location: {msg}"
+        );
+        assert!(msg.contains("(test_log), msg"), "expected message: {msg}");
+        assert!(msg.contains("Error in"), "expected prefix: {msg}");
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn test_warn_log() {
-        let _ = anyhow_error_and_warn_log("(test_warn_log), msg");
-        assert!(logs_contain("src/lib.rs"));
-        assert!(logs_contain("(test_warn_log), msg"));
-        assert!(logs_contain("Warning in"));
+        let err = anyhow_error_and_warn_log("(test_warn_log), msg");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("src/lib.rs"),
+            "expected caller location: {msg}"
+        );
+        assert!(
+            msg.contains("(test_warn_log), msg"),
+            "expected message: {msg}"
+        );
+        assert!(msg.contains("Warning in"), "expected prefix: {msg}");
     }
 }

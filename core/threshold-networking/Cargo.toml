@@ -51,8 +51,6 @@ tfhe = { workspace = true, features = [
     "integer",
     "zk-pok",
 ] }
-kms-test-tracing.workspace = true
-
 
 
 [build-dependencies]

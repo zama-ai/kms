@@ -343,7 +343,6 @@ async fn secure_threshold_keygen_test_crash_preprocessing() {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[kms_test_tracing::traced_test]
 #[serial]
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(

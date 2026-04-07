@@ -1,10 +1,10 @@
-//! Shared test-logging configuration used by both the `#[traced_test]` capture
-//! harness and the `observability` crate's test-mode subscriber.
+//! Shared test-logging configuration used by the `observability` crate's
+//! test-mode subscriber and integration test helpers.
 
 use std::{
     io,
     sync::{
-        Arc,
+        Arc, Once,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
@@ -215,14 +215,6 @@ where
 
 /// Install a minimal **stderr-only** subscriber using [`test_console_env_filter`].
 ///
-/// This does **not** register the in-memory capture layer that powers
-/// `logs_contain` / `logs_assert` on `#[traced_test]`; for that stack use
-/// [`crate::internal::try_init_traced_test_subscriber`] (or rely on the macro,
-/// which calls [`crate::internal::init_subscriber`] directly).
-///
-/// Workspace convention: integration tests usually call [`crate::init_logging`]
-/// or import [`try_init_test_stderr_subscriber`] from `kms_test_tracing::config`.
-///
 /// Safe to call multiple times: if a global subscriber is already installed,
 /// the underlying `try_init` returns `Err` and that error is ignored.
 pub fn try_init_test_stderr_subscriber() {
@@ -233,8 +225,24 @@ pub fn try_init_test_stderr_subscriber() {
         .try_init()
         && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref())
     {
-        eprintln!("[tracing-test] skipped stderr-only subscriber init: {err}");
+        eprintln!("[observability] skipped stderr-only subscriber init: {err}");
     }
+}
+
+/// Enables test-mode env defaults and initializes stderr test logging once.
+///
+/// This is the shared entry point for integration-style tests to avoid
+/// repeating ad-hoc `Once` guards across crates.
+///
+/// Safe to call multiple times — the `Once` guard runs initialization at most once.
+pub fn init_test_logging() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            std::env::set_var("KMS_TEST_MODE", "1");
+        }
+        try_init_test_stderr_subscriber();
+    });
 }
 
 #[cfg(test)]

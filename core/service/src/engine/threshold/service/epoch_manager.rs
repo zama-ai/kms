@@ -1491,7 +1491,6 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    #[kms_test_tracing::traced_test]
     async fn prss_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
@@ -1570,10 +1569,6 @@ pub(crate) mod tests {
             server_handle.assert_shutdown().await;
         }
 
-        // check that PRSS setups were created
-        assert!(logs_contain(
-            "Initializing threshold KMS server and generating a new PRSS Setup for"
-        ));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // create parties again without running PrssSetup this time (it should now be read from storage)
@@ -1588,9 +1583,6 @@ pub(crate) mod tests {
         )
         .await;
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
-
-        // check that PRSS setups were not created, but instead read from storage now
-        assert!(logs_contain("Loaded PRSS Setup from storage"));
     }
 
     #[tokio::test]

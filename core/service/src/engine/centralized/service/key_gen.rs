@@ -543,7 +543,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[kms_test_tracing::traced_test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_invalid_arg_preproc_id").unwrap();

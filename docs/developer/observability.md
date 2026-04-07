@@ -189,15 +189,10 @@ let result = build_request(payload, request_id, config)
 
 ### Testing
 
-In this repository, test logging is handled by our in-repo `kms-test-tracing`
-crate (workspace path `tools/kms-test-tracing`; distinct from crates.io
-`tracing-test`). It keeps the familiar `#[kms_test_tracing::traced_test]`
-workflow and adds repo-specific controls for console/file logging. In practice,
-use one of these two paths:
-
-- `#[kms_test_tracing::traced_test]` for log assertions (`logs_contain`, `logs_assert`)
-- `#[integration_test]` / `kms_test_tracing::init_logging()` for
-  integration-style stderr output
+Test logging is handled by the `observability` crate's `test_config` module.
+Call `observability::test_config::init_test_logging()` at the start of tests
+that need logging output. The logging configuration supports repo-specific
+controls for console/file logging via environment variables.
 
 Filter resolution is "first match wins", per output:
 
