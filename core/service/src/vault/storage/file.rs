@@ -251,7 +251,9 @@ impl StorageReaderExt for FileStorage {
         &self,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
-        all_data_ids_from_all_epochs_impl(self, data_type).await
+        all_data_ids_from_all_epochs_impl(self, data_type)
+            .await
+            .map(|(ids, _)| ids)
     }
 
     async fn load_bytes_at_epoch(
@@ -553,7 +555,6 @@ pub mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         // Setup temporary directory and storage
@@ -562,9 +563,6 @@ pub mod tests {
         let mut storage = FileStorage::new(Some(path), StorageType::PUB, None).unwrap();
         test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut storage).await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]
@@ -591,16 +589,12 @@ pub mod tests {
         test_store_load_bytes_at_epoch(&mut storage).await;
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_store_bytes_at_epoch_does_not_overwrite(&mut storage).await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]

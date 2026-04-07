@@ -720,6 +720,7 @@ impl<
                         }
                         .boxed(),
                     );
+
                     fhe_key_infos.push(info);
                 }
             }

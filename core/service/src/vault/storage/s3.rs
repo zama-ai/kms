@@ -329,7 +329,9 @@ impl StorageReaderExt for S3Storage {
         &self,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
-        all_data_ids_from_all_epochs_impl(self, data_type).await
+        all_data_ids_from_all_epochs_impl(self, data_type)
+            .await
+            .map(|(ids, _)| ids)
     }
 
     async fn load_bytes_at_epoch(
@@ -699,7 +701,6 @@ mod tests {
         test_batch_helper_methods(&mut pub_storage).await;
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_epoch_methods_in_s3() {
         let mut priv_storage =
@@ -718,7 +719,6 @@ mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         let mut pub_storage = create_s3_storage(
@@ -728,9 +728,6 @@ mod tests {
         .await;
         test_store_bytes_does_not_overwrite_existing_bytes(&mut pub_storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut pub_storage).await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]
@@ -780,7 +777,6 @@ mod tests {
             .await;
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
         let mut priv_storage = create_s3_storage(
@@ -792,9 +788,6 @@ mod tests {
             &mut priv_storage,
         )
         .await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]

@@ -41,7 +41,6 @@ fn dummy_info() -> KeyGenMetadata {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
@@ -66,7 +65,7 @@ async fn write_crs() {
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // writing to an empty meta store should fail
-    crypto_storage
+    let result = crypto_storage
         .write_crs_with_meta_store(
             &req_id,
             &default_epoch_id,
@@ -76,6 +75,7 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
+    assert!(result.is_err(), "expected error when meta store is empty");
 
     // update the meta store and we should be ok
     {
@@ -83,7 +83,7 @@ async fn write_crs() {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap();
     }
-    crypto_storage
+    let result = crypto_storage
         .write_crs_with_meta_store(
             &req_id,
             &default_epoch_id,
@@ -93,9 +93,11 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
+    assert!(result.is_ok(), "expected success: {result:?}");
+
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
-    crypto_storage
+    let result = crypto_storage
         .write_crs_with_meta_store(
             &req_id,
             &default_epoch_id,
@@ -105,6 +107,7 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
+    assert!(result.is_err(), "expected error on double write");
 
     // writing on a failed storage device should fail
     {
@@ -112,7 +115,7 @@ async fn write_crs() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_crs_2").unwrap();
-    crypto_storage
+    let result = crypto_storage
         .write_crs_with_meta_store(
             &new_req_id,
             &default_epoch_id,
@@ -122,8 +125,7 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
-    assert!(logs_contain("storage failed!"));
-    assert!(logs_contain("Deleted all crs material for request"));
+    assert!(result.is_err(), "expected storage failure error");
 
     // check the meta store is correct
     {
@@ -172,7 +174,6 @@ async fn read_public_key() {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn write_central_keys() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
@@ -212,7 +213,7 @@ async fn write_central_keys() {
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // write to an empty meta store should fail
-    crypto_storage
+    let result = crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
             &epoch_id,
@@ -221,8 +222,7 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    assert!(!logs_contain("storage failed!"));
-    assert!(logs_contain("Deleted all key material for request"));
+    assert!(result.is_err(), "expected error when meta store is empty");
 
     // update the meta store and the write should be ok
     {
@@ -230,7 +230,7 @@ async fn write_central_keys() {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap();
     }
-    crypto_storage
+    let result = crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
             &epoch_id,
@@ -239,10 +239,11 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
+    assert!(result.is_ok(), "expected success: {result:?}");
 
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
-    crypto_storage
+    let result = crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
             &epoch_id,
@@ -251,8 +252,7 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    // Check that the approach fails with the expected error message
-    assert!(logs_contain("while updating PK meta store for"));
+    assert!(result.is_err(), "expected error on double write");
 
     // write on a failed storage device should fail
     {
@@ -260,7 +260,7 @@ async fn write_central_keys() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_central_keys_2").unwrap();
-    crypto_storage
+    let result = crypto_storage
         .write_centralized_keys_with_meta_store(
             &new_req_id,
             &epoch_id,
@@ -269,8 +269,7 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    assert!(logs_contain("storage failed!"));
-    assert!(logs_contain("Deleted all key material for request"));
+    assert!(result.is_err(), "expected storage failure error");
 
     // check the meta store is correct
     {
@@ -281,7 +280,6 @@ async fn write_central_keys() {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn write_threshold_empty_update() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
@@ -290,18 +288,8 @@ async fn write_threshold_empty_update() {
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
-    // Check no errors happened
-    assert!(!logs_contain(&format!(
-        "while updating meta store for {req_id}"
-    )));
-    assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {req_id}"
-    )));
-    assert!(!logs_contain(&format!(
-        "Failed to ensure existance of threshold key material for {req_id}."
-    )));
     // write to an empty meta store should fail
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
@@ -310,8 +298,7 @@ async fn write_threshold_empty_update() {
             meta_store.clone(),
         )
         .await;
-    // Check that the expected error happened
-    assert!(logs_contain("while updating meta store for"));
+    assert!(result.is_err(), "expected error when meta store is empty");
 
     // update the meta store and the write should be ok
     {
@@ -319,7 +306,7 @@ async fn write_threshold_empty_update() {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap();
     }
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
@@ -328,6 +315,7 @@ async fn write_threshold_empty_update() {
             meta_store.clone(),
         )
         .await;
+    assert!(result.is_ok(), "expected success: {result:?}");
 
     // check the meta store is correct
     {
@@ -337,7 +325,6 @@ async fn write_threshold_empty_update() {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_meta_update() {
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
@@ -352,7 +339,7 @@ async fn write_threshold_keys_meta_update() {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap();
     }
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
@@ -361,17 +348,7 @@ async fn write_threshold_keys_meta_update() {
             meta_store.clone(),
         )
         .await;
-    // Check that no errors were logged
-    assert!(!logs_contain(&format!(
-        "while updating meta store for {req_id}"
-    )));
-    assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {req_id}"
-    )));
-    assert!(logs_contain(&format!(
-        "Finished storing key for Key Id {req_id}."
-    )));
-
+    assert!(result.is_ok(), "expected success: {result:?}");
     // check the meta store is correct
     {
         let guard = meta_store.read().await;
@@ -379,7 +356,7 @@ async fn write_threshold_keys_meta_update() {
     }
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
@@ -388,11 +365,10 @@ async fn write_threshold_keys_meta_update() {
             meta_store.clone(),
         )
         .await;
-    assert!(logs_contain("while updating meta store for"));
+    assert!(result.is_err(), "expected error on double write");
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_failed_storage() {
     let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
@@ -408,7 +384,7 @@ async fn write_threshold_keys_failed_storage() {
         let mut guard = meta_store.write().await;
         guard.insert(&req_id).unwrap();
     }
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
@@ -417,16 +393,7 @@ async fn write_threshold_keys_failed_storage() {
             meta_store.clone(),
         )
         .await;
-    // Check that no errors were logged
-    assert!(!logs_contain(&format!(
-        "while updating meta store for {req_id}"
-    )));
-    assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {req_id}"
-    )));
-    assert!(logs_contain(&format!(
-        "Finished storing key for Key Id {req_id}."
-    )));
+    assert!(result.is_ok(), "expected success: {result:?}");
 
     // check the meta store is correct
     {
@@ -440,7 +407,7 @@ async fn write_threshold_keys_failed_storage() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
-    crypto_storage
+    let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
             &epoch_id,
@@ -449,8 +416,7 @@ async fn write_threshold_keys_failed_storage() {
             meta_store.clone(),
         )
         .await;
-    // Check that no errors were logged
-    assert!(!logs_contain("while updating meta store for {new_req_id}"));
+    assert!(result.is_err(), "expected storage failure error");
 
     // check the meta store is correct
     {
@@ -461,7 +427,6 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn read_guarded_threshold_fhe_keys_not_found() {
     let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
     let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
@@ -495,7 +460,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 }
 
 #[tokio::test]
-#[kms_test_tracing::traced_test]
 async fn read_guarded_crypto_material_from_cache_not_found() {
     let key_id = derive_request_id("read_guarded_crypto_material_from_cache_not_found").unwrap();
     let epoch_id: EpochId =

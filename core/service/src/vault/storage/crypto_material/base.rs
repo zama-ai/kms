@@ -260,7 +260,8 @@ where
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         fhe_keys_cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
-    ) where
+    ) -> anyhow::Result<()>
+    where
         T: PrivateKeyMaterialMetadata + Serialize + Versionize + Named + Send + Sync + Clone,
         for<'a> <T as Versionize>::Versioned<'a>: Send + Sync,
     {
@@ -379,9 +380,6 @@ where
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
 
         let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
-        if let Err(e) = &meta_update_result {
-            tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
-        }
 
         if r1 && r2 && r3 && meta_update_result.is_ok() {
             // Update fhe_keys cache (no pk_cache update for compressed keys)
@@ -402,9 +400,14 @@ where
                 }
             }
             tracing::info!("Finished storing compressed key for Key Id {key_id}.");
+            Ok(())
         } else {
             self.purge_key_material(key_id, epoch_id, kms_type, guarded_meta_storage)
                 .await;
+            if !r1 || !r2 || !r3 {
+                anyhow::bail!("Storage write failed for compressed key {key_id}");
+            }
+            Err(meta_update_result.unwrap_err())
         }
     }
 
@@ -536,6 +539,7 @@ where
     /// Write the CRS to the storage backend.
     /// On failure, the meta_store is used to purge dangling data.
     /// On success, the meta_store is NOT updated; the caller is responsible for that.
+    /// Returns `true` if the write succeeded, `false` if any sub-operation failed.
     pub(crate) async fn inner_write_crs<T: Clone>(
         &self,
         crs_id: &RequestId,
@@ -543,7 +547,7 @@ where
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) {
+    ) -> bool {
         let (r1, r2, r3) = {
             // Enforce locking order for internal types
             let mut pub_storage = self.public_storage.lock().await;
@@ -628,7 +632,9 @@ where
             let guarded_meta_store = meta_store.write().await;
             self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
                 .await;
+            return false;
         }
+        true
     }
 
     /// Write the CRS to the storage backend as well as the cache,
@@ -636,6 +642,8 @@ where
     ///
     /// When calling this function more than once, the same [meta_store]
     /// must be used, otherwise the storage state may become inconsistent.
+    ///
+    /// Returns `Ok(())` on success, or `Err` if storage writes or the meta-store update failed.
     pub async fn write_crs_with_meta_store(
         &self,
         crs_id: &RequestId,
@@ -644,15 +652,21 @@ where
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
-    ) {
+    ) -> anyhow::Result<()> {
         let info = crs_info.clone();
-        self.inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
+        let storage_ok = self
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
             .await;
-
-        // Not much we can do if this fails
-        // Note: it will fail if inner_write_crs failed
-        let _ =
+        if !storage_ok {
+            anyhow::bail!("Storage write failed for CRS {crs_id}");
+        }
+        let meta_ok =
             update_ok_req_in_meta_store(&mut meta_store.write().await, crs_id, info, op_metric_tag);
+        if meta_ok {
+            Ok(())
+        } else {
+            anyhow::bail!("Error while updating meta store for {crs_id}")
+        }
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].

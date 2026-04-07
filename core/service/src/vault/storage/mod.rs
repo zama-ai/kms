@@ -61,11 +61,14 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
-/// Return all URLs stored of a specific data type
+/// Return all URLs stored of a specific data type.
+/// Returns `(ids, had_inconsistency)` where `had_inconsistency` is `true` when
+/// both epoch-aware and non-epoch paths contained data for the same `data_type`
+/// (indicative of a storage migration artifact).
 pub(crate) async fn all_data_ids_from_all_epochs_impl(
     storage: &impl StorageReaderExt,
     data_type: &str,
-) -> anyhow::Result<HashSet<RequestId>> {
+) -> anyhow::Result<(HashSet<RequestId>, bool)> {
     // First, get IDs from non-epoch path using StorageReader's implementation
     let ids_from_non_epoch_storage = storage.all_data_ids(data_type).await?;
 
@@ -79,11 +82,11 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
 
     if ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
         // Both are empty, return empty set
-        Ok(HashSet::new())
+        Ok((HashSet::new(), false))
     } else if ids_from_non_epoch_storage.is_empty() && !ids_from_epoch_storage.is_empty() {
-        Ok(ids_from_epoch_storage)
+        Ok((ids_from_epoch_storage, false))
     } else if !ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
-        Ok(ids_from_non_epoch_storage)
+        Ok((ids_from_non_epoch_storage, false))
     } else {
         // when both are non empty, then we have some inconsistency
         // there is no correct set to return and returning the union is also problematic
@@ -93,7 +96,7 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
             ids_from_epoch_storage.len(),
             data_type
         );
-        Ok(ids_from_epoch_storage)
+        Ok((ids_from_epoch_storage, true))
     }
 }
 
@@ -882,7 +885,6 @@ pub mod tests {
         storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
-    #[kms_test_tracing::traced_test]
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
         let mut rng = AesRng::seed_from_u64(98765);
         let epoch1 = EpochId::new_random(&mut rng);
@@ -952,19 +954,21 @@ pub mod tests {
         assert!(ids.contains(&id4));
         assert!(ids.contains(&id5));
 
-        // Case 3: Data in both epoch and non-epoch storage (should produce warning and only return epoched data)
+        // Case 3: Data in both epoch and non-epoch storage (should detect inconsistency and only return epoched data)
         storage
             .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
             .await
             .unwrap();
 
-        let ids = storage
-            .all_data_ids_from_all_epochs(&data_type)
+        let (ids, had_inconsistency) = all_data_ids_from_all_epochs_impl(storage, &data_type)
             .await
             .unwrap();
         assert_eq!(ids.len(), 1);
         assert!(ids.contains(&id1));
-        assert!(logs_contain("inconsistent storage"));
+        assert!(
+            had_inconsistency,
+            "Expected inconsistency flag when both epoch and non-epoch data exist"
+        );
 
         // Clean up
         storage
@@ -1084,7 +1088,6 @@ pub mod tests {
     /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
     /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
     /// `key_id` is used in both locations.
-    #[kms_test_tracing::traced_test]
     pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
         storage: &mut S,
     ) {
@@ -1188,13 +1191,15 @@ pub mod tests {
         assert!(epoch2_data_ids.contains(&shared_key_id));
 
         // --- Verify that all_data_ids_from_all_epochs detects the inconsistency ---
-        // Since we have data in both epoch and non-epoch storage, this should produce a warning return the epoched data
-        let ids = storage
-            .all_data_ids_from_all_epochs(&data_type)
+        // Since we have data in both epoch and non-epoch storage, this should return the epoched data and flag the inconsistency
+        let (ids, had_inconsistency) = all_data_ids_from_all_epochs_impl(storage, &data_type)
             .await
             .unwrap();
         assert_eq!(ids, epoch1_data_ids);
-        assert!(logs_contain("inconsistent storage"));
+        assert!(
+            had_inconsistency,
+            "Expected inconsistency flag when both epoch and non-epoch data exist"
+        );
 
         // --- Clean up ---
         storage
