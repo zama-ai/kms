@@ -38,6 +38,7 @@ use crate::{
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
+use kms_grpc::ContextId;
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
@@ -98,6 +99,7 @@ where
         &self,
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+        _mpc_context: &ContextId,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
@@ -148,14 +150,14 @@ where
         RecoveryValidationMaterial,
         HashMap<Role, InternalCustodianRecoveryOutput>,
     )> {
-        let context_id = parse_optional_grpc_request_id(
+        let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
         let recovery_material = {
             load_recovery_validation_material(
                 &self.crypto_storage.get_public_storage(),
-                &context_id,
+                &custodian_context_id,
                 &self.base_kms.verf_key(),
             )
             .await?
@@ -181,7 +183,7 @@ where
             ));
         }
 
-        Ok((context_id, recovery_material, parsed_custodian_rec))
+        Ok((custodian_context_id, recovery_material, parsed_custodian_rec))
     }
 }
 
@@ -306,7 +308,11 @@ where
             ));
         }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
-            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
+            .gen_outer_recovery_request(
+                backup_id,
+                recovery_material.payload.cts,
+                &recovery_material.payload.mpc_context,
+            )
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -516,17 +522,20 @@ where
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
-    context_id: &RequestId,
-    verf_key: &PublicSigKey,
+    custodian_context_id: &RequestId,
+    verf_key: &Arc<PublicSigKey>,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,
 {
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
-        .read_data(context_id, &PubDataType::RecoveryMaterial.to_string())
+        .read_data(
+            custodian_context_id,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
         .await?;
-    if &recovery_material.custodian_context().context_id != context_id {
+    if &recovery_material.custodian_context().context_id != custodian_context_id {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
     if !recovery_material.validate(verf_key) {

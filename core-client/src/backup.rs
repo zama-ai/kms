@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use aes_prng::AesRng;
 use hashing::{DomainSep, hash_element};
 use kms_grpc::{
-    RequestId,
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
         CustodianRecoveryRequest, Empty, NewCustodianContextRequest, OperatorBackupOutput,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
+    ContextId, RequestId,
 };
 use kms_lib::{
     backup::{
@@ -67,8 +67,9 @@ pub(crate) async fn do_new_custodian_context(
     rng: &mut AesRng,
     threshold: u32,
     custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
+    mpc_context_id: ContextId,
 ) -> anyhow::Result<RequestId> {
-    let context_id = RequestId::new_random(rng);
+    let custodian_context_id = RequestId::new_random(rng);
     let mut req_tasks = JoinSet::new();
     let mut custodian_nodes = Vec::new();
     for cur_setup in custodian_setup_msg {
@@ -76,16 +77,18 @@ pub(crate) async fn do_new_custodian_context(
     }
     let new_context = CustodianContext {
         custodian_nodes,
-        context_id: Some(context_id.into()),
+        custodian_context_id: Some(custodian_context_id.into()),
         threshold,
     };
     for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
+        let mpc_context_id_cloned = mpc_context_id.clone();
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    new_context: Some(new_context_cloned),
+                    new_custodian_context: Some(new_context_cloned),
+                    mpc_context_id: Some(mpc_context_id_cloned.into()),
                 }))
                 .await
         });
@@ -94,7 +97,7 @@ pub(crate) async fn do_new_custodian_context(
         let _ = inner??;
     }
 
-    Ok(context_id)
+    Ok(custodian_context_id)
 }
 
 pub(crate) async fn do_custodian_recovery_init(
@@ -123,7 +126,7 @@ pub(crate) async fn do_custodian_recovery_init(
         let cur_inner_rec = cur_rec_req?.into_inner();
         res.push((core_conf, cur_inner_rec.try_into()?));
     }
-    res.sort_by_key(|(core_conf, _)| core_conf.party_id);
+    res.sort_by(|a, b| a.0.party_id.cmp(&b.0.party_id));
 
     Ok(res.into_iter().map(|(_, v)| v).collect())
 }
@@ -134,12 +137,19 @@ pub(crate) async fn do_custodian_backup_recovery(
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
+    let pivot_mpc_context_id = custodian_recovery_outputs
+        .get(0)
+        .ok_or_else(|| anyhow::anyhow!("At least one custodian recovery output is required"))?
+        .mpc_context_id;
+    if custodian_recovery_outputs
+        .iter()
+        .any(|output| output.mpc_context_id != pivot_mpc_context_id)
+    {
+        anyhow::bail!("All custodian recovery outputs must have the same MPC context ID");
+    }
     // fetch the public keys of operators
-    // order of the verf keys will match the order of the
-    // core endpoints in the core-client config file
     let verf_keys = fetch_kms_verification_keys(sim_conf).await?;
     let mut req_tasks = JoinSet::new();
-    // TODO(zama-ai/kms-internal#2837)
     // we should change the key in the [core_endpoints] hashmap to be the verification key
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
@@ -160,6 +170,7 @@ pub(crate) async fn do_custodian_backup_recovery(
                     operator_verification_key: cur_recover
                         .operator_verification_key
                         .to_legacy_bytes()?,
+                    mpc_context_id: Some(pivot_mpc_context_id.into()),
                 });
             }
         }

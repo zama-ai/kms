@@ -123,22 +123,43 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
-        let inner = request.into_inner().new_context.ok_or_else(|| {
+        let inner = request.into_inner();
+        let mpc_context_id: ContextId = inner
+            .mpc_context_id
+            .ok_or_else(|| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("mpc_context_id is required in NewCustodianContextRequest"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?
+            .try_into()
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    None,
+                    anyhow::anyhow!("Failed to parse mpc_context_id: {}", e),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+        let custodian_context = inner.new_custodian_context.ok_or_else(|| {
             MetricedError::new(
                 OP_NEW_CUSTODIAN_CONTEXT,
                 None,
-                anyhow::anyhow!("new_context is required in NewCustodianContextRequest"),
+                anyhow::anyhow!("new_custodian_context is required in NewCustodianContextRequest"),
                 tonic::Code::InvalidArgument,
             )
         })?;
         tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
-            inner.context_id,
-            inner.threshold,
-            inner.custodian_nodes.len()
+            "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
+            mpc_context_id,
+            custodian_context.custodian_context_id,
+            custodian_context.threshold,
+            custodian_context.custodian_nodes.len()
         );
 
-        self.inner_new_custodian_context(inner.clone())
+        self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
@@ -221,7 +242,11 @@ where
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
-    async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
+    async fn inner_new_custodian_context(
+        &self,
+        context: CustodianContext,
+        mpc_context_id: ContextId,
+    ) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
@@ -238,6 +263,7 @@ where
             self.base_kms.sig_key()?.as_ref(),
             backup_dec_key,
             &inner_context,
+            mpc_context_id,
         )
         .await?;
 
@@ -949,6 +975,7 @@ async fn gen_recovery_validation(
     sig_key: &PrivateSigKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
+    mpc_context_id: ContextId,
 ) -> anyhow::Result<RecoveryValidationMaterial> {
     let operator = Operator::new_for_sharing(
         custodian_context
@@ -977,6 +1004,7 @@ async fn gen_recovery_validation(
         commitments,
         custodian_context.to_owned(),
         sig_key,
+        mpc_context_id,
     )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
@@ -1575,11 +1603,13 @@ mod tests {
             let first_context_id = RequestId::from_bytes([4u8; 32]);
             let first_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
-                context_id: Some(first_context_id.into()),
+                custodian_context_id: Some(first_context_id.into()),
                 threshold: threshold as u32,
             };
+            let mpc_context_id = ContextId::from_bytes([7u8; 32]);
             let request = Request::new(NewCustodianContextRequest {
-                new_context: Some(first_context),
+                new_custodian_context: Some(first_context),
+                mpc_context_id: Some(mpc_context_id.into()),
             });
             let session_maker = SessionMaker::four_party_dummy_session(
                 None,
@@ -1655,12 +1685,14 @@ mod tests {
         // Make a new context so we can delete the old one
         {
             // First try to do it with the same context ID (should fail)
+            let mpc_context_id = ContextId::from_bytes([7u8; 32]);
             let request = Request::new(NewCustodianContextRequest {
-                new_context: Some(CustodianContext {
+                new_custodian_context: Some(CustodianContext {
                     custodian_nodes: setup_msgs.clone(),
-                    context_id: Some(first_context_id.into()),
+                    custodian_context_id: Some(first_context_id.into()),
                     threshold: threshold as u32,
                 }),
+                mpc_context_id: Some(mpc_context_id.into()),
             });
             let response = context_manager.new_custodian_context(request).await;
             // Should fail since the same ID is used
@@ -1670,11 +1702,12 @@ mod tests {
             let second_context_id = RequestId::from_bytes([42u8; 32]);
             let second_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
-                context_id: Some(second_context_id.into()),
+                custodian_context_id: Some(second_context_id.into()),
                 threshold: threshold as u32,
             };
             let request = Request::new(NewCustodianContextRequest {
-                new_context: Some(second_context),
+                new_custodian_context: Some(second_context),
+                mpc_context_id: Some(mpc_context_id.into()),
             });
 
             let response = context_manager.new_custodian_context(request).await;
@@ -1737,16 +1770,18 @@ mod tests {
                 setup_msg_2.try_into().unwrap(),
                 setup_msg_3.try_into().unwrap(),
             ],
-            context_id: Some(backup_id.into()),
+            custodian_context_id: Some(backup_id.into()),
             threshold: 1,
         };
         let internal_context =
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
+        let mpc_context_id = ContextId::from_bytes([7u8; 32]);
         let recovery_material = gen_recovery_validation(
             &mut rng,
             &server_sig_key,
             backup_dec_key.clone(),
             &internal_context,
+            mpc_context_id,
         )
         .await
         .unwrap();

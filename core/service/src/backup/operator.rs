@@ -28,8 +28,8 @@ use algebra::{
 };
 use hashing::DomainSep;
 use kms_grpc::{
-    RequestId,
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
+    ContextId, RequestId,
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -283,6 +283,7 @@ impl RecoveryValidationMaterial {
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
+        mpc_context: ContextId,
     ) -> anyhow::Result<Self> {
         if custodian_context.custodian_nodes.len() != cts.len() {
             return Err(anyhow::anyhow!(
@@ -304,6 +305,7 @@ impl RecoveryValidationMaterial {
             cts,
             commitments,
             custodian_context,
+            mpc_context,
         };
         let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
@@ -387,6 +389,8 @@ pub struct RecoveryValidationMaterialPayload {
     pub commitments: BTreeMap<Role, Vec<u8>>,
     /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
+    /// The MPC context used when constructing the backup (i.e. identifying the verification key of the operator)
+    pub mpc_context: ContextId,
 }
 impl Named for RecoveryValidationMaterialPayload {
     const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
@@ -842,7 +846,7 @@ mod tests {
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
+    use kms_grpc::{identifiers::ContextId, kms::v1::{CustodianContext, CustodianSetupMessage}};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
 
@@ -895,14 +899,20 @@ mod tests {
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: Some(backup_id.into()),
+            custodian_context_id: Some(backup_id.into()),
             threshold: 1,
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
-        let rvm =
-            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
-                .unwrap();
+        let mpc_context = ContextId::from_bytes([7u8; 32]);
+        let rvm = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            mpc_context,
+        )
+        .unwrap();
         assert!(rvm.validate(&verf_key));
     }
 
