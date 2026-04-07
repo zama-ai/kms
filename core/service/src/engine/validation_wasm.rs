@@ -19,7 +19,6 @@ use crate::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
     },
-    some_or_err,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
@@ -71,6 +70,9 @@ const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
 const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
     "Extra data mismatch in user decryption";
+const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in user decryption";
+const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
+    "Not enough correct responses to user-decrypt the data!";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 pub(crate) fn check_ext_user_decryption_signature(
@@ -307,20 +309,17 @@ fn select_most_common_user_dec(
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(Some(payloads))` — More than `degree` responses passed validation;
+/// * `Ok(payloads)` — More than `degree` responses passed validation;
 ///   `payloads` contains the verified [`UserDecryptionResponsePayload`]s
 ///   (pivot first, then the remaining valid responses).
-/// * `Ok(None)` — Validation could not succeed: either no responses were
-///   provided, no majority-vote pivot was found, or too few responses survived
-///   signature / metadata checks to exceed the degree threshold.
+///   The caller should check if the list is empty.
 /// * `Err(_)` — An unrecoverable error occurred during validation
 fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
+) -> anyhow::Result<VerifiedUserDecryptionPayloads> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no responses");
-        return Ok(None);
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NO_RESP);
     }
     if trusted_ctx.server_addresses.is_empty() {
         anyhow::bail!("No servers configured in trusted user decryption context");
@@ -453,11 +452,9 @@ fn validate_user_decrypt_responses(
     }
 
     if resp_parsed_payloads.len() <= pivot_payload.degree as usize {
-        tracing::warn!("Not enough correct responses to user-decrypt the data!");
-        Ok(None)
-    } else {
-        Ok(Some(VerifiedUserDecryptionPayloads(resp_parsed_payloads)))
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
+    Ok(VerifiedUserDecryptionPayloads(resp_parsed_payloads))
 }
 
 /// Validates the aggregated user decryption responses received from the servers
@@ -481,11 +478,14 @@ pub(crate) fn validate_user_decrypt_responses_against_request(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
 ) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
-    let resp_parsed = some_or_err(
-        validate_user_decrypt_responses(trusted_ctx, agg_resp)?,
-        "Could not validate the aggregated responses".to_string(),
-    )?;
+    let resp_parsed = validate_user_decrypt_responses(trusted_ctx, agg_resp)?;
+    if resp_parsed.as_slice().is_empty() {
+        anyhow::bail!("VerifiedUserDecryptionPayloads is empty")
+    }
+
     let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
+
+    // Only index into the pivot if we've checked that the slice is not empty earlier
     let pivot_resp = &resp_parsed.as_slice()[0];
     if expected_link != pivot_resp.digest {
         tracing::warn!("The user decryption response is not linked to the correct request");
@@ -519,7 +519,8 @@ mod tests {
         dummy_domain,
         engine::validation_wasm::{
             ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
-            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
+            ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
         },
     };
 
@@ -527,7 +528,8 @@ mod tests {
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
-        ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE, Eip712VerificationParams,
+        ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
         UserDecTrustedValidationContext, check_ext_user_decryption_signature,
         select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
         validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
@@ -1128,7 +1130,6 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 4
@@ -1144,19 +1145,19 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 3 // instead of 4
             );
         }
 
-        // empty responses, should return None
+        // empty responses, should return error
         {
             assert!(
                 validate_user_decrypt_responses(&trusted_ctx, &[])
-                    .unwrap()
-                    .is_none()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_NO_RESP)
             );
         }
 
@@ -1173,7 +1174,6 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 2
@@ -1186,14 +1186,15 @@ mod tests {
             let mut bad_resp2 = resp2.clone();
             bad_resp2.payload = None; // no payload here, cannot be used for pivot
             let mut bad_resp3 = resp3.clone();
-            bad_resp3.payload.as_mut().unwrap().party_id = 2; // payload, but with wrong party ID (i.e. not matching its key) here, otherwise good as pivot
+            bad_resp3.payload.as_mut().unwrap().digest[0] ^= 1; // corrupt digest so it can't match for pivot
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
             assert!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
-                    .is_none()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Cannot find user decryption pivot")
             );
         }
 
@@ -1205,7 +1206,6 @@ mod tests {
 
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
                     .unwrap()
                     .as_slice()
                     .len(),
@@ -1265,7 +1265,6 @@ mod tests {
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
-                    .unwrap()
                     .as_slice()
                     .len(),
                 2
@@ -1311,12 +1310,27 @@ mod tests {
             run_with_customized_resp2(3, vec![1, 2, 3, 4], &vk, 1);
         }
 
+        // not enough correct responses: exactly `degree` valid ones should error
+        // resp1 is valid but bad_resp2 fails signature check due to wrong extra_data,
+        // leaving only 1 valid response which equals degree (1), triggering the bail
+        {
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.extra_data = vec![0];
+            let agg_resp = vec![resp1.clone(), bad_resp2];
+
+            assert!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP)
+            );
+        }
+
         // happy path
         {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
                     .unwrap()
                     .as_slice()
                     .len(),
