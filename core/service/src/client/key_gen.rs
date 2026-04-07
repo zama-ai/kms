@@ -384,9 +384,9 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<S>> {
         let mut key_digests = key_gen_result.key_digests.clone();
-
+        let key_type_s = key_type.to_string();
         let key_digest = key_digests
-            .extract_if(.., |kd| kd.key_type == key_type.to_string())
+            .extract_if(.., |kd| kd.key_type == key_type_s)
             .next()
             .ok_or_else(|| {
                 anyhow::anyhow!("Key type {key_type} not found in key generation result")
