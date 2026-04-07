@@ -1438,17 +1438,20 @@ pub(crate) mod tests {
         },
         cryptography::signatures::gen_sig_keys,
         engine::base::{BaseKmsStruct, derive_request_id},
+        engine::threshold::service::session::PRSSSetupCombined,
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
             StorageType,
             file::FileStorage,
             ram::{self, RamStorage},
+            read_all_data_versioned,
         },
     };
     use aes_prng::AesRng;
     use kms_grpc::{
+        RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::KMSType,
+        rpc_types::{KMSType, PrivDataType},
     };
     use rand::SeedableRng;
     use threshold_execution::{
@@ -1571,11 +1574,25 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
+        // Structural check: PRSS must be on disk after the first run (persisted by PrssSetup).
+        let prss_after_first: std::collections::HashMap<RequestId, PRSSSetupCombined> =
+            read_all_data_versioned(
+                &priv_storage[0],
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        let default_epoch_as_req: RequestId = (*DEFAULT_EPOCH_ID).into();
+        assert!(
+            prss_after_first.contains_key(&default_epoch_as_req),
+            "expected PRSS for default epoch in party-0 private storage after first run"
+        );
+
         // create parties again without running PrssSetup this time (it should now be read from storage)
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
-            pub_storage,
-            priv_storage,
+            pub_storage.clone(),
+            priv_storage.clone(),
             vaults2,
             false,
             None,
@@ -1583,6 +1600,23 @@ pub(crate) mod tests {
         )
         .await;
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
+
+        for server_handle in server_handles.into_values() {
+            server_handle.assert_shutdown().await;
+        }
+
+        // Second startup must not regenerate PRSS on disk (load-from-storage path only).
+        let prss_after_second: std::collections::HashMap<RequestId, PRSSSetupCombined> =
+            read_all_data_versioned(
+                &priv_storage[0],
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            prss_after_first, prss_after_second,
+            "PRSS in storage must be unchanged after second server run (no silent regeneration)"
+        );
     }
 
     #[tokio::test]

@@ -373,7 +373,14 @@ pub(crate) mod tests {
             )
             .await;
 
-        // Should fail due to no valid signatures
-        assert!(res.is_err());
+        // Should fail due to no valid signatures — CRS must not be counted as agreed.
+        let err = res.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("logic error: hash_counter_map is empty")
+                || msg.contains("Not enough signatures on CRS results")
+                || msg.contains("No consensus on CRS digest"),
+            "unexpected error message: {msg}"
+        );
     }
 }
