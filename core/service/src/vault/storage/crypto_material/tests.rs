@@ -2,15 +2,15 @@ use crate::{
     consts::DEFAULT_EPOCH_ID,
     cryptography::signatures::gen_sig_keys,
     dummy_domain,
-    engine::base::{derive_request_id, KeyGenMetadata},
+    engine::base::{KeyGenMetadata, derive_request_id},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::PubDataType, EpochId, RequestId};
+use kms_grpc::{EpochId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
+use tfhe::{CompactPublicKey, ConfigBuilder, ServerKey, shortint::ClassicPBSParameters};
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
@@ -41,7 +41,7 @@ fn dummy_info() -> KeyGenMetadata {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
@@ -172,7 +172,7 @@ async fn read_public_key() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_central_keys() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
@@ -281,7 +281,7 @@ async fn write_central_keys() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_empty_update() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
@@ -337,7 +337,7 @@ async fn write_threshold_empty_update() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_meta_update() {
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
@@ -392,7 +392,7 @@ async fn write_threshold_keys_meta_update() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_failed_storage() {
     let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
@@ -461,7 +461,7 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn read_guarded_threshold_fhe_keys_not_found() {
     let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
     let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
@@ -495,7 +495,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn read_guarded_crypto_material_from_cache_not_found() {
     let key_id = derive_request_id("read_guarded_crypto_material_from_cache_not_found").unwrap();
     let epoch_id: EpochId =

@@ -10,9 +10,9 @@ use crate::engine::threshold::service::RealThresholdKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
 use crate::vault::storage::file::FileStorage;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::RequestId;
 #[cfg(feature = "slow_tests")]
 use serial_test::serial;
 use threshold_networking::grpc::GrpcServer;
@@ -80,9 +80,11 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
-    assert!(dec_res
-        .iter()
-        .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound));
+    assert!(
+        dec_res
+            .iter()
+            .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound)
+    );
 
     // Check core service health for server 1
     let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
@@ -206,9 +208,11 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
     // Check both services are no longer reachable
-    assert!(get_status(&mut core_health_client, core_service_name)
-        .await
-        .is_err());
+    assert!(
+        get_status(&mut core_health_client, core_service_name)
+            .await
+            .is_err()
+    );
     assert!(
         get_status(&mut threshold_health_client, threshold_service_name)
             .await
@@ -407,7 +411,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 /// 4. Verifies the other 3 parties complete successfully
 /// 5. Waits for session timeout, then sends the request to party 3
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
 #[serial]
@@ -417,7 +421,7 @@ async fn nightly_test_complete_session_notification_isolated() -> Result<()> {
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::{
-        compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+        EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
     };
     use kms_grpc::kms::v1::TypedCiphertext;
     use std::env;
@@ -433,21 +437,23 @@ async fn nightly_test_complete_session_notification_isolated() -> Result<()> {
     let parallel_reqs = 1;
     let wait_time = 4;
 
-    // Ensure inactive session discard interval is small for the test
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
-        format!("{}", wait_time),
-    );
-    // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
-        format!("{}", wait_time + 1),
-    );
-    // And ensure that checking for abort and received values will happen quickly
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
-        format!("{}", wait_time + 2),
-    );
+    unsafe {
+        // Ensure inactive session discard interval is small for the test
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
+            format!("{}", wait_time),
+        );
+        // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
+            format!("{}", wait_time + 1),
+        );
+        // And ensure that checking for abort and received values will happen quickly
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
+            format!("{}", wait_time + 2),
+        );
+    }
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("complete_session_notification")

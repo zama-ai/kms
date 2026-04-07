@@ -9,20 +9,20 @@ use crate::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
-    engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
+    engine::base::{INSECURE_PREPROCESSING_ID, derive_request_id},
     util::key_setup::test_tools::{
-        file_backup_vault, purge, purge_backup, purge_priv, purge_pub, EncryptionConfig,
-        TestingPlaintext,
+        EncryptionConfig, TestingPlaintext, file_backup_vault, purge, purge_backup, purge_priv,
+        purge_pub,
     },
     vault::storage::{
-        delete_all_at_request_id, delete_at_request_and_epoch_id, file::FileStorage,
-        StorageReaderExt, StorageType,
+        StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
+        file::FileStorage,
     },
 };
 use kms_grpc::{
+    RequestId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
-    RequestId,
 };
 use serial_test::serial;
 use threshold_execution::endpoints::decryption::DecryptionMode;
@@ -237,14 +237,16 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
             backup_prefix.as_deref(),
         )
         .await;
-        assert!(backup_storage
-            .data_exists_at_epoch(
-                &key_id,
-                &DEFAULT_EPOCH_ID,
-                &PrivDataType::FheKeyInfo.to_string()
-            )
-            .await
-            .unwrap());
+        assert!(
+            backup_storage
+                .data_exists_at_epoch(
+                    &key_id,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap()
+        );
     }
     purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
     purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
@@ -284,6 +286,7 @@ async fn test_insecure_threshold_crs_backup() {
         true, // insecure execution
         &req_id,
         Some(16),
+        None,
     )
     .await;
     // Generated crs, delete it from private storage
@@ -299,10 +302,12 @@ async fn test_insecure_threshold_crs_backup() {
         .await
         .unwrap();
         // Check that is has been removed
-        assert!(!priv_storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            !priv_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
     }
     // Now try to restore
     let mut resp_tasks = JoinSet::new();
@@ -335,18 +340,22 @@ async fn test_insecure_threshold_crs_backup() {
         let backup_storage: FileStorage =
             FileStorage::new(test_path, StorageType::BACKUP, backup_prefix.as_deref()).unwrap();
         // Check the back up is still there
-        assert!(backup_storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            backup_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
         // Check that the file has been restored
         let priv_storage: FileStorage =
             FileStorage::new(test_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         // Check the back up is still there
-        assert!(priv_storage
-            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            priv_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
     }
     purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
     purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;

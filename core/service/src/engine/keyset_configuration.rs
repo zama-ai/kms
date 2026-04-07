@@ -1,12 +1,12 @@
 use anyhow::anyhow;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use threshold_execution::keyset_config::{self as ddec_keyset_config};
 
-use crate::engine::validation::{parse_grpc_request_id, RequestIdParsingErr};
+use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
 
 pub(crate) struct WrappedKeySetConfig(kms_grpc::kms::v1::KeySetConfig);
 

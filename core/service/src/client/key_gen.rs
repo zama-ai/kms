@@ -1,15 +1,17 @@
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
-use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_KEY;
-use crate::engine::validation::parse_optional_grpc_request_id;
+use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
-use hashing::hash_element;
 use hashing::SAFE_SER_SIZE_LIMIT;
+use hashing::hash_element;
+use kms_grpc::ContextId;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms::v1::PreviousEpochInfo;
@@ -17,13 +19,11 @@ use kms_grpc::kms::v1::{
     FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, KeySetConfig,
 };
-use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
+use kms_grpc::rpc_types::{PubDataType, alloy_to_protobuf_domain};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
-use kms_grpc::ContextId;
-use kms_grpc::RequestId;
-use tfhe::safe_serialization::safe_deserialize;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe_versionable::{Unversionize, Versionize};
 
 impl Client {
@@ -163,28 +163,6 @@ impl Client {
         self.verify_external_signature(&sol_type, domain, &resp.external_signature)
     }
 
-    /// Retrieve a server key based on the result from storage.
-    /// The method will return the key if retrieval is successful,
-    /// but will return None in case some sanity check fails.
-    async fn retrieve_server_key_no_verification<R: StorageReader>(
-        &self,
-        key_gen_result: &KeyGenResult,
-        storage: &R,
-    ) -> anyhow::Result<Option<ServerKey>> {
-        if let Some(server_key) = self
-            .retrieve_key_no_verification(key_gen_result, PubDataType::ServerKey, storage)
-            .await?
-        {
-            Ok(Some(server_key))
-        } else {
-            tracing::warn!(
-                "Server key not found with request ID {:?}",
-                key_gen_result.request_id
-            );
-            Ok(None)
-        }
-    }
-
     // TODO(zama-ai/kms-internal#2727)
     // this only checks the signature is valid against one of the server addresses
     // we should fix it so that it does a proper verification
@@ -263,7 +241,9 @@ impl Client {
         .try_into()?;
 
         if *preproc_id != actual_preproc_id {
-            return Err(anyhow::anyhow!("Preprocessing ID in key generation result does not match the provided preprocessing ID"));
+            return Err(anyhow::anyhow!(
+                "Preprocessing ID in key generation result does not match the provided preprocessing ID"
+            ));
         }
 
         if *key_id != actual_key_id {
@@ -374,29 +354,6 @@ impl Client {
         Ok(Some(compressed_keyset))
     }
 
-    /// Retrieve and validate a public key based on the result from storage.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
-    async fn retrieve_public_key_no_verification<R: StorageReader>(
-        &self,
-        key_gen_result: &KeyGenResult,
-        storage: &R,
-    ) -> anyhow::Result<Option<CompactPublicKey>> {
-        let request_id: RequestId = parse_optional_grpc_request_id(
-            &key_gen_result.request_id,
-            RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
-        )
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        tracing::debug!(
-            "getting compact public key using storage {} with request id {}",
-            storage.info(),
-            &request_id
-        );
-        self.retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-            .await
-    }
-
     /// Retrieve and validate a decompression key based on the result from storage.
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
@@ -472,7 +429,7 @@ impl Client {
 #[cfg(test)]
 pub(crate) mod tests {
     use tfhe::core_crypto::prelude::{
-        decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
+        ContiguousEntityContainer, LweCiphertextOwned, decrypt_lwe_ciphertext, divide_round,
     };
     use tfhe::prelude::{ParameterSetConformant, Tagged};
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;

@@ -3,7 +3,7 @@ pub mod tests {
     use crate::{
         tests::helper::tests::generate_keys,
         tfhe_internals::{
-            parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS},
+            parameters::{BC_PARAMS_SNS, DKGParams, PARAMS_TEST_BK_SNS},
             test_feature::KeySet,
         },
     };

@@ -9,8 +9,8 @@ use crate::algebra::integers::ZeroCenteredRem;
 use crate::algebra::levels::{
     CryptoModulus, GenericModulus, LevelEll, LevelFourteen, LevelKsw, LevelOne, ScalingFactor,
 };
-use crate::algebra::ntt::ntt_iter2;
 use crate::algebra::ntt::NTTConstants;
+use crate::algebra::ntt::ntt_iter2;
 use crate::algebra::ntt::{Const, N65536};
 use crate::constants::PLAINTEXT_MODULUS;
 use algebra::sharing::share::Share;
@@ -159,7 +159,6 @@ where
     N: Clone + Const,
     N: NTTConstants<ModQ>,
     ModQ: Ring + ZConsts,
-
     RqElement<ModQ, N>: Add<RqElement<ModQ, N>, Output = RqElement<ModQ, N>>,
     for<'l, 'r> &'l RqElement<ModQ, N>: Mul<&'r RqElement<ModQ, N>, Output = RqElement<ModQ, N>>,
     for<'r> RqElement<ModQ, N>: Mul<&'r ModQ, Output = RqElement<ModQ, N>>,
@@ -228,12 +227,10 @@ where
     IntQ: From<OldQ>,
     IntQ: PositiveConv<OldQ>,
     IntQ: PositiveConv<NewQ>,
-
     for<'a> RingElement<IntQ>: From<&'a RqElement<OldQ, N>>,
     IntQ: ModReduction<NewQ>,
     RingElement<IntQ>: Mul<IntQ, Output = RingElement<IntQ>>,
     RingElement<IntQ>: Sub<RingElement<IntQ>, Output = RingElement<IntQ>>,
-
     N: Const,
     RqElement<NewQ, N>: From<RingElement<NewQ>>,
     RqElement<NewQ, N>: Clone,

@@ -1,6 +1,6 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
-    poly::{gao_decoding, BitWiseEval, Poly},
+    poly::{BitWiseEval, Poly, gao_decoding},
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
     },
@@ -222,16 +222,16 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
-    #[cfg(feature = "extension_degree_7")]
-    use crate::galois_fields::gf128::GF128;
-    #[cfg(feature = "extension_degree_8")]
-    use crate::galois_fields::gf256::GF256;
+    #[cfg(feature = "extension_degree_3")]
+    use crate::galois_fields::gf8::GF8;
     #[cfg(feature = "extension_degree_5")]
     use crate::galois_fields::gf32::GF32;
     #[cfg(feature = "extension_degree_6")]
     use crate::galois_fields::gf64::GF64;
-    #[cfg(feature = "extension_degree_3")]
-    use crate::galois_fields::gf8::GF8;
+    #[cfg(feature = "extension_degree_7")]
+    use crate::galois_fields::gf128::GF128;
+    #[cfg(feature = "extension_degree_8")]
+    use crate::galois_fields::gf256::GF256;
     use crate::{
         base_ring::Z64,
         error_correction::{error_correction, shamir_error_correct},

@@ -3073,8 +3073,8 @@ name = "error-utils"
 version = "0.13.20-0"
 dependencies = [
  "anyhow",
+ "kms-test-tracing",
  "tracing",
- "tracing-test",
 ]
 
 [[package]]
@@ -4256,6 +4256,7 @@ dependencies = [
  "k256",
  "kms",
  "kms-grpc",
+ "kms-test-tracing",
  "lazy_static",
  "ml-kem",
  "nom 8.0.0",
@@ -4302,7 +4303,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
  "trait-variant",
  "url",
  "validator",
@@ -4331,6 +4331,7 @@ dependencies = [
  "kms",
  "kms-core-client",
  "kms-grpc",
+ "kms-test-tracing",
  "observability",
  "rand 0.8.5",
  "rcgen",
@@ -4346,8 +4347,10 @@ dependencies = [
  "threshold-execution",
  "threshold-fhe",
  "threshold-hashing",
+ "threshold-networking",
  "tokio",
  "tokio-rustls 0.26.2",
+ "toml",
  "tonic",
  "tonic-prost-build",
  "tracing",
@@ -4367,6 +4370,7 @@ dependencies = [
  "bc2wrap",
  "cfg-if",
  "hex",
+ "kms-test-tracing",
  "prost",
  "rand 0.8.5",
  "serde",
@@ -4381,7 +4385,6 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
- "tracing-test",
  "wasm-bindgen",
 ]
 
@@ -4403,6 +4406,24 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "validator",
+]
+
+[[package]]
+name = "kms-test-tracing"
+version = "0.13.20-0"
+dependencies = [
+ "kms-test-tracing-macro",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "kms-test-tracing-macro"
+version = "0.13.20-0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -4938,11 +4959,11 @@ dependencies = [
  "axum",
  "config",
  "http 1.3.1",
+ "kms-test-tracing",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-otlp",
- "opentelemetry-prometheus",
  "opentelemetry-semantic-conventions",
  "opentelemetry-stdout",
  "opentelemetry_sdk",
@@ -4960,7 +4981,6 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "tracing-test",
  "typed-builder",
  "uuid",
  "validator",
@@ -5054,19 +5074,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tonic",
- "tracing",
-]
-
-[[package]]
-name = "opentelemetry-prometheus"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14095eb06b569eb5d538fa4555969f7e8a410ed7910c903bfd295f9e1a50d7ea"
-dependencies = [
- "once_cell",
- "opentelemetry",
- "opentelemetry_sdk",
- "prometheus",
  "tracing",
 ]
 
@@ -7669,6 +7676,7 @@ dependencies = [
  "futures",
  "futures-util",
  "itertools 0.14.0",
+ "kms-test-tracing",
  "mockall",
  "ndarray",
  "num-integer",
@@ -7696,7 +7704,6 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
- "tracing-test",
  "zeroize",
 ]
 
@@ -7823,6 +7830,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hyper-rustls 0.27.7",
+ "kms-test-tracing",
  "lazy_static",
  "observability",
  "oid-registry",
@@ -7844,7 +7852,6 @@ dependencies = [
  "tonic-tls",
  "tower",
  "tracing",
- "tracing-test",
  "x509-parser",
 ]
 
@@ -8018,10 +8025,12 @@ version = "0.9.11+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3afc9a848309fe1aaffaed6e1546a7a14de1f935dc9d89d32afd9a44bab7c46"
 dependencies = [
+ "indexmap 2.13.0",
  "serde_core",
  "serde_spanned",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -8054,6 +8063,12 @@ checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
 dependencies = [
  "winnow",
 ]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.0+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d282ade6016312faf3e41e57ebbba0c073e4056dab1232ab1cb624199648f8ed"
 
 [[package]]
 name = "tonic"
@@ -8306,27 +8321,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-test"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557b891436fe0d5e0e363427fc7f217abf9ccd510d5136549847bdcbcd011d68"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
-dependencies = [
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]

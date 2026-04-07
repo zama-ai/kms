@@ -1,7 +1,7 @@
 use tfhe::{
     integer::{
-        ciphertext::{SquashedNoiseBooleanBlock, SquashedNoiseRadixCiphertext},
         BooleanBlock, IntegerCiphertext, IntegerRadixCiphertext, RadixCiphertext,
+        ciphertext::{SquashedNoiseBooleanBlock, SquashedNoiseRadixCiphertext},
     },
     shortint::ciphertext::SquashedNoiseCiphertext,
 };
@@ -165,9 +165,9 @@ impl LowLevelCiphertext {
 #[cfg(test)]
 mod tests {
     use tfhe::{
+        ClientKey, ConfigBuilder, FheBool, FheUint32, ServerKey,
         prelude::{FheEncrypt, SquashNoise},
         shortint::ClassicPBSParameters,
-        ClientKey, ConfigBuilder, FheBool, FheUint32, ServerKey,
     };
 
     use super::SnsRadixOrBoolCiphertext;

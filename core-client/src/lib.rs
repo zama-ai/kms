@@ -41,19 +41,19 @@ use kms_lib::util::file_handling::{
 };
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
-    test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext},
+    test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
 };
-use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
 use kms_lib::vault::Vault;
-use kms_lib::{conf, DecryptionMode};
+use kms_lib::vault::storage::{StorageType, file::FileStorage};
+use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
+use kms_lib::{DecryptionMode, conf};
 use observability::conf::Settings;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
@@ -1304,7 +1304,11 @@ pub async fn encrypt(
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
     if to_encrypt.len() != cipher_params.data_type.bits().div_ceil(8) {
-        tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), cipher_params.data_type);
+        tracing::warn!(
+            "Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.",
+            to_encrypt.len(),
+            cipher_params.data_type
+        );
     }
 
     let ptxt = TypedPlaintext {
@@ -1357,12 +1361,6 @@ pub async fn encrypt(
     ))
 }
 
-static INIT_LOG: Once = Once::new();
-
-pub fn init_testing() {
-    INIT_LOG.call_once(setup_logging);
-}
-
 pub fn setup_logging() {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", "core-client.log");
     let file_and_stdout = file_appender.and(std::io::stdout);
@@ -1370,8 +1368,6 @@ pub fn setup_logging() {
     // read the RUST_LOG environment variable to set the logging level, or set to INFO as default
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
-
-    println!("Setting up logging with level: {log_level:?}");
 
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
@@ -2297,7 +2293,9 @@ pub async fn execute_cmd(
 
     let total_duration = client_timer_start.elapsed();
     let command_duration = command_timer_start.elapsed();
-    tracing::info!("Core Client command {command:?} took {total_duration:?} in total (including setup), and {command_duration:?} for the command only.");
+    tracing::info!(
+        "Core Client command {command:?} took {total_duration:?} in total (including setup), and {command_duration:?} for the command only."
+    );
 
     Ok(res)
 }
@@ -2374,7 +2372,9 @@ mod tests {
         assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Test));
 
         // now set the env variable that overwrites fhe_params with "Default", which should take precedence if it's set
-        env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+        unsafe {
+            env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+        }
 
         let cc_conf_default: CoreClientConfig = Settings::builder()
             .path(&path_to_config)
@@ -2399,7 +2399,9 @@ mod tests {
         let id8 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         // Test the FromStr impl of PreviousEpochParameters
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
+        );
         let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
 
         assert_eq!(parsed.context_id.to_string(), id1);
@@ -2430,53 +2432,81 @@ mod tests {
         assert_eq!(crs_info_2.digest, "abc000");
 
         // Missing context_id should fail
-        let input_string = format!("epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing epoch_id should fail
-        let input_string = format!("context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing public key digest for non-compressed key set should fail
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing key_id in previous keys should fail
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing preproc_id in previous keys should fail
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Mixing compressed and non-compressed key sets should fail
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Missing server key digest for non-compressed key set should fail
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
         // Wrong ids test
-        let input_string = format!("context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
 
-        let input_string = format!("context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]");
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
+        );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
     }
 }

@@ -3,19 +3,19 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
 };
-use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
+use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
-use kms_grpc::identifiers::EpochId;
 use kms_grpc::RequestId;
-use serde::{de::DeserializeOwned, Serialize};
+use kms_grpc::identifiers::EpochId;
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{Unversionize, Versionize, named::Named};
 
 #[derive(Default, Clone, Debug)]
 pub struct FileStorage {
@@ -397,12 +397,11 @@ impl StorageExt for FileStorage {
         tokio::fs::remove_file(&path).await?;
 
         // Remove the epoch directory if it's now empty
-        if let Some(epoch_dir) = path.parent() {
-            if let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await {
-                if entries.next_entry().await?.is_none() {
-                    let _ = tokio::fs::remove_dir(epoch_dir).await;
-                }
-            }
+        if let Some(epoch_dir) = path.parent()
+            && let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await
+            && entries.next_entry().await?.is_none()
+        {
+            let _ = tokio::fs::remove_dir(epoch_dir).await;
         }
         Ok(())
     }
@@ -432,34 +431,44 @@ pub mod tests {
 
         // urls should be empty
         for data_type in PubDataType::iter() {
-            assert!(storage1
-                .all_data_ids(&data_type.to_string())
-                .await
-                .unwrap()
-                .is_empty());
-            assert!(storage2
-                .all_data_ids(&data_type.to_string())
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                storage1
+                    .all_data_ids(&data_type.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                storage2
+                    .all_data_ids(&data_type.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
         }
 
         let data = TestType { i: 13 };
         let id = derive_request_id("ID").unwrap();
         let wrong_id = derive_request_id("WRONG_ID").unwrap();
         // make sure we can put it in storage1
-        assert!(storage1
-            .store_data(&data, &id, &PubDataType::CRS.to_string())
-            .await
-            .is_ok());
-        assert!(storage1
-            .data_exists(&id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap());
-        assert!(!storage1
-            .data_exists(&wrong_id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap());
+        assert!(
+            storage1
+                .store_data(&data, &id, &PubDataType::CRS.to_string())
+                .await
+                .is_ok()
+        );
+        assert!(
+            storage1
+                .data_exists(&id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage1
+                .data_exists(&wrong_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap()
+        );
     }
 
     #[ignore]
@@ -544,7 +553,7 @@ pub mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         // Setup temporary directory and storage
@@ -582,7 +591,7 @@ pub mod tests {
         test_store_load_bytes_at_epoch(&mut storage).await;
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_file() {
         let temp_dir = tempfile::tempdir().unwrap();

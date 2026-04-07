@@ -11,6 +11,7 @@ use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
+use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
@@ -21,11 +22,10 @@ use crate::engine::traits::{BaseKms, Kms};
 #[cfg(feature = "non-wasm")]
 use crate::engine::utils::{sanity_check_crs_materials, sanity_check_public_materials};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
-use crate::engine::Shutdown;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
-use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt};
+use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -34,9 +34,10 @@ use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
 };
-use crate::vault::{storage::Storage, Vault};
+use crate::vault::{Vault, storage::Storage};
 use aes_prng::AesRng;
 use hashing::DomainSep;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 use kms_grpc::kms::v1::UserDecryptionResponsePayload;
@@ -45,22 +46,21 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
+use tfhe::Seed;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
 use tfhe::safe_serialization::safe_deserialize;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
-use tfhe::Seed;
 use tfhe::{
-    ClientKey, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
+    ClientKey, FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint80, FheUint128,
+    FheUint160, FheUint256, FheUint512, FheUint1024, FheUint2048,
 };
 use tfhe::{FheTypes, ServerKey};
 use threshold_execution::{
@@ -571,11 +571,11 @@ pub async fn async_user_decrypt<
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > fmt::Debug for CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> fmt::Debug for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CentralizedKms").finish() // Don't include fhe_dec_key or signing key
@@ -583,11 +583,11 @@ impl<
 }
 
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > BaseKms for CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> BaseKms for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
@@ -630,9 +630,11 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or_else(|| anyhow::anyhow!(
-                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                    )
+                })?;
                 let raw_res = ct.decrypt(&$keys.client_key);
                 $fout(raw_res)
             }
@@ -811,11 +813,11 @@ fn unsafe_decrypt(
 }
 
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > Kms for CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> Kms for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn public_decrypt(
         keys: &KmsFheKeyHandles,
@@ -864,11 +866,11 @@ impl<
 }
 
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> CentralizedKms<PubS, PrivS, CM, BO>
 {
     pub async fn new(
         config: CoreConfig,
@@ -995,11 +997,11 @@ impl<
 }
 
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> CentralizedKms<PubS, PrivS, CM, BO>
 {
     /// Get a reference to the key generation MetaStore
     pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenMetadata>>> {
@@ -1028,11 +1030,11 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
         let h_repoter = self.health_reporter.clone();
@@ -1050,11 +1052,11 @@ impl<
 
 #[allow(clippy::let_underscore_future)]
 impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-        CM: ContextManager + Sync + Send + 'static,
-        BO: BackupOperator + Sync + Send + 'static,
-    > Drop for CentralizedKms<PubS, PrivS, CM, BO>
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+> Drop for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -1096,46 +1098,46 @@ fn update_central_kms_system_metrics(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{generate_fhe_keys, CentralizedKmsKeys, CentralizedTestingKeys, Storage};
-    use crate::conf::{init_conf, CoreConfig};
+    use super::{CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys};
+    use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
+        DEFAULT_CENTRAL_KEY_ID, DEFAULT_CENTRAL_KEYS_PATH, OTHER_CENTRAL_DEFAULT_ID,
     };
     use crate::consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEYS_PATH,
-        TEST_CENTRAL_KEY_ID, TEST_PARAM,
+        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID,
+        TEST_CENTRAL_KEYS_PATH, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
-        ephemeral_signcryption_key_generation, UnsigncryptFHEPlaintext,
+        UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use crate::dummy_domain;
-    use crate::engine::base::{compute_handle, derive_request_id, KmsFheKeyHandles};
+    use crate::engine::base::{KmsFheKeyHandles, compute_handle, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
-    use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
+    use crate::util::key_setup::test_tools::{EncryptionConfig, compute_cipher};
     use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
-        delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
-        store_versioned_at_request_id, StorageExt,
+        StorageExt, delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
+        store_versioned_at_request_id,
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use aes_prng::AesRng;
+    use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-    use kms_grpc::RequestId;
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::HashMap;
     use std::path::Path;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
-    use tfhe::{set_server_key, FheTypes};
-    use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
+    use tfhe::{ConfigBuilder, Seed, shortint::ClassicPBSParameters};
+    use tfhe::{FheTypes, set_server_key};
     use threshold_execution::keyset_config::StandardKeySetConfig;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -1312,10 +1314,12 @@ pub(crate) mod tests {
             vec![],
         )
         .unwrap();
-        assert!(other_pub_fhe_keys
-            .server_key
-            .noise_squashing_key()
-            .is_some());
+        assert!(
+            other_pub_fhe_keys
+                .server_key
+                .noise_squashing_key()
+                .is_some()
+        );
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
@@ -1340,9 +1344,11 @@ pub(crate) mod tests {
                 sig_pk,
             },
         };
-        assert!(write_element(key_path, &centralized_test_keys)
-            .await
-            .is_ok());
+        assert!(
+            write_element(key_path, &centralized_test_keys)
+                .await
+                .is_ok()
+        );
         centralized_test_keys
     }
 
@@ -1354,17 +1360,19 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        assert!(generate_fhe_keys(
-            &sig_sk,
-            DEFAULT_PARAM,
-            StandardKeySetConfig::default().secret_key_config,
-            &key_id,
-            &preproc_id,
-            None,
-            &domain,
-            vec![]
-        )
-        .is_ok());
+        assert!(
+            generate_fhe_keys(
+                &sig_sk,
+                DEFAULT_PARAM,
+                StandardKeySetConfig::default().secret_key_config,
+                &key_id,
+                &preproc_id,
+                None,
+                &domain,
+                vec![]
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1535,12 +1543,14 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert!(inner
-                .crypto_storage
-                .inner
-                .fhe_keys_exist(key_id, epoch_id)
-                .await
-                .unwrap());
+            assert!(
+                inner
+                    .crypto_storage
+                    .inner
+                    .fhe_keys_exist(key_id, epoch_id)
+                    .await
+                    .unwrap()
+            );
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
             }
@@ -1764,12 +1774,14 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert!(inner
-                .crypto_storage
-                .inner
-                .fhe_keys_exist(key_id, epoch_id)
-                .await
-                .unwrap());
+            assert!(
+                inner
+                    .crypto_storage
+                    .inner
+                    .fhe_keys_exist(key_id, epoch_id)
+                    .await
+                    .unwrap()
+            );
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
             }

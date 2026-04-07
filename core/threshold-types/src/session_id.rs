@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use hashing::{serialize_hash_element, DomainSep};
+use hashing::{DomainSep, serialize_hash_element};
 
 pub const DSEP_SESSION_ID: DomainSep = *b"SESSN_ID";
 

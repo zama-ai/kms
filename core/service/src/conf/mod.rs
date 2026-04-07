@@ -3,7 +3,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
-    telemetry::{init_telemetry, ConfigTracing, SdkMeterProvider, SdkTracerProvider},
+    telemetry::{ConfigTracing, SdkTracerProvider, init_telemetry},
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp, path::PathBuf};
@@ -219,11 +219,11 @@ pub async fn init_conf_kms_core_telemetry<
     T: Serialize + Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
 >(
     config_file: &str,
-) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
+) -> anyhow::Result<(T, SdkTracerProvider)> {
     let full_config: T = init_conf(config_file)?;
     full_config.validate()?;
-    let (tracer_provider, meter_provider) = init_telemetry(&full_config).await?;
-    Ok((full_config, tracer_provider, meter_provider))
+    let tracer_provider = init_telemetry(&full_config).await?;
+    Ok((full_config, tracer_provider))
 }
 
 #[cfg(test)]
@@ -415,5 +415,163 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Compose config conformance: validate checked-in compose_*.toml files
+    // used by Docker Compose tests and referenced from client configs.
+    // These catch drift between config files and the CoreConfig struct.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_conformance_compose_1() {
+        let core_config: CoreConfig =
+            init_conf("config/compose_1").expect("compose_1 config must parse");
+        core_config
+            .validate()
+            .expect("compose_1 config must validate");
+
+        // Service endpoint
+        assert_eq!(core_config.service.listen_address, "0.0.0.0");
+        assert_eq!(core_config.service.listen_port, 50100);
+        assert_eq!(core_config.service.timeout_secs, 360);
+
+        // Public vault: S3 storage
+        let public_vault = core_config
+            .public_vault
+            .as_ref()
+            .expect("public_vault required");
+        assert_eq!(
+            public_vault.storage,
+            Storage::S3(S3Storage {
+                bucket: "kms".to_string(),
+                prefix: Some("PUB-p1".to_string()),
+            })
+        );
+
+        // Private vault: S3 storage (no keychain in compose)
+        let private_vault = core_config
+            .private_vault
+            .as_ref()
+            .expect("private_vault required");
+        assert_eq!(
+            private_vault.storage,
+            Storage::S3(S3Storage {
+                bucket: "kms".to_string(),
+                prefix: Some("PRIV-p1".to_string()),
+            })
+        );
+        assert!(
+            private_vault.keychain.is_none(),
+            "compose_1 should not have a keychain"
+        );
+
+        // Backup vault: file storage
+        let backup_vault = core_config
+            .backup_vault
+            .as_ref()
+            .expect("backup_vault required");
+        assert_eq!(
+            backup_vault.storage,
+            Storage::File(FileStorage {
+                path: PathBuf::from("./backup_vault"),
+                prefix: Some("BACKUP-p1".to_string()),
+            })
+        );
+
+        // Threshold section
+        let threshold = core_config
+            .threshold
+            .as_ref()
+            .expect("threshold section required");
+        assert_eq!(threshold.my_id, Some(1));
+        assert_eq!(threshold.threshold, 1);
+        assert_eq!(threshold.listen_port, 50001);
+        assert_eq!(threshold.num_sessions_preproc, Some(2));
+
+        // TLS: auto mode with trusted releases
+        assert!(
+            threshold.tls.as_ref().is_some_and(|t| t.is_auto()),
+            "compose_1 must use TLS auto mode"
+        );
+
+        // Peers: 4 parties
+        let peers = threshold.peers.as_ref().expect("peers must be present");
+        assert_eq!(peers.len(), 4);
+        for (i, peer) in peers.iter().enumerate() {
+            assert_eq!(peer.party_id, i + 1, "peer[{i}] party_id mismatch");
+            assert!(
+                peer.tls_cert.is_some(),
+                "peer[{i}] expected a TLS cert path"
+            );
+            assert!(
+                peer.mpc_identity.is_some(),
+                "peer[{i}] expected an mpc_identity"
+            );
+        }
+
+        // AWS config
+        let aws = core_config.aws.as_ref().expect("aws config required");
+        assert_eq!(aws.region, "us-east-1");
+        assert!(aws.s3_endpoint.is_some(), "s3_endpoint expected");
+    }
+
+    #[test]
+    fn config_conformance_compose_centralized() {
+        let core_config: CoreConfig =
+            init_conf("config/compose_centralized").expect("compose_centralized config must parse");
+        core_config
+            .validate()
+            .expect("compose_centralized config must validate");
+
+        // Service endpoint
+        assert_eq!(core_config.service.listen_address, "0.0.0.0");
+        assert_eq!(core_config.service.listen_port, 50051);
+
+        // Public vault: S3 storage
+        let public_vault = core_config
+            .public_vault
+            .as_ref()
+            .expect("public_vault required");
+        assert!(
+            public_vault.storage.is_s_3(),
+            "compose_centralized public vault must use S3"
+        );
+
+        // Private vault: file storage
+        let private_vault = core_config
+            .private_vault
+            .as_ref()
+            .expect("private_vault required");
+        assert_eq!(
+            private_vault.storage,
+            Storage::File(FileStorage {
+                path: PathBuf::from("./keys"),
+                prefix: None,
+            })
+        );
+
+        // Backup vault: file storage
+        let backup_vault = core_config
+            .backup_vault
+            .as_ref()
+            .expect("backup_vault required");
+        assert_eq!(
+            backup_vault.storage,
+            Storage::File(FileStorage {
+                path: PathBuf::from("./backup_vault"),
+                prefix: None,
+            })
+        );
+
+        // No threshold section
+        assert!(
+            core_config.threshold.is_none(),
+            "centralized compose must not have threshold section"
+        );
+
+        // AWS config
+        let aws = core_config.aws.as_ref().expect("aws config required");
+        assert_eq!(aws.region, "us-east-1");
     }
 }

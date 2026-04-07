@@ -1,6 +1,6 @@
 pub mod random_free_port;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 
 /// Helper method to write a generic element to a file for tests or benchmarks.

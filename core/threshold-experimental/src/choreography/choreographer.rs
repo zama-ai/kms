@@ -16,7 +16,7 @@ use threshold_types::session_id::SessionId;
 
 use tokio::task::JoinSet;
 use tokio::time::Duration;
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 use super::requests::{
     PreprocKeyGenParams, PrssInitParams, SupportedRing, ThresholdDecryptParams,

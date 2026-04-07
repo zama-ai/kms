@@ -8,10 +8,10 @@ use crate::{
     large_execution::offline::SecureLargePreprocessing,
     online::{
         preprocessing::{
+            TriplePreprocessing,
             orchestration::{
                 producer_traits::TripleProducerTrait, progress_tracker::ProgressTracker,
             },
-            TriplePreprocessing,
         },
         triple::Triple,
     },
@@ -23,7 +23,7 @@ use crate::{
 use algebra::structure_traits::Ring;
 use error_utils::anyhow_error_and_log;
 
-use super::common::{execute_preprocessing, ProducerSession};
+use super::common::{ProducerSession, execute_preprocessing};
 
 pub struct GenericTripleProducer<Z, S, PreprocStrat>
 where
@@ -52,7 +52,11 @@ where
         progress_tracker: Option<ProgressTracker>,
     ) -> anyhow::Result<Self> {
         if sessions.len() != channels.len() {
-            return Err(anyhow_error_and_log(format!("Trying to instantiate a producer with {} sessions and {} channels, but we need as many sessions as channels",sessions.len(), channels.len())));
+            return Err(anyhow_error_and_log(format!(
+                "Trying to instantiate a producer with {} sessions and {} channels, but we need as many sessions as channels",
+                sessions.len(),
+                channels.len()
+            )));
         }
 
         //Always sort the sessions by sid so we are sure it's order the same way for all parties
@@ -117,15 +121,15 @@ mod tests {
     use itertools::Itertools;
 
     use crate::online::preprocessing::{
+        TriplePreprocessing,
         memory::InMemoryBasePreprocessing,
         orchestration::producers::common::tests::{
-            test_production_large, test_production_small, ReceiverChannelCollectionWithTracker,
-            Typeproduction, TEST_NUM_LOOP,
+            ReceiverChannelCollectionWithTracker, TEST_NUM_LOOP, Typeproduction,
+            test_production_large, test_production_small,
         },
-        TriplePreprocessing,
     };
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
         sharing::shamir::{RevealOp, ShamirSharings},
         structure_traits::{Derive, ErrorCorrect, Invert, Solve},

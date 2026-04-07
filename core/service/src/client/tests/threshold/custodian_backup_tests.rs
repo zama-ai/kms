@@ -2,6 +2,8 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
+        use crate::client::client_wasm::Client;
+        use crate::client::test_tools::ServerHandle;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
         use crate::client::tests::common::standard_keygen_config;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
@@ -9,11 +11,13 @@ cfg_if::cfg_if! {
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
         use crate::cryptography::signatures::PublicSigKey;
+        use crate::engine::base::CrsGenMetadata;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
         use crate::util::key_setup::test_tools::TestingPlaintext;
         use crate::vault::storage::file::FileStorage;
+        use crate::vault::storage::read_versioned_at_request_and_epoch_id;
         use crate::vault::storage::read_versioned_at_request_id;
         use crate::vault::storage::StorageType;
         use aes_prng::AesRng;
@@ -34,12 +38,11 @@ use crate::client::tests::threshold::custodian_context_tests::run_new_cus_contex
 #[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{
-    purge, purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
+    purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
@@ -48,10 +51,10 @@ use crate::{
 };
 #[cfg(feature = "insecure")]
 use alloy_primitives::Address;
-use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
+use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use serial_test::serial;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -146,43 +149,23 @@ async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] thre
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+
     let req_new_cus: RequestId = derive_request_id(&format!(
-            "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
-        ))
-        .unwrap();
-
-    tracing::debug!("req_new_cus: {req_new_cus}");
-
-    let test_path = None;
+        "test_backup_after_crs_threshold_custodian_{amount_parties}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_crs_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    // Purge IDs so repeated test runs find a fresh plate.
-    purge(
-        None,
-        None,
-        &crs_req,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    purge(
-        None,
-        None,
-        &req_new_cus,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    purge_backup(test_path, backup_storage_prefixes).await;
 
-    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tracing::debug!("req_new_cus: {req_new_cus}");
+
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    // The threshold handle should only be started after the storage is purged
-    // since the threshold parties will load the CRS from private storage
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
@@ -193,7 +176,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let _mnemnonics = run_new_cus_context(
+    let mnemonics = run_new_cus_context(
         &kms_clients,
         &mut internal_client,
         &req_new_cus,
@@ -210,6 +193,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         true,
         &crs_req,
         Some(16),
+        test_path,
     )
     .await;
 
@@ -234,20 +218,30 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     }
     assert!(crss[crss.len() - 1].priv_data_type == PrivDataType::CrsInfo);
 
-    println!("Shutting down servers");
-    // Shut down the servers
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
+    // Read CRS metadata from private storage for reference before recovery
+    let mut original_crs_metadata = Vec::with_capacity(priv_storage_prefixes.len());
+    for storage_prefix in priv_storage_prefixes.iter() {
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
+        let cur_meta: CrsGenMetadata = read_versioned_at_request_and_epoch_id(
+            &cur_priv_store,
+            &crs_req,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        original_crs_metadata.push(cur_meta);
     }
-    drop(kms_clients);
-    drop(internal_client);
 
-    // TODO(2942): Shouldn't rather we be trying to read from the Parties' private storage
-    // to make sure they've correctly recovered ? Not sure what reading from backup brings us here ?
+    // Shut down the servers
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 
-    // Check that the backup is still there an unmodified
-    println!("Starting new servers");
-    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
+    // Purge the private storage to test the backup recovery
+    purge_priv(test_path, priv_storage_prefixes).await;
+
+    // Reboot the servers
+    let (kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -257,23 +251,33 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
-        test_path,
-        &req_new_cus,
-        &crs_req,
-        *DEFAULT_EPOCH_ID,
-        &PrivDataType::CrsInfo.to_string(),
-        backup_storage_prefixes,
-    )
-    .await;
-    assert_eq!(crss.len(), amount_parties);
-    for i in 0..amount_parties {
-        assert!(reread_crss[i] == crss[i]);
+    // Purge the private storage again to delete the signing key
+    purge_priv(test_path, priv_storage_prefixes).await;
+
+    // Execute the backup restoring
+    run_full_custodian_recovery(&kms_clients, mnemonics, amount_parties, None).await;
+
+    // Verify CRS metadata was recovered correctly
+    for (i, storage_prefix) in priv_storage_prefixes.iter().enumerate() {
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
+        let recovered_meta: CrsGenMetadata = read_versioned_at_request_and_epoch_id(
+            &cur_priv_store,
+            &crs_req,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recovered_meta, original_crs_metadata[i]);
     }
+
+    // Shut down the servers
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 }
 
 #[cfg(feature = "insecure")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -337,27 +341,12 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Shut down the servers
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
-    }
-    drop(kms_clients);
-    drop(internal_client);
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 
-    let mut sig_keys = Vec::new();
     // Read the private signing keys for reference
-    for storage_prefix in priv_storage_prefixes.iter() {
-        let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
-        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
-            &cur_priv_store,
-            &SIGNING_KEY_ID,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        sig_keys.push(cur_sk);
-    }
-    // Purge the private storage to tests the backup
+    let sig_keys = read_signing_keys(test_path, priv_storage_prefixes).await;
+
+    // Purge the private storage to test the backup
     purge_priv(test_path, priv_storage_prefixes).await;
 
     // Reboot the servers
@@ -375,36 +364,16 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     purge_priv(test_path, priv_storage_prefixes).await;
 
     // Execute the backup restoring
-    let mut rng = AesRng::seed_from_u64(13);
-    let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
-    assert_eq!(recovery_req_resp.len(), amount_parties);
-    let cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
-    let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
-    assert_eq!(recovery_output.len(), amount_parties);
-    let res = run_restore_from_backup(&kms_clients).await;
-    assert_eq!(res.len(), amount_parties);
+    run_full_custodian_recovery(&kms_clients, mnemnonics, amount_parties, None).await;
 
     // Check that the key material is back
-    for (i, storage_prefix) in priv_storage_prefixes.iter().enumerate() {
-        let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
-        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
-            &cur_priv_store,
-            &SIGNING_KEY_ID,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        // Check the data is correctly recovered
-        assert_eq!(cur_sk, sig_keys[i]);
+    let recovered_keys = read_signing_keys(test_path, priv_storage_prefixes).await;
+    for (i, key) in recovered_keys.iter().enumerate() {
+        assert_eq!(key, &sig_keys[i]);
     }
 
     // Reboot the servers and try to decrypt
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
-    }
-    drop(kms_clients);
-    drop(internal_client);
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
     let (mut kms_servers, mut kms_clients, mut internal_client) =
         threshold_handles_custodian_backup(
             *dkg_param,
@@ -438,7 +407,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 }
 
 #[cfg(feature = "insecure")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test]
 #[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {
@@ -449,6 +418,35 @@ async fn test_decrypt_after_recovery_threshold_negative() {
     assert!(logs_contain(
         "Could not validate signcryption for custodian role 3"
     ));
+}
+
+#[cfg(feature = "insecure")]
+fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecoveryRequest)>) {
+    // Change a bit in two of the custodians contribution to the recover requests to make them invalid
+    for (_cur_op_idx, (_, cur_payload)) in cus_out.iter_mut() {
+        // First custodian 1
+        cur_payload
+            .custodian_recovery_outputs
+            .get_mut(0)
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 11th byte
+                    .map(|back_out| back_out.signcryption[11] ^= 1)
+            });
+        // Then in custodian 3
+        cur_payload
+            .custodian_recovery_outputs
+            .get_mut(2)
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 7th byte
+                    .map(|back_out| back_out.signcryption[7] ^= 1)
+            });
+    }
 }
 
 #[cfg(feature = "insecure")]
@@ -483,27 +481,12 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .await;
 
     // Shut down the servers
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
-    }
-    drop(kms_clients);
-    drop(internal_client);
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 
-    let mut sig_keys = Vec::new();
     // Read the private signing keys for reference
-    for storage_prefix in priv_storage_prefixes.iter() {
-        let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
-        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
-            &cur_priv_store,
-            &SIGNING_KEY_ID,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        sig_keys.push(cur_sk);
-    }
-    // Purge the private storage to tests the backup
+    let sig_keys = read_signing_keys(test_path, priv_storage_prefixes).await;
+
+    // Purge the private storage to test the backup
     purge_priv(test_path, priv_storage_prefixes).await;
 
     // Reboot the servers
@@ -520,45 +503,62 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     // Purge the private storage again to delete the signing key
     purge_priv(test_path, priv_storage_prefixes).await;
 
-    // Execute the backup restoring
-    let mut rng = AesRng::seed_from_u64(13);
-    let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
-    assert_eq!(recovery_req_resp.len(), amount_parties);
-    let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
-
-    // Change a bit in two of the custodians contribution to the recover requests to make them invalid
-    for (_cur_op_idx, (_, cur_payload)) in cus_out.iter_mut() {
-        // First custodian 1
-        cur_payload
-            .custodian_recovery_outputs
-            .get_mut(0)
-            .map(|inner| {
-                inner
-                    .backup_output
-                    .as_mut()
-                    // Flip a bit in the 11th byte
-                    .map(|back_out| back_out.signcryption[11] ^= 1)
-            });
-        // Then in custodian 3
-        cur_payload
-            .custodian_recovery_outputs
-            .get_mut(2)
-            .map(|inner| {
-                inner
-                    .backup_output
-                    .as_mut()
-                    // Flip a bit in the 7th byte
-                    .map(|back_out| back_out.signcryption[7] ^= 1)
-            });
-    }
-
-    let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
-    assert_eq!(recovery_output.len(), amount_parties);
-    let res = run_restore_from_backup(&kms_clients).await;
-    assert_eq!(res.len(), amount_parties);
+    // Execute the backup restoring with corrupted custodian outputs
+    run_full_custodian_recovery(
+        &kms_clients,
+        mnemnonics,
+        amount_parties,
+        Some(corrupt_custodian_outputs),
+    )
+    .await;
 
     // Check that the key material is back
-    for (i, storage_prefix) in priv_storage_prefixes.iter().enumerate() {
+    let recovered_keys = read_signing_keys(test_path, priv_storage_prefixes).await;
+    for (i, key) in recovered_keys.iter().enumerate() {
+        assert_eq!(key, &sig_keys[i]);
+    }
+}
+
+#[cfg(feature = "insecure")]
+async fn shutdown_servers_and_client(
+    kms_servers: HashMap<u32, ServerHandle>,
+    _kms_clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    _internal_client: Client,
+) {
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+    // here we will drop kms_clients and internal_client
+}
+
+#[cfg(feature = "insecure")]
+#[allow(clippy::type_complexity)]
+async fn run_full_custodian_recovery(
+    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    mnemonics: Vec<String>,
+    amount_parties: usize,
+    mutate_outputs: Option<fn(&mut HashMap<Address, (u32, CustodianRecoveryRequest)>)>,
+) {
+    let mut rng = AesRng::seed_from_u64(13);
+    let recovery_req_resp = run_custodian_recovery_init(kms_clients).await;
+    assert_eq!(recovery_req_resp.len(), amount_parties);
+    let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemonics).await;
+    if let Some(mutate) = mutate_outputs {
+        mutate(&mut cus_out);
+    }
+    let recovery_output = run_custodian_backup_recovery(kms_clients, &cus_out).await;
+    assert_eq!(recovery_output.len(), amount_parties);
+    let res = run_restore_from_backup(kms_clients).await;
+    assert_eq!(res.len(), amount_parties);
+}
+
+#[cfg(feature = "insecure")]
+async fn read_signing_keys(
+    test_path: Option<&std::path::Path>,
+    priv_storage_prefixes: &[Option<String>],
+) -> Vec<PrivateSigKey> {
+    let mut sig_keys = Vec::new();
+    for storage_prefix in priv_storage_prefixes.iter() {
         let cur_priv_store =
             FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         let cur_sk: PrivateSigKey = read_versioned_at_request_id(
@@ -568,9 +568,9 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         )
         .await
         .unwrap();
-        // Check the data is correctly recovered
-        assert_eq!(cur_sk, sig_keys[i]);
+        sig_keys.push(cur_sk);
     }
+    sig_keys
 }
 
 // Right now only used by insecure tests

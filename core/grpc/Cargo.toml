@@ -44,7 +44,7 @@ tracing = { workspace = true, features = ["log"] }
 wasm-bindgen.workspace = true
 
 [dev-dependencies]
-tracing-test = { workspace = true}
+kms-test-tracing = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build.workspace = true

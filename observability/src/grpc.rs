@@ -2,7 +2,7 @@ use crate::telemetry::{TRACER_PARENT_SPAN_ID, TRACER_REQUEST_ID};
 use opentelemetry::trace::TraceContextExt;
 use std::time::Instant;
 use tonic::Request;
-use tracing::{trace, warn, Level, Span};
+use tracing::{Level, Span, trace, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
@@ -147,7 +147,7 @@ pub fn extract_parent_span_id<T>(request: &Request<T>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing_test::traced_test;
+    use kms_test_tracing::traced_test;
 
     #[test]
     #[traced_test]

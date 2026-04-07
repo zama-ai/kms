@@ -70,7 +70,11 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
         match (self.ndim(), rhs.ndim()) {
             (1, 1) => {
                 if self.dim() != rhs.dim() {
-                    return  Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())));
+                    return Err(anyhow_error_and_log(format!(
+                        "Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
+                        self.dim(),
+                        rhs.dim()
+                    )));
                 }
                 if self.len() != rhs.len() {
                     return Err(anyhow_error_and_log(format!(
@@ -87,7 +91,11 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
             }
             (1, 2) => {
                 if self.dim()[0] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
+                    Err(anyhow_error_and_log(format!(
+                        "Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}",
+                        self.dim(),
+                        rhs.dim()
+                    )))
                 } else {
                     let mut res = Vec::new();
                     for col in rhs.columns() {
@@ -109,7 +117,11 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
             }
             (2, 1) => {
                 if self.dim()[1] != rhs.dim()[0] {
-                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
+                    Err(anyhow_error_and_log(format!(
+                        "Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}",
+                        self.dim(),
+                        rhs.dim()
+                    )))
                 } else {
                     let mut res = Vec::new();
                     for row in self.rows() {
@@ -188,7 +200,7 @@ mod tests {
     use crate::{
         galois_rings::{
             common::ResiduePoly,
-            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+            degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         },
         structure_traits::One,
     };

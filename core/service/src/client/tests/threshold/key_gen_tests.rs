@@ -38,7 +38,7 @@ cfg_if::cfg_if! {
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use crate::client::tests::common::compressed_keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{decompression_keygen_config, TIME_TO_SLEEP_MS};
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, decompression_keygen_config};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]
@@ -343,7 +343,7 @@ async fn secure_threshold_keygen_test_crash_preprocessing() {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[serial]
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(

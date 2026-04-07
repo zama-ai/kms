@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tfhe::{
-    shortint::parameters::{GlweDimension, PolynomialSize},
     Versionize,
+    shortint::parameters::{GlweDimension, PolynomialSize},
 };
 use tfhe_versionable::VersionsDispatch;
 
@@ -169,7 +169,7 @@ mod tests {
 
     use super::GlweSecretKeyShare;
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_forced_hw_keygen_glwe() {
         // Params such that we need each of the 3 keys with HW between 4 and 6

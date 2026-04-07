@@ -1,7 +1,7 @@
 #![allow(clippy::test_attr_in_doctest)]
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 /// Attribute macro for integration tests that ensures proper setup
 /// specifically it creates an env var `RUN_MODE=integration` that
@@ -31,10 +31,8 @@ pub fn integration_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = quote! {
         #(#fn_attrs)*
         #fn_vis fn #fn_name() {
-            static INIT: std::sync::Once = std::sync::Once::new();
-            INIT.call_once(|| {
-                std::env::set_var("RUN_MODE", "integration");
-            });
+            unsafe {std::env::set_var("RUN_MODE", "integration");}
+            ::kms_test_tracing::init_logging();
             #fn_block
         }
     };
@@ -79,23 +77,27 @@ pub fn persistent_traces(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 let sep = std::path::MAIN_SEPARATOR.to_string();
                 // Set up the module path for trace logs
                 let module_dir = module_path!().replace("::", &sep);
-                std::env::set_var("TEST_MODULE_PATH", module_dir);
+                unsafe { std::env::set_var("TEST_MODULE_PATH", module_dir); }
 
                 // Set test function name for additional context
                 let test_fn_name = stringify!(#fn_name);
-                std::env::set_var("TEST_FUNCTION_NAME", test_fn_name);
+                unsafe { std::env::set_var("TEST_FUNCTION_NAME", test_fn_name); }
 
                 // Add unique process ID for CI artifacts differentiation
                 let process_id = std::process::id().to_string();
-                std::env::set_var("TEST_PROCESS_ID", &process_id);
+                unsafe { std::env::set_var("TEST_PROCESS_ID", &process_id); }
 
                 // Try to get CI job name from env if available
                 if let Ok(job) = std::env::var("GITHUB_JOB") {
-                    std::env::set_var("TEST_JOB_NAME", job);
+                    unsafe { std::env::set_var("TEST_JOB_NAME", job); }
                 }
 
                 // Enable trace persistence without changing execution environment
-                std::env::set_var("TRACE_PERSISTENCE", "enabled");
+                unsafe {
+                  std::env::set_var("TRACE_PERSISTENCE", "enabled");
+                  std::env::set_var("KMS_TEST_MODE", "1");
+                  std::env::set_var("TRACE_PERSISTENCE", "enabled");
+                };
             });
             #fn_block
         }

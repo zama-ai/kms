@@ -10,19 +10,42 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     anyhow_error_and_log,
-    client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
+    client::user_decryption_wasm::{ParsedUserDecryptionRequest, compute_link},
     cryptography::{
         compute_user_decrypt_message,
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
         signatures::{
-            internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
+            PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
     },
-    some_or_err,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
+
+/// Trusted client-side configuration used to validate server responses.
+/// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
+/// All fields MUST originate from the client's own configuration or some trusted source.
+pub(crate) struct UserDecTrustedValidationContext<'a> {
+    pub server_addresses: &'a HashMap<u32, Address>,
+    pub client_request: &'a ParsedUserDecryptionRequest,
+    pub eip712_domain: &'a Eip712Domain,
+}
+
+/// User decryption response payloads that have passed validation
+/// (signature verification, metadata consistency, majority-vote pivot selection).
+#[derive(Debug, PartialEq)]
+pub(crate) struct VerifiedUserDecryptionPayloads(Vec<UserDecryptionResponsePayload>);
+
+impl VerifiedUserDecryptionPayloads {
+    pub fn into_inner(self) -> Vec<UserDecryptionResponsePayload> {
+        self.0
+    }
+
+    pub fn as_slice(&self) -> &[UserDecryptionResponsePayload] {
+        &self.0
+    }
+}
 
 /// Groups EIP-712 external signature verification parameters.
 pub(crate) struct Eip712VerificationParams<'a> {
@@ -47,6 +70,9 @@ const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
 const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
     "Extra data mismatch in user decryption";
+const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in user decryption";
+const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
+    "Not enough correct responses to user-decrypt the data!";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 pub(crate) fn check_ext_user_decryption_signature(
@@ -74,8 +100,7 @@ pub(crate) fn check_ext_user_decryption_signature(
 }
 
 fn validate_user_decrypt_meta_data_and_signature(
-    server_addresses: &HashMap<u32, Address>,
-    client_request: &ParsedUserDecryptionRequest,
+    trusted_ctx: &UserDecTrustedValidationContext,
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
     signature: &[u8],
@@ -107,26 +132,27 @@ fn validate_user_decrypt_meta_data_and_signature(
 
     if pivot_resp.digest != other_resp.digest {
         anyhow::bail!(
-                    "{}: pivot has verification key {:?} gave digest {:?}, other has verification key {:?} with digest {:?}",
-                ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
-                    pivot_resp.verification_key,
-                    pivot_resp.digest,
-                    other_resp.verification_key,
-                    other_resp.digest,
-                );
+            "{}: pivot has verification key {:?} gave digest {:?}, other has verification key {:?} with digest {:?}",
+            ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
+            pivot_resp.verification_key,
+            pivot_resp.digest,
+            other_resp.verification_key,
+            other_resp.digest,
+        );
     }
 
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
 
-    let expected_addr = if let Some(expected_addr) = server_addresses.get(&(other_resp.party_id)) {
-        if *expected_addr != resp_verf_key.address() {
-            anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
-        }
-        expected_addr
-    } else {
-        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
-    };
+    let expected_addr =
+        if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(other_resp.party_id)) {
+            if *expected_addr != resp_verf_key.address() {
+                anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
+            }
+            expected_addr
+        } else {
+            anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
+        };
 
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
@@ -137,7 +163,7 @@ fn validate_user_decrypt_meta_data_and_signature(
             ));
         }
 
-        if eip712_params.response_extra_data != client_request.extra_data() {
+        if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
@@ -146,7 +172,7 @@ fn validate_user_decrypt_meta_data_and_signature(
         check_ext_user_decryption_signature(
             eip712_params.response_external_signature,
             other_resp,
-            client_request,
+            trusted_ctx.client_request,
             eip712_params.trusted_eip712_domain,
             expected_addr,
         )
@@ -275,19 +301,32 @@ fn select_most_common_user_dec(
     idx.and_then(|i| agg_resp[i].payload.clone())
 }
 
+/// Validates individual user decryption responses against a majority-vote pivot,
+/// checking metadata consistency, signatures, and degree constraints.
+///
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
+///
+/// # Returns
+/// * `Ok(payloads)` — More than `degree` responses passed validation;
+///   `payloads` contains the verified [`UserDecryptionResponsePayload`]s
+///   (pivot first, then the remaining valid responses).
+///   The caller should check if the list is empty.
+/// * `Err(_)` — An unrecoverable error occurred during validation
 fn validate_user_decrypt_responses(
-    server_addresses: &HashMap<u32, Address>,
-    client_request: &ParsedUserDecryptionRequest,
-    eip712_domain: &Eip712Domain,
+    trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<Option<Vec<UserDecryptionResponsePayload>>> {
+) -> anyhow::Result<VerifiedUserDecryptionPayloads> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no responses");
-        return Ok(None);
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NO_RESP);
+    }
+    if trusted_ctx.server_addresses.is_empty() {
+        anyhow::bail!("No servers configured in trusted user decryption context");
     }
 
     // Pick a pivot response
-    let threshold = (server_addresses.len() - 1) / 3; // Note that this is floored division.
+    let threshold = (trusted_ctx.server_addresses.len() - 1) / 3; // Note that this is floored division.
     let min_occurence = threshold + 1; // We need t+1 responses at least to find the pivot response.
     let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
@@ -300,11 +339,11 @@ fn validate_user_decrypt_responses(
     // if the pivot response degree does not match the threshold, we cannot proceed
     if pivot_payload.degree != threshold as u32 {
         anyhow::bail!(
-                "Pivot user decrypt responses gave degree {} which does not match expected threshold {} for {} known servers",
-                pivot_payload.degree,
-                threshold,
-                server_addresses.len()
-            );
+            "Pivot user decrypt responses gave degree {} which does not match expected threshold {} for {} known servers",
+            pivot_payload.degree,
+            threshold,
+            trusted_ctx.server_addresses.len()
+        );
     }
 
     for cur_resp in agg_resp {
@@ -321,11 +360,10 @@ fn validate_user_decrypt_responses(
         let eip712_params = Eip712VerificationParams {
             response_external_signature: &cur_resp.external_signature,
             response_extra_data: &cur_resp.extra_data,
-            trusted_eip712_domain: eip712_domain,
+            trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
-            server_addresses,
-            client_request,
+            trusted_ctx,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
@@ -339,9 +377,11 @@ fn validate_user_decrypt_responses(
         }
         if pivot_payload.degree != cur_payload.degree {
             tracing::warn!(
-                    "Server with claimed ID {} gave degree {} which is inconsistent with the pivot response {}",
-                    cur_payload.party_id, cur_payload.degree, pivot_payload.degree
-                );
+                "Server with claimed ID {} gave degree {} which is inconsistent with the pivot response {}",
+                cur_payload.party_id,
+                cur_payload.degree,
+                pivot_payload.degree
+            );
             continue;
         }
         // Sanity check the ID of the server.
@@ -382,7 +422,8 @@ fn validate_user_decrypt_responses(
         {
             tracing::warn!(
                 "Server who gave ID {} has different number of ciphertexts than the pivot response {} ",
-                cur_payload.party_id, pivot_payload.party_id
+                cur_payload.party_id,
+                pivot_payload.party_id
             );
             continue;
         }
@@ -411,28 +452,41 @@ fn validate_user_decrypt_responses(
     }
 
     if resp_parsed_payloads.len() <= pivot_payload.degree as usize {
-        tracing::warn!("Not enough correct responses to user-decrypt the data!");
-        Ok(None)
-    } else {
-        Ok(Some(resp_parsed_payloads))
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
+    Ok(VerifiedUserDecryptionPayloads(resp_parsed_payloads))
 }
 
 /// Validates the aggregated user decryption responses received from the servers
 /// against the given user decryption request. Returns the validated responses
 /// mapped to the server ID on success.
+///
+/// # Arguments
+/// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
+///
+/// # Returns
+/// * `Ok(Some(payloads))` — All checks passed: individual response validation
+///   succeeded (see [`validate_user_decrypt_responses`]) **and** the pivot
+///   response's digest matches the expected link derived from the client request,
+///   confirming the responses correspond to the original request.
+/// * `Ok(None)` — The responses were individually valid but the request-linkage
+///   check failed (digest mismatch), meaning the responses do not belong to
+///   the given request.
+/// * `Err(_)` — An unrecoverable error from individual response validation.
 pub(crate) fn validate_user_decrypt_responses_against_request(
-    server_addresses: &HashMap<u32, Address>,
-    client_request: &ParsedUserDecryptionRequest,
-    eip712_domain: &Eip712Domain,
+    trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<Option<Vec<UserDecryptionResponsePayload>>> {
-    let resp_parsed = some_or_err(
-        validate_user_decrypt_responses(server_addresses, client_request, eip712_domain, agg_resp)?,
-        "Could not validate the aggregated responses".to_string(),
-    )?;
-    let expected_link = compute_link(client_request, eip712_domain)?;
-    let pivot_resp = resp_parsed[0].clone();
+) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
+    let resp_parsed = validate_user_decrypt_responses(trusted_ctx, agg_resp)?;
+    if resp_parsed.as_slice().is_empty() {
+        anyhow::bail!("VerifiedUserDecryptionPayloads is empty")
+    }
+
+    let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
+
+    // Only index into the pivot if we've checked that the slice is not empty earlier
+    let pivot_resp = &resp_parsed.as_slice()[0];
     if expected_link != pivot_resp.digest {
         tracing::warn!("The user decryption response is not linked to the correct request");
         return Ok(None);
@@ -453,30 +507,32 @@ mod tests {
 
     use crate::{
         client::user_decryption_wasm::{
-            compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
+            CiphertextHandle, ParsedUserDecryptionRequest, compute_link,
         },
         cryptography::{
             compute_external_user_decrypt_signature,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                gen_sig_keys, internal_sign, PublicSigKey, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PublicSigKey, gen_sig_keys, internal_sign,
             },
         },
         dummy_domain,
         engine::validation_wasm::{
             ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
-            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
+            ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
         },
     };
 
     use super::{
-        check_ext_user_decryption_signature, select_most_common_user_dec,
-        validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
-        validate_user_decrypt_responses_against_request, Eip712VerificationParams,
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
+        UserDecTrustedValidationContext, check_ext_user_decryption_signature,
+        select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
+        validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
     };
 
     #[test]
@@ -544,16 +600,18 @@ mod tests {
 
         // incorrect external signature length
         {
-            assert!(check_ext_user_decryption_signature(
-                &external_sig[0..64],
-                &payload,
-                &request,
-                &domain,
-                &kms_addrs[&1],
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH));
+            assert!(
+                check_ext_user_decryption_signature(
+                    &external_sig[0..64],
+                    &payload,
+                    &request,
+                    &domain,
+                    &kms_addrs[&1],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
+            );
         }
 
         // bad signature due to bad signing key
@@ -567,14 +625,16 @@ mod tests {
                 &[],
             )
             .unwrap();
-            assert!(check_ext_user_decryption_signature(
-                &bad_external_sig,
-                &payload,
-                &request,
-                &domain,
-                &kms_addrs[&1],
-            )
-            .is_err());
+            assert!(
+                check_ext_user_decryption_signature(
+                    &bad_external_sig,
+                    &payload,
+                    &request,
+                    &domain,
+                    &kms_addrs[&1],
+                )
+                .is_err()
+            );
         }
 
         // bad signature due to bad domain
@@ -585,30 +645,34 @@ mod tests {
                 chain_id: 1234, // incorrect chain ID
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            assert!(check_ext_user_decryption_signature(
-                &external_sig,
-                &payload,
-                &request,
-                &bad_domain,
-                &kms_addrs[&1],
-            )
-            .is_err());
+            assert!(
+                check_ext_user_decryption_signature(
+                    &external_sig,
+                    &payload,
+                    &request,
+                    &bad_domain,
+                    &kms_addrs[&1],
+                )
+                .is_err()
+            );
         }
 
         // check that we detect the error if payload is modified
         {
             let mut bad_payload = payload.clone();
             bad_payload.party_id = 2; // modify ID
-            assert!(check_ext_user_decryption_signature(
-                &external_sig,
-                &bad_payload,
-                &request,
-                &domain,
-                &kms_addrs[&1],
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE));
+            assert!(
+                check_ext_user_decryption_signature(
+                    &external_sig,
+                    &bad_payload,
+                    &request,
+                    &domain,
+                    &kms_addrs[&1],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE)
+            );
         }
 
         // happy path
@@ -688,6 +752,12 @@ mod tests {
         )
         .unwrap();
 
+        let trusted_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            eip712_domain: &dummy_domain,
+        };
+
         // incorrect length
         {
             let other_resp = UserDecryptionResponsePayload {
@@ -702,17 +772,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &other_resp,
-                &[], // the ECDSA signature may be empty, thus we check the external one
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &other_resp,
+                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH)
+            );
         }
 
         // mismatch type
@@ -734,17 +805,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &other_resp,
-                &[], // the ECDSA signature may be empty, thus we check the external one
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &other_resp,
+                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH)
+            );
         }
 
         // digest mismatch
@@ -766,17 +838,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &other_resp,
-                &[], // the ECDSA signature may be empty, thus we check the external one
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &other_resp,
+                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH)
+            );
         }
 
         // no signatures are provided
@@ -786,17 +859,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &pivot_resp,
-                &[], // the ECDSA signature may be empty, thus we check the external one
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &pivot_resp,
+                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE)
+            );
         }
 
         // if the ID is changed to something that does not exist, return error
@@ -808,17 +882,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &other_resp,
-                &[],
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &other_resp,
+                    &[],
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
+            );
         }
 
         // if the ID does not match with the claimed address, return error
@@ -830,17 +905,18 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            assert!(validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
-                &pivot_resp,
-                &other_resp,
-                &[],
-                &params,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS));
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &other_resp,
+                    &[],
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
+            );
         }
 
         // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
@@ -853,8 +929,7 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
+                &trusted_ctx,
                 &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
@@ -874,8 +949,7 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             validate_user_decrypt_meta_data_and_signature(
-                &server_addresses,
-                &client_request,
+                &trusted_ctx,
                 &pivot_resp,
                 &pivot_resp,
                 &signature_buf,
@@ -926,6 +1000,12 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
             vec![],
         );
+
+        let trusted_ctx = UserDecTrustedValidationContext {
+            server_addresses: &server_addresses,
+            client_request: &client_request,
+            eip712_domain: &dummy_domain,
+        };
 
         let resp1 = {
             let payload0 = UserDecryptionResponsePayload {
@@ -1048,15 +1128,10 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), resp4.clone()];
 
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 4
             );
         }
@@ -1068,29 +1143,22 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), bad_resp];
 
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 3 // instead of 4
             );
         }
 
-        // empty responses, should return None
+        // empty responses, should return error
         {
-            assert!(validate_user_decrypt_responses(
-                &server_addresses,
-                &client_request,
-                &dummy_domain,
-                &[],
-            )
-            .unwrap()
-            .is_none());
+            assert!(
+                validate_user_decrypt_responses(&trusted_ctx, &[])
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_NO_RESP)
+            );
         }
 
         // empty payload
@@ -1104,15 +1172,10 @@ mod tests {
             // We will have 2 accepted responses because
             // the third one does not have a payload
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 2
             );
         }
@@ -1123,18 +1186,16 @@ mod tests {
             let mut bad_resp2 = resp2.clone();
             bad_resp2.payload = None; // no payload here, cannot be used for pivot
             let mut bad_resp3 = resp3.clone();
-            bad_resp3.payload.as_mut().unwrap().party_id = 2; // payload, but with wrong party ID (i.e. not matching its key) here, otherwise good as pivot
+            bad_resp3.payload.as_mut().unwrap().digest[0] ^= 1; // corrupt digest so it can't match for pivot
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
-            assert!(validate_user_decrypt_responses(
-                &server_addresses,
-                &client_request,
-                &dummy_domain,
-                &agg_resp,
-            )
-            .unwrap()
-            .is_none());
+            assert!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Cannot find user decryption pivot")
+            );
         }
 
         // one repsonse has a wrong degree, but should pass since majority is fine
@@ -1144,15 +1205,10 @@ mod tests {
             let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
 
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 2
             );
         }
@@ -1167,9 +1223,7 @@ mod tests {
             let agg_resp = vec![bad_resp2, bad_resp3];
 
             assert!(validate_user_decrypt_responses(
-                &server_addresses,
-                &client_request,
-                &dummy_domain,
+                &trusted_ctx,
                 &agg_resp,
             )
             .unwrap_err().to_string()
@@ -1209,15 +1263,10 @@ mod tests {
             let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
 
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 2
             );
         };
@@ -1261,19 +1310,30 @@ mod tests {
             run_with_customized_resp2(3, vec![1, 2, 3, 4], &vk, 1);
         }
 
+        // not enough correct responses: exactly `degree` valid ones should error
+        // resp1 is valid but bad_resp2 fails signature check due to wrong extra_data,
+        // leaving only 1 valid response which equals degree (1), triggering the bail
+        {
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.extra_data = vec![0];
+            let agg_resp = vec![resp1.clone(), bad_resp2];
+
+            assert!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP)
+            );
+        }
+
         // happy path
         {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
             assert_eq!(
-                validate_user_decrypt_responses(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 3
             );
         }
@@ -1396,29 +1456,32 @@ mod tests {
                 dummy_domain.verifying_contract.unwrap(),
                 vec![],
             );
-            assert!(validate_user_decrypt_responses_against_request(
-                &server_addresses,
-                &bad_client_request,
-                &dummy_domain,
-                &agg_resp,
-            )
-            .unwrap()
-            .is_none());
+            let bad_ctx = UserDecTrustedValidationContext {
+                server_addresses: &server_addresses,
+                client_request: &bad_client_request,
+                eip712_domain: &dummy_domain,
+            };
+            assert!(
+                validate_user_decrypt_responses_against_request(&bad_ctx, &agg_resp)
+                    .unwrap()
+                    .is_none()
+            );
         }
 
         // happy path
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
+            let trusted_ctx = UserDecTrustedValidationContext {
+                server_addresses: &server_addresses,
+                client_request: &client_request,
+                eip712_domain: &dummy_domain,
+            };
             assert_eq!(
-                validate_user_decrypt_responses_against_request(
-                    &server_addresses,
-                    &client_request,
-                    &dummy_domain,
-                    &agg_resp,
-                )
-                .unwrap()
-                .unwrap()
-                .len(),
+                validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .unwrap()
+                    .as_slice()
+                    .len(),
                 2
             );
         }

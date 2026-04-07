@@ -4,19 +4,19 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::{internal_verify_sig, PublicSigKey, Signature},
+    signatures::{PublicSigKey, Signature, internal_verify_sig},
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
-    check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
-    DSEP_USER_DECRYPTION,
+    DSEP_USER_DECRYPTION, UserDecTrustedValidationContext, check_ext_user_decryption_signature,
+    validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     error_correction::MemoizedExceptionals,
     galois_rings::degree_4::ResiduePolyF4,
-    sharing::shamir::{fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings},
+    sharing::shamir::{ShamirSharings, fill_indexed_shares, reconstruct_w_errors_sync},
     structure_traits::{BaseRing, ErrorCorrect, Ring},
 };
 use alloy_sol_types::Eip712Domain;
@@ -28,8 +28,8 @@ use kms_grpc::kms::v1::{
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
-use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
+use tfhe::shortint::ClassicPBSParameters;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
@@ -224,15 +224,16 @@ impl Client {
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let ctx = UserDecTrustedValidationContext {
+            server_addresses: &self.get_server_addrs(),
+            client_request,
+            eip712_domain,
+        };
         let validated_resps = some_or_err(
-            validate_user_decrypt_responses_against_request(
-                &self.get_server_addrs(),
-                client_request,
-                eip712_domain,
-                agg_resp,
-            )?,
+            validate_user_decrypt_responses_against_request(&ctx, agg_resp)?,
             "Could not validate request".to_owned(),
-        )?;
+        )?
+        .into_inner();
         let degree = some_or_err(
             validated_resps.first(),
             "No valid responses parsed".to_string(),
@@ -244,8 +245,8 @@ impl Client {
         let num_parties = 3 * degree + 1;
         if amount_shares > num_parties {
             return Err(anyhow_error_and_log(format!(
-                    "Received more shares than expected for number of parties. n={num_parties}, #shares={amount_shares}"
-                )));
+                "Received more shares than expected for number of parties. n={num_parties}, #shares={amount_shares}"
+            )));
         }
 
         let pbs_params = self
@@ -268,9 +269,9 @@ impl Client {
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
                     // we can tolerate at most t=degree errors in the recovered shares
                     if recovery_errors > degree {
-                        return Err(anyhow_error_and_log(
-                            format!("Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"),
-                        ));
+                        return Err(anyhow_error_and_log(format!(
+                            "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
+                        )));
                     }
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
@@ -284,13 +285,15 @@ impl Client {
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
-                                return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()),
-                                ));
+                                return Err(anyhow_error_and_log(format!(
+                                    "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
+                                    &cur_block_shares.shares.len()
+                                )));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
+                                    &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -322,9 +325,9 @@ impl Client {
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
                     // we can tolerate at most t=degree errors in the recovered shares
                     if recovery_errors > degree {
-                        return Err(anyhow_error_and_log(
-                            format!("Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"),
-                        ));
+                        return Err(anyhow_error_and_log(format!(
+                            "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
+                        )));
                     }
 
                     let mut decrypted_blocks = Vec::new();
@@ -339,13 +342,15 @@ impl Client {
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
-                                return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()),
-                                ));
+                                return Err(anyhow_error_and_log(format!(
+                                    "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
+                                    &cur_block_shares.shares.len()
+                                )));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
+                                    &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -505,14 +510,16 @@ impl Client {
                 ) {
                     Ok(Some(r)) => decrypted_blocks.push(r),
                     Ok(None) => {
-                        return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
-                                ));
+                        return Err(anyhow_error_and_log(format!(
+                            "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}",
+                            &cur_block_shares.shares.len()
+                        )));
                     }
                     Err(e) => {
                         return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
-                                )));
+                            "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}",
+                            &cur_block_shares.shares.len()
+                        )));
                     }
                 }
             }

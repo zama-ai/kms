@@ -152,7 +152,7 @@ threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
-tracing-test.workspace = true
+kms-test-tracing.workspace = true
 
 
 [features]
@@ -160,7 +160,7 @@ default = ["non-wasm"]
 testing = ["dep:tempfile"]
 non-wasm = [
     "kms-grpc/non-wasm",
-    "threshold-networking/non-wasm",
+    "dep:threshold-networking",
     "threshold-fhe/non-wasm",
 
     "dep:attestation-doc-validation",

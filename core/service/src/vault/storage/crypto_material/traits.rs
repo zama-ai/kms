@@ -1,7 +1,7 @@
 //! Core traits for cryptographic material storage
 
 use crate::vault::storage::{StorageReader, StorageReaderExt};
-use kms_grpc::{identifiers::EpochId, RequestId};
+use kms_grpc::{RequestId, identifiers::EpochId};
 
 /// Trait for reading cryptographic material from storage
 ///

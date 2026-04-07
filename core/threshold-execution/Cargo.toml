@@ -68,7 +68,7 @@ serial_test.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-tracing-test.workspace = true
+kms-test-tracing.workspace = true
 
 
 [features]
@@ -81,8 +81,7 @@ extension_degree_7 = ["algebra/extension_degree_7"]
 extension_degree_8 = ["algebra/extension_degree_8"]
 
 non-wasm = [
-	"threshold-networking/non-wasm",
-
+    "dep:threshold-networking",
     "dep:tfhe-zk-pok",
     "dep:redis",
     "dep:thread-handles",

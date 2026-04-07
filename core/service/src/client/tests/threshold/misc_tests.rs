@@ -30,9 +30,9 @@ cfg_if::cfg_if! {
         use crate::util::key_setup::test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext};
     }
 }
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::RequestId;
 use serial_test::serial;
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
@@ -80,9 +80,11 @@ async fn test_threshold_health_endpoint_availability() {
     .await;
     let dec_res = dec_tasks.join_all().await;
     // Check the server will fail since it cannot find the PRSS info
-    assert!(dec_res
-        .iter()
-        .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound));
+    assert!(
+        dec_res
+            .iter()
+            .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound)
+    );
 
     // Get health client for main server 1
     let mut main_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -195,9 +197,11 @@ async fn test_threshold_close_after_drop() {
     // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
     // Check the server is no longer there
-    assert!(get_status(&mut core_health_client, core_service_name)
-        .await
-        .is_err());
+    assert!(
+        get_status(&mut core_health_client, core_service_name)
+            .await
+            .is_err()
+    );
     assert!(
         get_status(&mut threshold_health_client, threshold_service_name)
             .await
@@ -357,7 +361,7 @@ async fn test_ratelimiter() {
 }
 
 /// Validates the fix that ensures that a party is notified if it starts a session the others consider completed.
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
 #[serial]
@@ -372,21 +376,23 @@ async fn nightly_test_complete_session_notification() {
     let parallel_reqs = 1;
     let wait_time = 4;
 
-    // Ensure inactive session discard interval is small for the test
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
-        format!("{}", wait_time),
-    );
-    // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
-        format!("{}", wait_time + 1),
-    );
-    // And ensure that checking for abort and received values will happen quickly
-    env::set_var(
-        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
-        format!("{}", wait_time + 2),
-    );
+    unsafe {
+        // Ensure inactive session discard interval is small for the test
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
+            format!("{}", wait_time),
+        );
+        // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
+            format!("{}", wait_time + 1),
+        );
+        // And ensure that checking for abort and received values will happen quickly
+        env::set_var(
+            "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
+            format!("{}", wait_time + 2),
+        );
+    }
 
     let (kms_servers, kms_clients, mut internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;

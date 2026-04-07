@@ -247,8 +247,8 @@ mod tests {
     use rand::{RngCore, SeedableRng};
 
     use super::{
-        execute_all_randomness_tests_tight, igamc, ring_monobit_test, ring_runs_test, runs_test,
-        NUM_STD_DEV_NIST, SIGNIFICANCE_LEVEL,
+        NUM_STD_DEV_NIST, SIGNIFICANCE_LEVEL, execute_all_randomness_tests_tight, igamc,
+        ring_monobit_test, ring_runs_test, runs_test,
     };
     use crate::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Sample};
 

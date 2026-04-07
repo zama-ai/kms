@@ -225,10 +225,10 @@ mod tests {
             prelude::PlaintextCount,
         },
         shortint::{
+            CiphertextModulus,
             parameters::{
                 DecompositionBaseLog, DecompositionLevelCount, GlweDimension, PolynomialSize,
             },
-            CiphertextModulus,
         },
     };
     use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
@@ -236,8 +236,8 @@ mod tests {
     use threshold_types::role::Role;
 
     use super::{
-        encrypt_glwe_ciphertext_assign, GlweCiphertextShare, GlweSecretKeyShare,
-        MPCEncryptionRandomGenerator,
+        GlweCiphertextShare, GlweSecretKeyShare, MPCEncryptionRandomGenerator,
+        encrypt_glwe_ciphertext_assign,
     };
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs

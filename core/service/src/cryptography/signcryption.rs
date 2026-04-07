@@ -17,17 +17,17 @@ use crate::cryptography::encryption::{
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
-    check_normalized, internal_sign, HasSigningScheme, PrivateSigKey, PublicSigKey, Signature,
-    SigningSchemeType, SIG_SIZE,
+    HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
+    check_normalized, internal_sign,
 };
 use ::signature::Verifier;
-use hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
+use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -841,20 +841,24 @@ mod tests {
             let mut cipher = correct_cipher.clone();
             cipher.payload[0] ^= 1;
 
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                    .is_err()
+            );
         }
 
         // wrong scheme
         {
             let mut cipher = correct_cipher.clone();
             cipher.pke_type = PkeSchemeType::MlKem1024;
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                    .is_err()
+            );
         }
 
         // use the wrong client signcryption key
@@ -865,10 +869,12 @@ mod tests {
                 &client_signcryption_keys.unsigncryption_key.receiver_id,
                 Some(&client_signcryption_keys.signcrypt_key.signing_key),
             );
-            assert!(wrong_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
-                .is_err());
+            assert!(
+                wrong_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // use the wrong server key
@@ -881,17 +887,21 @@ mod tests {
                 &wrong_verf_key,
                 &client_signcryption_keys.unsigncryption_key.receiver_id,
             );
-            assert!(wrong_keys
-                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
-                .is_err());
+            assert!(
+                wrong_keys
+                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // use bad domain separator
         {
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // happy path should still work at the end
@@ -910,10 +920,11 @@ mod tests {
         let res = parse_msg(to_encrypt.to_vec(), &server_verf_key);
         // unwrapping fails
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("unexpected verification key digest"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("unexpected verification key digest")
+        );
     }
 
     #[test]

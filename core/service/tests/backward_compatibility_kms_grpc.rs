@@ -2,11 +2,10 @@ mod common;
 use common::load_and_unversionize;
 
 use backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
     PrivDataTypeTest, PubDataTypeTest, SignedPubDataHandleInternalTest, TestMetadataKmsGrpc,
-    TestType, Testcase,
+    TestType, Testcase, data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{TestedModule, run_all_tests},
 };
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal};
 use kms_lib::engine::context::SoftwareVersion;

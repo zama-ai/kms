@@ -22,7 +22,7 @@ use threshold_execution::runtime::sessions::{
 };
 use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use threshold_types::role::Role;
-use threshold_types::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
+use threshold_types::session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES, SessionId};
 
 fn session_id_from_bgv_ct(
     ciphertext: &LevelledCiphertext<LevelEll, N65536>,

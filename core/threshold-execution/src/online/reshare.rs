@@ -22,7 +22,7 @@ use algebra::{
     syndrome::lagrange_numerators,
 };
 use error_utils::anyhow_error_and_log;
-use itertools::{izip, Itertools};
+use itertools::{Itertools, izip};
 use std::{
     collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     sync::Arc,
@@ -138,10 +138,10 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
 }
 
 impl<
-        Ses: BaseSessionHandles,
-        OpenProtocol: RobustOpen + Default,
-        BroadcastProtocol: Broadcast + Default,
-    > Default for RealSameSetsReshare<Ses, OpenProtocol, BroadcastProtocol>
+    Ses: BaseSessionHandles,
+    OpenProtocol: RobustOpen + Default,
+    BroadcastProtocol: Broadcast + Default,
+> Default for RealSameSetsReshare<Ses, OpenProtocol, BroadcastProtocol>
 {
     fn default() -> Self {
         RealSameSetsReshare {
@@ -221,10 +221,10 @@ pub struct RealTwoSetsReshareAsSet1<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Clone for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Clone for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     fn clone(&self) -> Self {
         RealTwoSetsReshareAsSet1 {
@@ -236,10 +236,10 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OpenProtocol: RobustOpen + Default,
-        BroadcastProtocol: Broadcast + Default,
-    > Default for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OpenProtocol: RobustOpen + Default,
+    BroadcastProtocol: Broadcast + Default,
+> Default for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     fn default() -> Self {
         RealTwoSetsReshareAsSet1 {
@@ -251,11 +251,10 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > ProtocolDescription
-    for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> ProtocolDescription for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
         let indent = Self::INDENT_STRING.repeat(depth);
@@ -269,10 +268,10 @@ impl<
 
 #[async_trait]
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Reshare for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Reshare for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     type ReshareSessions = TwoSetsSes;
     // As set 1 preprocessing is not needed
@@ -336,12 +335,11 @@ pub struct RealTwoSetsReshareAsSet2<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Clone
-    for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Clone for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn clone(&self) -> Self {
         RealTwoSetsReshareAsSet2 {
@@ -354,11 +352,11 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen + Default,
-        BroadcastProtocol: Broadcast + Default,
-    > Default
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen + Default,
+    BroadcastProtocol: Broadcast + Default,
+> Default
     for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn default() -> Self {
@@ -372,11 +370,11 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > ProtocolDescription
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> ProtocolDescription
     for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
@@ -391,11 +389,11 @@ impl<
 
 #[async_trait]
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Reshare
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Reshare
     for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     type ReshareSessions = (TwoSetsSes, OneSetSes);
@@ -458,11 +456,11 @@ pub struct RealTwoSetsReshareAsBothSets<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Clone
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Clone
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn clone(&self) -> Self {
@@ -476,11 +474,11 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen + Default,
-        BroadcastProtocol: Broadcast + Default,
-    > Default
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen + Default,
+    BroadcastProtocol: Broadcast + Default,
+> Default
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn default() -> Self {
@@ -494,11 +492,11 @@ impl<
 }
 
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > ProtocolDescription
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> ProtocolDescription
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
@@ -513,11 +511,11 @@ impl<
 
 #[async_trait]
 impl<
-        TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
-        OneSetSes: BaseSessionHandles,
-        RobustOpenProtocol: RobustOpen,
-        BroadcastProtocol: Broadcast,
-    > Reshare
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+    RobustOpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+> Reshare
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     type ReshareSessions = (TwoSetsSes, OneSetSes);
@@ -979,10 +977,10 @@ where
         // Note: should be equal to expected_input_len
         if vs.len() != rs_share_iter.len() {
             tracing::warn!(
-                    "Mistmatch in lengths during resharing: vs.len() = {}, rs_share_iter.len() = {}. Will pad with zeros.",
-                    vs.len(),
-                    rs_share_iter.len()
-                );
+                "Mistmatch in lengths during resharing: vs.len() = {}, rs_share_iter.len() = {}. Will pad with zeros.",
+                vs.len(),
+                rs_share_iter.len()
+            );
         }
 
         let mut s_share = Vec::with_capacity(expected_input_len);
@@ -1050,8 +1048,8 @@ fn take_majority_vote_on_broadcasts<
             }
         } else {
             tracing::warn!(
-                    "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
-                );
+                "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
+            );
             my_set_session.add_corrupt(sender_in_s2);
         }
     }
@@ -1583,8 +1581,8 @@ mod tests {
 
         if let Some(set_2_session) = set_2_session {
             let reshare_result = reshare_result.unwrap().unwrap();
-            let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
-            opened_reshared
+
+            open_list(&reshare_result, &set_2_session).await.unwrap()
         } else {
             assert!(reshare_result.unwrap().is_none());
             inner_secrets.unwrap()

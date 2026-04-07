@@ -1,7 +1,7 @@
 use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
-    bivariate::{compute_powers, MatrixMul},
+    bivariate::{MatrixMul, compute_powers},
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
 };
 use async_trait::async_trait;
@@ -209,7 +209,7 @@ pub(crate) mod tests {
         large_execution::{single_sharing::SecureSingleSharing, single_sharing::SingleSharing},
         runtime::sessions::large_session::LargeSession,
     };
-    use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+    use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
     #[cfg(feature = "extension_degree_8")]
     use algebra::galois_rings::degree_8::ResiduePolyF8;
     use algebra::{

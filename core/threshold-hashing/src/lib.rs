@@ -1,7 +1,7 @@
 use serde::Serialize;
 use sha3::{
-    digest::{ExtendableOutput, Update, XofReader},
     Shake256,
+    digest::{ExtendableOutput, Update, XofReader},
 };
 
 /// Domain separator for hashing elements.

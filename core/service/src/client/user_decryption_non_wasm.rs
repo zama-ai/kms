@@ -5,9 +5,9 @@ use crate::cryptography::encryption::{
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-use kms_grpc::RequestId;
 use kms_grpc::{ContextId, EpochId};
 
 impl Client {

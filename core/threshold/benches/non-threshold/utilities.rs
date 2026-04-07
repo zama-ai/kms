@@ -1,13 +1,13 @@
-use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
+use tfhe::core_crypto::fft_impl::fft64::math::fft::{FftAlgo, Method, Plan, setup_custom_fft_plan};
 use tfhe::{
+    ClientKey, Tag,
     core_crypto::{prelude::NormalizedHammingWeightBound, seeders::new_seeder},
     xof_key_set::CompressedXofKeySet,
-    ClientKey, Tag,
 };
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::parameters::{
-    BC_PARAMS_SNS, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P32_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE,
-    NIST_PARAMS_P8_SNS_LWE,
+    BC_PARAMS_SNS, NIST_PARAMS_P8_SNS_FGLWE, NIST_PARAMS_P8_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
+    NIST_PARAMS_P32_SNS_LWE,
 };
 #[cfg(feature = "measure_memory")]
 use threshold_fhe::allocator::MEM_ALLOCATOR;

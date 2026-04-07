@@ -52,7 +52,10 @@ pub async fn fetch_public_elements(
             .await
             .is_err()
             {
-                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                tracing::warn!(
+                    "Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.",
+                    cur_core.s3_endpoint
+                );
                 all_elements = false;
                 break 'elements;
             }
@@ -69,8 +72,8 @@ pub async fn fetch_public_elements(
 
     if successful_core_ids.is_empty() {
         Err(anyhow::anyhow!(
-                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
-            ))
+            "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
+        ))
     } else {
         Ok(successful_core_ids.into_iter().collect())
     }
@@ -206,7 +209,10 @@ async fn generic_fetch_element(
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
+            tracing::info!(
+                "Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}",
+                bytes.len()
+            );
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -235,7 +241,10 @@ async fn generic_fetch_element(
             )
         })?;
         let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {local_path}/{folder}", res.len());
+        tracing::info!(
+            "Successfully read {} bytes for element {element_id} from local path {local_path}/{folder}",
+            res.len()
+        );
         Ok(res)
     }
 }

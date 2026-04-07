@@ -11,36 +11,36 @@ description = "Provides networking for all threshold network components. GRPC, s
 algebra.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-attestation-doc-validation = { workspace = true, optional = true }
-backoff = { workspace = true, features = ["tokio"], optional = true }
+attestation-doc-validation.workspace = true
+backoff = { workspace = true, features = ["tokio"] }
 bc2wrap.workspace = true
 dashmap.workspace = true
 hex = { workspace = true, features = ["serde"] }
-hyper-rustls-ring = { workspace = true, optional = true }
+hyper-rustls-ring.workspace = true
 error-utils.workspace = true
 futures-util.workspace = true
 lazy_static.workspace = true
-observability = { workspace = true, optional = true }
+observability.workspace = true
 oid-registry.workspace = true
 prost.workspace = true
 serde.workspace = true
 sha2.workspace = true
 tfhe-versionable.workspace = true
-thread-handles = { workspace = true, optional = true }
+thread-handles.workspace = true
 threshold-types.workspace = true
 tokio = { workspace = true, features = [
     "sync",
     "rt",
     "macros",
     "time",
-], optional = true }
-tokio-rustls = { workspace = true, optional = true }
-tonic = { workspace = true, features = ["tls-ring"], optional = true }
+] }
+tokio-rustls.workspace = true
+tonic = { workspace = true, features = ["tls-ring"] }
 tonic-prost.workspace = true
-tonic-tls = { workspace = true, optional = true }
-tower = { workspace = true, features = ["retry", "timeout"], optional = true }
+tonic-tls.workspace = true
+tower = { workspace = true, features = ["retry", "timeout"] }
 tracing.workspace = true
-x509-parser = { workspace = true, optional = true }
+x509-parser.workspace = true
 
 [dev-dependencies]
 test-utils.workspace = true
@@ -51,7 +51,7 @@ tfhe = { workspace = true, features = [
     "integer",
     "zk-pok",
 ] }
-tracing-test.workspace = true
+kms-test-tracing.workspace = true
 
 
 
@@ -59,24 +59,7 @@ tracing-test.workspace = true
 tonic-prost-build.workspace = true
 
 [features]
-default = ["non-wasm"]
-
-non-wasm = [
-	"threshold-execution/non-wasm",
-
-	"dep:attestation-doc-validation",
-	"dep:backoff",
-	"dep:hyper-rustls-ring",
-    "dep:observability",
-    "dep:thread-handles",
-    "dep:tokio",
-    "dep:x509-parser",
-    "dep:tokio-rustls",
-    "dep:tonic",
-    "dep:tonic-tls",
-    "dep:tower",
-]
 experimental = ["choreographer", "testing"]
-testing = ["non-wasm", "threshold-execution/testing"]
+testing = ["threshold-execution/testing"]
 malicious_strategies = ["testing"]
 choreographer = ["malicious_strategies"]

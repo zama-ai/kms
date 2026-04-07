@@ -2,6 +2,7 @@ use itertools::Itertools;
 use num_traits::Zero;
 use std::slice::IterMut;
 use tfhe::{
+    Seed,
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
     },
@@ -13,7 +14,6 @@ use tfhe::{
         },
     },
     prelude::CastFrom,
-    Seed,
 };
 
 use super::{glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType};

@@ -1,6 +1,6 @@
 use {
-    backward_compatibility::load::{load_versioned_auxiliary, DataFormat, TestFailure},
     backward_compatibility::TestType,
+    backward_compatibility::load::{DataFormat, TestFailure, load_versioned_auxiliary},
     std::path::Path,
     tfhe_versionable::Unversionize,
 };
