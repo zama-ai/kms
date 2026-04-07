@@ -615,7 +615,8 @@ mod tests {
         names.sort();
 
         // Exhaustive allowlist — update this when adding/removing metrics
-        let expected_metrics = vec![
+        #[allow(unused_mut)]
+        let mut expected_metrics = vec![
             "kms_active_sessions",
             "kms_cpu_load",
             "kms_file_descriptors",
@@ -640,7 +641,10 @@ mod tests {
             "kms_total_cpus",
             "kms_total_memory",
             "kms_version",
-            // process_* metrics come from the prometheus crate `process` feature.
+        ];
+        // process_* metrics come from the prometheus crate's `process` feature (linux only),
+        #[cfg(target_os = "linux")]
+        expected_metrics.extend_from_slice(&[
             "process_cpu_seconds_total",
             "process_max_fds",
             "process_open_fds",
@@ -648,7 +652,7 @@ mod tests {
             "process_start_time_seconds",
             "process_threads",
             "process_virtual_memory_bytes",
-        ];
+        ]);
 
         assert_eq!(
             names, expected_metrics,
