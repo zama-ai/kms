@@ -15,7 +15,6 @@ use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use hashing::DomainSep;
-#[cfg(feature = "non-wasm")]
 use hashing::HashingWriter;
 use hashing::hash_element;
 use hashing::serialize_hash_element;
@@ -23,11 +22,9 @@ use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
@@ -80,7 +77,6 @@ lazy_static::lazy_static! {
         crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersioned {
     V0(KmsFheKeyHandlesV0),
@@ -102,7 +98,6 @@ impl Upgrade<KmsFheKeyHandles> for KmsFheKeyHandlesV0 {
 ///
 /// This structure securely holds sensitive key material used by the KMS,
 /// including the client key, optional decompression key, and public key metadata.
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
@@ -127,7 +122,6 @@ impl Named for KmsFheKeyHandles {
     const NAME: &'static str = "KmsFheKeyHandles";
 }
 
-#[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
     /// Computes key handles for public key materials with signatures.
     ///
@@ -204,7 +198,6 @@ impl KmsFheKeyHandles {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct KmsFheKeyHandlesV0 {
     /// Client's private key for FHE operations
@@ -600,7 +593,6 @@ pub fn deserialize_to_low_level(
 }
 
 /// Serialize and hash a versioned element using tfhe-rs' `safe_serialize` function.
-#[cfg(feature = "non-wasm")]
 pub fn safe_serialize_hash_element_versioned<T>(
     domain_separator: &DomainSep,
     msg: &T,
@@ -894,7 +886,6 @@ pub enum KeyGenMetadataVersioned {
 }
 
 // Values that need to be stored temporarily as part of an async key generation call.
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersioned)]
 pub enum KeyGenMetadata {
@@ -945,13 +936,11 @@ impl KeyGenMetadata {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataInnerVersioned {
     V0(CrsGenMetadataInner),
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataInnerVersioned)]
 pub struct CrsGenMetadataInner {
@@ -961,14 +950,12 @@ pub struct CrsGenMetadataInner {
     pub(crate) external_signature: Vec<u8>,
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataVersioned {
     V0(CrsGenSignedPubDataHandleInternalWrapper),
     V1(CrsGenMetadata),
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersioned)]
 pub enum CrsGenMetadata {
@@ -976,7 +963,6 @@ pub enum CrsGenMetadata {
     LegacyV0(SignedPubDataHandleInternal),
 }
 
-#[cfg(feature = "non-wasm")]
 impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     type Error = std::convert::Infallible;
     fn upgrade(self) -> Result<CrsGenMetadata, Self::Error> {
@@ -984,7 +970,6 @@ impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl CrsGenMetadata {
     pub fn new(
         crs_id: RequestId,
@@ -1016,7 +1001,6 @@ impl CrsGenMetadata {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl Named for CrsGenMetadata {
     /// Returns the type name for versioning and serialization
     const NAME: &'static str = "CrsGenMetadata";
@@ -1025,12 +1009,10 @@ impl Named for CrsGenMetadata {
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
 // an external signature on the batch and any extra data.
-#[cfg(feature = "non-wasm")]
 pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
-#[cfg(feature = "non-wasm")]
 pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
 
 #[cfg(test)]
