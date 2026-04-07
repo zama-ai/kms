@@ -1283,7 +1283,7 @@ mod tests {
         };
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: Some(backup_id.into()),
+            custodian_context_id: Some(backup_id.into()),
             threshold,
         };
         let internal_custodian_context =
@@ -1299,9 +1299,15 @@ mod tests {
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
-        let rec_material =
-            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
-                .unwrap();
+        let mpc_context = kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]);
+        let rec_material = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            mpc_context,
+        )
+        .unwrap();
         (rec_material, verf_key, dec_key, enc_key)
     }
 

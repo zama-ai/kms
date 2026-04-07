@@ -18,7 +18,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{RequestId, kms::v1::CustodianContext};
+use kms_grpc::{RequestId, identifiers::ContextId, kms::v1::CustodianContext};
 use proptest::prelude::*;
 use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
@@ -150,6 +150,7 @@ fn custodian_reencrypt() {
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
+    let mpc_context_id = RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]);
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
@@ -165,6 +166,7 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 bad_cts[0].0.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -185,6 +187,7 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 bad_cts[0].0.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -201,6 +204,7 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 cts[0].0.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 bad_backup_id,
@@ -216,6 +220,7 @@ fn custodian_reencrypt() {
             .verify_reencrypt(
                 &mut rng,
                 cts[0].0.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -578,7 +583,7 @@ fn operator_handle_init(
             .iter()
             .map(|msg| msg.to_owned().try_into().unwrap())
             .collect(),
-        context_id: Some((*backup_id).into()),
+        custodian_context_id: Some((*backup_id).into()),
         threshold: custodian_threshold as u32,
     };
     for _op_idx in 1..=operator_count {
@@ -601,11 +606,13 @@ fn operator_handle_init(
             .unwrap();
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
+        let mpc_context = ContextId::from_bytes([7u8; 32]);
         let validation_material = RecoveryValidationMaterial::new(
             cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
             &signing_key,
+            mpc_context,
         )
         .unwrap();
         operators.insert(
@@ -662,6 +669,7 @@ fn custodian_recover(
             match custodian.verify_reencrypt(
                 rng,
                 cur_backup.get(cur_cus_role).unwrap(),
+                RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]),
                 verification_key,
                 ephemeral_enc_key,
                 *backup_id,

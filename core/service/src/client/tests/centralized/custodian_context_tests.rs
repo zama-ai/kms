@@ -100,8 +100,9 @@ pub(crate) async fn run_new_cus_context(
     amount_custodians: usize,
     threshold: u32,
 ) -> Vec<String> {
+    let mpc_context_id = kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]);
     let (new_cus_req, mnemonics) = internal_client
-        .new_custodian_context_request(req_new_cus, amount_custodians, threshold)
+        .new_custodian_context_request(req_new_cus, &mpc_context_id, amount_custodians, threshold)
         .unwrap();
 
     let response = kms_client

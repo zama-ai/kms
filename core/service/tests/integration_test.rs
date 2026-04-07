@@ -906,17 +906,19 @@ mod kms_custodian_binary_tests {
                     .iter()
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
-                context_id: Some(backup_id.into()),
+                custodian_context_id: Some(backup_id.into()),
                 threshold: threshold as u32,
             },
             backup_pke,
         )
         .unwrap();
+        let mpc_context = kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]);
         let validation_material = RecoveryValidationMaterial::new(
             ct_map.clone(),
             commitments.clone(),
             custodian_context,
             &signing_key,
+            mpc_context,
         )
         .unwrap();
         let mut ciphertexts = BTreeMap::new();
