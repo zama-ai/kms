@@ -404,6 +404,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+/// Same intent as centralized negative test: corrupt signcryption for two custodians; invalid
+/// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
 #[cfg(feature = "insecure")]
 #[tokio::test]
 #[serial]

@@ -994,7 +994,10 @@ mod tests {
         let validated = result.unwrap();
         // Only 2 messages should pass validation (the one with the wrong header was filtered)
         assert_eq!(validated.len(), 2);
-        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with invalid header should have been filtered");
+        assert!(
+            !validated.contains_key(&Role::indexed_from_one(1)),
+            "Role 1 with invalid header should have been filtered"
+        );
     }
 
     #[test]
@@ -1015,7 +1018,10 @@ mod tests {
         let validated = result.unwrap();
         // Only 2 messages should pass validation (the one with the old timestamp was filtered)
         assert_eq!(validated.len(), 2);
-        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with past timestamp should have been filtered");
+        assert!(
+            !validated.contains_key(&Role::indexed_from_one(1)),
+            "Role 1 with past timestamp should have been filtered"
+        );
     }
 
     #[test]
@@ -1040,7 +1046,10 @@ mod tests {
         let validated = result.unwrap();
         // Only 2 messages should pass validation (the one with the future timestamp was filtered)
         assert_eq!(validated.len(), 2);
-        assert!(!validated.contains_key(&Role::indexed_from_one(1)), "Role 1 with future timestamp should have been filtered");
+        assert!(
+            !validated.contains_key(&Role::indexed_from_one(1)),
+            "Role 1 with future timestamp should have been filtered"
+        );
     }
 
     #[test]
@@ -1117,8 +1126,14 @@ mod tests {
         let validated = result.unwrap();
         // Only 2 entries: the duplicate role keeps the first value and skips the second
         assert_eq!(validated.len(), 2);
-        assert!(validated.contains_key(&Role::indexed_from_one(1)), "Role 1 should be present (first occurrence kept)");
-        assert!(validated.contains_key(&Role::indexed_from_one(3)), "Role 3 should be present");
+        assert!(
+            validated.contains_key(&Role::indexed_from_one(1)),
+            "Role 1 should be present (first occurrence kept)"
+        );
+        assert!(
+            validated.contains_key(&Role::indexed_from_one(3)),
+            "Role 3 should be present"
+        );
     }
 
     #[test]

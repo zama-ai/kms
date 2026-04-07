@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StorageType};
+use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
@@ -361,17 +361,18 @@ impl Storage for S3Storage {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key(data_id, data_type);
-        self.store_data_at_key(key, data).await
+        self.store_data_at_key(key, data).await?;
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes(
@@ -379,14 +380,14 @@ impl Storage for S3Storage {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key(data_id, data_type);
 
@@ -394,7 +395,7 @@ impl Storage for S3Storage {
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
@@ -410,7 +411,7 @@ impl StorageExt for S3Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -421,10 +422,11 @@ impl StorageExt for S3Storage {
                 data_type,
                 epoch_id
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
-        self.store_data_at_key(key, data).await
+        self.store_data_at_key(key, data).await?;
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes_at_epoch(
@@ -433,7 +435,7 @@ impl StorageExt for S3Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -444,7 +446,7 @@ impl StorageExt for S3Storage {
                 data_type,
                 epoch_id
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
 
@@ -452,7 +454,7 @@ impl StorageExt for S3Storage {
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data_at_epoch(

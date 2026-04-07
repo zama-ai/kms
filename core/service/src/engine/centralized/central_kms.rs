@@ -1195,7 +1195,8 @@ pub(crate) mod tests {
                 &RequestId::from_str(&sk_handle)?,
                 &PrivDataType::SigningKey.to_string(),
             )
-            .await?;
+            .await
+            .map(|_| ())?;
         Ok(ram_storage)
     }
 

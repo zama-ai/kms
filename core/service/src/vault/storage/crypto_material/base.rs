@@ -407,7 +407,9 @@ where
             if !r1 || !r2 || !r3 {
                 anyhow::bail!("Storage write failed for compressed key {key_id}");
             }
-            Err(meta_update_result.unwrap_err())
+            meta_update_result.map_err(|e| {
+                anyhow::anyhow!("Error while updating meta store for compressed key {key_id}: {e}")
+            })
         }
     }
 

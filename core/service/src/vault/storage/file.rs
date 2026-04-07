@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StorageType};
+use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
@@ -280,7 +280,7 @@ impl Storage for FileStorage {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path(data_id, data_type);
         self.setup_dirs(&path).await?;
         if self.data_exists(data_id, data_type).await? {
@@ -288,7 +288,7 @@ impl Storage for FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 path.display()
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         safe_write_element_versioned(&path, data)
             .await
@@ -296,7 +296,7 @@ impl Storage for FileStorage {
                 tracing::warn!("Could not write to path {}: {}", path.display(), e);
                 e
             })?;
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     /// Store bytes with a specific [url], giving a warning if the data already exists and exits _without_ writing
@@ -305,7 +305,7 @@ impl Storage for FileStorage {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path(data_id, data_type);
         self.setup_dirs(&path).await?;
         if self.data_exists(data_id, data_type).await? {
@@ -313,13 +313,13 @@ impl Storage for FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 path.display()
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         write_bytes(path.as_path(), bytes).await.map_err(|e| {
             tracing::warn!("Could not write to path {}: {}", path.display(), e);
             e
         })?;
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
@@ -335,7 +335,7 @@ impl StorageExt for FileStorage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
         self.setup_dirs(&path).await?;
         if self
@@ -346,7 +346,7 @@ impl StorageExt for FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 path.display()
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         tracing::info!(
             "Storing data {} at epoch {:?} at path {}",
@@ -360,7 +360,7 @@ impl StorageExt for FileStorage {
                 tracing::warn!("Could not write to path {}: {}", path.display(), e);
                 e
             })?;
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes_at_epoch(
@@ -369,7 +369,7 @@ impl StorageExt for FileStorage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
         self.setup_dirs(&path).await?;
         if self
@@ -380,13 +380,13 @@ impl StorageExt for FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 path.display()
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         write_bytes(path.as_path(), bytes).await.map_err(|e| {
             tracing::warn!("Could not write to path {}: {}", path.display(), e);
             e
         })?;
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data_at_epoch(

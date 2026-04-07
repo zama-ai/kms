@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader};
+use super::{Storage, StorageReader, StoreWriteOutcome};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::vault::storage::{StorageExt, all_data_ids_from_all_epochs_impl};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
@@ -191,20 +191,20 @@ impl Storage for RamStorage {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
             .insert(((*data_id, None), data_type.to_string()), serialized);
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes(
@@ -212,18 +212,18 @@ impl Storage for RamStorage {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         self.internal_storage
             .insert(((*data_id, None), data_type.to_string()), bytes.to_vec());
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
@@ -244,7 +244,7 @@ impl StorageExt for RamStorage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -254,7 +254,7 @@ impl StorageExt for RamStorage {
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
@@ -266,7 +266,7 @@ impl StorageExt for RamStorage {
             "Stored data at epoch: ({}, {}, {})",
             data_id, epoch_id, data_type
         );
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes_at_epoch(
@@ -275,7 +275,7 @@ impl StorageExt for RamStorage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -286,13 +286,13 @@ impl StorageExt for RamStorage {
                 data_type,
                 epoch_id
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         self.internal_storage.insert(
             ((*data_id, Some(*epoch_id)), data_type.to_string()),
             bytes.to_vec(),
         );
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data_at_epoch(
@@ -369,7 +369,7 @@ impl Storage for FailingRamStorage {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.available_writes < 1 {
             anyhow::bail!("storage failed!")
         } else {
@@ -383,7 +383,7 @@ impl Storage for FailingRamStorage {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         self.inner.store_bytes(bytes, data_id, data_type).await
     }
 

@@ -23,6 +23,37 @@ static ref LEGACY_DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
 ]);
 }
 
+/// Outcome of [`migrate_legacy_prss`] (split Z128/Z64 → combined).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyPrssMigrationOutcome {
+    /// MPC context could not be loaded (e.g. fresh install).
+    SkippedNoMpcContext,
+    /// Combined PRSS already stored under the legacy epoch id.
+    SkippedAlreadyMigrated,
+    /// Both legacy halves were read and combined successfully.
+    MigratedFromLegacy,
+    /// One or both legacy halves were missing or inconsistent.
+    SkippedIncompleteLegacyData,
+}
+
+/// Outcome of [`migrate_context_before_0_13_10`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyContextMigrationOutcome {
+    /// No context under the legacy default MPC context id.
+    SkippedNoLegacyContext,
+    /// Context was copied to the new default id and the legacy entry removed.
+    Migrated,
+}
+
+/// Outcome of [`migrate_combined_prss_to_0_13_10`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrssCombinedEpochMigrationOutcome {
+    /// No combined PRSS at the legacy default epoch id.
+    SkippedNoLegacyCombined,
+    /// Data was moved to the current default epoch id and the legacy key removed.
+    Migrated,
+}
+
 /// Migrate from 0.12.x to 0.13.x (including all 0.13.0 to 0.13.9 versions)
 /// This involves migrating FHE key material from the legacy storage format to the new epoch-aware format, and migrating the legacy PRSS setup to the new combined format.
 #[deprecated(
@@ -38,7 +69,7 @@ where
 {
     migrate_fhe_keys_v0_12_to_v0_13(priv_storage, kms_type).await?;
     if let KMSType::Threshold = kms_type {
-        migrate_legacy_prss(priv_storage).await?;
+        migrate_legacy_prss(priv_storage).await.map(|_| ())?;
     }
     Ok(())
 }
@@ -60,9 +91,13 @@ where
     if let KMSType::Threshold = kms_type {
         // Migrate any remaining combined PRSS data that might not have been migrated in the previous migration
         // That is, if a conversion to the PRSSCombined format has already been done, but under the legacy default epoch id
-        migrate_combined_prss_to_0_13_10(priv_storage).await?;
+        migrate_combined_prss_to_0_13_10(priv_storage)
+            .await
+            .map(|_| ())?;
     }
-    migrate_context_before_0_13_10(priv_storage).await?;
+    migrate_context_before_0_13_10(priv_storage)
+        .await
+        .map(|_| ())?;
     migrate_fhe_keys_0_13_x_to_0_13_10(priv_storage, kms_type).await?;
     // Remove moved keys (keys with legacy ID still remains)
     migrate_fhe_keys_after_0_13_x(priv_storage, kms_type).await?;
@@ -157,7 +192,8 @@ where
         // Store the data at the new epoch-aware location
         priv_storage
             .store_bytes_at_epoch(&data, &key_id, &legacy_epoch_id, &data_type_str)
-            .await?;
+            .await
+            .map(|_| ())?;
 
         tracing::info!(
             "Migrated key {} from legacy format to epoch {}",
@@ -213,7 +249,9 @@ where
 /// by using the default value for the epoch ID.
 /// It then converts the old PRSSSetup data into the new PRSSSetupCombined format and stores it back in storage under the new epoch-aware path.
 #[expect(deprecated)]
-async fn migrate_legacy_prss<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
+async fn migrate_legacy_prss<PrivS>(
+    priv_storage: &mut PrivS,
+) -> anyhow::Result<LegacyPrssMigrationOutcome>
 where
     PrivS: StorageExt + Sync + Send,
 {
@@ -228,7 +266,7 @@ This likely means threshold MPC has not been initialized yet on this installatio
 so there is no legacy PRSS state to migrate.",
                     *LEGACY_DEFAULT_MPC_CONTEXT,
                 );
-                return Ok(());
+                return Ok(LegacyPrssMigrationOutcome::SkippedNoMpcContext);
             }
         }
     };
@@ -244,7 +282,7 @@ so there is no legacy PRSS state to migrate.",
             "PRSS Setup for epoch {} already exists and has been migrated, skipping migration",
             &(*LEGACY_DEFAULT_EPOCH_ID)
         );
-        return Ok(());
+        return Ok(LegacyPrssMigrationOutcome::SkippedAlreadyMigrated);
     }
     let prss_128_legacy_id = derive_request_id(&format!(
         "PRSSSetup_Z128_ID_{}_{}_{}",
@@ -281,7 +319,7 @@ so there is no legacy PRSS state to migrate.",
         (prss_128, prss_64)
     };
 
-    match prss_from_storage {
+    let outcome = match prss_from_storage {
         (Ok(prss_128), Ok(prss_64)) => {
             let new_prss = PRSSSetupCombined {
                 prss_setup_z128: prss_128,
@@ -308,21 +346,33 @@ so there is no legacy PRSS state to migrate.",
                 "Successfully converted legacy PRSS Setup from storage for epoch ID {}.",
                 (*LEGACY_DEFAULT_EPOCH_ID)
             );
+            LegacyPrssMigrationOutcome::MigratedFromLegacy
         }
-        (Err(e), Ok(_)) => tracing::error!(
-            "Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"
-        ),
-        (Ok(_), Err(e)) => tracing::error!(
-            "Failed to read legacy PRSS Z64 from file with error: {e}, but was able to read Z128, skipping migration since we don't have the full data"
-        ),
-        (Err(_e), Err(e)) => tracing::error!(
-            "Failed to read both legacy PRSS Z128 and Z64 from file with errors: Z128 error: {_e}, Z64 error: {e}, skipping migration"
-        ),
-    }
-    Ok(())
+        (Err(e), Ok(_)) => {
+            tracing::error!(
+                "Failed to read legacy PRSS Z128 from file with error: {e}, but was able to read Z64, skipping migration since we don't have the full data"
+            );
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        }
+        (Ok(_), Err(e)) => {
+            tracing::error!(
+                "Failed to read legacy PRSS Z64 from file with error: {e}, but was able to read Z128, skipping migration since we don't have the full data"
+            );
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        }
+        (Err(_e), Err(e)) => {
+            tracing::error!(
+                "Failed to read both legacy PRSS Z128 and Z64 from file with errors: Z128 error: {_e}, Z64 error: {e}, skipping migration"
+            );
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        }
+    };
+    Ok(outcome)
 }
 
-async fn migrate_combined_prss_to_0_13_10<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
+async fn migrate_combined_prss_to_0_13_10<PrivS>(
+    priv_storage: &mut PrivS,
+) -> anyhow::Result<PrssCombinedEpochMigrationOutcome>
 where
     PrivS: StorageExt + Sync + Send,
 {
@@ -339,7 +389,7 @@ where
                 "Skipping legacy PRSSCombined migration: failed to load PRSSCombined '{}' ({err})",
                 *LEGACY_DEFAULT_EPOCH_ID
             );
-            return Ok(());
+            return Ok(PrssCombinedEpochMigrationOutcome::SkippedNoLegacyCombined);
         }
     };
     store_versioned_at_request_id(
@@ -360,11 +410,13 @@ where
         *LEGACY_DEFAULT_EPOCH_ID,
         *DEFAULT_EPOCH_ID
     );
-    Ok(())
+    Ok(PrssCombinedEpochMigrationOutcome::Migrated)
 }
 
 /// Reads context under the old legacy default context ID and if it exists, re-stores it under the new default context ID.
-async fn migrate_context_before_0_13_10<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
+async fn migrate_context_before_0_13_10<PrivS>(
+    priv_storage: &mut PrivS,
+) -> anyhow::Result<LegacyContextMigrationOutcome>
 where
     PrivS: StorageExt + Sync + Send,
 {
@@ -376,7 +428,7 @@ where
                 "Skipping legacy context migration: failed to load context '{}' ({err})",
                 *LEGACY_DEFAULT_MPC_CONTEXT
             );
-            return Ok(());
+            return Ok(LegacyContextMigrationOutcome::SkippedNoLegacyContext);
         }
     };
     // Update context id
@@ -400,7 +452,7 @@ where
         *LEGACY_DEFAULT_MPC_CONTEXT,
         *DEFAULT_MPC_CONTEXT
     );
-    Ok(())
+    Ok(LegacyContextMigrationOutcome::Migrated)
 }
 
 async fn migrate_fhe_keys_0_13_x_to_0_13_10<PrivS>(
@@ -457,7 +509,8 @@ where
         // Store the data at the new epoch-aware location
         priv_storage
             .store_bytes_at_epoch(&data, &key_id, &DEFAULT_EPOCH_ID, &data_type_str)
-            .await?;
+            .await
+            .map(|_| ())?;
 
         tracing::info!(
             "Migrated key {} from legacy format to epoch {}",
@@ -1101,7 +1154,10 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_legacy_prss(&mut storage).await.unwrap(),
+            LegacyPrssMigrationOutcome::MigratedFromLegacy
+        );
 
         // Verify PrssSetupCombined was created at the legacy epoch ID (where we asked it to store)
         let legacy_epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
@@ -1160,13 +1216,19 @@ mod tests {
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_legacy_prss(&mut storage).await.unwrap(),
+            LegacyPrssMigrationOutcome::MigratedFromLegacy
+        );
 
         // Write fresh legacy data again
         write_legacy_empty_prss_to_storage(&mut storage, threshold, num_parties).await;
 
         // Second migration should skip (PrssSetupCombined already exists)
-        migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_legacy_prss(&mut storage).await.unwrap(),
+            LegacyPrssMigrationOutcome::SkippedAlreadyMigrated
+        );
 
         // PrssSetupCombined should still exist
         let epoch_id = *LEGACY_DEFAULT_EPOCH_ID;
@@ -1204,8 +1266,11 @@ mod tests {
         let threshold = 1u8;
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
-        let result = migrate_legacy_prss(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            result,
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        );
     }
 
     #[tokio::test]
@@ -1233,8 +1298,11 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            result,
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        );
     }
 
     #[tokio::test]
@@ -1261,8 +1329,11 @@ mod tests {
         .await
         .unwrap();
 
-        let result = migrate_legacy_prss(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_legacy_prss(&mut storage).await.unwrap();
+        assert_eq!(
+            result,
+            LegacyPrssMigrationOutcome::SkippedIncompleteLegacyData
+        );
     }
 
     // ── Tests for migrate_context_before_0_13_10 ──
@@ -1285,7 +1356,10 @@ mod tests {
                 .unwrap()
         );
 
-        migrate_context_before_0_13_10(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_context_before_0_13_10(&mut storage).await.unwrap(),
+            LegacyContextMigrationOutcome::Migrated
+        );
 
         // Context should now exist at the new default ID
         let migrated: ContextInfo = read_versioned_at_request_id(
@@ -1315,8 +1389,11 @@ mod tests {
     async fn test_migrate_context_no_legacy() {
         let mut storage = RamStorage::new();
         // No context stored, should skip gracefully
-        let result = migrate_context_before_0_13_10(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_context_before_0_13_10(&mut storage).await.unwrap();
+        assert_eq!(
+            result,
+            LegacyContextMigrationOutcome::SkippedNoLegacyContext
+        );
     }
 
     #[tokio::test]
@@ -1328,7 +1405,10 @@ mod tests {
         store_legacy_test_context(&mut storage, threshold, num_parties).await;
 
         // First migration
-        migrate_context_before_0_13_10(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_context_before_0_13_10(&mut storage).await.unwrap(),
+            LegacyContextMigrationOutcome::Migrated
+        );
 
         // Context at new location
         let migrated: ContextInfo = read_versioned_at_request_id(
@@ -1342,7 +1422,10 @@ mod tests {
         assert_eq!(migrated.threshold, threshold as u32);
 
         // Second migration should skip (legacy context was deleted, nothing to migrate)
-        migrate_context_before_0_13_10(&mut storage).await.unwrap();
+        assert_eq!(
+            migrate_context_before_0_13_10(&mut storage).await.unwrap(),
+            LegacyContextMigrationOutcome::SkippedNoLegacyContext
+        );
 
         // Data at new location should be unchanged
         let still_migrated: ContextInfo = read_versioned_at_request_id(
@@ -1380,9 +1463,12 @@ mod tests {
         .await
         .unwrap();
 
-        migrate_combined_prss_to_0_13_10(&mut storage)
-            .await
-            .unwrap();
+        assert_eq!(
+            migrate_combined_prss_to_0_13_10(&mut storage)
+                .await
+                .unwrap(),
+            PrssCombinedEpochMigrationOutcome::Migrated
+        );
 
         assert!(
             storage
@@ -1407,16 +1493,26 @@ mod tests {
     #[tokio::test]
     async fn test_migrate_combined_prss_no_data_ram() {
         let mut storage = RamStorage::new();
-        let result = migrate_combined_prss_to_0_13_10(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_combined_prss_to_0_13_10(&mut storage)
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            PrssCombinedEpochMigrationOutcome::SkippedNoLegacyCombined
+        );
     }
 
     #[tokio::test]
     async fn test_migrate_combined_prss_no_data_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        let result = migrate_combined_prss_to_0_13_10(&mut storage).await;
-        assert!(result.is_ok());
+        let result = migrate_combined_prss_to_0_13_10(&mut storage)
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            PrssCombinedEpochMigrationOutcome::SkippedNoLegacyCombined
+        );
     }
 
     // ── Tests for migrate_fhe_keys_0_13_x_to_0_13_10 ──

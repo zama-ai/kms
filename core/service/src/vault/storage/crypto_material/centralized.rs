@@ -224,7 +224,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             if !r1 || !r2 || !r3 {
                 anyhow::bail!("Storage write failed for key {key_id}");
             }
-            Err(meta_update.unwrap_err())
+            meta_update.map_err(|e| {
+                anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
+            })
         }
     }
 

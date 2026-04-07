@@ -19,6 +19,15 @@ use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{Unversionize, Versionize, named::Named};
 use tracing;
 
+/// Result of a store operation when the API declines to overwrite existing objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreWriteOutcome {
+    /// New data was written.
+    Created,
+    /// Data was already present; existing value was kept.
+    SkippedExisting,
+}
+
 pub mod crypto_material;
 pub mod file;
 pub mod ram;
@@ -164,25 +173,25 @@ pub trait Storage: StorageReader {
     /// Store the given `data` with the given `data_id` of the given `data_type`
     /// Under the hood, the versioned data is stored.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, but the call will succeed.
+    /// instead a warning is logged, but the call will succeed with [`StoreWriteOutcome::SkippedExisting`].
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Store raw bytes directly without versioning or serialization.
     /// This is useful for storing ASCII text (e.g., Ethereum addresses, PEM certificates)
     /// or raw bytes like cryptographic commitments.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, but the call will succeed.
+    /// instead a warning is logged, but the call will succeed with [`StoreWriteOutcome::SkippedExisting`].
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Delete the given `data_id` with the given `data_type`.
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
@@ -203,7 +212,7 @@ pub trait StorageExt: StorageReaderExt + Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Store raw bytes at the specified epoch without versioning or serialization.
     async fn store_bytes_at_epoch(
@@ -212,7 +221,7 @@ pub trait StorageExt: StorageReaderExt + Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Deletes data at the specified data ID, epoch ID, and data type.
     async fn delete_data_at_epoch(
@@ -248,6 +257,7 @@ where
                 "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 /// Store some data at a location defined by `request_id` and `data_type`.
@@ -274,6 +284,7 @@ where
                 "Could not store data with ID {request_id}, epoch ID {epoch_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 // Helper method for storing text under a request ID.
@@ -292,6 +303,7 @@ pub async fn store_text_at_request_id<S: Storage>(
                 "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 // Helper method for reading text under a request ID.
@@ -837,17 +849,23 @@ pub mod tests {
 
         // First bytes to store
         let original_bytes = vec![1, 2, 3, 4, 5];
-        storage
-            .store_bytes(&original_bytes, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes(&original_bytes, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
         // Attempt to overwrite with different bytes
         let new_bytes = vec![9, 8, 7, 6, 5];
-        storage
-            .store_bytes(&new_bytes, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes(&new_bytes, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Read back and verify it is still the original bytes
         let loaded = storage.load_bytes(&data_id, &data_type).await.unwrap();
@@ -865,17 +883,23 @@ pub mod tests {
 
         // First data to store
         let original_data = TestType { i: 42 };
-        storage
-            .store_data(&original_data, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_data(&original_data, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
         // Attempt to overwrite with different data
         let new_data = TestType { i: 99 };
-        storage
-            .store_data(&new_data, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_data(&new_data, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Read back and verify it is still the original data
         let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
@@ -1055,17 +1079,21 @@ pub mod tests {
         let data_id = derive_request_id("BYTES_EPOCH_OVERWRITE").unwrap();
         let data_type = PrivDataType::FheKeyInfo.to_string();
 
-        // Store original bytes
-        storage
-            .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
-        // Attempt to overwrite with different bytes
-        storage
-            .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Verify original bytes are preserved
         let loaded = storage

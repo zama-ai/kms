@@ -272,6 +272,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+/// Two custodians submit corrupted signcryption; those outputs are rejected and recovery still
+/// completes with the remaining valid shares (see `assert_eq!(sig_key, new_sig_key)` at end).
 #[tokio::test]
 #[serial]
 async fn test_decrypt_after_recovery_centralized_negative() {
