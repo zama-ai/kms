@@ -77,15 +77,13 @@ pub fn serialize_hash_element<T>(domain_separator: &DomainSep, msg: &T) -> anyho
 where
     T: Serialize + ?Sized,
 {
-    let to_hash = match bc2wrap::serialize(msg) {
-        Ok(to_hash) => to_hash,
-        Err(e) => {
-            anyhow::bail!("Could not encode message due to error: {:?}", e);
-        }
-    };
-    Ok(hash_element(domain_separator, &to_hash))
+    let mut writer = HashingWriter::new(domain_separator);
+
+    let _hashed_bytes = bc2wrap::serialize_into(msg, &mut writer)?;
+    Ok(writer.finalize())
 }
 
+/// A [`std::io::Writer`]-compatible Shake256 hasher, allowing for "hash-as-you-write" optimizations.
 pub struct HashingWriter {
     hasher: Shake256,
 }
