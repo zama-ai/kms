@@ -343,8 +343,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: 'minioadmin'
           AWS_DEFAULT_REGION: 'eu-north-1'
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
-          # Anonymous S3 read test (vault::storage::s3::test_s3_anon); real AWS eu-west-1 bucket
-          KMS_TEST_S3_ANON_BUCKET: zama-zws-dev-kms-ci-no-delete
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
