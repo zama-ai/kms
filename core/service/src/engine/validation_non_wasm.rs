@@ -517,7 +517,6 @@ pub(crate) fn select_most_common_public_dec(
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
-    amount_servers: usize,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
@@ -528,7 +527,6 @@ fn validate_public_decrypt_responses(
     }
 
     // Pick a pivot response
-    let min_occurence = (amount_servers - 1) / 3 + 1; // note that this is floored division
     let min_occurence = (trusted_ctx.server_pks.len() - 1) / 3 + 1; // note that this is floored division
     let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
@@ -620,11 +618,10 @@ fn validate_public_decrypt_responses(
 pub(crate) fn validate_public_decrypt_responses_against_request(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
-    amount_servers: usize,
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
     let resp_parsed_payloads = crate::some_or_err(
-        validate_public_decrypt_responses(trusted_ctx, agg_resp, amount_servers)?,
+        validate_public_decrypt_responses(trusted_ctx, agg_resp)?,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
     )?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
