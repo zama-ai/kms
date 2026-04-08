@@ -116,8 +116,10 @@ impl std::io::Write for HashingWriter {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::io::Write;
+
     use super::DomainSep;
-    use crate::{hash_element, serialize_hash_element, unsafe_hash_list};
+    use crate::{HashingWriter, hash_element, serialize_hash_element, unsafe_hash_list};
 
     const DSEP_TEST: DomainSep = *b"test_1__";
     const DSEP_TEST2: DomainSep = *b"test_2__";
@@ -178,5 +180,17 @@ pub(crate) mod tests {
         let digest_other_val = serialize_hash_element(&DSEP_TEST, "test2").unwrap();
         assert_ne!(digest, digest_other_domain);
         assert_ne!(digest, digest_other_val);
+    }
+
+    #[test]
+    fn hashing_writer_matches_hash_element() {
+        let dsep = b"dsepdsep";
+        let data = b"some payload...";
+        let hash = hash_element(&dsep, data);
+
+        let mut writer = HashingWriter::new(dsep);
+        writer.write_all(data).unwrap();
+
+        assert_eq!(writer.finalize(), hash);
     }
 }

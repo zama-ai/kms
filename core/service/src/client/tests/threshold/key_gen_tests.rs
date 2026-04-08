@@ -1405,7 +1405,6 @@ pub(crate) async fn verify_keygen_responses(
                 )
                 .await
                 .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
-                .unwrap()
                 .unwrap();
 
             assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());

@@ -174,7 +174,7 @@ impl Client {
         domain: &Eip712Domain,
         _extra_data: Vec<u8>,
         storage: &R,
-    ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
+    ) -> anyhow::Result<(ServerKey, CompactPublicKey)> {
         let req_id = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request id".into()),
@@ -266,7 +266,7 @@ impl Client {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let public_key = safe_deserialize(Cursor::new(&pblk_bytes), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(Some((server_key, public_key)))
+        Ok((server_key, public_key))
     }
 
     /// Retrieve a compressed keyset based on the result from storage.
