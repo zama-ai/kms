@@ -786,11 +786,11 @@ where
             .await?;
 
         // Sort the votes received from the broadcast
-        let count = sort_votes(&broadcast_result, session)?;
+        let (count, _) = sort_votes(&broadcast_result, session)?;
         // Find which values have received most votes
         let true_psi_vals = find_winning_prf_values(&count, session)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
-        handle_non_voting_parties(&true_psi_vals, &count, session)?;
+        let _ = handle_non_voting_parties(&true_psi_vals, &count, session)?;
         // Compute result based on majority votes
         compute_party_shares(&true_psi_vals, session, ComputeShareMode::Prss)
     }
@@ -828,11 +828,11 @@ where
             .await?;
 
         // Sort the votes received from the broadcast
-        let count = sort_votes(&broadcast_result, session)?;
+        let (count, _) = sort_votes(&broadcast_result, session)?;
         // Find which values have received most votes
         let true_chi_vals = find_winning_prf_values(&count, session)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
-        handle_non_voting_parties(&true_chi_vals, &count, session)?;
+        let _ = handle_non_voting_parties(&true_chi_vals, &count, session)?;
         // Compute result based on majority votes
         compute_party_shares(&true_chi_vals, session, ComputeShareMode::Przs)
     }
@@ -842,22 +842,34 @@ where
     }
 }
 
+/// Why a party was flagged as corrupt during the PRSS vote-checking phase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PrssCorruptionReason {
+    /// Broadcast a value of the wrong type (not `PRSSVotes`).
+    WrongBroadcastType,
+    /// Voted for the same PRF value more than once.
+    DuplicateVote,
+    /// Did not vote for the correct (winning) PRF value.
+    DidNotVoteCorrectly,
+}
+
+type CorruptionLog = Vec<(Role, PrssCorruptionReason)>;
+
 /// Helper method for sorting the votes. Takes the `broadcast_result` and for each [PrssSet] sorts which parties has voted/replied for each of the different [Value]s.
 /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
 /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
 fn sort_votes<Z: Ring, S: BaseSessionHandles>(
     broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
     session: &mut S,
-) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
-    // We count through a set of voting roles in order to avoid one party voting for the same value multiple times
+) -> anyhow::Result<(HashMap<PartySet, ValueVotes<Z>>, CorruptionLog)> {
     let mut count: HashMap<PartySet, ValueVotes<Z>> = HashMap::new();
+    let mut reasons: CorruptionLog = Vec::new();
     for (role, broadcast_val) in broadcast_result {
-        //Destructure bcast value into the voting vector
         let vec_pairs = match broadcast_val {
             BroadcastValue::PRSSVotes(vec_values) => vec_values,
-            // If the party does not broadcast the type as expected they are considered malicious
             _ => {
                 session.add_corrupt(*role);
+                reasons.push((*role, PrssCorruptionReason::WrongBroadcastType));
                 tracing::warn!(
                     "Party with role {:?} sent values they shouldn't and is thus malicious",
                     role.one_based()
@@ -865,10 +877,11 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
                 continue;
             }
         };
-        // Sorts the votes received from `role` during broadcast for each [PrssSet]
         for (prss_set, prf_val) in vec_pairs {
             match count.get_mut(prss_set) {
-                Some(value_votes) => add_vote(value_votes, prf_val, *role, session)?,
+                Some(value_votes) => {
+                    add_vote(value_votes, prf_val, *role, session, &mut reasons)?;
+                }
                 None => {
                     count.insert(
                         prss_set.clone(),
@@ -878,7 +891,7 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
             };
         }
     }
-    Ok(count)
+    Ok((count, reasons))
 }
 
 /// Helper method that uses a prf value, `cur_prf_val`, and counts it in `value_votes`, associated to `cur_role`.
@@ -890,15 +903,14 @@ fn add_vote<Z: Ring, S: BaseSessionHandles>(
     cur_prf_val: &Vec<Z>,
     cur_role: Role,
     session: &mut S,
+    reasons: &mut CorruptionLog,
 ) -> anyhow::Result<()> {
     match value_votes.get_mut(cur_prf_val) {
         Some(existing_roles) => {
-            // If it has been seen before, insert the current contributing role
             let role_inserted = existing_roles.insert(cur_role);
             if !role_inserted {
-                // If the role was not inserted then it was already present and hence the party is trying to vote multiple times
-                // and they should be marked as corrupt
                 session.add_corrupt(cur_role);
+                reasons.push((cur_role, PrssCorruptionReason::DuplicateVote));
                 tracing::warn!(
                     "Party with role {:?} is trying to vote for the same prf value more than once and is thus malicious",
                     cur_role.one_based()
@@ -961,7 +973,8 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
     true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
     count: &HashMap<PartySet, ValueVotes<Z>>,
     session: &mut S,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<CorruptionLog> {
+    let mut reasons: CorruptionLog = Vec::new();
     for (prss_set, value) in true_prf_vals {
         if let Some(roles_votes) = count
             .get(*prss_set)
@@ -975,6 +988,7 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
                 for cur_role in prss_set.iter() {
                     if !roles_votes.contains(cur_role) {
                         session.add_corrupt(*cur_role);
+                        reasons.push((*cur_role, PrssCorruptionReason::DidNotVoteCorrectly));
                         tracing::warn!(
                             "Party with role {:?} did not vote for the correct prf value and is thus malicious",
                             cur_role.one_based()
@@ -984,7 +998,7 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
             }
         }
     }
-    Ok(())
+    Ok(reasons)
 }
 
 /// Helper method for computing the parties resulting share value based on the winning psi value for each [PrssSet]
@@ -1727,7 +1741,7 @@ mod tests {
             ),
         ]);
 
-        let res = sort_votes(&broadcast_result, &mut session).unwrap();
+        let (res, _) = sort_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes = HashMap::from([(
             value.clone(),
             HashSet::from([
@@ -1770,13 +1784,27 @@ mod tests {
             ), // Not the right broadcast type again
         ]);
 
-        let res = sort_votes(&broadcast_result, &mut session).unwrap();
+        let (res, corruption_reasons) = sort_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes =
             HashMap::from([(vec![value], HashSet::from([Role::indexed_from_one(1)]))]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
         assert_eq!(reference, res);
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(3)));
+        assert!(
+            corruption_reasons
+                .iter()
+                .any(|(r, reason)| *r == Role::indexed_from_one(2)
+                    && *reason == PrssCorruptionReason::WrongBroadcastType),
+            "expected WrongBroadcastType for role 2, got: {corruption_reasons:?}"
+        );
+        assert!(
+            corruption_reasons
+                .iter()
+                .any(|(r, reason)| *r == Role::indexed_from_one(3)
+                    && *reason == PrssCorruptionReason::WrongBroadcastType),
+            "expected WrongBroadcastType for role 3, got: {corruption_reasons:?}"
+        );
     }
 
     #[test]
@@ -1786,31 +1814,51 @@ mod tests {
         let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let value = vec![ResiduePolyF4Z128::from_scalar(Wrapping(42))];
         let mut votes = HashMap::new();
+        let mut reasons = Vec::new();
 
-        add_vote(&mut votes, &value, Role::indexed_from_one(3), &mut session).unwrap();
-        // Check that the vote of `my_role` was added
+        add_vote(
+            &mut votes,
+            &value,
+            Role::indexed_from_one(3),
+            &mut session,
+            &mut reasons,
+        )
+        .unwrap();
         assert!(
             votes
                 .get(&value)
                 .unwrap()
                 .contains(&Role::indexed_from_one(3))
         );
-        // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
+        assert!(reasons.is_empty());
 
-        add_vote(&mut votes, &value, Role::indexed_from_one(2), &mut session).unwrap();
-        // Check that role 2 also gets added
+        add_vote(
+            &mut votes,
+            &value,
+            Role::indexed_from_one(2),
+            &mut session,
+            &mut reasons,
+        )
+        .unwrap();
         assert!(
             votes
                 .get(&value)
                 .unwrap()
                 .contains(&Role::indexed_from_one(2))
         );
-        // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
+        assert!(reasons.is_empty());
 
-        // Check that party 3 gets added to the set of corruptions after trying to vote a second time
-        add_vote(&mut votes, &value, Role::indexed_from_one(3), &mut session).unwrap();
+        // Party 3 votes a second time -- should be flagged as corrupt with DuplicateVote
+        add_vote(
+            &mut votes,
+            &value,
+            Role::indexed_from_one(3),
+            &mut session,
+            &mut reasons,
+        )
+        .unwrap();
         assert!(
             votes
                 .get(&value)
@@ -1818,6 +1866,13 @@ mod tests {
                 .contains(&Role::indexed_from_one(3))
         );
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(3)));
+        assert!(
+            reasons
+                .iter()
+                .any(|(r, reason)| *r == Role::indexed_from_one(3)
+                    && *reason == PrssCorruptionReason::DuplicateVote),
+            "expected DuplicateVote for role 3, got: {reasons:?}"
+        );
     }
 
     #[test]
@@ -1870,9 +1925,17 @@ mod tests {
             HashSet::from([Role::indexed_from_one(1), Role::indexed_from_one(2)]),
         )]);
         let count = HashMap::from([(set.clone(), votes)]);
-        handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
+        let corruption_reasons =
+            handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
         assert!(session.corrupt_roles.contains(&Role::indexed_from_one(3)));
         assert_eq!(1, session.corrupt_roles.len());
+        assert!(
+            corruption_reasons
+                .iter()
+                .any(|(r, reason)| *r == Role::indexed_from_one(3)
+                    && *reason == PrssCorruptionReason::DidNotVoteCorrectly),
+            "expected DidNotVoteCorrectly for role 3, got: {corruption_reasons:?}"
+        );
     }
 
     #[tokio::test]
