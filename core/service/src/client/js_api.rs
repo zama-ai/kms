@@ -507,6 +507,9 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
+/// * `threshold` - Optional threshold override for reconstruction.
+/// If not provided, it is computed from the number of server addresses as `(n - 1) / 3`.
+///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
@@ -541,8 +544,8 @@ pub fn process_user_decryption_resp_from_js(
         agg_resp,
         enc_pk,
         enc_sk,
-        verify,
         threshold,
+        verify,
     );
     // Need to convert to BE for JS, evrerything is internally represented as LE
     match le_res {
@@ -575,6 +578,9 @@ pub fn process_user_decryption_resp_from_js(
 /// * `enc_pk` - The ephemeral public key.
 ///
 /// * `enc_sk` - The ephemeral secret key.
+///
+/// * `threshold` - Optional threshold override for reconstruction.
+/// If not provided, it is computed from the number of server addresses as `(n - 1) / 3`.
 ///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
