@@ -805,8 +805,8 @@ fn validate_custodian_messages(
                 custodian_role
             );
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            if !(now - TIMESTAMP_VALIDATION_WINDOW_SECS < timestamp
-                && timestamp < now + TIMESTAMP_VALIDATION_WINDOW_SECS)
+            if !(now.saturating_sub(TIMESTAMP_VALIDATION_WINDOW_SECS) < timestamp
+                && timestamp < now.saturating_add(TIMESTAMP_VALIDATION_WINDOW_SECS))
             {
                 tracing::warn!(
                     "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
