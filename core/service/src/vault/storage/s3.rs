@@ -492,7 +492,7 @@ impl Intercept for HostHeaderInterceptor {
 
 // This builds an anonymous S3 client, useful for accessing public S3 buckets.
 pub async fn build_anonymous_s3_client(
-    aws_s3_endpoint: Url,
+    aws_s3_endpoint: &str,
     region: String,
 ) -> anyhow::Result<S3Client> {
     let aws_region = Region::new(region);
@@ -503,7 +503,7 @@ pub async fn build_anonymous_s3_client(
         .await;
 
     let s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config)
-        .endpoint_url(aws_s3_endpoint)
+        .endpoint_url(url::Url::parse(aws_s3_endpoint)?)
         .force_path_style(true);
     let s3_config = s3_config_builder.build();
     Ok(S3Client::from_conf(s3_config))
@@ -602,6 +602,37 @@ pub(crate) async fn s3_put_blob(
     }
 }
 
+/// Find the AWS region from an S3 bucket URL.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
+pub fn find_region_from_s3_url(s3_bucket_url: &String) -> anyhow::Result<String> {
+    let parsed_url = url::Url::parse(s3_bucket_url.as_str())?;
+    let domain = parsed_url
+        .domain()
+        .ok_or(anyhow::anyhow!("Cannot parse domain from URL"))?;
+    let domain_parts: Vec<&str> = domain.split('.').collect();
+    if domain_parts.len() < 4 {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        return Ok("us-east-1".to_owned()); // default region
+    }
+    let dot_com_pos = domain_parts.len() - 1;
+    let expected_s3_pos = dot_com_pos - 3;
+    let expected_region_pos = dot_com_pos - 2;
+    // e.g s3.eu-west-1.amazonaws.com
+    if domain_parts[expected_s3_pos] == "s3" {
+        Ok(domain_parts[expected_region_pos].to_owned())
+    } else {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        Ok("us-east-1".to_owned()) // default region
+    }
+}
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "s3_tests")]{
         pub const BUCKET_NAME: &str = "ci-kms-key-test";
@@ -671,17 +702,11 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        engine::threshold::service::reshare_utils::find_region_from_s3_url,
-        vault::storage::tests::{
+    use crate::vault::storage::tests::{
             test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
-            test_store_bytes_does_not_overwrite_existing_bytes,
-            test_store_data_does_not_overwrite_existing_data,
-        },
+        test_store_bytes_does_not_overwrite_existing_bytes,
+        test_store_data_does_not_overwrite_existing_data,
     };
-
-    /// When `KMS_TEST_S3_ANON_BUCKET` is unset or empty, [`test_s3_anon`] uses this bucket (same as CI).
-    const DEFAULT_KMS_TEST_S3_ANON_BUCKET: &str = "zama-zws-dev-kms-ci-no-delete";
 
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -808,18 +833,14 @@ mod tests {
         let url = "https://s3.eu-west-1.amazonaws.com/";
         let region = find_region_from_s3_url(&url.to_string()).unwrap();
         assert_eq!(region, "eu-west-1");
-        let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
-            .await
-            .unwrap();
-
-        // Listing requires a real bucket with anonymous ListObjects. Override with KMS_TEST_S3_ANON_BUCKET.
-        let bucket = match std::env::var("KMS_TEST_S3_ANON_BUCKET") {
-            Ok(b) if !b.is_empty() => b,
-            _ => DEFAULT_KMS_TEST_S3_ANON_BUCKET.to_string(),
-        };
-
-        let pub_storage =
-            ReadOnlyS3Storage::new(s3_client, bucket, StorageType::PUB, Some("PUB-p1")).unwrap();
+        let s3_client = build_anonymous_s3_client(url, region).await.unwrap();
+        let pub_storage = ReadOnlyS3Storage::new(
+            s3_client,
+            "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
+            StorageType::PUB,
+            Some("PUB-p1"),
+        )
+        .unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
         // at least one public key should be present in the bucket
@@ -915,4 +936,23 @@ impl StorageReader for DummyReadOnlyS3Storage {
     fn info(&self) -> String {
         self.ram_storage.info()
     }
+}
+
+#[test]
+fn test_find_region() {
+    let url = "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "eu-west-1");
+
+    let url = "https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-west-1");
+
+    let url = "https://s3.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-east-1");
+
+    let url = "http://dev-s3-mock:9000".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-east-1");
 }
