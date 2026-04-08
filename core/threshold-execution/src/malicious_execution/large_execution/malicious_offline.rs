@@ -62,12 +62,12 @@ impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
 
 #[async_trait]
 impl<
-        Z: Derive + ErrorCorrect,
-        Ses: LargeSessionHandles,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        RO: RobustOpen,
-    > Preprocessing<Z, Ses> for CheatingLargePreprocessing<Z, S, D, RO>
+    Z: Derive + ErrorCorrect,
+    Ses: LargeSessionHandles,
+    S: SingleSharing<Z>,
+    D: DoubleSharing<Z>,
+    RO: RobustOpen,
+> Preprocessing<Z, Ses> for CheatingLargePreprocessing<Z, S, D, RO>
 {
     async fn execute(
         &mut self,
@@ -128,10 +128,7 @@ impl<Z: Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: Rob
             .iter()
             .zip(vec_share_y.iter())
             .zip(vec_double_share_v.iter())
-            .map(|((x, y), v)| {
-                let res = *x * *y + v.degree_2t + Z::sample(session.rng());
-                res
-            })
+            .map(|((x, y), v)| *x * *y + v.degree_2t + Z::sample(session.rng()))
             .collect_vec();
         network_vec_share_d.pop();
 

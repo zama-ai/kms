@@ -9,7 +9,7 @@ use std::{
 use algebra::{
     base_ring::Z128,
     galois_rings::{
-        common::{pack_residue_poly, ResiduePoly},
+        common::{ResiduePoly, pack_residue_poly},
         degree_4::ResiduePolyF4Z128,
     },
     structure_traits::{ErrorCorrect, Invert, Ring, Solve},
@@ -17,12 +17,12 @@ use algebra::{
 use alloy_primitives::U256;
 use anyhow::anyhow;
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
         self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
         UserDecryptionResponse, UserDecryptionResponsePayload,
     },
-    RequestId,
 };
 use observability::{
     metrics,
@@ -35,8 +35,9 @@ use rand::{CryptoRng, RngCore};
 use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
-        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
-        LowLevelCiphertext, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+        DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+        SmallOfflineNoiseFloodSession, partial_decrypt_using_noiseflooding,
+        secure_partial_decrypt_using_bitdec,
     },
     runtime::sessions::small_session::SmallSession,
     tfhe_internals::private_keysets::PrivateKeySet,
@@ -56,25 +57,25 @@ use crate::{
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
+        base::{BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level},
         threshold::{
-            service::session::{validate_context_and_epoch, ImmutableSessionMaker},
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
-            DSEP_USER_DECRYPTION,
+            DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
+            validate_user_decrypt_req,
         },
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store, MetaStore,
+            MetaStore, add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === Current Module Imports ===
@@ -153,15 +154,15 @@ pub struct RealUserDecryptor<
 }
 
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Dec: NoiseFloodPartialDecryptor<
-                Prep = SmallOfflineNoiseFloodSession<
-                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                    SmallSession<ResiduePolyF4Z128>,
-                >,
-            > + 'static,
-    > RealUserDecryptor<PubS, PrivS, Dec>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Dec: NoiseFloodPartialDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+> RealUserDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for user decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition.
@@ -259,14 +260,14 @@ impl<
                                 None => {
                                     return Err(anyhow!(
                                         "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
-                                    ))
+                                    ));
                                 }
                             };
 
                             (pdec_serialized, packing_factor, time)
                         }
                         Err(e) => {
-                            return Err(anyhow!("Failed user decryption with noiseflooding: {e}"))
+                            return Err(anyhow!("Failed user decryption with noiseflooding: {e}"));
                         }
                     };
                     Ok(res)
@@ -300,7 +301,7 @@ impl<
                                 None => {
                                     return Err(anyhow!(
                                         "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
-                                    ))
+                                    ));
                                 }
                             };
 
@@ -426,15 +427,15 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        Dec: NoiseFloodPartialDecryptor<
-                Prep = SmallOfflineNoiseFloodSession<
-                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
-                    SmallSession<ResiduePolyF4Z128>,
-                >,
-            > + 'static,
-    > UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    Dec: NoiseFloodPartialDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+> UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
 {
     async fn user_decrypt(
         &self,
@@ -621,7 +622,14 @@ impl<
 fn format_user_request(request: &UserDecryptionRequest) -> String {
     format!(
         "UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, client_address: {:?}, enc_key: {:?}, domain: {:?}, typed_ciphertexts_count: {} }}",
-        request.request_id, request.key_id, request.context_id, request.epoch_id, request.client_address, hex::encode(&request.enc_key), request.domain, request.typed_ciphertexts.len(),
+        request.request_id,
+        request.key_id,
+        request.context_id,
+        request.epoch_id,
+        request.client_address,
+        hex::encode(&request.enc_key),
+        request.domain,
+        request.typed_ciphertexts.len(),
     )
 }
 
@@ -630,7 +638,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::CiphertextFormat,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use tfhe::FheTypes;

@@ -11,7 +11,7 @@ use crate::tfhe_internals::parameters::DKGParams;
 use crate::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
 use crate::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::{Monomials, ResiduePoly},
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, Ring, Solve},
@@ -566,21 +566,27 @@ where
         let lwe_encryption_secret_key_share = match &self.lwe_encryption_secret_key_share {
             LweSecretKeyShareEnum::Z128(key) => key.clone(),
             LweSecretKeyShareEnum::Z64(_) => {
-                anyhow::bail!("Expected Z128 lwe_encryption_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic.")
+                anyhow::bail!(
+                    "Expected Z128 lwe_encryption_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic."
+                )
             }
         };
 
         let lwe_secret_key_share = match &self.lwe_compute_secret_key_share {
             LweSecretKeyShareEnum::Z128(key) => key.clone(),
             LweSecretKeyShareEnum::Z64(_) => {
-                anyhow::bail!("Expected Z128 lwe_compute_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic.")
+                anyhow::bail!(
+                    "Expected Z128 lwe_compute_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic."
+                )
             }
         };
 
         let glwe_secret_key_share = match &self.glwe_secret_key_share {
             GlweSecretKeyShareEnum::Z128(key) => key.clone(),
             GlweSecretKeyShareEnum::Z64(_) => {
-                anyhow::bail!("Expected Z128 glwe_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic.")
+                anyhow::bail!(
+                    "Expected Z128 glwe_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic."
+                )
             }
         };
 
@@ -604,7 +610,9 @@ where
         let glwe_secret_key_share_compression = match &self.glwe_secret_key_share_compression {
             Some(CompressionPrivateKeySharesEnum::Z128(comp)) => Some(comp.clone()),
             Some(CompressionPrivateKeySharesEnum::Z64(_)) => {
-                anyhow::bail!("Expected Z128 glwe_secret_key_share_compression, got Z64. Keys must be lifted to Z128 before calling to_generic.")
+                anyhow::bail!(
+                    "Expected Z128 glwe_secret_key_share_compression, got Z64. Keys must be lifted to Z128 before calling to_generic."
+                )
             }
             None => None,
         };
@@ -757,8 +765,8 @@ mod test {
     use crate::{
         online::triple::open_list,
         runtime::{
-            sessions::small_session::{SmallSession128, SmallSession64},
-            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+            sessions::small_session::{SmallSession64, SmallSession128},
+            test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         },
         tfhe_internals::{
             parameters::BC_PARAMS_SNS,
@@ -770,10 +778,10 @@ mod test {
         },
     };
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::{
             common::ResiduePoly,
-            degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+            degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         },
         sharing::share::Share,
         structure_traits::Ring,
@@ -958,7 +966,7 @@ mod test {
             parameters::{BC_PARAMS_NO_SNS, PARAMS_TEST_BK_SNS},
         };
         use algebra::{
-            base_ring::{Z128, Z64},
+            base_ring::{Z64, Z128},
             galois_rings::degree_4::ResiduePolyF4Z128,
             sharing::share::Share,
         };

@@ -26,7 +26,7 @@ pub fn reconstruct_message<const EXTENSION_DEGREE: usize>(
         _ => {
             return Err(anyhow_error_and_log(
                 "Right shift not possible - no opened value".to_string(),
-            ))
+            ));
         }
     };
     Ok(out)

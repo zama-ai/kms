@@ -34,7 +34,9 @@ pub use kms_test_tracing_macro::traced_test;
 pub fn init_logging() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        std::env::set_var("KMS_TEST_MODE", "1");
+        unsafe {
+            std::env::set_var("KMS_TEST_MODE", "1");
+        }
         config::try_init_test_stderr_subscriber();
     });
 }

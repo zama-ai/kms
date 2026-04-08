@@ -9,8 +9,8 @@ mod utilities;
 use aes_prng::AesRng;
 use criterion::Criterion;
 use rand::prelude::*;
-use tfhe::{prelude::*, set_server_key, CompactPublicKey, FheUint64, ReRandomizationContext};
-use utilities::{generate_tfhe_keys, set_plan, ALL_PARAMS};
+use tfhe::{CompactPublicKey, FheUint64, ReRandomizationContext, prelude::*, set_server_key};
+use utilities::{ALL_PARAMS, generate_tfhe_keys, set_plan};
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
@@ -86,9 +86,9 @@ fn main() {
             .into_raw_parts();
 
         let mut rng = AesRng::from_entropy();
-        let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
-        let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
-        let amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let from_amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
+        let to_amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
+        let amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);
 
         set_server_key(server_key);
 

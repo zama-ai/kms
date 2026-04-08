@@ -121,12 +121,12 @@ pub(crate) mod tests {
         sessions::large_session::LargeSession, test_runtime::generate_fixed_roles,
     };
     use crate::tests::helper::tests::{
-        execute_protocol_large_w_disputes_and_malicious, get_networkless_large_session_for_parties,
-        TestingParameters,
+        TestingParameters, execute_protocol_large_w_disputes_and_malicious,
+        get_networkless_large_session_for_parties,
     };
     use aes_prng::AesRng;
     use algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+        galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         structure_traits::{ErrorCorrect, Ring},
     };
     use rand::SeedableRng;

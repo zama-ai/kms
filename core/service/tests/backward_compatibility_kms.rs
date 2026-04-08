@@ -6,11 +6,8 @@
 
 mod common;
 use aes_prng::AesRng;
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
@@ -18,32 +15,34 @@ use backward_compatibility::{
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{TestedModule, run_all_tests},
 };
 use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::{
+    RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
-    RequestId,
 };
 use kms_lib::{
     backup::{
+        BackupCiphertext,
         custodian::{
             Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
             InternalCustodianSetupMessage,
         },
         operator::{
-            BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
-            RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
+            BackupMaterial, DSEP_BACKUP_COMMITMENT, InnerOperatorBackupOutput,
+            InternalRecoveryRequest, Operator, RecoveryValidationMaterial,
         },
-        BackupCiphertext,
     },
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            compute_eip712_signature, gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType,
+            PrivateSigKey, PublicSigKey, SigningSchemeType, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -52,11 +51,11 @@ use kms_lib::{
     },
     engine::{
         base::{
-            safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
-            KeyGenMetadataInner, KmsFheKeyHandles,
+            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
+            safe_serialize_hash_element_versioned,
         },
         context::{ContextInfo, NodeInfo, SoftwareVersion},
-        threshold::service::{session::PRSSSetupCombined, PublicKeyMaterial, ThresholdFheKeys},
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
@@ -289,7 +288,7 @@ fn test_crs_gen_metadata(
             return Err(test.failure(
                 "Expected current CrsGenMetadata, got legacy".to_string(),
                 format,
-            ))
+            ));
         }
         CrsGenMetadata::Current(_) => {
             // Expected. Test done as match to ensure that it gets updated in case new types get added

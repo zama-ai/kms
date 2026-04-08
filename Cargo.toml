@@ -43,7 +43,7 @@ exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", 
 [workspace.package]
 authors = ["Zama"]
 publish = true
-edition = "2021"
+edition = "2024"
 license = "BSD-3-Clause-Clear"
 version = "0.13.20-0"
 repository = "https://github.com/zama-ai/kms"
@@ -162,10 +162,9 @@ oid-registry = "=0.8.1"  # OID registry for ASN.1 - LOW RISK: rusticata team
 opentelemetry = "=0.31.0"  # OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
 opentelemetry-http = "=0.31.0"  # OpenTelemetry HTTP transport - LOW RISK: CNCF project
 opentelemetry-otlp = { version = "=0.31.0", features = ["tokio", "grpc-tonic"] }  # OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
-opentelemetry-prometheus = "=0.31.0"  # Prometheus metrics exporter - LOW RISK: CNCF project (discontinued)
 opentelemetry-semantic-conventions = "=0.31.0"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
 opentelemetry-stdout = { version = "=0.31.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
-opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs", "metrics"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
+opentelemetry_sdk = { version = "=0.31.0", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
@@ -208,6 +207,7 @@ thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual 
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 tokio-util = { version = "=0.7.18", features = ["rt"] }  # Tokio utilities - LOW RISK: tokio team
+toml = "=0.9.11"  # TOML serialization for tests and tooling - LOW RISK: rust-lang maintained, widely used
 tonic = "=0.14.5"  # gRPC framework - LOW RISK: hyperium team
 tonic-health = "=0.14.5"  # gRPC health checking - LOW RISK: hyperium team
 tonic-prost = "=0.14.5"  # prost codec for tonic gRPC - LOW RISK: hyperium team

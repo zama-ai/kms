@@ -1,21 +1,21 @@
 use aes_prng::AesRng;
 use algebra::{
-    galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
+    galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
     structure_traits::Ring,
 };
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use test_utils::read_element;
-use tfhe::{set_server_key, FheUint8};
+use tfhe::{FheUint8, set_server_key};
 use threshold_execution::{
     constants::REAL_KEY_PATH,
-    endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-    runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext, threshold_decrypt64},
+    runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tests::ensure_real_keys_setup,
     tfhe_internals::{
-        test_feature::{keygen_all_party_shares_from_keyset, KeySet},
+        test_feature::{KeySet, keygen_all_party_shares_from_keyset},
         utils::expanded_encrypt,
     },
 };
@@ -63,7 +63,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -120,7 +120,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -170,7 +170,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -230,7 +230,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)

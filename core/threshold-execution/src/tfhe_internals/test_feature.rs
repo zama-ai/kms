@@ -3,6 +3,7 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{num::Wrapping, sync::Arc};
 use tfhe::{
+    ClientKey, Seed,
     core_crypto::{
         commons::traits::Numeric,
         entities::{GlweSecretKey, LweSecretKey},
@@ -11,17 +12,15 @@ use tfhe::{
     integer::compression_keys::DecompressionKey,
     prelude::{FheDecrypt, FheEncrypt, ParameterSetConformant, SquashNoise, Tagged},
     shortint::{
-        self,
+        self, ClassicPBSParameters, PBSParameters,
         client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
         list_compression::{
             CompressionPrivateKeys, NoiseSquashingCompressionKey,
             NoiseSquashingCompressionPrivateKey,
         },
         parameters::CompressionParameters,
-        ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
-    ClientKey, Seed,
 };
 use tokio::{task::JoinSet, time::timeout_at};
 
@@ -37,7 +36,7 @@ use crate::{
     },
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     sharing::{
         shamir::{InputOp, ShamirSharings},
@@ -157,7 +156,7 @@ impl KeySet {
 
 pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, tag: tfhe::Tag, rng: &mut R) -> KeySet {
     let config = params.to_tfhe_config();
-    let seed = Seed(rng.gen());
+    let seed = Seed(rng.r#gen());
     let mut client_key = ClientKey::generate_with_seed(config, seed);
     *client_key.tag_mut() = tag;
 
@@ -229,14 +228,13 @@ fn extract_key_containers(
     };
 
     // Check compression key consistency
-    if let Some(ks) = keyset {
-        if ks.get_raw_compression_client_key().is_none()
-            && params_basic_handle
-                .get_compression_decompression_params()
-                .is_some()
-        {
-            anyhow::bail!("Compression client key is missing when parameter is available")
-        }
+    if let Some(ks) = keyset
+        && ks.get_raw_compression_client_key().is_none()
+        && params_basic_handle
+            .get_compression_decompression_params()
+            .is_some()
+    {
+        anyhow::bail!("Compression client key is missing when parameter is available")
     }
 
     let compression_sk_container64: Option<Vec<u64>> = match keyset {
@@ -595,7 +593,7 @@ where
             tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
 
         // Generate seed bytes
-        let private_seed_bytes: Vec<u8> = Seed(session.rng().gen()).0.to_le_bytes().to_vec();
+        let private_seed_bytes: Vec<u8> = Seed(session.rng().r#gen()).0.to_le_bytes().to_vec();
 
         let (client_key, compressed_xof_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
             config,
@@ -1201,8 +1199,9 @@ pub fn combine_and_run_sns_compression_test(
 #[cfg(test)]
 mod tests {
     use tfhe::{
+        FheUint8,
         prelude::{CiphertextList, FheDecrypt},
-        set_server_key, FheUint8,
+        set_server_key,
     };
 
     use crate::{

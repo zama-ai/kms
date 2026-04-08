@@ -9,7 +9,7 @@ use crate::{
     online::preprocessing::DKGPreprocessing,
     runtime::sessions::base_session::BaseSessionHandles,
     tfhe_internals::{
-        lwe_ciphertext::{self, encrypt_lwe_ciphertext_list, LweCiphertextShare},
+        lwe_ciphertext::{self, LweCiphertextShare, encrypt_lwe_ciphertext_list},
         lwe_key::LweSecretKeyShare,
         parameters::MSNRKParams,
         randomness::MPCEncryptionRandomGenerator,

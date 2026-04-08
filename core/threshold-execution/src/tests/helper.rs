@@ -19,7 +19,7 @@ pub mod tests_and_benches {
             sessions::base_session::{BaseSession, GenericBaseSession},
             sessions::{large_session::LargeSession, small_session::SmallSession},
             test_runtime::generate_fixed_roles_two_sets_with_intersection,
-            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+            test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         },
         small_execution::prf::PRSSConversions,
     };
@@ -410,19 +410,19 @@ pub mod tests {
                 small_session::SmallSession,
             },
             test_runtime::{
-                generate_fixed_roles, generate_fixed_roles_two_sets_with_intersection,
-                DistributedTestRuntime,
+                DistributedTestRuntime, generate_fixed_roles,
+                generate_fixed_roles_two_sets_with_intersection,
             },
         },
         small_execution::prf::PRSSConversions,
         tfhe_internals::{
             parameters::DKGParams,
-            test_feature::{gen_key_set, KeySet},
+            test_feature::{KeySet, gen_key_set},
         },
     };
     use aes_prng::AesRng;
     use algebra::structure_traits::{ErrorCorrect, Invert, Ring};
-    use futures_util::future::{join_all, Future, FutureExt};
+    use futures_util::future::{Future, FutureExt, join_all};
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::{

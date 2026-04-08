@@ -18,7 +18,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt as tracing_fmt};
 
 pub static INITIALIZED: Once = Once::new();
 
@@ -183,16 +183,15 @@ pub fn init_subscriber() {
                     .with_filter(test_console_env_filter()),
             )
             .try_init()
+            && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref())
         {
-            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
-                eprintln!("[tracing-test] skipped global subscriber init (console+capture): {err}");
-            }
+            eprintln!("[tracing-test] skipped global subscriber init (console+capture): {err}");
         }
     } else {
-        if let Err(err) = subscriber.try_init() {
-            if parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref()) {
-                eprintln!("[tracing-test] skipped global subscriber init (capture): {err}");
-            }
+        if let Err(err) = subscriber.try_init()
+            && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref())
+        {
+            eprintln!("[tracing-test] skipped global subscriber init (capture): {err}");
         }
     }
 }

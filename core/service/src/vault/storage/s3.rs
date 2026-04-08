@@ -1,28 +1,28 @@
 use super::{Storage, StorageReader, StorageType};
-use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
+use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
-use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
+use aws_sdk_s3::{Client as S3Client, error::ProvideErrorMetadata, primitives::ByteStream};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::{
     box_error::BoxError,
     client::{
-        interceptors::{context::BeforeTransmitInterceptorContextMut, Intercept},
+        interceptors::{Intercept, context::BeforeTransmitInterceptorContextMut},
         runtime_components::RuntimeComponents,
     },
 };
 use aws_smithy_types::config_bag::ConfigBag;
-use http_legacy::{header::HOST, HeaderValue};
+use http_legacy::{HeaderValue, header::HOST};
 use hyper_rustls::HttpsConnectorBuilder;
-use kms_grpc::{identifiers::EpochId, RequestId};
-use serde::{de::DeserializeOwned, Serialize};
+use kms_grpc::{RequestId, identifiers::EpochId};
+use serde::{Serialize, de::DeserializeOwned};
 #[cfg(test)]
 use std::cell::RefCell;
 use std::{collections::HashSet, str::FromStr};
 use tfhe::{
+    Unversionize, Versionize,
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
-    Unversionize, Versionize,
 };
 use tokio::io::AsyncReadExt;
 use url::Url;
@@ -671,17 +671,11 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        engine::threshold::service::reshare_utils::find_region_from_s3_url,
-        vault::storage::tests::{
-            test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
-            test_store_bytes_does_not_overwrite_existing_bytes,
-            test_store_data_does_not_overwrite_existing_data,
-        },
+    use crate::vault::storage::tests::{
+        test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
+        test_store_bytes_does_not_overwrite_existing_bytes,
+        test_store_data_does_not_overwrite_existing_data,
     };
-
-    /// When `KMS_TEST_S3_ANON_BUCKET` is unset or empty, [`test_s3_anon`] uses this bucket (same as CI).
-    const DEFAULT_KMS_TEST_S3_ANON_BUCKET: &str = "zama-zws-dev-kms-ci-no-delete";
 
     async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -805,24 +799,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_s3_anon() {
-        let url = "https://s3.eu-west-1.amazonaws.com/";
-        let region = find_region_from_s3_url(&url.to_string()).unwrap();
-        assert_eq!(region, "eu-west-1");
-        let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
+        let prefix = std::stringify!(test_s3_anon);
+        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+        storage
+            .store_bytes(b"fake-pk", &RequestId::default(), "PublicKey")
             .await
             .unwrap();
 
-        // Listing requires a real bucket with anonymous ListObjects. Override with KMS_TEST_S3_ANON_BUCKET.
-        let bucket = match std::env::var("KMS_TEST_S3_ANON_BUCKET") {
-            Ok(b) if !b.is_empty() => b,
-            _ => DEFAULT_KMS_TEST_S3_ANON_BUCKET.to_string(),
-        };
+        // Build an anonymous client pointing at local MinIO
+        let s3_client =
+            build_anonymous_s3_client(Url::parse(AWS_S3_ENDPOINT).unwrap(), AWS_REGION.to_string())
+                .await
+                .unwrap();
 
-        let pub_storage =
-            ReadOnlyS3Storage::new(s3_client, bucket, StorageType::PUB, Some("PUB-p1")).unwrap();
+        let pub_storage = ReadOnlyS3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-        // at least one public key should be present in the bucket
         assert!(!public_key_ids.is_empty());
     }
 }

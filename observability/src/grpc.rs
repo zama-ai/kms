@@ -2,7 +2,7 @@ use crate::telemetry::{TRACER_PARENT_SPAN_ID, TRACER_REQUEST_ID};
 use opentelemetry::trace::TraceContextExt;
 use std::time::Instant;
 use tonic::Request;
-use tracing::{trace, warn, Level, Span};
+use tracing::{Level, Span, trace, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 

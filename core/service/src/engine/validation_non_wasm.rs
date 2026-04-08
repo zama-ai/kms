@@ -1,6 +1,6 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
-use crate::engine::keyset_configuration::{preproc_proto_to_keyset_config, InternalKeySetConfig};
+use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::MetricedError;
 use crate::{
     anyhow_error_and_log,
@@ -8,7 +8,7 @@ use crate::{
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
         signatures::{
-            internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
+            PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
     },
     engine::base::compute_public_decryption_message,
@@ -22,6 +22,7 @@ use kms_grpc::kms::v1::{
     CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest, NewMpcEpochRequest, PreviousEpochInfo,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
+use kms_grpc::{KeyId, RequestId};
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
@@ -29,7 +30,6 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
-use kms_grpc::{KeyId, RequestId};
 use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
@@ -53,10 +53,10 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
 
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP: &str =
-    "Could not validate the aggregated public decryption responses";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP: &str =
     "Not enough correct public decryption responses to decrypt the data!";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP: &str =
+    "No responses to validate in public decryption!";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
     "The number of ciphertexts in the public decryption response is wrong";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK: &str =
@@ -386,12 +386,12 @@ fn validate_public_decrypt_meta_data(
 ) -> anyhow::Result<bool> {
     if pivot_resp.request_id != other_resp.request_id {
         tracing::warn!(
-                    "Response from server with verification key {:?} gave request ID {:?}, whereas the pivot server gave request ID {:?}, and its verification key is {:?}",
-                    pivot_resp.verification_key,
-                    pivot_resp.request_id,
-                    other_resp.request_id,
-                    other_resp.verification_key
-                );
+            "Response from server with verification key {:?} gave request ID {:?}, whereas the pivot server gave request ID {:?}, and its verification key is {:?}",
+            pivot_resp.verification_key,
+            pivot_resp.request_id,
+            other_resp.request_id,
+            other_resp.verification_key
+        );
         return Ok(false);
     }
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
@@ -510,16 +510,14 @@ pub(crate) fn select_most_common_public_dec(
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(None)` — no responses to verify.
-/// * `Ok(Some(vec![]))` — responses existed but none passed verification.
-/// * `Ok(Some(vec![...]))` — verified response payloads.
+/// * `Ok(vec![])` — no responses passed verification or there were no responses.
+/// * `Ok(vec![...])` — verified response payloads.
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
-) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
+) -> anyhow::Result<Vec<PublicDecryptionResponsePayload>> {
     if agg_resp.is_empty() {
-        tracing::warn!("There are no public decryption responses!");
-        return Ok(None);
+        anyhow::bail!(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP);
     }
     if trusted_ctx.server_pks.is_empty() {
         anyhow::bail!("No servers configured in trusted public decryption context");
@@ -542,11 +540,11 @@ fn validate_public_decrypt_responses(
             }
         };
 
-        if let Some(expected_extra_data) = trusted_ctx.extra_data {
-            if cur_resp.extra_data != expected_extra_data {
-                tracing::warn!("Extra data mismatch in public decryption!");
-                continue;
-            }
+        if let Some(expected_extra_data) = trusted_ctx.extra_data
+            && cur_resp.extra_data != expected_extra_data
+        {
+            tracing::warn!("Extra data mismatch in public decryption!");
+            continue;
         }
 
         // check the uniqueness of verification key
@@ -587,7 +585,7 @@ fn validate_public_decrypt_responses(
         verification_keys.insert(cur_payload.verification_key.clone());
         resp_parsed_payloads.push(cur_payload.clone());
     }
-    Ok(Some(resp_parsed_payloads))
+    Ok(resp_parsed_payloads)
 }
 
 /// Validates the aggregated decryption response by checking:
@@ -607,10 +605,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
 ) -> anyhow::Result<()> {
-    let resp_parsed_payloads = crate::some_or_err(
-        validate_public_decrypt_responses(trusted_ctx, agg_resp)?,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP.to_string(),
-    )?;
+    let resp_parsed_payloads = validate_public_decrypt_responses(trusted_ctx, agg_resp)?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
         return Err(anyhow_error_and_log(
             ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
@@ -960,13 +955,13 @@ mod tests {
 
     use aes_prng::AesRng;
     use kms_grpc::{
+        RequestId,
         kms::v1::{
             self, NewMpcEpochRequest, PreviousEpochInfo, PublicDecryptionRequest,
             PublicDecryptionResponse, PublicDecryptionResponsePayload, TypedCiphertext,
             TypedPlaintext, UserDecryptionRequest,
         },
-        rpc_types::{alloy_to_protobuf_domain, ID_LENGTH},
-        RequestId,
+        rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
     };
 
     use rand::SeedableRng;
@@ -980,22 +975,23 @@ mod tests {
         engine::{
             base::{compute_external_pt_signature, derive_request_id},
             validation::{
-                parse_grpc_request_id, validate_new_mpc_epoch_request, RequestIdParsingErr,
+                RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
             validation_non_wasm::{
-                select_most_common_public_dec, validate_public_decrypt_responses,
+                ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, select_most_common_public_dec,
+                validate_public_decrypt_responses,
             },
         },
     };
 
     use super::{
-        unpack_public_decrypt_req, unpack_user_decrypt_req, validate_public_decrypt_meta_data,
-        validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712, Eip712VerificationParams, PublicDecTrustedValidationContext,
         DSEP_PUBLIC_DECRYPTION, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
+        Eip712VerificationParams, PublicDecTrustedValidationContext, unpack_public_decrypt_req,
+        unpack_user_decrypt_req, validate_public_decrypt_meta_data,
+        validate_public_decrypt_responses_against_request, verify_max_num_bits,
+        verify_user_decrypt_eip712,
     };
 
     #[test]
@@ -1025,10 +1021,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_public_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::PublicDecRequestBadKeyId.to_string()));
+            assert!(
+                unpack_public_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::PublicDecRequestBadKeyId.to_string())
+            );
         }
 
         // empty request ID
@@ -1042,10 +1040,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_public_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
+            assert!(
+                unpack_public_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::PublicDecRequest.to_string())
+            );
         }
 
         // invalid request ID
@@ -1062,10 +1062,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_public_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
+            assert!(
+                unpack_public_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::PublicDecRequest.to_string())
+            );
         }
 
         // empty ciphertext
@@ -1079,10 +1081,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_public_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS));
+            assert!(
+                unpack_public_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS)
+            );
         }
 
         // finally everything is ok
@@ -1142,10 +1146,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_user_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::UserDecRequestBadKeyId.to_string()));
+            assert!(
+                unpack_user_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::UserDecRequestBadKeyId.to_string())
+            );
         }
 
         // empty request ID
@@ -1161,10 +1167,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_user_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
+            assert!(
+                unpack_user_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::UserDecRequest.to_string())
+            );
         }
 
         // invalid request ID
@@ -1183,10 +1191,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_user_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
+            assert!(
+                unpack_user_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&RequestIdParsingErr::UserDecRequest.to_string())
+            );
         }
 
         // empty ciphertext
@@ -1202,10 +1212,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_user_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS));
+            assert!(
+                unpack_user_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS)
+            );
         }
 
         // bad client address
@@ -1247,10 +1259,12 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            assert!(unpack_user_decrypt_req(&req)
-                .unwrap_err()
-                .to_string()
-                .contains("Error deserializing")); // the error message that is returned from trying to decode the bad encoding
+            assert!(
+                unpack_user_decrypt_req(&req)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Error deserializing")
+            ); // the error message that is returned from trying to decode the bad encoding
         }
 
         // finally everything is ok
@@ -1344,7 +1358,10 @@ mod tests {
             match verify_user_decrypt_eip712(&bad_req) {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
-                    assert_eq!(e.to_string(), "error parsing checksummed address: 66f9664f97F2b50F62D13eA064982f936dE76657 - invalid string length");
+                    assert_eq!(
+                        e.to_string(),
+                        "error parsing checksummed address: 66f9664f97F2b50F62D13eA064982f936dE76657 - invalid string length"
+                    );
                 }
             }
         }
@@ -1404,14 +1421,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad signature (malformed signature)
@@ -1427,14 +1446,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .is_err()
+            );
         }
 
         // use a bad signature (signing the wrong value)
@@ -1465,14 +1486,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &bad_signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &bad_signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (digest mismatch)
@@ -1502,14 +1525,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (bad validation key)
@@ -1535,14 +1560,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // use a bad response (mismatch plaintext)
@@ -1568,14 +1595,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(!validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &bad_value,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                !validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &bad_value,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
 
         // happy path
@@ -1590,14 +1619,16 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            assert!(validate_public_decrypt_meta_data(
-                &trusted_ctx,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                None,
-            )
-            .unwrap());
+            assert!(
+                validate_public_decrypt_meta_data(
+                    &trusted_ctx,
+                    &pivot,
+                    &pivot,
+                    &signature_buf,
+                    None,
+                )
+                .unwrap()
+            );
         }
     }
 
@@ -1703,7 +1734,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1
             );
@@ -1712,7 +1742,6 @@ mod tests {
             bad_agg_resp.reverse();
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 1
@@ -1724,7 +1753,6 @@ mod tests {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 1
@@ -1764,7 +1792,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1
             );
@@ -1778,7 +1805,6 @@ mod tests {
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
-                    .unwrap()
                     .len(),
                 1 // instead of 2
             );
@@ -1789,7 +1815,6 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
                 validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
-                    .unwrap()
                     .unwrap()
                     .len(),
                 2
@@ -1915,7 +1940,7 @@ mod tests {
                 validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1)
                     .unwrap_err()
                     .to_string()
-                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP)
+                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP)
             );
         }
 
@@ -2093,46 +2118,52 @@ mod tests {
         };
 
         // return false for empty external signature
-        assert!(!validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &[],
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            !validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &[],
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
 
         // return false for bad external signature
-        assert!(!validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &bad_external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            !validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &bad_external_signature,
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
 
         // happy path
-        assert!(validate_public_decrypt_meta_data(
-            &trusted_ctx,
-            &pivot,
-            &pivot,
-            &signature_buf,
-            Some(&Eip712VerificationParams {
-                response_external_signature: &external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &alloy_domain,
-            }),
-        )
-        .unwrap());
+        assert!(
+            validate_public_decrypt_meta_data(
+                &trusted_ctx,
+                &pivot,
+                &pivot,
+                &signature_buf,
+                Some(&Eip712VerificationParams {
+                    response_external_signature: &external_signature,
+                    response_extra_data: &extra_data,
+                    trusted_eip712_domain: &alloy_domain,
+                }),
+            )
+            .unwrap()
+        );
     }
 
     #[test]

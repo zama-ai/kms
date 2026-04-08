@@ -15,7 +15,7 @@ use crate::{
         glwe_key::GlweSecretKeyShare,
         lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
-        lwe_key::{generate_lwe_public_key_shared, LweSecretKeyShare},
+        lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
         modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
         parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
@@ -29,7 +29,7 @@ use crate::{
     },
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     structure_traits::{BaseRing, ErrorCorrect, Ring},
 };
@@ -39,10 +39,10 @@ use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,
     shortint::{
+        ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
         parameters::LweCiphertextCount,
         server_key::CompressedModulusSwitchConfiguration,
-        ClassicPBSParameters,
     },
     xof_key_set::CompressedXofKeySet,
 };
@@ -311,12 +311,12 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
 
         // Messages exchanged are big so we deserialize them on Rayon
         session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
-        if Z::BIT_LENGTH == 64 {
-            if let DKGParams::WithSnS(_) = params {
-                return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with in Z64".to_string(),
-                ));
-            }
+        if Z::BIT_LENGTH == 64
+            && let DKGParams::WithSnS(_) = params
+        {
+            return Err(anyhow_error_and_log(
+                "Can not generate Switch and Squash key with in Z64".to_string(),
+            ));
         }
 
         if Z::BIT_LENGTH != params_basics_handle.get_dkg_mode().expected_bit_length() {
@@ -872,12 +872,12 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
 #[cfg(any(test, feature = "testing"))]
 pub mod conformance {
     use tfhe::core_crypto::prelude::{
-        decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
+        ContiguousEntityContainer, LweCiphertextOwned, decrypt_lwe_ciphertext, divide_round,
     };
+    use tfhe::shortint::ClassicPBSParameters;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
-    use tfhe::shortint::ClassicPBSParameters;
 
     pub fn check_drift_technique_key(
         pbs_params: ClassicPBSParameters,
@@ -972,16 +972,16 @@ pub mod tests {
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
             parameters::{
-                DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
-                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
-                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
+                BC_PARAMS_NO_SNS, DKGParams, NIST_PARAMS_P8_NO_SNS_FGLWE,
+                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, PARAMS_TEST_BK_SNS,
             },
             test_feature::to_hl_client_key,
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
         structure_traits::{ErrorCorrect, Invert, Solve},
     };
@@ -989,6 +989,7 @@ pub mod tests {
     use std::path::Path;
     use test_utils::{read_element, write_element};
     use tfhe::{
+        CompressedCiphertextListBuilder, FheUint8, FheUint32, FheUint64, ReRandomizationContext,
         core_crypto::{
             algorithms::{
                 convert_standard_lwe_bootstrap_key_to_fourier_128, par_generate_lwe_bootstrap_key,
@@ -1004,18 +1005,17 @@ pub mod tests {
         prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize, Tagged},
         set_server_key,
         shortint::{
+            PBSParameters,
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
             noise_squashing::{
-                atomic_pattern::{
-                    standard::StandardAtomicPatternNoiseSquashingKey,
-                    AtomicPatternNoiseSquashingKey,
-                },
                 NoiseSquashingKey, Shortint128BootstrappingKey,
+                atomic_pattern::{
+                    AtomicPatternNoiseSquashingKey,
+                    standard::StandardAtomicPatternNoiseSquashingKey,
+                },
             },
             parameters::CoreCiphertextModulus,
-            PBSParameters,
         },
-        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8, ReRandomizationContext,
     };
     use tfhe_csprng::seeders::Seeder;
     use threshold_types::network::NetworkMode;
@@ -1029,7 +1029,7 @@ pub mod tests {
     use crate::{
         config::BatchParams,
         keyset_config::KeySetConfig,
-        online::preprocessing::{create_memory_factory, DKGPreprocessing},
+        online::preprocessing::{DKGPreprocessing, create_memory_factory},
         runtime::sessions::{
             base_session::ToBaseSession,
             small_session::{SmallSession, SmallSessionHandles},

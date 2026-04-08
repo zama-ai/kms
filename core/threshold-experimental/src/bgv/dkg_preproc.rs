@@ -11,13 +11,13 @@ use threshold_execution::{
     config::BatchParams,
     online::{
         preprocessing::{
-            dummy::DummyPreprocessing,
-            memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
             // orchestration::producer_traits::BitGenOdd,
             BasePreprocessing,
             BitPreprocessing,
             RandomPreprocessing,
             TriplePreprocessing,
+            dummy::DummyPreprocessing,
+            memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
         },
         secret_distributions::{RealSecretDistributions, SecretDistributions},
         triple::Triple,

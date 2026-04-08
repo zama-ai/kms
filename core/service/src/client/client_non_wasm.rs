@@ -2,14 +2,14 @@ use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
 use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::vault::storage::{
+    Storage, StorageReader,
     crypto_material::{
         get_client_signing_key, get_client_verification_key, get_core_verification_key,
     },
-    Storage, StorageReader,
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use futures_util::future::{try_join_all, TryFutureExt};
+use futures_util::future::{TryFutureExt, try_join_all};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::fmt;

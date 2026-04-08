@@ -38,7 +38,7 @@ cfg_if::cfg_if! {
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use crate::client::tests::common::compressed_keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{decompression_keygen_config, TIME_TO_SLEEP_MS};
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, decompression_keygen_config};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]

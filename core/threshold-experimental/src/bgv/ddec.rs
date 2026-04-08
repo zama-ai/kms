@@ -165,8 +165,8 @@ mod tests {
     use crate::algebra::ntt::N65536;
     use crate::bgv::basics::bgv_enc;
     use crate::bgv::basics::keygen;
-    use crate::bgv::ddec::keygen_shares;
     use crate::bgv::ddec::LevelEll;
+    use crate::bgv::ddec::keygen_shares;
     use aes_prng::AesRng;
     use algebra::sharing::shamir::RevealOp;
     use algebra::sharing::shamir::ShamirSharings;
@@ -176,8 +176,8 @@ mod tests {
     use algebra::structure_traits::Zero;
     use std::collections::HashMap;
     use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
-    use threshold_execution::runtime::test_runtime::generate_fixed_roles;
     use threshold_execution::runtime::test_runtime::DistributedTestRuntime;
+    use threshold_execution::runtime::test_runtime::generate_fixed_roles;
     use threshold_types::network::NetworkMode;
     use threshold_types::session_id::SessionId;
 

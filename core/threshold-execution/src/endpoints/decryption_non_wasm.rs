@@ -6,11 +6,11 @@ use crate::endpoints::decryption::RadixOrBoolCiphertext;
 use crate::endpoints::decryption::SnsDecryptionKeyType;
 use crate::endpoints::decryption::SnsRadixOrBoolCiphertext;
 use crate::large_execution::offline::SecureLargePreprocessing;
-use crate::online::bit_manipulation::{bit_dec_batch, BatchedBits};
-use crate::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
+use crate::online::bit_manipulation::{BatchedBits, bit_dec_batch};
 use crate::online::preprocessing::BitDecPreprocessing;
 use crate::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::online::preprocessing::NoiseFloodPreprocessing;
+use crate::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::runtime::sessions::base_session::BaseSession;
 use crate::runtime::sessions::base_session::BaseSessionHandles;
 use crate::runtime::sessions::base_session::ToBaseSession;
@@ -30,7 +30,7 @@ use crate::{runtime::test_runtime::DistributedTestRuntime, small_execution::prf:
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
     structure_traits::{Derive, ErrorCorrect, Invert, Ring, Solve, Zero},
@@ -49,12 +49,12 @@ use std::num::Wrapping;
 use std::ops::Mul;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
-use tfhe::integer::noise_squashing::NoiseSquashingKey;
+use tfhe::core_crypto::prelude::{LweCiphertext, LweKeyswitchKey, keyswitch_lwe_ciphertext};
 use tfhe::integer::ServerKey;
-use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
+use tfhe::integer::noise_squashing::NoiseSquashingKey;
 use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
+use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use thread_handles::spawn_compute_bound;
 #[cfg(any(test, feature = "testing"))]
 use threshold_types::role::Role;
@@ -103,9 +103,9 @@ pub trait OfflineNoiseFloodSession<const EXTENSION_DEGREE: usize> {
 
 #[async_trait]
 impl<
-        const EXTENSION_DEGREE: usize,
-        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
-    > OfflineNoiseFloodSession<EXTENSION_DEGREE>
+    const EXTENSION_DEGREE: usize,
+    Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
+> OfflineNoiseFloodSession<EXTENSION_DEGREE>
     for SmallOfflineNoiseFloodSession<EXTENSION_DEGREE, Ses>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -146,9 +146,9 @@ where
 
 #[async_trait]
 impl<
-        const EXTENSION_DEGREE: usize,
-        PreprocStrat: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession> + Default,
-    > OfflineNoiseFloodSession<EXTENSION_DEGREE> for LargeOfflineNoiseFloodSession<PreprocStrat>
+    const EXTENSION_DEGREE: usize,
+    PreprocStrat: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession> + Default,
+> OfflineNoiseFloodSession<EXTENSION_DEGREE> for LargeOfflineNoiseFloodSession<PreprocStrat>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
@@ -1004,7 +1004,7 @@ where
         _ => {
             return Err(anyhow_error_and_log(
                 "Error receiving shares for reconstructing bit-composed message".to_string(),
-            ))
+            ));
         }
     };
     Ok(out)
@@ -1214,7 +1214,7 @@ where
             None => {
                 return Err(anyhow_error_and_log(
                     "Missing the switch and squash secret key".to_string(),
-                ))
+                ));
             }
         },
         SnsDecryptionKeyType::SnsCompressionKey => {
@@ -1223,7 +1223,7 @@ where
                 None => {
                     return Err(anyhow_error_and_log(
                         "Missing the switch and squash compression secret key".to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -1310,15 +1310,15 @@ mod tests {
     use crate::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
-    use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
+    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
     use crate::{
         constants::SMALL_TEST_KEY_PATH,
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+        runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         tests::ensure_test_data_setup,
     };
     use aes_prng::AesRng;
     use algebra::{
-        base_ring::{Z128, Z64},
+        base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -1330,7 +1330,7 @@ mod tests {
     use std::{collections::HashSet, sync::Arc};
     use test_utils::read_element;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-    use tfhe::{prelude::FheEncrypt, FheUint8};
+    use tfhe::{FheUint8, prelude::FheEncrypt};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 

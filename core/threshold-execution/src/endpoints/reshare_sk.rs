@@ -1,7 +1,7 @@
 use crate::{
     config::BatchParams,
     online::{
-        preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
+        preprocessing::{BasePreprocessing, memory::InMemoryBasePreprocessing},
         reshare::{
             Expected, NotExpected, Reshare, SecureSameSetReshare, SecureTwoSetsReshareAsBothSets,
             SecureTwoSetsReshareAsSet1, SecureTwoSetsReshareAsSet2,
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use algebra::{
-    base_ring::{Z128, Z64},
+    base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     structure_traits::{ErrorCorrect, Invert, Syndrome},
 };
@@ -684,15 +684,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::online::preprocessing::RandomPreprocessing;
+    use crate::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::runtime::sessions::base_session::{BaseSession, GenericBaseSession};
     use crate::runtime::sessions::small_session::SmallSession;
     use crate::tests::helper::tests_and_benches::{
         execute_protocol_small, execute_protocol_two_sets,
     };
     use crate::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS, PARAMS_TEST_BK_SNS};
-    use crate::tfhe_internals::test_feature::{keygen_all_party_shares_from_keyset, KeySet};
+    use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
     use crate::{
         constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
@@ -712,12 +712,12 @@ mod tests {
     use test_utils::read_element;
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
+    use tfhe::shortint::PBSParameters;
     use tfhe::shortint::client_key::atomic_pattern::{
         AtomicPatternClientKey, StandardAtomicPatternClientKey,
     };
     use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
     use tfhe::shortint::prelude::ModulusSwitchType;
-    use tfhe::shortint::PBSParameters;
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use threshold_types::network::NetworkMode;
     use threshold_types::role::{Role, TwoSetsRole, TwoSetsThreshold};

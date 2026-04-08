@@ -26,13 +26,13 @@ use threshold_types::{
     party::{MpcIdentity, RoleAssignment},
 };
 use tokio::sync::{
-    mpsc::{channel, Receiver, Sender},
     Mutex, RwLock,
+    mpsc::{Receiver, Sender, channel},
 };
 use tokio::time::{Duration, Instant};
 
-use tonic::transport::server::TcpConnectInfo;
 use tonic::transport::CertificateDer;
+use tonic::transport::server::TcpConnectInfo;
 use x509_parser::parse_x509_certificate;
 
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
@@ -276,10 +276,10 @@ impl GrpcNetworkingManager {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
                                 tracing::warn!(
-                                "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
-                                session_id,
-                                started.elapsed().as_secs()
-                            );
+                                    "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
+                                    session_id,
+                                    started.elapsed().as_secs()
+                                );
                                 to_remove.push(*session_id);
                                 continue;
                             } else {
@@ -331,7 +331,9 @@ impl GrpcNetworkingManager {
         let force_tls = tls_conf.is_some();
         #[cfg(feature = "testing")]
         if !force_tls {
-            tracing::warn!("force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments.");
+            tracing::warn!(
+                "force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments."
+            );
         }
 
         #[cfg(not(any(test, feature = "testing")))]
@@ -420,7 +422,7 @@ impl GrpcNetworkingManager {
         role_assignment: &RoleAssignment<R>,
         my_role: R,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<Arc<impl Networking<R>>> {
+    ) -> anyhow::Result<Arc<impl Networking<R> + use<R>>> {
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
@@ -803,9 +805,9 @@ impl NetworkingImpl {
         match session_status {
             SessionStatus::Completed(_) => {
                 tracing::debug!(
-                        "Session {:?} found in session_store but is completed. Will be removed by background cleanup.",
-                        tag.session_id
-                    );
+                    "Session {:?} found in session_store but is completed. Will be removed by background cleanup.",
+                    tag.session_id
+                );
                 // We accept the message even if we won't do anything with it
                 // to avoid blocking the sender
                 Ok(None)
@@ -844,7 +846,9 @@ impl NetworkingImpl {
                                 tonic::Code::ResourceExhausted,
                                 format!(
                                     "Too many inactive sessions opened by {:?}. Have {}, Max allowed: {}",
-                                    tag.sender, *opened_session_tracker_entry, self.max_opened_inactive_sessions
+                                    tag.sender,
+                                    *opened_session_tracker_entry,
+                                    self.max_opened_inactive_sessions
                                 ),
                             ));
                         }
@@ -1123,7 +1127,9 @@ impl Gnetworking for NetworkingImpl {
                             tonic::Code::ResourceExhausted,
                             format!(
                                 "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
-                                tag.sender,*opened_session_tracker_entry, self.max_opened_inactive_sessions
+                                tag.sender,
+                                *opened_session_tracker_entry,
+                                self.max_opened_inactive_sessions
                             ),
                         ));
                     }
@@ -1159,12 +1165,12 @@ impl Gnetworking for NetworkingImpl {
 
         if let Err(e) = send_result {
             tracing::warn!(
-            "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
-            tag.session_id,
-            &tag.sender,
-            tag.round_counter,
-            self.max_waiting_time_for_message_queue.as_secs()
-        );
+                "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
+                tag.session_id,
+                &tag.sender,
+                tag.round_counter,
+                self.max_waiting_time_for_message_queue.as_secs()
+            );
 
             return Err(tonic::Status::new(
                 tonic::Code::ResourceExhausted,
@@ -1201,8 +1207,8 @@ mod tests {
     use dashmap::DashMap;
     use threshold_types::party::{Identity, RoleAssignment};
     use threshold_types::role::Role;
-    use tokio::sync::mpsc::channel;
     use tokio::sync::Mutex;
+    use tokio::sync::mpsc::channel;
     use tokio::time::{Duration, Instant};
 
     #[test]

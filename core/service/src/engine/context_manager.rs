@@ -11,17 +11,17 @@ use crate::engine::backup_operator::{
 };
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
 use crate::engine::threshold::service::ThresholdFheKeys;
+use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr,
+    RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_context_at_id, delete_custodian_context_at_id, store_context_at_id, StorageExt,
+    StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -252,15 +252,19 @@ where
             if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
                 guarded_backup_vault.keychain.as_mut()
             {
-                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id() {
-                    if cur_backup_id == inner_context.context_id {
-                        anyhow::bail!("A custodian context with the same context ID already exists in the backup vault!");
-                    }
+                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                    && cur_backup_id == inner_context.context_id
+                {
+                    anyhow::bail!(
+                        "A custodian context with the same context ID already exists in the backup vault!"
+                    );
                 }
                 secret_share_keychain
                     .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
             } else {
-                return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
+                return Err(anyhow_error_and_log(
+                    "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
+                ));
             }
             for cur_type in PrivDataType::iter() {
                 match cur_type {
@@ -761,7 +765,9 @@ where
             loaded_count += 1;
         }
         if loaded_count == 0 {
-            tracing::warn!("Failed to load any of the MPC contexts from storage. Server is likely in recovery mode.");
+            tracing::warn!(
+                "Failed to load any of the MPC contexts from storage. Server is likely in recovery mode."
+            );
         } else if loaded_count < contexts.len() {
             tracing::warn!(
                 "Loaded only {}/{} MPC contexts.",
@@ -925,7 +931,8 @@ where
         let exists_in_storage = self.inner.mpc_context_exists_in_storage(context_id).await?;
         if exists_in_storage != exsits_in_session_maker {
             anyhow::bail!(
-                 "inconsistent context state for context while checking existance, exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}")
+                "inconsistent context state for context while checking existance, exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}"
+            )
         } else {
             Ok(exsits_in_session_maker && exists_in_storage)
         }
@@ -983,40 +990,41 @@ mod tests {
     use super::*;
     use crate::{
         backup::{
-            custodian::{Custodian, InternalCustodianSetupMessage, HEADER},
+            custodian::{Custodian, HEADER, InternalCustodianSetupMessage},
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::{gen_sig_keys, PublicSigKey},
+            signatures::{PublicSigKey, gen_sig_keys},
             signcryption::UnifiedUnsigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::{
+            Vault,
             keychain::secretsharing,
             storage::{
+                StorageProxy,
                 crypto_material::get_core_signing_key,
                 delete_context_at_id,
                 ram::{self, RamStorage},
                 read_context_at_id, read_versioned_at_request_id, store_context_at_id,
-                store_versioned_at_request_id, StorageProxy,
+                store_versioned_at_request_id,
             },
-            Vault,
         },
     };
     use kms_grpc::{
+        RequestId,
         identifiers::ContextId,
         kms::v1::{
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
             NewMpcContextRequest,
         },
         rpc_types::{KMSType, PrivDataType, PubDataType},
-        RequestId,
     };
-    use rand::{rngs::OsRng, SeedableRng};
+    use rand::{SeedableRng, rngs::OsRng};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
     use tonic::Request;
@@ -1756,9 +1764,11 @@ mod tests {
             &server_verf_key,
             &custodian_id,
         );
-        assert!(internal_rec_req
-            .is_valid(Role::indexed_from_one(1), &unsign_key)
-            .unwrap());
+        assert!(
+            internal_rec_req
+                .is_valid(Role::indexed_from_one(1), &unsign_key)
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1975,10 +1985,12 @@ mod tests {
                     .mpc_context_exists_in_cache(context_id)
                     .await
             );
-            assert!(context_manager
-                .mpc_context_exists_and_consistent(context_id)
-                .await
-                .unwrap());
+            assert!(
+                context_manager
+                    .mpc_context_exists_and_consistent(context_id)
+                    .await
+                    .unwrap()
+            );
         }
 
         // Destroy the middle context

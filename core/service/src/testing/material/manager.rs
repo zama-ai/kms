@@ -4,15 +4,15 @@
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
 use crate::consts::{
-    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P,
-    DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
-    DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, KEY_PATH_PREFIX,
+    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P,
+    DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+    DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, KEY_PATH_PREFIX,
     OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID,
-    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
-    TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
+    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
+    TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
@@ -744,13 +744,17 @@ impl TestMaterialManager {
                     ],
                     4 => vec![TEST_THRESHOLD_KEY_ID_4P.to_string()],
                     10 => vec![TEST_THRESHOLD_KEY_ID_10P.to_string()],
-                    n => panic!("Unsupported party count for Testing material: {n}. Supported: 1 (centralized), 4, 10"),
+                    n => panic!(
+                        "Unsupported party count for Testing material: {n}. Supported: 1 (centralized), 4, 10"
+                    ),
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
                     4 => vec![TEST_THRESHOLD_CRS_ID_4P.to_string()],
                     10 => vec![TEST_THRESHOLD_CRS_ID_10P.to_string()],
-                    n => panic!("Unsupported party count for Testing CRS: {n}. Supported: 1 (centralized), 4, 10"),
+                    n => panic!(
+                        "Unsupported party count for Testing CRS: {n}. Supported: 1 (centralized), 4, 10"
+                    ),
                 },
             },
             MaterialType::Default => KeyIds {
@@ -762,14 +766,18 @@ impl TestMaterialManager {
                     4 => vec![DEFAULT_THRESHOLD_KEY_ID_4P.to_string()],
                     10 => vec![DEFAULT_THRESHOLD_KEY_ID_10P.to_string()],
                     13 => vec![DEFAULT_THRESHOLD_KEY_ID_13P.to_string()],
-                    n => panic!("Unsupported party count for Default material: {n}. Supported: 1 (centralized), 4, 10, 13"),
+                    n => panic!(
+                        "Unsupported party count for Default material: {n}. Supported: 1 (centralized), 4, 10, 13"
+                    ),
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
                     4 => vec![DEFAULT_THRESHOLD_CRS_ID_4P.to_string()],
                     10 => vec![DEFAULT_THRESHOLD_CRS_ID_10P.to_string()],
                     13 => vec![DEFAULT_THRESHOLD_CRS_ID_13P.to_string()],
-                    n => panic!("Unsupported party count for Default CRS: {n}. Supported: 1 (centralized), 4, 10, 13"),
+                    n => panic!(
+                        "Unsupported party count for Default CRS: {n}. Supported: 1 (centralized), 4, 10, 13"
+                    ),
                 },
             },
         }

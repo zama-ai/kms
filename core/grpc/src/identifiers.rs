@@ -17,7 +17,7 @@ use std::fmt;
 use std::fmt::Display;
 use std::str::FromStr;
 use tfhe_versionable::{NotVersioned, Unversionize, Versionize, VersionizeOwned};
-use threshold_types::session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES};
+use threshold_types::session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES, SessionId};
 use tracing;
 
 /// Standard length for identifiers in bytes

@@ -2,15 +2,15 @@
 //! can be constructed from the protobuf types and stored in the vault.
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{named::Named, Versionize};
+use tfhe::{Versionize, named::Named};
 use tfhe_versionable::VersionsDispatch;
 use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
 
 use crate::{
     cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
-    engine::validation::{parse_optional_grpc_request_id, RequestIdParsingErr},
-    vault::storage::{crypto_material::get_core_signing_key, StorageReader},
+    engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+    vault::storage::{StorageReader, crypto_material::get_core_signing_key},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
@@ -543,10 +543,12 @@ mod tests {
         .unwrap();
 
         let result = context.verify(&storage).await;
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains(ERR_DUPLICATE_PARTY_IDS));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_DUPLICATE_PARTY_IDS)
+        );
     }
 
     #[test]

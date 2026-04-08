@@ -2,7 +2,7 @@ use super::{basics::PrivateBgvKeySet, dkg_preproc::BGVDkgPreprocessing};
 use crate::{
     algebra::cyclotomic::RqElement,
     algebra::levels::{CryptoModulus, GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor},
-    algebra::ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
+    algebra::ntt::{Const, NTTConstants, hadamard_product, ntt_inv, ntt_iter2},
     bgv::basics::PublicKey,
 };
 use algebra::{sharing::share::Share, structure_traits::FromU128};
@@ -189,15 +189,15 @@ mod tests {
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
 
-    use super::{bgv_distributed_keygen, BGVDkgPreprocessing};
+    use super::{BGVDkgPreprocessing, bgv_distributed_keygen};
     use crate::{
         algebra::{
             cyclotomic::{TernaryElement, TernaryEntry},
             levels::{LevelEll, LevelKsw, LevelOne},
-            ntt::{ntt_inv, Const, N65536},
+            ntt::{Const, N65536, ntt_inv},
         },
         bgv::{
-            basics::{bgv_dec, bgv_enc, PublicKey, SecretKey},
+            basics::{PublicKey, SecretKey, bgv_dec, bgv_enc},
             dkg_preproc::InMemoryBGVDkgPreprocessing,
         },
         constants::PLAINTEXT_MODULUS,

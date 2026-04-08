@@ -282,7 +282,10 @@ where
 
     //Make sure there's hope to ever have enough shares to try and reconstruct
     if degree + 2 * threshold >= num_parties {
-        return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}", sharing.shares.len())));
+        return Err(anyhow_error_and_warn_log(format!(
+            "Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}",
+            sharing.shares.len()
+        )));
     }
 
     // Not enough shares to reconstruct (yet)
@@ -366,7 +369,9 @@ where
         }
     //Make sure there's hope to ever have enough shares to try and reconstruct
     } else {
-        Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")))
+        Err(anyhow_error_and_warn_log(format!(
+            "Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}"
+        )))
     }
 }
 
@@ -375,7 +380,7 @@ mod tests {
     use super::*;
     use crate::{
         galois_rings::{
-            common::{pack_residue_poly, TryFromWrapper},
+            common::{TryFromWrapper, pack_residue_poly},
             degree_4::ResiduePolyF4,
         },
         randomness_check::execute_all_randomness_tests_tight,
@@ -460,7 +465,7 @@ mod tests {
         }}
     }
 
-    use crate::base_ring::{Z128, Z64};
+    use crate::base_ring::{Z64, Z128};
     tests_poly_shamir!(Z64, u64);
     tests_poly_shamir!(Z128, u128);
 

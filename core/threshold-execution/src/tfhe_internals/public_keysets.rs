@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::prelude::{
     SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
 };
+use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
@@ -12,17 +13,16 @@ use tfhe::shortint::key_switching_key::KeySwitchingKeyDestinationAtomicPattern;
 use tfhe::shortint::list_compression::{
     CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
 };
-use tfhe::shortint::noise_squashing::atomic_pattern::compressed::standard::CompressedStandardAtomicPatternNoiseSquashingKey;
-use tfhe::shortint::noise_squashing::atomic_pattern::compressed::CompressedAtomicPatternNoiseSquashingKey;
 use tfhe::shortint::noise_squashing::CompressedShortint128BootstrappingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::CompressedAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::standard::CompressedStandardAtomicPatternNoiseSquashingKey;
 use tfhe::shortint::server_key::{
     CompressedModulusSwitchConfiguration, ShortintCompressedBootstrappingKey,
 };
-use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::{
+    XofSeed,
     shortint::ciphertext::{MaxDegree, MaxNoiseLevel},
     xof_key_set::CompressedXofKeySet,
-    XofSeed,
 };
 
 #[derive(Clone, Serialize, Deserialize)]

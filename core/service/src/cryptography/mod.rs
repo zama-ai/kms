@@ -14,9 +14,9 @@ pub mod signcryption;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 #[cfg(any(feature = "non-wasm", test))]
-use crate::cryptography::signatures::compute_eip712_signature;
-#[cfg(any(feature = "non-wasm", test))]
 use crate::cryptography::signatures::PrivateSigKey;
+#[cfg(any(feature = "non-wasm", test))]
+use crate::cryptography::signatures::compute_eip712_signature;
 #[cfg(any(feature = "non-wasm", test))]
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::{

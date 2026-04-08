@@ -20,7 +20,7 @@ use crate::choreography::requests::{
     ThresholdKeyGenResultParams,
 };
 use aes_prng::AesRng;
-use algebra::base_ring::{Z128, Z64};
+use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
 use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
@@ -28,8 +28,8 @@ use clap::ValueEnum;
 use dashmap::DashMap;
 use error_utils::anyhow_error_and_log;
 use futures_util::{
-    future::{join_all, try_join_all},
     TryFutureExt,
+    future::{join_all, try_join_all},
 };
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
@@ -43,10 +43,10 @@ use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use threshold_execution::endpoints::decryption::{
+    BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession, RadixOrBoolCiphertext,
+    SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
-    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
-    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
-    SnsRadixOrBoolCiphertext,
+    task_decryption_bitdec_par,
 };
 use threshold_execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
@@ -98,7 +98,7 @@ use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},
 };
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
 pub enum SupportedRing {
@@ -314,12 +314,12 @@ where
 }
 
 impl<
-        const EXTENSION_DEGREE: usize,
-        PRSSInitStrategy: Default + 'static,
-        SmallOfflineStrategy: Default + 'static,
-        LargeOfflineStrategyZ64: Default + 'static,
-        LargeOfflineStrategyZ128: Default + 'static,
-    >
+    const EXTENSION_DEGREE: usize,
+    PRSSInitStrategy: Default + 'static,
+    SmallOfflineStrategy: Default + 'static,
+    LargeOfflineStrategyZ64: Default + 'static,
+    LargeOfflineStrategyZ128: Default + 'static,
+>
     GrpcChoreography<
         EXTENSION_DEGREE,
         PRSSInitStrategy,
@@ -331,17 +331,13 @@ where
     // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-
     PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
-
     PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
-
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
@@ -536,12 +532,12 @@ where
 
 #[async_trait]
 impl<
-        const EXTENSION_DEGREE: usize,
-        PRSSInitStrategy: Default + 'static,
-        SmallOfflineStrategy: Default + 'static,
-        LargeOfflineStrategyZ64: Default + 'static,
-        LargeOfflineStrategyZ128: Default + 'static,
-    > Choreography
+    const EXTENSION_DEGREE: usize,
+    PRSSInitStrategy: Default + 'static,
+    SmallOfflineStrategy: Default + 'static,
+    LargeOfflineStrategyZ64: Default + 'static,
+    LargeOfflineStrategyZ128: Default + 'static,
+> Choreography
     for GrpcChoreography<
         EXTENSION_DEGREE,
         PRSSInitStrategy,
@@ -553,17 +549,13 @@ where
     // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-
     PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
-
     PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
-
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
@@ -990,7 +982,12 @@ where
                     self.data
                         .dkg_preproc_store_regular
                         .insert(id, (params, preproc));
-                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                    return Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!(
+                            "The preprocessing stored under id {id} does not match the parameters request for key gen."
+                        ),
+                    ));
                 }
 
                 let my_future = || async move {
@@ -1049,7 +1046,12 @@ where
                     self.data
                         .dkg_preproc_store_sns
                         .insert(id, (params, preproc));
-                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                    return Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!(
+                            "The preprocessing stored under id {id} does not match the parameters request for key gen."
+                        ),
+                    ));
                 }
 
                 let my_future = || async move {
@@ -2162,7 +2164,12 @@ where
                         .noise_squashing_key()
                         .is_none()
                     {
-                        return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
+                        return Err(tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!(
+                                "Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}"
+                            ),
+                        ));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
                         self.data.ddec_preproc_store_nf.remove(&preproc_sid).ok_or_else(|| {
@@ -2754,7 +2761,9 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     _params: DKGParams,
     _tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
-    panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
+    panic!(
+        "Require the testing feature on the moby cluster to perform a local intialization of the keys"
+    )
 }
 
 /// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid

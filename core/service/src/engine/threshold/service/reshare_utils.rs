@@ -2,21 +2,21 @@ use crate::{
     engine::{
         context::ContextInfo,
         utils::{
-            verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
-            verify_key_digest_from_bytes, MetricedError,
+            MetricedError, verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
+            verify_key_digest_from_bytes,
         },
     },
     vault::storage::{
+        Storage, StorageExt, StorageReader, StorageType,
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id,
-        s3::{build_anonymous_s3_client, ReadOnlyS3StorageGetter},
-        Storage, StorageExt, StorageReader, StorageType,
+        s3::{ReadOnlyS3StorageGetter, build_anonymous_s3_client},
     },
 };
-use kms_grpc::{rpc_types::PubDataType, ContextId, RequestId};
+use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::collections::HashMap;
-use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs, ServerKey};
+use tfhe::{ServerKey, xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
@@ -676,9 +676,9 @@ mod tests {
     use crate::engine::context::ContextInfo;
     use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
+    use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
-    use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
@@ -686,13 +686,13 @@ mod tests {
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
+    use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
-    use tfhe::shortint::ClassicPBSParameters;
     use tfhe::CompactPublicKey;
     use tfhe::ServerKey;
+    use tfhe::shortint::ClassicPBSParameters;
 
     #[test]
     fn test_split_devnet_url() {
@@ -856,9 +856,10 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert!(err
-                .to_string()
-                .contains(ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS));
+            assert!(
+                err.to_string()
+                    .contains(ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS)
+            );
         }
     }
 
@@ -1232,9 +1233,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH));
+        assert!(
+            err.to_string()
+                .contains(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH)
+        );
     }
 
     #[tokio::test]

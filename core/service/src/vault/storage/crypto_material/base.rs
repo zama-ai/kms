@@ -5,7 +5,7 @@
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::meta_store::update_ok_req_in_meta_store;
-use crate::vault::storage::{store_versioned_at_request_and_epoch_id, StorageReader};
+use crate::vault::storage::{StorageReader, store_versioned_at_request_and_epoch_id};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
@@ -18,32 +18,32 @@ use crate::{
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
+        Vault,
         keychain::KeychainProxy,
         storage::{
+            Storage, StorageExt, StorageReaderExt,
             crypto_material::{
                 check_data_exists, check_data_exists_at_epoch, log_storage_success,
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
-            store_context_at_id, store_versioned_at_request_id, Storage, StorageExt,
-            StorageReaderExt,
+            store_context_at_id, store_versioned_at_request_id,
         },
-        Vault,
     },
 };
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     rpc_types::{KMSType, PrivDataType, PubDataType},
-    RequestId,
 };
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
-use tfhe::named::Named;
-use tfhe::xof_key_set::CompressedXofKeySet;
 #[cfg(test)]
 use tfhe::CompactPublicKey;
 use tfhe::Versionize;
+use tfhe::named::Named;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
@@ -351,7 +351,9 @@ where
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted {kms_type} FHE keys to backup storage for request {key_id}: {e}");
+                            tracing::error!(
+                                "Failed to store encrypted {kms_type} FHE keys to backup storage for request {key_id}: {e}"
+                            );
                         } else {
                             log_storage_success(
                                 key_id,
@@ -364,7 +366,9 @@ where
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        tracing::warn!(
+                            "No backup vault configured. Skipping backup of key material for request {key_id}"
+                        );
                         true
                     }
                 }
@@ -597,12 +601,16 @@ where
                         .await;
 
                         if let Err(e) = &backup_result {
-                            tracing::error!("Failed to store encrypted crs info to backup storage for request {crs_id}: {e}");
+                            tracing::error!(
+                                "Failed to store encrypted crs info to backup storage for request {crs_id}: {e}"
+                            );
                         }
                         backup_result.is_ok()
                     }
                     None => {
-                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {crs_id}");
+                        tracing::warn!(
+                            "No backup vault configured. Skipping backup of CRS material for request {crs_id}"
+                        );
                         true
                     }
                 }
@@ -835,16 +843,19 @@ where
                         Some(keychain) => {
                             if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
                                 // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(req_id, recovery_material.custodian_context().backup_enc_key.clone());
+                                sharing_chain.set_backup_enc_key(
+                                    req_id,
+                                    recovery_material.custodian_context().backup_enc_key.clone(),
+                                );
                             }
-                        },
+                        }
                         None => {
                             tracing::info!(
                                 "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
                             );
-                        },
+                        }
                     }
-                },
+                }
                 None => tracing::warn!(
                     "No backup vault configured, skipping setting backup encryption key for request {req_id}"
                 ),

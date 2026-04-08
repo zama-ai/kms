@@ -6,9 +6,9 @@ use aes_prng::AesRng;
 use algebra::base_ring::Z64;
 use anyhow::anyhow;
 use kms_grpc::{
+    EpochId, RequestId,
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    EpochId, RequestId,
 };
 use observability::{
     metrics::{self, DurationGuard},
@@ -32,15 +32,15 @@ use tracing::Instrument;
 use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
+        base::{BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs},
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
-        validation::{parse_grpc_request_id, validate_crs_gen_request, RequestIdParsingErr},
+        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::{
-        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
+        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
+    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store};
 
@@ -77,10 +77,10 @@ pub struct RealCrsGenerator<
 }
 
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        C: Ceremony + Send + Sync + 'static,
-    > RealCrsGenerator<PubS, PrivS, C>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
+> RealCrsGenerator<PubS, PrivS, C>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -433,10 +433,10 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        C: Ceremony + Send + Sync + 'static,
-    > CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
+> CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
 {
     async fn crs_gen(
         &self,
@@ -464,10 +464,10 @@ pub struct RealInsecureCrsGenerator<
 
 #[cfg(feature = "insecure")]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        C: Ceremony + Send + Sync + 'static,
-    > RealInsecureCrsGenerator<PubS, PrivS, C>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
+> RealInsecureCrsGenerator<PubS, PrivS, C>
 {
     pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
@@ -488,10 +488,10 @@ impl<
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: StorageExt + Send + Sync + 'static,
-        C: Ceremony + Send + Sync + 'static,
-    > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
+> InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
 {
     async fn insecure_crs_gen(
         &self,
@@ -520,7 +520,7 @@ mod tests {
     use algebra::structure_traits::Ring;
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{
@@ -538,10 +538,10 @@ mod tests {
     use super::*;
 
     impl<
-            PubS: Storage + Send + Sync + 'static,
-            PrivS: StorageExt + Send + Sync + 'static,
-            C: Ceremony + Send + Sync + 'static,
-        > RealCrsGenerator<PubS, PrivS, C>
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
+        C: Ceremony + Send + Sync + 'static,
+    > RealCrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
             base_kms: BaseKmsStruct,

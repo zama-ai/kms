@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     net::IpAddr,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -8,9 +8,9 @@ use std::{
 
 use super::ggen::gnetworking_client::GnetworkingClient;
 use crate::ggen::Status;
+use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
-use backoff::SystemClock;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
@@ -21,8 +21,8 @@ use threshold_types::{
     role::{RoleKind, RoleTrait},
 };
 use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     RwLock,
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
 use tonic::service::interceptor::InterceptedService;
@@ -268,7 +268,9 @@ impl GrpcSendingService {
                             // "channel closed" errors on subsequent sends.
                             // Instead, mark as completed and drain remaining messages.
                             completed_parties.insert(other_role_kind);
-                            tracing::warn!("Failed to send message to {other_role_kind} party since it claims the session is already completed");
+                            tracing::warn!(
+                                "Failed to send message to {other_role_kind} party since it claims the session is already completed"
+                            );
                             incorrectly_sent += 1;
                             receiver_completed = true;
                         }
@@ -277,10 +279,10 @@ impl GrpcSendingService {
                 Err(status) => {
                     incorrectly_sent += 1;
                     tracing::warn!(
-                    "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {}",
-                    status.code(),
-                    status.message()
-                );
+                        "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {}",
+                        status.code(),
+                        status.message()
+                    );
                 }
             };
         }
@@ -291,7 +293,9 @@ impl GrpcSendingService {
                 "No more listeners on {other_role_kind}, nothing happened, shutting down network task without errors."
             );
         } else if incorrectly_sent == received_request {
-            tracing::error!("No more listeners on {other_role_kind}, everything failed, {incorrectly_sent} errors, shutting down network task");
+            tracing::error!(
+                "No more listeners on {other_role_kind}, everything failed, {incorrectly_sent} errors, shutting down network task"
+            );
         } else if incorrectly_sent > 0 {
             tracing::warn!(
                 "Network task with {other_role_kind} finished with: {incorrectly_sent} errors, {skipped} skipped, {received_request} total requests"

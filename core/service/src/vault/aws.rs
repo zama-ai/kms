@@ -1,6 +1,6 @@
 use aws_config::{
-    default_provider::credentials::DefaultCredentialsChain, imds::client::Client as IMDSClient,
-    provider_config::ProviderConfig, Region, SdkConfig,
+    Region, SdkConfig, default_provider::credentials::DefaultCredentialsChain,
+    imds::client::Client as IMDSClient, provider_config::ProviderConfig,
 };
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
