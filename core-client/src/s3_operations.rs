@@ -10,8 +10,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::cryptography::signatures::PrivateSigKey;
 use kms_lib::vault::storage::s3::{build_anonymous_s3_client, find_region_from_s3_url, S3Storage};
 use kms_lib::vault::storage::{StorageReader, StorageType};
-use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
-use tfhe::safe_serialization::safe_serialize;
+use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
 
 /// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
@@ -80,7 +79,7 @@ pub async fn fetch_public_elements(
     }
 }
 
-/// This tries to fetch the KMS public verification keys from S3 for all the cores.
+/// This fetches the KMS public verification key from S3 for all the cores.
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
@@ -94,23 +93,16 @@ pub(crate) async fn fetch_kms_verification_keys(
             StorageType::PUB,
             None,
         )?;
-        let key_ids = s3_storage
-            .all_data_ids(&PubDataType::VerfKey.to_string())
+        let vk: PublicSigKey = s3_storage
+            .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
             .await?;
-        // Use the single verification key (take the first one found)
-        for cur_key_id in key_ids {
-            let cur_key: PublicSigKey = s3_storage
-                .read_data(&cur_key_id, &PubDataType::VerfKey.to_string())
-                .await?;
-            keys_map.insert(cur_core.party_id, cur_key);
-            break; // single key per server
-        }
+        keys_map.insert(cur_core.party_id, vk);
     }
 
     Ok(keys_map)
 }
 
-/// This fetches the KMS private signing keys from S3 for all the cores.
+/// This fetches the KMS private signing key from S3 for all the cores.
 #[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_signing_keys(
     sim_conf: &CoreClientConfig,
@@ -125,17 +117,10 @@ pub(crate) async fn fetch_kms_signing_keys(
             StorageType::PRIV,
             None,
         )?;
-        let key_ids = s3_storage
-            .all_data_ids(&PrivDataType::SigningKey.to_string())
+        let sk: PrivateSigKey = s3_storage
+            .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
             .await?;
-        // Use the single signing key (take the first one found)
-        for cur_key_id in key_ids {
-            let cur_key: PrivateSigKey = s3_storage
-                .read_data(&cur_key_id, &PrivDataType::SigningKey.to_string())
-                .await?;
-            keys_map.insert(cur_core.party_id, cur_key);
-            break; // single key per server
-        }
+        keys_map.insert(cur_core.party_id, sk);
     }
     Ok(keys_map)
 }
