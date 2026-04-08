@@ -1325,7 +1325,15 @@ mod tests {
         outputs.push(cus_2);
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        // Dummy OperatorBackupOutput bytes are not a valid signcryption, so often zero outputs
+        // validate; we still assert the threshold / recovery failure (not a silent Ok).
+        assert!(
+            err.contains("Only received")
+                && err.contains("valid recovery outputs")
+                && err.contains("Cannot recover the backup decryption key"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1341,7 +1349,12 @@ mod tests {
             &enc_key,
         )
         .await;
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Only received 0 valid recovery outputs")
+                && err.contains("Cannot recover the backup decryption key"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1353,7 +1366,12 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Only received 0 valid recovery outputs")
+                && err.contains("Cannot recover the backup decryption key"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1390,7 +1408,13 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Only received")
+                && err.contains("valid recovery outputs")
+                && err.contains("Cannot recover the backup decryption key"),
+            "unexpected error: {err}"
+        );
     }
     #[tokio::test]
     async fn test_update_backup_vault() {

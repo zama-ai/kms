@@ -75,7 +75,11 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
-    assert!(result.is_err(), "expected error when meta store is empty");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating meta store for"),
+        "expected meta-store update failure when empty, got: {err}"
+    );
 
     // update the meta store and we should be ok
     {
@@ -107,7 +111,11 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
-    assert!(result.is_err(), "expected error on double write");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating meta store for"),
+        "expected meta-store conflict on double write, got: {err}"
+    );
 
     // writing on a failed storage device should fail
     {
@@ -125,7 +133,11 @@ async fn write_crs() {
             OP_CRS_GEN_REQUEST,
         )
         .await;
-    assert!(result.is_err(), "expected storage failure error");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Storage write failed for CRS"),
+        "expected underlying storage failure, got: {err}"
+    );
 
     // check the meta store is correct
     {
@@ -222,7 +234,11 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected error when meta store is empty");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating PK meta store for"),
+        "expected PK meta-store update failure when empty, got: {err}"
+    );
 
     // update the meta store and the write should be ok
     {
@@ -252,7 +268,11 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected error on double write");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating PK meta store for"),
+        "expected PK meta-store conflict on double write, got: {err}"
+    );
 
     // write on a failed storage device should fail
     {
@@ -269,7 +289,11 @@ async fn write_central_keys() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected storage failure error");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Storage write failed for key"),
+        "expected underlying storage failure, got: {err}"
+    );
 
     // check the meta store is correct
     {
@@ -298,7 +322,11 @@ async fn write_threshold_empty_update() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected error when meta store is empty");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating meta store for"),
+        "expected meta-store update failure when empty, got: {err}"
+    );
 
     // update the meta store and the write should be ok
     {
@@ -365,7 +393,11 @@ async fn write_threshold_keys_meta_update() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected error on double write");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating meta store for"),
+        "expected meta-store conflict on double write, got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -416,7 +448,11 @@ async fn write_threshold_keys_failed_storage() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_err(), "expected storage failure error");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Storage write failed for threshold key"),
+        "expected underlying storage failure, got: {err}"
+    );
 
     // check the meta store is correct
     {
