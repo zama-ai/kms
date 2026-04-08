@@ -483,8 +483,7 @@ mod tests {
         // Error starts unreturned; Drop will invoke handle_error.
         assert!(!error.returned);
         drop(error);
-        // handle_error correctness is verified via the into::<Status>() path in other tests;
-        // here we only confirm Drop completes when `returned` is false.
+        // Confirm that Drop invokes handle_error when the error was not returned.
     }
 
     #[test]

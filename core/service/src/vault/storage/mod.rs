@@ -60,7 +60,7 @@ pub trait StorageReader {
     /// before deserializing, to avoid issues with version upgrades changing the serialized form.
     async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 
-    /// Return all URLs stored of a specific data type.
+    /// Return all data IDs stored for a specific data type.
     ///
     /// This function does not consider data types that are stored under different epochs,
     /// use [StorageReaderExt::all_data_ids_at_epoch] instead.
@@ -70,7 +70,7 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
-/// Return all URLs stored of a specific data type.
+/// Return all data IDs stored for a specific data type.
 /// Returns `(ids, had_inconsistency)` where `had_inconsistency` is `true` when
 /// both epoch-aware and non-epoch paths contained data for the same `data_type`
 /// (indicative of a storage migration artifact).
@@ -143,7 +143,7 @@ pub trait StorageReaderExt: StorageReader {
         data_type: &str,
     ) -> anyhow::Result<T>;
 
-    /// Return all URLs stored of a specific data type
+    /// Return all data IDs stored for a specific data type.
     // In theory only a default implementation is needed,
     // but we cannot implement it easily due to this issue
     // https://github.com/rust-lang/impl-trait-utils/issues/17
