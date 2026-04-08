@@ -1,7 +1,7 @@
 use crate::{
     constants::{REAL_KEY_PATH, SMALL_TEST_KEY_PATH},
     tests::helper::tests::generate_keys_deterministically,
-    tfhe_internals::parameters::{DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS},
+    tfhe_internals::parameters::{BC_PARAMS_SNS, DKGParams, PARAMS_TEST_BK_SNS},
 };
 use std::{path::Path, sync::Once};
 use test_utils::write_element;
