@@ -1429,11 +1429,16 @@ mod tests {
         ];
 
         // encode plaintexts into a list of solidity bytes using `alloy`, this should fail and return an error due to unsupported types
-        let res = super::abi_encode_plaintexts(&pts_mix3);
+        let err_msg = super::abi_encode_plaintexts(&pts_mix3)
+            .unwrap_err()
+            .to_string();
         assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Received unsupported FHE type for ABI encoding")
+            err_msg.contains("Received unsupported FHE type for ABI encoding"),
+            "expected unsupported type error: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("Error in"),
+            "expected error to be logged (via anyhow_error_and_log): {err_msg}"
         );
     }
 
