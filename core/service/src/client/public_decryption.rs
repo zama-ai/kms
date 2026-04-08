@@ -58,7 +58,6 @@ impl Client {
         &self,
         request: Option<PublicDecryptionRequest>,
         agg_resp: &[PublicDecryptionResponse],
-        amount_servers: usize,
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         use crate::engine::validation::select_most_common_public_dec;
@@ -83,12 +82,7 @@ impl Client {
             extra_data,
             request: request.as_ref(),
         };
-        validate_public_decrypt_responses_against_request(
-            &trusted_ctx,
-            agg_resp,
-            amount_servers,
-            min_agree_count,
-        )?;
+        validate_public_decrypt_responses_against_request(&trusted_ctx, agg_resp, min_agree_count)?;
 
         let pivot_payload = some_or_err(
             select_most_common_public_dec(min_agree_count as usize, agg_resp),

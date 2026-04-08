@@ -1,4 +1,4 @@
-use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::MetricedError;
@@ -47,6 +47,7 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     pub server_pks: &'a HashMap<u32, PublicSigKey>,
     pub eip712_domain: Option<&'a Eip712Domain>,
     pub ext_handles_bytes: &'a [Vec<u8>],
+    #[allow(unused)]
     pub extra_data: Option<&'a [u8]>,
     pub request: Option<&'a PublicDecryptionRequest>,
 }
