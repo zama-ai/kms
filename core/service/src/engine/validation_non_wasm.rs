@@ -378,7 +378,8 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// original request, we will not have EIP-712 parameters.
 /// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
 fn validate_public_decrypt_meta_data(
-    trusted_ctx: &PublicDecTrustedValidationContext,
+    ref_verf_key: &PublicSigKey,
+    ext_handles_bytes: &[Vec<u8>],
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
@@ -396,7 +397,7 @@ fn validate_public_decrypt_meta_data(
     }
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
-    if !trusted_ctx.server_pks.values().contains(&resp_verf_key) {
+    if ref_verf_key != &resp_verf_key {
         tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);
     }
@@ -432,7 +433,7 @@ fn validate_public_decrypt_meta_data(
             return Ok(false);
         }
         let message = compute_public_decryption_message(
-            trusted_ctx.ext_handles_bytes,
+            ext_handles_bytes,
             &other_resp.plaintexts,
             params.response_extra_data,
         )?;
@@ -516,6 +517,7 @@ pub(crate) fn select_most_common_public_dec(
 fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
+    amount_servers: usize,
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
         tracing::warn!("There are no public decryption responses!");
@@ -526,6 +528,7 @@ fn validate_public_decrypt_responses(
     }
 
     // Pick a pivot response
+    let min_occurence = (amount_servers - 1) / 3 + 1; // note that this is floored division
     let min_occurence = (trusted_ctx.server_pks.len() - 1) / 3 + 1; // note that this is floored division
     let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
@@ -534,6 +537,7 @@ fn validate_public_decrypt_responses(
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut verification_keys = HashSet::new();
     for cur_resp in agg_resp {
+        let (_version, context_id, epoch_id) = parse_extra_data(&cur_resp.extra_data)?;
         let cur_payload = match &cur_resp.payload {
             Some(cur_payload) => cur_payload,
             None => {
@@ -542,18 +546,40 @@ fn validate_public_decrypt_responses(
             }
         };
 
-        if let Some(expected_extra_data) = trusted_ctx.extra_data
-            && cur_resp.extra_data != expected_extra_data
-        {
-            tracing::warn!("Extra data mismatch in public decryption!");
-            continue;
+        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+        let mut found_new_verf_key = false;
+        // Validate the verf key
+        for (cur_id, server_addrs) in server_pks {
+            match server_addrs.get(&context_id) {
+                Some(testing_key) => {
+                    if testing_key == &cur_verf_key {
+                        if !verification_keys.contains(&cur_verf_key) {
+                            tracing::warn!(
+                                "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
+                                hex::encode(&cur_payload.verification_key),
+                                cur_id
+                            );
+                        } else {
+                            found_new_verf_key = true;
+                        }
+                        // We found the key so break the inner loop
+                        break;
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        "Context ID {} in public decryption response does not match any known context ID",
+                        context_id
+                    );
+                }
+            };
         }
-
-        // check the uniqueness of verification key
-        if verification_keys.contains(&cur_payload.verification_key) {
+        if !found_new_verf_key {
             tracing::warn!(
-                "At least two servers gave the same verification key {}",
+                "Verification key {} in public decryption response does not match any, not already validated, verification key for context ID {}",
                 hex::encode(&cur_payload.verification_key),
+                context_id
             );
             continue;
         }
@@ -568,7 +594,8 @@ fn validate_public_decrypt_responses(
                 trusted_eip712_domain: domain,
             });
         if !validate_public_decrypt_meta_data(
-            trusted_ctx,
+            &cur_verf_key,
+            trusted_ctx.ext_handles_bytes,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
@@ -953,6 +980,27 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         resharing,
     })
 }
+
+/// Extracts information from the `extraData` field
+/// Returns the version (as an u8), the context ID and the epoch ID.
+/// TODO temporary helper until https://github.com/zama-ai/kms-internal/issues/2925 is done
+pub fn parse_extra_data(extra_data: &[u8]) -> anyhow::Result<(u8, ContextId, EpochId)> {
+    if extra_data[0] != 1 {
+        anyhow::bail!("Unsupported version in extraData: {}", extra_data[0]);
+    }
+    if extra_data.len() < 1 + 2 * ID_LENGTH {
+        anyhow::bail!(
+            "extraData is too short, expected at least {} bytes, got {}",
+            1 + 2 * ID_LENGTH,
+            extra_data.len()
+        );
+    }
+    let context_slice = &extra_data[1..=ID_LENGTH];
+    let epoch_slice = &extra_data[1..=ID_LENGTH];
+    let context_id = ContextId::try_from(context_slice)?;
+    let epoch_id = EpochId::try_from(epoch_slice)?;
+    // todo is validity checked with tryfrom?
+    
 
 #[cfg(test)]
 mod tests {
