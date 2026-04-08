@@ -42,6 +42,16 @@ pub enum LweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
     V0(LweSecretKeyShare<Z, EXTENSION_DEGREE>),
 }
 
+/// Statistics from bounded-Hamming-weight secret-key sampling; returned with the key from
+/// [`LweSecretKeyShare::new_from_preprocessing`] and from `GlweSecretKeyShare::new_from_preprocessing` in `glwe_key`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyGenStats {
+    /// Number of draws from preprocessing (`next_bit_vec`) when `pmax` is set.
+    pub candidates_sampled: usize,
+    /// Rejected LWE keys (one per failed full-vector sample) or GLWE polynomials (per out-of-bounds row).
+    pub candidates_rejected: usize,
+}
+
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
@@ -199,14 +209,16 @@ where
         preprocessing: &mut P,
         pmax: Option<f64>,
         session: &mut S,
-    ) -> anyhow::Result<Self> {
-        let data = if let Some(pmax) = pmax {
+    ) -> anyhow::Result<(Self, KeyGenStats)> {
+        let (data, stats) = if let Some(pmax) = pmax {
             let (min_hw, max_hw) = compute_min_max_hw(pmax, dimension.0 as u64);
             let max_hw = Z::from_u128(max_hw as u128);
             let min_hw = Z::from_u128(min_hw as u128);
 
+            let mut stats = KeyGenStats::default();
             let mut data;
             loop {
+                stats.candidates_sampled += 1;
                 data = preprocessing.next_bit_vec(dimension.0)?;
                 let hw = compute_hamming_weight_lwe_sk(&data, session)
                     .await?
@@ -218,12 +230,14 @@ where
                 tracing::info!(
                     "Hamming weight out of bounds: {hw}. Expected min : {min_hw}, max : {max_hw}"
                 );
+                stats.candidates_rejected += 1;
             }
-            data
+            (data, stats)
         } else {
-            preprocessing.next_bit_vec(dimension.0)?
+            let data = preprocessing.next_bit_vec(dimension.0)?;
+            (data, KeyGenStats::default())
         };
-        Ok(Self { data })
+        Ok((Self { data }, stats))
     }
 
     pub fn lwe_dimension(&self) -> LweDimension {
@@ -545,7 +559,7 @@ mod tests {
 
             let mut preprocessing = InMemoryBitPreprocessing { available_bits };
 
-            let lwe_key = LweSecretKeyShare::new_from_preprocessing(
+            let (lwe_key, keygen_stats) = LweSecretKeyShare::new_from_preprocessing(
                 LweDimension(key_size),
                 &mut preprocessing,
                 Some(pmax),
@@ -553,7 +567,7 @@ mod tests {
             )
             .await
             .unwrap();
-            (my_role, lwe_key)
+            (my_role, lwe_key, keygen_stats)
         };
 
         let parties = 5;
@@ -573,8 +587,15 @@ mod tests {
         )
         .await;
 
+        assert!(
+            results
+                .iter()
+                .all(|(_, _, stats)| stats.candidates_rejected > 0),
+            "expected the retry path to be exercised"
+        );
+
         let mut lwe_key_shares = HashMap::new();
-        for (role, key_shares) in results {
+        for (role, key_shares, _) in results {
             lwe_key_shares.insert(role, Vec::new());
             let lwe_key_shares = lwe_key_shares.get_mut(&role).unwrap();
             for key_share in key_shares.data {

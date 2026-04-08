@@ -17,7 +17,7 @@ use algebra::{
     structure_traits::{BaseRing, ErrorCorrect},
 };
 
-use super::lwe_key::LweSecretKeyShare;
+use super::lwe_key::{KeyGenStats, LweSecretKeyShare};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum GlweSecretKeyShareVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
@@ -49,8 +49,8 @@ where
         preprocessing: &mut P,
         pmax: Option<f64>,
         session: &mut S,
-    ) -> anyhow::Result<Self> {
-        let data = if let Some(pmax) = pmax {
+    ) -> anyhow::Result<(Self, KeyGenStats)> {
+        let (data, stats) = if let Some(pmax) = pmax {
             // We need to consider GLWE keys as GlweDim keys of size polynomial_size
             let (min_hw, max_hw) = compute_min_max_hw(pmax, polynomial_size.0 as u64);
             let max_hw = Z::from_u128(max_hw as u128);
@@ -58,7 +58,9 @@ where
 
             let mut total_size = total_size;
             let mut data = Vec::with_capacity(total_size);
+            let mut stats = KeyGenStats::default();
             loop {
+                stats.candidates_sampled += 1;
                 let local_data = preprocessing.next_bit_vec(total_size)?;
 
                 // Safety check, should never happen as next_bit_vec should already error out if
@@ -83,6 +85,7 @@ where
                             &local_data[index * polynomial_size.0..(index + 1) * polynomial_size.0],
                         );
                     } else {
+                        stats.candidates_rejected += 1;
                         tracing::info!(
                             "Hamming weight out of bounds: {hw}. Expected min : {min_hw}, max : {max_hw}"
                         );
@@ -94,15 +97,19 @@ where
                     break;
                 }
             }
-            data
+            (data, stats)
         } else {
-            preprocessing.next_bit_vec(total_size)?
+            let data = preprocessing.next_bit_vec(total_size)?;
+            (data, KeyGenStats::default())
         };
 
-        Ok(Self {
-            data,
-            polynomial_size,
-        })
+        Ok((
+            Self {
+                data,
+                polynomial_size,
+            },
+            stats,
+        ))
     }
 
     pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
@@ -220,7 +227,7 @@ mod tests {
 
             let mut preprocessing = InMemoryBitPreprocessing { available_bits };
 
-            let lwe_key = GlweSecretKeyShare::new_from_preprocessing(
+            let (glwe_key, keygen_stats) = GlweSecretKeyShare::new_from_preprocessing(
                 total_size,
                 polynomial_size,
                 &mut preprocessing,
@@ -229,7 +236,7 @@ mod tests {
             )
             .await
             .unwrap();
-            (my_role, lwe_key)
+            (my_role, glwe_key, keygen_stats)
         };
 
         let parties = 5;
@@ -249,8 +256,15 @@ mod tests {
         )
         .await;
 
+        assert!(
+            results
+                .iter()
+                .all(|(_, _, stats)| stats.candidates_rejected > 0),
+            "expected the retry path to be exercised"
+        );
+
         let mut glwe_key_shares = HashMap::new();
-        for (role, key_shares) in results {
+        for (role, key_shares, _) in results {
             glwe_key_shares.insert(role, Vec::new());
             let glwe_key_shares = glwe_key_shares.get_mut(&role).unwrap();
             for key_share in key_shares.data {

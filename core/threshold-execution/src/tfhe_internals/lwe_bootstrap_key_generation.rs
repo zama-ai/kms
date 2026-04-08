@@ -323,7 +323,7 @@ mod tests {
             let mut dummy_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+            let (lwe_secret_key_share, _) = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
                 LweDimension(lwe_dimension),
                 &mut dummy_preproc,
                 None,
@@ -333,7 +333,7 @@ mod tests {
             .unwrap();
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+            let (glwe_secret_key_share, _) = GlweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
                 num_key_bits_glwe,
                 PolynomialSize(polynomial_size),
                 &mut dummy_preproc,

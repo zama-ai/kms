@@ -52,7 +52,8 @@ where
                 pmax,
                 session,
             )
-            .await?,
+            .await?
+            .0,
             params: CompressionParameters::Classic(params),
         })
     }
