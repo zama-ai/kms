@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::{collections::HashSet, path::Path};
 
+use crate::{CoreClientConfig, CoreConf};
 use bytes::Bytes;
+#[cfg(feature = "testing")]
+use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
-use kms_lib::{
-    consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID},
-    cryptography::signatures::PublicSigKey,
-};
-
-use crate::{CoreClientConfig, CoreConf};
+use kms_lib::vault::storage::s3::{build_anonymous_s3_client, find_region_from_s3_url, S3Storage};
+use kms_lib::vault::storage::{StorageReader, StorageType};
+use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
+use tfhe::safe_serialization::safe_serialize;
 
 /// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
@@ -79,37 +80,112 @@ pub async fn fetch_public_elements(
     }
 }
 
-/// This fetches the KMS public verification keys from S3 for all the cores.
+/// This tries to fetch the KMS public verification keys and store them in the local file system
+/// Return the server IDs of all servers that were successfully contacted
+/// or an error if no server could be contacted
+/// sim_conf: the core client configuration
+/// destination_prefix: the local folder to store the fetched elements
+/// download_all: whether to download from all cores or just the first one
+/// returns: the party IDs of the cores that were successfully contacted, unsorted
+pub(crate) async fn fetch_and_store_kms_verification_keys(
+    sim_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+    download_all: bool,
+) -> anyhow::Result<Vec<CoreConf>> {
+    // set of core ids, to track which cores we successfully contacted
+    let mut successful_core_ids: HashSet<CoreConf> = HashSet::new();
+    for cur_core in &sim_conf.cores {
+        let mut all_elements = true;
+        let verf_folder = destination_prefix
+            .join(&cur_core.object_folder)
+            .join(&PubDataType::VerfKey.to_string());
+        let addr_folder = destination_prefix
+            .join(&cur_core.object_folder)
+            .join(&PubDataType::VerfAddress.to_string());
+        let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
+        let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
+        let s3_storage = S3Storage::new(
+            s3_client,
+            cur_core.object_folder.clone(),
+            StorageType::PUB,
+            None,
+        )?;
+        let key_ids = match s3_storage
+            .all_data_ids(&PubDataType::VerfKey.to_string())
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not fetch verification key IDs from core at endpoint {} with error {e}.",
+                    cur_core.s3_endpoint
+                );
+                continue;
+            }
+        };
+        for cur_key_id in key_ids {
+            let cur_key: PublicSigKey = match s3_storage
+                .read_data(&cur_key_id, &PubDataType::VerfKey.to_string())
+                .await
+            {
+                Ok(cur_key) => cur_key,
+                Err(e) => {
+                    tracing::warn!("Could not fetch verification key with id {cur_key_id} from core at endpoint {} with error {e}.", cur_core.s3_endpoint);
+                    all_elements = false;
+                    continue;
+                }
+            };
+
+            let mut cur_key_bytes: Vec<_> = Vec::new();
+            safe_serialize(&cur_key, &mut cur_key_bytes, SAFE_SER_SIZE_LIMIT)?;
+            write_bytes_to_file(&verf_folder, &cur_key_id.as_str(), cur_key_bytes.as_ref()).await?;
+            let addr_string = cur_key.address().to_string();
+            let addr_bytes = addr_string.as_bytes();
+            write_bytes_to_file(&addr_folder, &cur_key_id.as_str(), addr_bytes).await?;
+        }
+        // if we were able to retrieve all elements, add the core id to the set of successful nodes
+        if all_elements {
+            successful_core_ids.insert(cur_core.clone());
+            // if we only want to download from one core, break here
+            if !download_all {
+                break;
+            }
+        }
+    }
+    if successful_core_ids.is_empty() {
+        Err(anyhow::anyhow!(
+            "Could not fetch elements from any core. At least one core is required to proceed."
+        ))
+    } else {
+        Ok(successful_core_ids.into_iter().collect())
+    }
+}
+
+/// This tries to fetch the KMS public verification keys from S3 for all the cores.
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
-
     for cur_core in &sim_conf.cores {
-        let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core.object_folder,
-                &PubDataType::VerfKey.to_string()
-            ),
-            key_id,
-        )
-        .await?;
-
-        let vk = tfhe::safe_serialization::safe_deserialize(
-            std::io::Cursor::new(&content),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to deserialize verification key for party {}: {}",
-                cur_core.party_id,
-                e
-            )
-        })?;
-        keys_map.insert(cur_core.party_id, vk);
+        let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
+        let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
+        let s3_storage = S3Storage::new(
+            s3_client,
+            cur_core.object_folder.clone(),
+            StorageType::PUB,
+            None,
+        )?;
+        let key_ids = s3_storage
+            .all_data_ids(&PubDataType::VerfKey.to_string())
+            .await?;
+        // Use the single verification key (take the first one found)
+        for cur_key_id in key_ids {
+            let cur_key: PublicSigKey = s3_storage
+                .read_data(&cur_key_id, &PubDataType::VerfKey.to_string())
+                .await?;
+            keys_map.insert(cur_core.party_id, cur_key);
+            break; // single key per server
+        }
     }
 
     Ok(keys_map)
@@ -120,43 +196,28 @@ pub(crate) async fn fetch_kms_verification_keys(
 pub(crate) async fn fetch_kms_signing_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
-
     for cur_core in &sim_conf.cores {
-        use kms_grpc::rpc_types::PrivDataType;
-
-        let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core
-                    .private_object_folder
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "Private object folder not set for core {}",
-                        cur_core.party_id
-                    ))?,
-                &PrivDataType::SigningKey.to_string()
-            ),
-            key_id,
-        )
-        .await?;
-
-        let signing_key: PrivateSigKey = tfhe::safe_serialization::safe_deserialize(
-            std::io::Cursor::new(&content),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to deserialize signing key for party {}: {}",
-                cur_core.party_id,
-                e
-            )
-        })?;
-        keys_map.insert(cur_core.party_id, signing_key);
+        let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
+        let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
+        let s3_storage = S3Storage::new(
+            s3_client,
+            cur_core.object_folder.clone(),
+            StorageType::PRIV,
+            None,
+        )?;
+        let key_ids = s3_storage
+            .all_data_ids(&PrivDataType::SigningKey.to_string())
+            .await?;
+        // Use the single signing key (take the first one found)
+        for cur_key_id in key_ids {
+            let cur_key: PrivateSigKey = s3_storage
+                .read_data(&cur_key_id, &PrivDataType::SigningKey.to_string())
+                .await?;
+            keys_map.insert(cur_core.party_id, cur_key);
+            break; // single key per server
+        }
     }
-
     Ok(keys_map)
 }
 
