@@ -892,13 +892,15 @@ mod kms_custodian_binary_tests {
         )
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();
-        let (ct_map, commitments) = operator
+        let signcrypt_result = operator
             .secret_share_and_signcrypt(
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,
             )
             .unwrap();
+        let ct_map = signcrypt_result.ct_shares;
+        let commitments = signcrypt_result.commitments;
         let custodian_context = InternalCustodianContext::new(
             CustodianContext {
                 custodian_nodes: setup_msgs

@@ -135,8 +135,8 @@ fn custodian_reencrypt() {
         })
         .collect::<Vec<_>>();
 
-    // cts[i][j] should go to custodian j, for all i
-    let cts = operators
+    // signcrypt_results[i].ct_shares[j] should go to custodian j, for all i
+    let signcrypt_results = operators
         .iter()
         .zip_eq(&secrets)
         .map(|(operator, secret)| {
@@ -153,15 +153,15 @@ fn custodian_reencrypt() {
     // tweak the ciphertext, so that signature verification fails
     {
         let operator_role = Role::indexed_from_zero(0);
-        let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
+        let mut bad_results = signcrypt_results.clone();
+        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
             z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].0.get(&operator_role).unwrap(),
+                bad_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -173,15 +173,15 @@ fn custodian_reencrypt() {
     // tweak the signature, so that signature verification also fails
     {
         let operator_role = Role::indexed_from_zero(0);
-        let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
+        let mut bad_results = signcrypt_results.clone();
+        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
             z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].0.get(&operator_role).unwrap(),
+                bad_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -197,7 +197,7 @@ fn custodian_reencrypt() {
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].0.get(&operator_role).unwrap(),
+                signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
                 &ephemeral_enc_key,
                 bad_backup_id,
@@ -212,7 +212,7 @@ fn custodian_reencrypt() {
         let _ = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].0.get(&operator_role).unwrap(),
+                signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -373,12 +373,18 @@ fn full_flow_malicious_custodian_init() {
         assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
-        let res = operator.secret_share_and_signcrypt(
-            &mut rng,
-            &bc2wrap::serialize(&backup_priv_key).unwrap(),
-            backup_id,
+        let result = operator
+            .secret_share_and_signcrypt(
+                &mut rng,
+                &bc2wrap::serialize(&backup_priv_key).unwrap(),
+                backup_id,
+            )
+            .unwrap();
+        assert!(
+            result.skipped_roles.contains(&Role::indexed_from_one(2)),
+            "expected role 2 to be skipped (removed custodian): {:?}",
+            result.skipped_roles
         );
-        assert!(res.is_ok());
     }
 }
 
@@ -585,13 +591,15 @@ fn operator_handle_init(
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
-        let (cur_op_output, cur_comm) = operator
+        let signcrypt_result = operator
             .secret_share_and_signcrypt(
                 rng,
                 &bc2wrap::serialize(&backup_dec_key).unwrap(),
                 *backup_id,
             )
             .unwrap();
+        let cur_op_output = signcrypt_result.ct_shares;
+        let cur_comm = signcrypt_result.commitments;
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
         let validation_material = RecoveryValidationMaterial::new(

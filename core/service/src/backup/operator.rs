@@ -241,6 +241,15 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
     }
 }
 
+/// Result of [`Operator::secret_share_and_signcrypt`] including roles that
+/// were skipped because no custodian key was available.
+#[derive(Debug, Clone)]
+pub struct SigncryptResult {
+    pub ct_shares: BTreeMap<Role, InnerOperatorBackupOutput>,
+    pub commitments: BTreeMap<Role, Vec<u8>>,
+    pub skipped_roles: Vec<Role>,
+}
+
 fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
     if n == 0 {
         return Err(BackupError::SetupError("n cannot be 0".to_string()));
@@ -545,7 +554,6 @@ impl Operator {
     // the function fails afterwards.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
-    #[allow(clippy::type_complexity)]
     /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
     /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
     /// indexed by the role of each custodian.
@@ -555,13 +563,7 @@ impl Operator {
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<
-        (
-            BTreeMap<Role, InnerOperatorBackupOutput>,
-            BTreeMap<Role, Vec<u8>>,
-        ),
-        BackupError,
-    > {
+    ) -> Result<SigncryptResult, BackupError> {
         let sk = match &self.signing_key {
             None => {
                 return Err(BackupError::OperatorError(
@@ -603,6 +605,7 @@ impl Operator {
 
         let mut ct_shares: BTreeMap<Role, _> = BTreeMap::new();
         let mut commitments: BTreeMap<Role, _> = BTreeMap::new();
+        let mut skipped_roles: Vec<Role> = Vec::new();
 
         // Zip_eq will panic in case the two iterators are not of the same length.
         // Since `plain_ij` is created in this method from `shares` such a panic can only happen in case of a bug in this method
@@ -624,8 +627,8 @@ impl Operator {
             let (cus_enc_key, custodian_verf_key) = match self.custodian_keys.get(&role_j) {
                 Some((enc_pk, sig_pk)) => (enc_pk, sig_pk),
                 None => {
-                    // Note that we do not error out since we might now have gotten all the expected correct custodian setup messages
                     tracing::warn!("Could not find custodian keys for role {role_j}");
+                    skipped_roles.push(role_j);
                     continue;
                 }
             };
@@ -662,13 +665,17 @@ impl Operator {
 
         if ct_shares.len() < self.threshold + 1 {
             return Err(BackupError::OperatorError(format!(
-                "Not enough valid custodian shares were created: expected at least {} but got {}",
+                "Not enough valid custodian shares were created: expected at least {} but got {}, skipped roles: {skipped_roles:?}",
                 self.threshold + 1,
                 ct_shares.len()
             )));
         }
         // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
-        Ok((ct_shares, commitments))
+        Ok(SigncryptResult {
+            ct_shares,
+            commitments,
+            skipped_roles,
+        })
     }
 
     /// Operators that does the recovery collects all the materials

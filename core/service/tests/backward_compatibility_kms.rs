@@ -1082,7 +1082,7 @@ fn test_operator_backup_output(
         )
         .unwrap()
     };
-    let (cts, _commitments) = &operator
+    let signcrypt_result = operator
         .secret_share_and_signcrypt(
             &mut rng,
             &test.plaintext,
@@ -1091,7 +1091,7 @@ fn test_operator_backup_output(
         .unwrap();
 
     // in this test we fix the custodian role to 1
-    let new_operator_backup_output = &cts[&Role::indexed_from_one(1)];
+    let new_operator_backup_output = &signcrypt_result.ct_shares[&Role::indexed_from_one(1)];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(
