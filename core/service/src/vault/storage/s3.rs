@@ -605,8 +605,8 @@ pub(crate) async fn s3_put_blob(
 /// Find the AWS region from an S3 bucket URL.
 /// For example:
 /// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
-pub fn find_region_from_s3_url(s3_bucket_url: &String) -> anyhow::Result<String> {
-    let parsed_url = url::Url::parse(s3_bucket_url.as_str())?;
+pub fn find_region_from_s3_url(s3_bucket_url: &str) -> anyhow::Result<String> {
+    let parsed_url = url::Url::parse(s3_bucket_url)?;
     let domain = parsed_url
         .domain()
         .ok_or(anyhow::anyhow!("Cannot parse domain from URL"))?;
