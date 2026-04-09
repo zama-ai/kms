@@ -703,7 +703,7 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 mod tests {
     use super::*;
     use crate::vault::storage::tests::{
-            test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
+        test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
         test_store_bytes_does_not_overwrite_existing_bytes,
         test_store_data_does_not_overwrite_existing_data,
     };

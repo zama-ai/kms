@@ -7,8 +7,8 @@ use crate::{
 };
 use aes_prng::AesRng;
 use kms_grpc::{
-    kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
     ContextId, RequestId,
+    kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
 };
 use threshold_types::role::Role;
 

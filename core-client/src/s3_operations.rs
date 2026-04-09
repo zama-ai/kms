@@ -8,7 +8,7 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
-use kms_lib::vault::storage::s3::{build_anonymous_s3_client, find_region_from_s3_url, S3Storage};
+use kms_lib::vault::storage::s3::{S3Storage, build_anonymous_s3_client, find_region_from_s3_url};
 use kms_lib::vault::storage::{StorageReader, StorageType};
 use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
 

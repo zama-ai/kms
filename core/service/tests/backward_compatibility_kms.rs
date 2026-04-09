@@ -747,15 +747,14 @@ fn test_recovery_material(
         };
         cts.insert(cus_role, cts_out.clone());
     }
-    let new_versionized =
-        RecoveryValidationMaterial::new(
-            cts,
-            commitments,
-            icc,
-            &operator_sk,
-            kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
-        )
-        .unwrap();
+    let new_versionized = RecoveryValidationMaterial::new(
+        cts,
+        commitments,
+        icc,
+        &operator_sk,
+        kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
+    )
+    .unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(

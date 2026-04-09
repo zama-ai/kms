@@ -37,8 +37,8 @@ use crate::{
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
-use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::ContextId;
+use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
@@ -183,7 +183,11 @@ where
             ));
         }
 
-        Ok((custodian_context_id, recovery_material, parsed_custodian_rec))
+        Ok((
+            custodian_context_id,
+            recovery_material,
+            parsed_custodian_rec,
+        ))
     }
 }
 

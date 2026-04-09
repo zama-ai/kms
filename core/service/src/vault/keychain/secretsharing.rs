@@ -423,15 +423,14 @@ mod tests {
             commitments.insert(role, vec![i as u8; 32]);
         }
 
-        let rec_material =
-            RecoveryValidationMaterial::new(
-                cts,
-                commitments,
-                internal_custodian_context,
-                &sig_key,
-                kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
-            )
-            .unwrap();
+        let rec_material = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
+        )
+        .unwrap();
 
         // Store it in RamStorage
         let mut storage = RamStorage::default();
