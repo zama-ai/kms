@@ -35,7 +35,7 @@ use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
