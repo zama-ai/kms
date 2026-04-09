@@ -164,13 +164,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 params.custodian_role
             );
             let mpc_context_id_str = params.mpc_context_id;
-            let mpc_context_id = ContextId::try_from(&mpc_context_id_str).expect(
-                format!(
-                    "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID.",
-                    mpc_context_id_str
-                )
-                .as_str(),
-            );
+            let mpc_context_id = ContextId::try_from(&mpc_context_id_str).unwrap_or_else(|_| panic!(
+                "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID.",
+                mpc_context_id_str
+            ));
             // TODO @reviewer is this actually correct? I think we use bc2wrap for publicSigKey type? Not sure how it even compiles since PublicSigKey does not implement Unversionize
             let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;

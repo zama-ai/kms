@@ -553,6 +553,8 @@ async fn new_custodian_context<T: DockerComposeManager>(
     let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
         threshold: custodian_threshold,
         setup_msg_paths,
+        mpc_context_id: "0707070707070707070707070707070707070707070707070707070707070707"
+            .to_string(),
     });
     let init_config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),

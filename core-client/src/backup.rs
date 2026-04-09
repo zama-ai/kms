@@ -83,7 +83,7 @@ pub(crate) async fn do_new_custodian_context(
     for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
-        let mpc_context_id_cloned = mpc_context_id.clone();
+        let mpc_context_id_cloned = mpc_context_id;
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
@@ -138,7 +138,7 @@ pub(crate) async fn do_custodian_backup_recovery(
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let pivot_mpc_context_id = custodian_recovery_outputs
-        .get(0)
+        .first()
         .ok_or_else(|| anyhow::anyhow!("At least one custodian recovery output is required"))?
         .mpc_context_id;
     if custodian_recovery_outputs

@@ -1992,6 +1992,8 @@ async fn new_custodian_context_isolated(
         CCCommand::NewCustodianContext(NewCustodianContextParameters {
             threshold: custodian_threshold,
             setup_msg_paths,
+            mpc_context_id: "0707070707070707070707070707070707070707070707070707070707070707"
+                .to_string(),
         }),
         200,
     );

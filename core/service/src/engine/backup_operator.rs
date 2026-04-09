@@ -1329,6 +1329,7 @@ mod tests {
                 pke_type: 0,
                 signing_type: 0,
             }),
+            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
         }
     }
 
@@ -1341,6 +1342,7 @@ mod tests {
             custodian_role: 2,
             operator_verification_key: bc2wrap::serialize(&verf_key).unwrap(),
             backup_output: None, // Missing backup output for custodian role 2
+            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
         };
         outputs.push(cus_2);
         let result =

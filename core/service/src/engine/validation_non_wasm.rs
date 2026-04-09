@@ -988,7 +988,7 @@ mod tests {
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{gen_sig_keys, internal_sign},
+            signatures::{PublicSigKey, gen_sig_keys, internal_sign},
         },
         dummy_domain,
         engine::{
@@ -1405,7 +1405,7 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
             [vk0, vk1, vk2]
                 .into_iter()
                 .enumerate()
@@ -1433,16 +1433,10 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &pivot,
                     &signature_buf,
@@ -1458,16 +1452,10 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &pivot,
                     &signature_buf,
@@ -1498,16 +1486,10 @@ mod tests {
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &pivot,
                     &bad_signature_buf,
@@ -1537,16 +1519,10 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &bad_value,
                     &signature_buf,
@@ -1572,16 +1548,10 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &bad_value,
                     &signature_buf,
@@ -1607,16 +1577,10 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &bad_value,
                     &signature_buf,
@@ -1631,16 +1595,10 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
                 validate_public_decrypt_meta_data(
-                    &trusted_ctx,
+                    &pks[&1],
+                    &[],
                     &pivot,
                     &pivot,
                     &signature_buf,
@@ -2092,7 +2050,7 @@ mod tests {
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
             [vk0, vk1, vk2]
                 .into_iter()
                 .enumerate()
@@ -2134,18 +2092,11 @@ mod tests {
         let mut bad_external_signature = external_signature.clone();
         bad_external_signature[0] ^= 1;
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data),
-            request: None,
-        };
-
         // return false for empty external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &pks[&1],
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,
@@ -2161,7 +2112,8 @@ mod tests {
         // return false for bad external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &pks[&1],
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,
@@ -2177,7 +2129,8 @@ mod tests {
         // happy path
         assert!(
             validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &pks[&1],
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,
