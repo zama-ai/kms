@@ -551,8 +551,8 @@ fn validate_public_decrypt_responses(
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
         let mut found_new_verf_key = false;
         // Validate the verf key
-        for (cur_id, testing_key) in trusted_ctx.server_pks {
-            if testing_key == &cur_verf_key {
+        for (cur_id, key_to_check_against) in trusted_ctx.server_pks {
+            if key_to_check_against == &cur_verf_key {
                 if verification_keys.contains(&cur_verf_key) {
                     tracing::warn!(
                         "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
