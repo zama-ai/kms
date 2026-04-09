@@ -1,5 +1,4 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::MetricedError;
@@ -1431,15 +1430,8 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1450,15 +1442,8 @@ mod tests {
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
-                validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .is_err()
+                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .is_err()
             );
         }
 
@@ -1484,15 +1469,8 @@ mod tests {
             let bad_signature_buf = bad_signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &pivot,
-                    &bad_signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &bad_signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1517,15 +1495,8 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1546,15 +1517,8 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1575,15 +1539,8 @@ mod tests {
             let signature_buf = signature.sig.to_vec();
 
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1593,15 +1550,8 @@ mod tests {
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
-                validate_public_decrypt_meta_data(
-                    &pks[&1],
-                    &[],
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .unwrap()
             );
         }
     }
@@ -2086,7 +2036,6 @@ mod tests {
         // return false for empty external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &pks[&1],
                 &ext_handles_bytes,
                 &pivot,
                 &pivot,
@@ -2103,7 +2052,6 @@ mod tests {
         // return false for bad external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &pks[&1],
                 &ext_handles_bytes,
                 &pivot,
                 &pivot,
@@ -2120,7 +2068,6 @@ mod tests {
         // happy path
         assert!(
             validate_public_decrypt_meta_data(
-                &pks[&1],
                 &ext_handles_bytes,
                 &pivot,
                 &pivot,
