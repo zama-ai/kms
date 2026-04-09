@@ -1,4 +1,5 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::MetricedError;
@@ -379,7 +380,6 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// original request, we will not have EIP-712 parameters.
 /// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
 fn validate_public_decrypt_meta_data(
-    ref_verf_key: &PublicSigKey,
     ext_handles_bytes: &[Vec<u8>],
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
@@ -396,12 +396,6 @@ fn validate_public_decrypt_meta_data(
         );
         return Ok(false);
     }
-    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
-    if ref_verf_key != &resp_verf_key {
-        tracing::warn!("Server key is unknown or incorrect.");
-        return Ok(false);
-    }
 
     // the plaintexts should match
     if pivot_resp.plaintexts != other_resp.plaintexts {
@@ -413,13 +407,17 @@ fn validate_public_decrypt_meta_data(
         sig: k256::ecdsa::Signature::from_slice(signature)?,
     };
 
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
+
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     if internal_verify_sig(
         &DSEP_PUBLIC_DECRYPTION,
         &bc2wrap::serialize(&other_resp)?,
         &sig,
-        &resp_verf_key,
+        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+        &cur_verf_key,
     )
     .is_err()
     {
@@ -444,7 +442,7 @@ fn validate_public_decrypt_meta_data(
             params.response_external_signature,
         ) {
             Ok(recovered_addr) => {
-                let expected_addr = resp_verf_key.address();
+                let expected_addr = cur_verf_key.address();
                 if recovered_addr != expected_addr {
                     tracing::warn!(
                         "External signature address mismatch: recovered {} but expected {}",
@@ -541,7 +539,7 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
-         if let Some(expected_extra_data) = trusted_ctx.extra_data
+        if let Some(expected_extra_data) = trusted_ctx.extra_data
             && cur_resp.extra_data != expected_extra_data
         {
             tracing::warn!("Extra data mismatch in public decryption!");
@@ -584,7 +582,6 @@ fn validate_public_decrypt_responses(
                 trusted_eip712_domain: domain,
             });
         if !validate_public_decrypt_meta_data(
-            &cur_verf_key,
             trusted_ctx.ext_handles_bytes,
             &pivot_payload,
             cur_payload,
