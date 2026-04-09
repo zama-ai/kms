@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
