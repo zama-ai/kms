@@ -33,16 +33,16 @@ UNIT_CONV_TO_KB = {"B": 1e-3}
 
 class ResultEntry:
     def __init__(self):
-        self.keygen_latency = -1
-        self.keygen_memory = -1
-        self.erc20_latency = -1
-        self.erc20_memory = -1
-        self.encrypt_latency = -1
-        self.encrypt_memory = -1
-        self.decrypt_latency = -1
-        self.decrypt_memory = -1
-        self.mul_latency = -1
-        self.mul_memory = -1
+        self.keygen_latency: float = -1
+        self.keygen_memory: float = -1
+        self.erc20_latency: float = -1
+        self.erc20_memory: float = -1
+        self.encrypt_latency: float = -1
+        self.encrypt_memory: float = -1
+        self.decrypt_latency: float = -1
+        self.decrypt_memory: float = -1
+        self.mul_latency: float = -1
+        self.mul_memory: float = -1
 
 RESULT_MAP = {
     "NIST_PARAMS_P32_SNS_FGLWE":ResultEntry(),
@@ -68,7 +68,7 @@ def find_op_from_json(data):
 
 def parse_latency_keygen(data):
     parameters = find_parameters_from_json(data)
-    if parameters == None:
+    if parameters is None:
         return
     mean_latency = data["mean"]["estimate"]
     mean_unit = data["mean"]["unit"]
@@ -80,7 +80,7 @@ def parse_latency_keygen(data):
 
 def parse_latency_erc20(data):
     parameters = find_parameters_from_json(data)
-    if parameters == None:
+    if parameters is None:
         return
     mean_latency = data["mean"]["estimate"]
     mean_unit = data["mean"]["unit"]
@@ -92,7 +92,7 @@ def parse_latency_erc20(data):
 
 def parse_latency_basic_ops(data):
     parameters = find_parameters_from_json(data)
-    if parameters == None:
+    if parameters is None:
         return
     op = find_op_from_json(data)
     mean_latency = data["mean"]["estimate"]
@@ -153,9 +153,12 @@ def fetch_mean_memory(line):
 
 def parse_memory_keygen(line):
     params = find_params_from_line(line)
-    if params == None:
+    if params is None:
         return
-    (mean_memory,unit) = fetch_mean_memory(line)
+    result = fetch_mean_memory(line)
+    if result is None:
+        return
+    (mean_memory,unit) = result
 
     memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
 
@@ -163,10 +166,13 @@ def parse_memory_keygen(line):
 
 def parse_memory_erc20(line):
     params = find_params_from_line(line)
-    if params == None:
+    if params is None:
         return
 
-    (mean_memory,unit) = fetch_mean_memory(line)
+    result = fetch_mean_memory(line)
+    if result is None:
+        return
+    (mean_memory,unit) = result
 
     memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
 
@@ -174,10 +180,13 @@ def parse_memory_erc20(line):
 
 def parse_memory_basic_ops(line):
     params = find_params_from_line(line)
-    if params == None:
+    if params is None:
         return
 
-    (mean_memory,unit) = fetch_mean_memory(line)
+    result = fetch_mean_memory(line)
+    if result is None:
+        return
+    (mean_memory,unit) = result
 
     memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
 
