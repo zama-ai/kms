@@ -37,7 +37,6 @@ use crate::{
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
-use kms_grpc::ContextId;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
     RequestId,
@@ -99,7 +98,6 @@ where
         &self,
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-        _mpc_context: &ContextId,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
@@ -312,11 +310,7 @@ where
             ));
         }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
-            .gen_outer_recovery_request(
-                backup_id,
-                recovery_material.payload.cts,
-                &recovery_material.payload.mpc_context,
-            )
+            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
             .await
             .map_err(|e| {
                 MetricedError::new(

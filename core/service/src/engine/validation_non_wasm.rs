@@ -541,7 +541,12 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
-
+         if let Some(expected_extra_data) = trusted_ctx.extra_data
+            && cur_resp.extra_data != expected_extra_data
+        {
+            tracing::warn!("Extra data mismatch in public decryption!");
+            continue;
+        }
         // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
         let mut found_new_verf_key = false;
