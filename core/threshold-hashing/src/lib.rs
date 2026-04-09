@@ -77,19 +77,49 @@ pub fn serialize_hash_element<T>(domain_separator: &DomainSep, msg: &T) -> anyho
 where
     T: Serialize + ?Sized,
 {
-    let to_hash = match bc2wrap::serialize(msg) {
-        Ok(to_hash) => to_hash,
-        Err(e) => {
-            anyhow::bail!("Could not encode message due to error: {:?}", e);
-        }
-    };
-    Ok(hash_element(domain_separator, &to_hash))
+    let mut writer = HashingWriter::new(domain_separator);
+
+    let _hashed_bytes = bc2wrap::serialize_into(msg, &mut writer)?;
+    Ok(writer.finalize())
+}
+
+/// A [`std::io::Writer`]-compatible Shake256 hasher, allowing for "hash-as-you-write" optimizations.
+pub struct HashingWriter {
+    hasher: Shake256,
+}
+
+impl HashingWriter {
+    pub fn new(domsep: &DomainSep) -> Self {
+        let mut hasher = Shake256::default();
+        hasher.update(domsep);
+        Self { hasher }
+    }
+
+    pub fn finalize(self) -> Vec<u8> {
+        let mut output_reader = self.hasher.finalize_xof();
+        let mut digest = vec![0u8; DIGEST_BYTES];
+        output_reader.read(&mut digest);
+        digest
+    }
+}
+
+impl std::io::Write for HashingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.hasher.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::io::Write;
+
     use super::DomainSep;
-    use crate::{hash_element, serialize_hash_element, unsafe_hash_list};
+    use crate::{HashingWriter, hash_element, serialize_hash_element, unsafe_hash_list};
 
     const DSEP_TEST: DomainSep = *b"test_1__";
     const DSEP_TEST2: DomainSep = *b"test_2__";
@@ -150,5 +180,17 @@ pub(crate) mod tests {
         let digest_other_val = serialize_hash_element(&DSEP_TEST, "test2").unwrap();
         assert_ne!(digest, digest_other_domain);
         assert_ne!(digest, digest_other_val);
+    }
+
+    #[test]
+    fn hashing_writer_matches_hash_element() {
+        let dsep = b"dsepdsep";
+        let data = b"some payload...";
+        let hash = hash_element(&dsep, data);
+
+        let mut writer = HashingWriter::new(dsep);
+        writer.write_all(data).unwrap();
+
+        assert_eq!(writer.finalize(), hash);
     }
 }
