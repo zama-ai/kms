@@ -19,7 +19,7 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
 use crate::vault::keychain::KeychainProxy;
-use crate::vault::storage::crypto_material::CryptoMaterialStorage;
+use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
     StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
 };
@@ -35,7 +35,7 @@ use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
-use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
@@ -143,6 +143,30 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        {
+            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
+            if !data_exists(
+                &*guarded_priv_storage,
+                &mpc_context_id.into(),
+                &PrivDataType::ContextInfo.to_string(),
+            )
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    Some(mpc_context_id.into()),
+                    anyhow::anyhow!("Failed to check if MPC context exists in storage: {}", e),
+                    tonic::Code::Internal,
+                )
+            })? {
+                return Err(MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    Some(mpc_context_id.into()),
+                    anyhow::anyhow!("MPC context does not exist"),
+                    tonic::Code::InvalidArgument,
+                ));
+            }
+        }
         let custodian_context = inner.new_custodian_context.ok_or_else(|| {
             MetricedError::new(
                 OP_NEW_CUSTODIAN_CONTEXT,

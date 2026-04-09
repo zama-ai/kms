@@ -12,6 +12,7 @@ use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::consts::DEFAULT_MPC_CONTEXT;
 use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
@@ -553,8 +554,7 @@ async fn new_custodian_context<T: DockerComposeManager>(
     let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
         threshold: custodian_threshold,
         setup_msg_paths,
-        mpc_context_id: "0707070707070707070707070707070707070707070707070707070707070707"
-            .to_string(),
+        mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
     });
     let init_config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
