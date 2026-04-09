@@ -73,7 +73,8 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     ))
     .unwrap();
 
-    let test_path = None;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
