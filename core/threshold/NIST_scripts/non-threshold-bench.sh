@@ -9,7 +9,7 @@ TARGET_DIR="$(pwd)/non_threshold_bench"
 OUTPUT_FILE="$TARGET_DIR/bench_results.json"
 MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
 # Note: Doesn't hurt to set those features even when not needed, and it allows compiling only once
-FEATURES="experimental,measure_memory"
+FEATURES="measure_memory"
 
 SPEED_BENCH_LIST=(
     "non-threshold_tfhe-rs_keygen_speed"
