@@ -1546,7 +1546,7 @@ mod tests {
         assert_eq!(f_zero, secret);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_levelksw_triple_gen() {
         let parties = 5;
         let threshold = 1;

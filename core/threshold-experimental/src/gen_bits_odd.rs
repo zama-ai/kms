@@ -159,7 +159,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bitgen() {
         let parties = 4;
         let threshold = 1;
