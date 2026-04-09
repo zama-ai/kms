@@ -830,6 +830,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_s3_anon() {
+<<<<<<< tore/fix/signing-key-cherry-picks
         let url = "https://s3.eu-west-1.amazonaws.com/";
         let region = find_region_from_s3_url(&url.to_string()).unwrap();
         assert_eq!(region, "eu-west-1");
@@ -839,11 +840,30 @@ mod tests {
             "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
             StorageType::PUB,
             Some("PUB-p1"),
+=======
+        let prefix = std::stringify!(test_s3_anon);
+        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+        storage
+            .store_bytes(b"fake-pk", &RequestId::default(), "PublicKey")
+            .await
+            .unwrap();
+
+        // Build an anonymous client pointing at local MinIO
+        let s3_client =
+            build_anonymous_s3_client(Url::parse(AWS_S3_ENDPOINT).unwrap(), AWS_REGION.to_string())
+                .await
+                .unwrap();
+
+        let pub_storage = ReadOnlyS3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+>>>>>>> main
         )
         .unwrap();
 
         let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-        // at least one public key should be present in the bucket
         assert!(!public_key_ids.is_empty());
     }
 }

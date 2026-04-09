@@ -6,7 +6,6 @@ use crate::consts::{
     DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
 };
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
-use crate::vault::storage::StorageExt;
 use crate::vault::storage::{Storage, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -96,7 +95,8 @@ pub async fn regenerate_central_keys(
 
     // Delete all FHE key artifacts to force clean regeneration.
     // ensure_central_keys_exist short-circuits on existing PublicKey, but we also
-    // remove ServerKey and FhePrivateKey to avoid stale data from a previous run.
+    // remove ServerKey and FhePrivateKey from all Epochs to avoid stale data
+    // from previous runs.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
         let _ = pub_storage
             .delete_data(key_id, &PubDataType::PublicKey.to_string())
@@ -104,14 +104,13 @@ pub async fn regenerate_central_keys(
         let _ = pub_storage
             .delete_data(key_id, &PubDataType::ServerKey.to_string())
             .await;
-        let _ = priv_storage
-            .delete_data_at_epoch(
-                key_id,
-                &DEFAULT_EPOCH_ID,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await;
     }
+    remove_dir_if_exists(
+        priv_storage
+            .root_dir()
+            .join(PrivDataType::FhePrivateKey.to_string()),
+    )
+    .await;
 
     // Regenerate FHE keys
     if !ensure_central_keys_exist(
