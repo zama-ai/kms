@@ -64,8 +64,13 @@ pub fn threshold_decrypt(
         let net = Arc::clone(&runtime.user_nets[role.one_based() - 1]);
         let threshold = runtime.threshold;
 
-        let session_params =
-            SessionParameters::new(threshold, session_id, role, runtime.roles.iter().copied().collect::<HashSet<_>>()).unwrap();
+        let session_params = SessionParameters::new(
+            threshold,
+            session_id,
+            role,
+            runtime.roles.iter().copied().collect::<HashSet<_>>(),
+        )
+        .unwrap();
         let base_session = BaseSession::new(session_params, net, AesRng::from_entropy()).unwrap();
 
         let sk_shares = private_keys[&role]
