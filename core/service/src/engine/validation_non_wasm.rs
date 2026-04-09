@@ -550,7 +550,7 @@ fn validate_public_decrypt_responses(
         // Validate the verf key
         for (cur_id, testing_key) in trusted_ctx.server_pks {
             if testing_key == &cur_verf_key {
-                if !verification_keys.contains(&cur_verf_key) {
+                if verification_keys.contains(&cur_verf_key) {
                     tracing::warn!(
                         "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
                         hex::encode(&cur_payload.verification_key),
