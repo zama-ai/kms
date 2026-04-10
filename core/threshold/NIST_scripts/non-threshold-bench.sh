@@ -5,7 +5,7 @@
 # And parses the results into a format suitable for the NIST submission.
 
 
-TARGET_DIR="$(pwd)/non_threshold_bench"
+TARGET_DIR="$(pwd)/non_threshold_bench/tfhe_bench"
 OUTPUT_FILE="$TARGET_DIR/bench_results.json"
 MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
 # Note: Doesn't hurt to set those features even when not needed, and it allows compiling only once

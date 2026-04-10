@@ -113,6 +113,10 @@ path = "src/bin/threshold-gen-tls-certs.rs"
 name = "non-threshold-kat"
 path = "src/bin/non-threshold/kat.rs"
 
+[[bin]]
+name = "non-threshold-zk-pok-kat"
+path = "src/bin/non-threshold/zk-pok-kat.rs"
+
 [[bench]]
 name = "ddec"
 harness = false
@@ -175,6 +179,17 @@ harness = false
 [[bench]]
 name = "non-threshold_tfhe-rs_keygen_memory"
 path = "benches/non-threshold/tfhe-rs/memory/keygen.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-zk-pok_speed"
+path = "benches/non-threshold/tfhe-zk-pok/speed.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-zk-pok_memory"
+path = "benches/non-threshold/tfhe-zk-pok/memory.rs"
 required-features = ["measure_memory"]
 harness = false
 

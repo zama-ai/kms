@@ -3,65 +3,136 @@ import json
 import csv
 import re
 import sys
-# Maps parameters name to the corresponding csv file
+
+# ---------------------------------------------------------------------------
+# TFHE / BGV parameter and experiment tables
+# ---------------------------------------------------------------------------
+
+# Maps parameter-set name to the CSV file it should produce.
 PARAMS_MAP = {
-    "NIST_PARAMS_P32_SNS_FGLWE":"TFHE_Clear_P32_FGLWE.csv",
-    "NIST_PARAMS_P32_SNS_LWE":"TFHE_Clear_P32_LWE.csv",
-    "NIST_PARAMS_P8_SNS_FGLWE":"TFHE_Clear_P8_FGLWE.csv",
-    "NIST_PARAMS_P8_SNS_LWE":"TFHE_Clear_P8_LWE.csv",
-    "BC_PARAMS_SNS":"TFHE_Clear_BC_FGLWE.csv",
-    "bgv":"BGV_Clear.csv"
+    "NIST_PARAMS_P32_SNS_FGLWE": "TFHE_Clear_P32_FGLWE.csv",
+    "NIST_PARAMS_P32_SNS_LWE":   "TFHE_Clear_P32_LWE.csv",
+    "NIST_PARAMS_P8_SNS_FGLWE":  "TFHE_Clear_P8_FGLWE.csv",
+    "NIST_PARAMS_P8_SNS_LWE":    "TFHE_Clear_P8_LWE.csv",
+    "BC_PARAMS_SNS":              "TFHE_Clear_BC_FGLWE.csv",
+    "bgv":                        "BGV_Clear.csv",
 }
 
-# Maps the experiment name to the corresponding row in the csv file
 EXPERIMENTS_MAP = {
-    "non-threshold_keygen" : "KeyGen",
-    "non-threshold_erc20" : "ERC20",
-    "non-threshold_basic-ops" : {
-        "encrypt" : "Enc",
-        "decrypt" : "Dec",
-        "mul" : "Mult64",
-    }
+    "non-threshold_keygen": "KeyGen",
+    "non-threshold_erc20":  "ERC20",
+    "non-threshold_basic-ops": {
+        "encrypt": "Enc",
+        "decrypt": "Dec",
+        "mul":     "Mult64",
+    },
 }
 
-RESULT_MAP = {}
+# ---------------------------------------------------------------------------
+# ZK PoK parameter and operation tables
+# ---------------------------------------------------------------------------
+
+# Maps parameter-set name to the ZK CSV file it should produce.
+ZK_PARAMS_MAP = {
+    "NIST_PARAMS_P32_SNS_FGLWE": "ZK_PoK_NIST_PARAMS_P32_SNS_FGLWE.csv",
+    "NIST_PARAMS_P32_SNS_LWE":   "ZK_PoK_NIST_PARAMS_P32_SNS_LWE.csv",
+    "NIST_PARAMS_P8_SNS_FGLWE":  "ZK_PoK_NIST_PARAMS_P8_SNS_FGLWE.csv",
+    "NIST_PARAMS_P8_SNS_LWE":    "ZK_PoK_NIST_PARAMS_P8_SNS_LWE.csv",
+    "BC_PARAMS_SNS":              "ZK_PoK_BC_PARAMS_SNS.csv",
+}
+
+# Internal operation key → CSV row label.
+# Ordered longest-first so substring checks are unambiguous.
+ZK_OPS = ["verify_two_steps", "verify_batched", "proof_gen", "crs_gen"]
+ZK_OPS_LABEL = {
+    "crs_gen":          "CRSGen",
+    "proof_gen":        "ProofGen",
+    "verify_two_steps": "VerifyTwoSteps",
+    "verify_batched":   "VerifyBatched",
+}
+
+# ---------------------------------------------------------------------------
+# Unit conversions
+# ---------------------------------------------------------------------------
 
 # I think we only have ns ?
 UNIT_CONV_TO_MS = {"ns": 1e-6}
 # I think we only have B ?
 UNIT_CONV_TO_KB = {"B": 1e-3}
 
+# ---------------------------------------------------------------------------
+# Result containers
+# ---------------------------------------------------------------------------
+
 class ResultEntry:
     def __init__(self):
-        self.keygen_latency: float = -1
-        self.keygen_memory: float = -1
-        self.erc20_latency: float = -1
-        self.erc20_memory: float = -1
+        self.keygen_latency:  float = -1
+        self.keygen_memory:   float = -1
+        self.erc20_latency:   float = -1
+        self.erc20_memory:    float = -1
         self.encrypt_latency: float = -1
-        self.encrypt_memory: float = -1
+        self.encrypt_memory:  float = -1
         self.decrypt_latency: float = -1
-        self.decrypt_memory: float = -1
-        self.mul_latency: float = -1
-        self.mul_memory: float = -1
+        self.decrypt_memory:  float = -1
+        self.mul_latency:     float = -1
+        self.mul_memory:      float = -1
 
-RESULT_MAP = {
-    "NIST_PARAMS_P32_SNS_FGLWE":ResultEntry(),
-    "NIST_PARAMS_P32_SNS_LWE":ResultEntry(),
-    "NIST_PARAMS_P8_SNS_FGLWE":ResultEntry(),
-    "NIST_PARAMS_P8_SNS_LWE":ResultEntry(),
-    "BC_PARAMS_SNS":ResultEntry(),
-    "bgv":ResultEntry()
-    }
+    def all_missing(self):
+        return all(v == -1 for v in [
+            self.keygen_latency,  self.keygen_memory,
+            self.erc20_latency,   self.erc20_memory,
+            self.encrypt_latency, self.encrypt_memory,
+            self.decrypt_latency, self.decrypt_memory,
+            self.mul_latency,     self.mul_memory,
+        ])
+
+
+class ZkResultEntry:
+    def __init__(self):
+        self.crs_gen_latency:          float = -1
+        self.crs_gen_memory:           float = -1
+        self.proof_gen_latency:        float = -1
+        self.proof_gen_memory:         float = -1
+        self.verify_two_steps_latency: float = -1
+        self.verify_two_steps_memory:  float = -1
+        self.verify_batched_latency:   float = -1
+        self.verify_batched_memory:    float = -1
+
+    def all_missing(self):
+        return all(v == -1 for v in [
+            self.crs_gen_latency,          self.crs_gen_memory,
+            self.proof_gen_latency,        self.proof_gen_memory,
+            self.verify_two_steps_latency, self.verify_two_steps_memory,
+            self.verify_batched_latency,   self.verify_batched_memory,
+        ])
+
+
+RESULT_MAP    = {k: ResultEntry()   for k in PARAMS_MAP}
+ZK_RESULT_MAP = {k: ZkResultEntry() for k in ZK_PARAMS_MAP}
+
+# ---------------------------------------------------------------------------
+# Helpers shared by both TFHE and ZK parsers
+# ---------------------------------------------------------------------------
+
+def fetch_mean_memory(line):
+    """Return (mean_str, unit) from a bench_memory output line, or None."""
+    match = re.search(r"Memory usage for .* \(avg over .* runs\) : (.*) B\.", line)
+    if match:
+        return (match.group(1), "B")
+
+# ---------------------------------------------------------------------------
+# TFHE / BGV latency parsing
+# ---------------------------------------------------------------------------
 
 def find_parameters_from_json(data):
-    for key in PARAMS_MAP.keys():
+    for key in PARAMS_MAP:
         if key in data["id"]:
             return key
     print("Skipping {} no params found".format(data["id"]))
     return None
 
 def find_op_from_json(data):
-    for key in EXPERIMENTS_MAP["non-threshold_basic-ops"].keys():
+    for key in EXPERIMENTS_MAP["non-threshold_basic-ops"]:
         if key in data["id"]:
             return key
     print("Skipping {} op not needed".format(data["id"]))
@@ -71,35 +142,25 @@ def parse_latency_keygen(data):
     if parameters is None:
         return
     mean_latency = data["mean"]["estimate"]
-    mean_unit = data["mean"]["unit"]
-
-    latency = mean_latency * UNIT_CONV_TO_MS[mean_unit]
-
-    RESULT_MAP[parameters].keygen_latency = latency
-
+    mean_unit    = data["mean"]["unit"]
+    RESULT_MAP[parameters].keygen_latency = mean_latency * UNIT_CONV_TO_MS[mean_unit]
 
 def parse_latency_erc20(data):
     parameters = find_parameters_from_json(data)
     if parameters is None:
         return
     mean_latency = data["mean"]["estimate"]
-    mean_unit = data["mean"]["unit"]
-
-    latency = mean_latency * UNIT_CONV_TO_MS[mean_unit]
-
-    RESULT_MAP[parameters].erc20_latency = latency
-
+    mean_unit    = data["mean"]["unit"]
+    RESULT_MAP[parameters].erc20_latency = mean_latency * UNIT_CONV_TO_MS[mean_unit]
 
 def parse_latency_basic_ops(data):
     parameters = find_parameters_from_json(data)
     if parameters is None:
         return
-    op = find_op_from_json(data)
+    op           = find_op_from_json(data)
     mean_latency = data["mean"]["estimate"]
-    mean_unit = data["mean"]["unit"]
-
-    latency = mean_latency * UNIT_CONV_TO_MS[mean_unit]
-
+    mean_unit    = data["mean"]["unit"]
+    latency      = mean_latency * UNIT_CONV_TO_MS[mean_unit]
     if op == "encrypt":
         RESULT_MAP[parameters].encrypt_latency = latency
     elif op == "decrypt":
@@ -109,47 +170,79 @@ def parse_latency_basic_ops(data):
     else:
         print("Skipped op {} as it's not one we care about in NIST doc.".format(op))
 
+# ---------------------------------------------------------------------------
+# ZK PoK latency parsing
+# ---------------------------------------------------------------------------
 
+def find_zk_params_from_json(data):
+    for key in ZK_PARAMS_MAP:
+        if key in data["id"]:
+            return key
+    print("Skipping ZK entry {} – no matching params".format(data["id"]))
+    return None
+
+def find_zk_op_from_json(data):
+    for op in ZK_OPS:  # longest names first — avoids prefix ambiguity
+        if op in data["id"]:
+            return op
+    print("Skipping ZK entry {} – unknown op".format(data["id"]))
+    return None
+
+def parse_zk_latency(data):
+    params = find_zk_params_from_json(data)
+    if params is None:
+        return
+    op = find_zk_op_from_json(data)
+    if op is None:
+        return
+    latency = data["mean"]["estimate"] * UNIT_CONV_TO_MS[data["mean"]["unit"]]
+    entry = ZK_RESULT_MAP[params]
+    if op == "crs_gen":
+        entry.crs_gen_latency = latency
+    elif op == "proof_gen":
+        entry.proof_gen_latency = latency
+    elif op == "verify_two_steps":
+        entry.verify_two_steps_latency = latency
+    elif op == "verify_batched":
+        entry.verify_batched_latency = latency
+
+# ---------------------------------------------------------------------------
+# Shared latency-file entry point
+# ---------------------------------------------------------------------------
 
 def parse_latency_file():
-    # Open LATENCY_FILE and read each line which is a json struct with the bench data
     with open(LATENCY_FILE, "r") as f:
         for line in f:
             data = json.loads(line)
-            # Process the json data as needed
-            # Acces the `id` field which contains the experiment name
-            # Make sure id exists in data
             if data.get("id") is None:
                 print("Skipping entry with no id: {}".format(data))
                 continue
             experiment_name = data["id"]
-            if "non-threshold_keygen" in experiment_name :
+            if "non-threshold_zk-pok" in experiment_name:
+                parse_zk_latency(data)
+            elif "non-threshold_keygen" in experiment_name:
                 parse_latency_keygen(data)
-            elif "non-threshold_erc20" in experiment_name :
+            elif "non-threshold_erc20" in experiment_name:
                 parse_latency_erc20(data)
-            # We only care about FheUint64 type
-            elif "non-threshold_basic-ops" in experiment_name and ("FheUint64" in experiment_name or "bgv" in experiment_name):
+            elif "non-threshold_basic-ops" in experiment_name and (
+                "FheUint64" in experiment_name or "bgv" in experiment_name
+            ):
                 parse_latency_basic_ops(data)
-            else :
-                continue
+
+# ---------------------------------------------------------------------------
+# TFHE / BGV memory parsing
+# ---------------------------------------------------------------------------
 
 def find_params_from_line(line):
-    for key in PARAMS_MAP.keys():
+    for key in PARAMS_MAP:
         if key in line:
             return key
 
 def find_op_from_line(line):
-    for key in EXPERIMENTS_MAP["non-threshold_basic-ops"].keys():
+    for key in EXPERIMENTS_MAP["non-threshold_basic-ops"]:
         if key in line:
             return key
     print("Skipping {}".format(line))
-
-def fetch_mean_memory(line):
-    # fetch memory from a line that looks like
-    match = re.search(r"Memory usage for .* \(avg over .* runs\) : (.*) B.", line)
-    if match:
-        mean_memory = match.group(1)
-        return (mean_memory, "B")
 
 def parse_memory_keygen(line):
     params = find_params_from_line(line)
@@ -158,38 +251,28 @@ def parse_memory_keygen(line):
     result = fetch_mean_memory(line)
     if result is None:
         return
-    (mean_memory,unit) = result
-
-    memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
-
-    RESULT_MAP[params].keygen_memory = memory
+    mean_memory, unit = result
+    RESULT_MAP[params].keygen_memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
 
 def parse_memory_erc20(line):
     params = find_params_from_line(line)
     if params is None:
         return
-
     result = fetch_mean_memory(line)
     if result is None:
         return
-    (mean_memory,unit) = result
-
-    memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
-
-    RESULT_MAP[params].erc20_memory = memory
+    mean_memory, unit = result
+    RESULT_MAP[params].erc20_memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
 
 def parse_memory_basic_ops(line):
     params = find_params_from_line(line)
     if params is None:
         return
-
     result = fetch_mean_memory(line)
     if result is None:
         return
-    (mean_memory,unit) = result
-
+    mean_memory, unit = result
     memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
-
     if "encrypt" in line:
         RESULT_MAP[params].encrypt_memory = memory
     if "decrypt" in line:
@@ -197,54 +280,115 @@ def parse_memory_basic_ops(line):
     if "mul" in line:
         RESULT_MAP[params].mul_memory = memory
 
+# ---------------------------------------------------------------------------
+# ZK PoK memory parsing
+# ---------------------------------------------------------------------------
+
+def find_zk_params_from_line(line):
+    for key in ZK_PARAMS_MAP:
+        if key in line:
+            return key
+    return None
+
+def find_zk_op_from_line(line):
+    for op in ZK_OPS:  # longest names first — avoids prefix ambiguity
+        if op in line:
+            return op
+    return None
+
+def parse_zk_memory(line):
+    params = find_zk_params_from_line(line)
+    if params is None:
+        return
+    op = find_zk_op_from_line(line)
+    if op is None:
+        return
+    result = fetch_mean_memory(line)
+    if result is None:
+        return
+    mean_memory, unit = result
+    memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
+    entry = ZK_RESULT_MAP[params]
+    if op == "crs_gen":
+        entry.crs_gen_memory = memory
+    elif op == "proof_gen":
+        entry.proof_gen_memory = memory
+    elif op == "verify_two_steps":
+        entry.verify_two_steps_memory = memory
+    elif op == "verify_batched":
+        entry.verify_batched_memory = memory
+
+# ---------------------------------------------------------------------------
+# Shared memory-file entry point
+# ---------------------------------------------------------------------------
+
 def parse_memory_file():
-    # Open MEMORY_FILE and read each line
     with open(MEMORY_FILE, "r") as f:
         for line in f:
-            if "non-threshold_keygen" in line :
+            if "non-threshold_zk-pok" in line:
+                parse_zk_memory(line)
+            elif "non-threshold_keygen" in line:
                 parse_memory_keygen(line)
-            elif "non-threshold_erc20" in line :
+            elif "non-threshold_erc20" in line:
                 parse_memory_erc20(line)
-            # We only care about FheUint64 type
-            elif "non-threshold_basic-ops" in line and ("FheUint64" in line or "bgv" in line):
+            elif "non-threshold_basic-ops" in line and (
+                "FheUint64" in line or "bgv" in line
+            ):
                 parse_memory_basic_ops(line)
-            else :
-                continue
+
+# ---------------------------------------------------------------------------
+# CSV output
+# ---------------------------------------------------------------------------
 
 def output_result_csv_files():
-    # Create output directory if it does not exist
+    """Write one TFHE/BGV CSV file per parameter set that has at least one result."""
     os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
-
-    # For each element in RESULT_MAP create the associated csv file
     for params, result in RESULT_MAP.items():
+        if result.all_missing():
+            continue  # no data for this param set in the given folder
         file_name = os.path.join(OUTPUT_DIRECTORY, PARAMS_MAP[params])
         with open(file_name, "w") as f:
-            # Use , as delimiter in csv file
-            csv_writer = csv.writer(f, delimiter=',')
-            # Write the header
-            csv_writer.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes"])
-            csv_writer.writerow(["KeyGen", result.keygen_latency, result.keygen_memory])
-            csv_writer.writerow(["Enc", result.encrypt_latency, result.encrypt_memory])
-            csv_writer.writerow(["Dec", result.decrypt_latency, result.decrypt_memory])
-            csv_writer.writerow(["ERC20", result.erc20_latency, result.erc20_memory])
-            csv_writer.writerow(["Mult64", result.mul_latency, result.mul_memory])
+            w = csv.writer(f, delimiter=",")
+            w.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes"])
+            w.writerow(["KeyGen",  result.keygen_latency,  result.keygen_memory])
+            w.writerow(["Enc",     result.encrypt_latency, result.encrypt_memory])
+            w.writerow(["Dec",     result.decrypt_latency, result.decrypt_memory])
+            w.writerow(["ERC20",   result.erc20_latency,   result.erc20_memory])
+            w.writerow(["Mult64",  result.mul_latency,     result.mul_memory])
 
+def output_zk_csv_files():
+    """Write one ZK PoK CSV file per parameter set that has at least one result."""
+    os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+    for params, result in ZK_RESULT_MAP.items():
+        if result.all_missing():
+            continue  # no ZK data for this param set in the given folder
+        file_name = os.path.join(OUTPUT_DIRECTORY, ZK_PARAMS_MAP[params])
+        with open(file_name, "w") as f:
+            w = csv.writer(f, delimiter=",")
+            w.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes"])
+            w.writerow(["CRSGen",        result.crs_gen_latency,          result.crs_gen_memory])
+            w.writerow(["ProofGen",       result.proof_gen_latency,        result.proof_gen_memory])
+            w.writerow(["VerifyTwoSteps", result.verify_two_steps_latency, result.verify_two_steps_memory])
+            w.writerow(["VerifyBatched",  result.verify_batched_latency,   result.verify_batched_memory])
 
-# Take as input from the CLI the folder in which to find the bench results
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main():
     global LATENCY_FILE, MEMORY_FILE, OUTPUT_DIRECTORY
     if len(sys.argv) != 2:
         print("Usage: {} <folder>".format(sys.argv[0]))
         sys.exit(1)
     folder = sys.argv[1]
-    LATENCY_FILE = os.path.join(folder, "bench_results.json")
-    MEMORY_FILE = os.path.join(folder, "memory_bench_results.txt")
+    LATENCY_FILE     = os.path.join(folder, "bench_results.json")
+    MEMORY_FILE      = os.path.join(folder, "memory_bench_results.txt")
     OUTPUT_DIRECTORY = os.path.join(folder, "output")
 
     parse_latency_file()
     parse_memory_file()
     output_result_csv_files()
-
+    output_zk_csv_files()
 
 
 if __name__ == "__main__":

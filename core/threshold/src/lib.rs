@@ -14,3 +14,6 @@ pub mod tls_certs;
 
 #[cfg(all(feature = "choreographer", feature = "non-wasm"))]
 pub mod malicious_moby;
+
+#[cfg(feature = "non-wasm")]
+pub mod zk_utils;
