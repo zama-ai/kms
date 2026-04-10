@@ -11,8 +11,6 @@ pub mod encryption;
 #[allow(deprecated)]
 pub mod signcryption;
 
-use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 #[cfg(any(feature = "non-wasm", test))]
 use crate::cryptography::signatures::PrivateSigKey;
 #[cfg(any(feature = "non-wasm", test))]
@@ -28,17 +26,17 @@ pub(crate) fn compute_external_user_decrypt_signature(
     server_sk: &PrivateSigKey,
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
-    user_pk: &UnifiedPublicEncKey,
+    user_pk_buf: &[u8],
     extra_data: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    let message = compute_user_decrypt_message(payload, user_pk, extra_data)?;
+    let message = compute_user_decrypt_message(payload, user_pk_buf, extra_data)?;
     tracing::debug!("Computing signature for UserDecryptResponseVerification");
     compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
 pub(crate) fn compute_user_decrypt_message(
     payload: &UserDecryptionResponsePayload,
-    user_pk: &UnifiedPublicEncKey,
+    user_pk_buf: &[u8],
     extra_data: &[u8],
 ) -> anyhow::Result<UserDecryptResponseVerification> {
     // convert external_handles back to 256-bit bytes32 to be signed
@@ -62,13 +60,6 @@ pub(crate) fn compute_user_decrypt_message(
 
     let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
 
-    // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
-    // the solidity structure to sign with EIP-712
-    // note that the JS client must also use the same encoding to verify the result
-    let user_pk_buf = user_pk
-        .to_legacy_bytes()
-        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
-
     tracing::info!(
         "Computed UserDecryptResponseVerification for handles {:?} and extra data \"{}\".",
         external_handles_bytes32,
@@ -76,7 +67,7 @@ pub(crate) fn compute_user_decrypt_message(
     );
 
     Ok(UserDecryptResponseVerification {
-        publicKey: user_pk_buf.into(),
+        publicKey: user_pk_buf.to_vec().into(),
         ctHandles: external_handles_bytes32,
         userDecryptedShare: user_decrypted_share_buf.into(),
         extraData: extra_data.to_vec().into(),
