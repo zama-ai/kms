@@ -69,12 +69,12 @@ test('centralized user decryption response', (_t) => {
     const enc_sk = transcript_to_enc_sk(transcript);
 
     // test user decrypt using wasm objects
-    const pt = process_user_decryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
+    const pt = process_user_decryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, null, true);
     assert.deepEqual(1, pt.length);
     assert.deepEqual(48, pt[0].bytes[0]);
 
     const response2 = transcript_to_response(transcript);
-    const pt2 = process_user_decryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
+    const pt2 = process_user_decryption_resp(client, null, null, response2, enc_pk, enc_sk, null, false);
     assert.deepEqual(1, pt2.length);
     assert.deepEqual(48, pt2[0].bytes[0]);
 });
