@@ -3,7 +3,6 @@ use algebra::{
     galois_rings::degree_4::ResiduePolyF4,
     sharing::share::Share,
 };
-use ctor::ctor;
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
@@ -25,7 +24,6 @@ use threshold_types::session_id::SessionId;
 #[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};
 
-#[ctor]
 fn redis_tidy() {
     let redis_conf = RedisConf::default();
     let client = redis::Client::open(redis_conf.host).unwrap();
@@ -43,6 +41,8 @@ macro_rules! test_triples {
 
             #[tokio::test]
             async fn [<test_redis_preprocessing $z:lower>]() {
+                redis_tidy();
+
                 let test_key_prefix = format!("test_redis_preprocessing_{}",stringify!($z));
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -84,6 +84,7 @@ macro_rules! test_triples {
 
 #[tokio::test]
 async fn test_store_fetch_100_triples() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_triples".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -121,6 +122,7 @@ async fn test_store_fetch_100_triples() {
 
 #[tokio::test]
 async fn test_store_fetch_100_randoms() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_randoms".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -144,6 +146,7 @@ async fn test_store_fetch_100_randoms() {
 
 #[tokio::test]
 async fn test_store_fetch_100_bits() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_bits".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -167,6 +170,7 @@ async fn test_store_fetch_100_bits() {
 
 #[tokio::test]
 async fn test_fetch_more_than_stored() {
+    redis_tidy();
     let store_count = 100;
     let fetch_count = 101;
 
@@ -196,6 +200,7 @@ async fn test_fetch_more_than_stored() {
 
 #[tokio::test]
 async fn test_cleanup_on_drop() {
+    redis_tidy();
     let test_key_prefix = "test_cleanup_on_drop".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -251,6 +256,8 @@ fn test_dkg_orchestrator_large(
         online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
     use threshold_types::network::NetworkMode;
+
+    redis_tidy();
 
     let params_basics_handles = params.get_params_basics_handle();
 
@@ -378,6 +385,8 @@ async fn test_cast_fail_memory_bit_dec_preprocessing() {
         dummy::DummyPreprocessing,
     };
     use threshold_execution::tests::helper::testing::get_dummy_parameters_for_parties;
+
+    redis_tidy();
 
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(
