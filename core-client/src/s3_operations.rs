@@ -91,7 +91,12 @@ pub(crate) async fn fetch_kms_verification_keys(
         let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
         // this is not an operation that is frequently used, so we can create a new s3 client each time
         let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let s3_storage = S3Storage::new(s3_client, bucket, StorageType::PUB, None)?; // TODO already included in bucket????
+        let s3_storage = S3Storage::new(
+            s3_client,
+            bucket,
+            StorageType::PUB,
+            Some(&cur_core.object_folder),
+        )?;
         let vk: PublicSigKey = s3_storage
             .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
             .await?;
@@ -112,7 +117,12 @@ pub(crate) async fn fetch_kms_signing_keys(
         let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
         // this is not an operation that is frequently used, so we can create a new s3 client each time
         let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let s3_storage = S3Storage::new(s3_client, bucket, StorageType::PUB, None)?; // TODO already included in bucket????
+        let s3_storage = S3Storage::new(
+            s3_client,
+            bucket,
+            StorageType::PRIV,
+            Some(&cur_core.object_folder),
+        )?;
         let sk: PrivateSigKey = s3_storage
             .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
             .await?;
