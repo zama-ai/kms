@@ -1545,9 +1545,13 @@ mod tests {
         use super::super::*;
         use algebra::sharing::shamir::{RevealOp, ShamirSharings};
         use threshold_execution::config::BatchParams;
-        use threshold_execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+        use threshold_execution::online::preprocessing::{
+            RandomPreprocessing, TriplePreprocessing,
+        };
         use threshold_execution::runtime::sessions::small_session::SmallSession;
-        use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+        use threshold_execution::small_execution::offline::{
+            Preprocessing, SecureSmallPreprocessing,
+        };
         use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
         use threshold_types::network::NetworkMode;
 
@@ -1555,22 +1559,21 @@ mod tests {
         async fn test_levelksw_triple_gen() {
             let parties = 5;
             let threshold = 1;
-            let mut task =
-                |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-                    let batch_size = BatchParams {
-                        triples: 100,
-                        randoms: 100,
-                    };
-
-                    let mut prep = SecureSmallPreprocessing::default()
-                        .execute(&mut session, batch_size)
-                        .await
-                        .unwrap();
-                    (
-                        prep.next_triple_vec(100).unwrap(),
-                        prep.next_random_vec(100).unwrap(),
-                    )
+            let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
+                let batch_size = BatchParams {
+                    triples: 100,
+                    randoms: 100,
                 };
+
+                let mut prep = SecureSmallPreprocessing::default()
+                    .execute(&mut session, batch_size)
+                    .await
+                    .unwrap();
+                (
+                    prep.next_triple_vec(100).unwrap(),
+                    prep.next_random_vec(100).unwrap(),
+                )
+            };
             //This is Sync because we are generating triples
             let results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
                 parties,
