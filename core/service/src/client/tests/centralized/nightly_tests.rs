@@ -103,7 +103,6 @@ async fn default_user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -140,7 +139,6 @@ async fn default_user_decryption_centralized_precompute_sns(
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
-        false,
         false,
         msg,
         EncryptionConfig {
