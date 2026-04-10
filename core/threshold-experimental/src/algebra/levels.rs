@@ -1402,12 +1402,6 @@ mod tests {
     use algebra::sharing::shamir::{InputOp, RevealOp};
     use algebra::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use rand::SeedableRng;
-    use threshold_execution::config::BatchParams;
-    use threshold_execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-    use threshold_execution::runtime::sessions::small_session::SmallSession;
-    use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-    use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
-    use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 
     use super::*;
@@ -1546,65 +1540,78 @@ mod tests {
         assert_eq!(f_zero, secret);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_levelksw_triple_gen() {
-        let parties = 5;
-        let threshold = 1;
-        let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let batch_size = BatchParams {
-                triples: 100,
-                randoms: 100,
-            };
+    #[cfg(feature = "slow_tests")]
+    mod slow_tests {
+        use super::super::*;
+        use algebra::sharing::shamir::{RevealOp, ShamirSharings};
+        use threshold_execution::config::BatchParams;
+        use threshold_execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+        use threshold_execution::runtime::sessions::small_session::SmallSession;
+        use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+        use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
+        use threshold_types::network::NetworkMode;
 
-            let mut prep = SecureSmallPreprocessing::default()
-                .execute(&mut session, batch_size)
-                .await
-                .unwrap();
-            (
-                prep.next_triple_vec(100).unwrap(),
-                prep.next_random_vec(100).unwrap(),
+        #[tokio::test(flavor = "multi_thread")]
+        async fn test_levelksw_triple_gen() {
+            let parties = 5;
+            let threshold = 1;
+            let mut task =
+                |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
+                    let batch_size = BatchParams {
+                        triples: 100,
+                        randoms: 100,
+                    };
+
+                    let mut prep = SecureSmallPreprocessing::default()
+                        .execute(&mut session, batch_size)
+                        .await
+                        .unwrap();
+                    (
+                        prep.next_triple_vec(100).unwrap(),
+                        prep.next_random_vec(100).unwrap(),
+                    )
+                };
+            //This is Sync because we are generating triples
+            let results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
+                parties,
+                threshold,
+                None,
+                NetworkMode::Sync,
+                None,
+                &mut task,
+                None,
             )
-        };
-        //This is Sync because we are generating triples
-        let results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
-        )
-        .await;
+            .await;
 
-        //Reconstruct everything and check triples are triples
-        for idx in 0..100 {
-            let mut vec_x = Vec::new();
-            let mut vec_y = Vec::new();
-            let mut vec_z = Vec::new();
-            let mut vec_r = Vec::new();
-            for result in results.iter() {
-                let (x, y, z) = result.0[idx].take();
-                let r = result.1[idx];
-                vec_x.push(x);
-                vec_y.push(y);
-                vec_z.push(z);
-                vec_r.push(r);
+            //Reconstruct everything and check triples are triples
+            for idx in 0..100 {
+                let mut vec_x = Vec::new();
+                let mut vec_y = Vec::new();
+                let mut vec_z = Vec::new();
+                let mut vec_r = Vec::new();
+                for result in results.iter() {
+                    let (x, y, z) = result.0[idx].take();
+                    let r = result.1[idx];
+                    vec_x.push(x);
+                    vec_y.push(y);
+                    vec_z.push(z);
+                    vec_r.push(r);
+                }
+                let ss_x = ShamirSharings::create(vec_x);
+                let ss_y = ShamirSharings::create(vec_y);
+                let ss_z = ShamirSharings::create(vec_z);
+                let ss_r = ShamirSharings::create(vec_r);
+
+                let x = ss_x.reconstruct(threshold as usize);
+                let y = ss_y.reconstruct(threshold as usize);
+                let z = ss_z.reconstruct(threshold as usize);
+                assert!(x.is_ok());
+                assert!(y.is_ok());
+                assert!(z.is_ok());
+                assert_eq!(x.unwrap() * y.unwrap(), z.unwrap());
+                let r = ss_r.reconstruct(threshold as usize);
+                assert!(r.is_ok());
             }
-            let ss_x = ShamirSharings::create(vec_x);
-            let ss_y = ShamirSharings::create(vec_y);
-            let ss_z = ShamirSharings::create(vec_z);
-            let ss_r = ShamirSharings::create(vec_r);
-
-            let x = ss_x.reconstruct(threshold as usize);
-            let y = ss_y.reconstruct(threshold as usize);
-            let z = ss_z.reconstruct(threshold as usize);
-            assert!(x.is_ok());
-            assert!(y.is_ok());
-            assert!(z.is_ok());
-            assert_eq!(x.unwrap() * y.unwrap(), z.unwrap());
-            let r = ss_r.reconstruct(threshold as usize);
-            assert!(r.is_ok());
         }
     }
 
