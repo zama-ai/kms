@@ -514,15 +514,18 @@ impl<
             )
         })?)
         .clone();
-        let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&client_enc_key_bytes_orig)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
+        let client_enc_key = tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+            std::io::Cursor::new(&client_enc_key_bytes_orig),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,

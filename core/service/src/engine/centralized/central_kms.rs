@@ -8,7 +8,6 @@ use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
@@ -519,9 +518,11 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    // LEGACY CODE: see `from_legacy_bytes` for docs
-    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(client_enc_key_bytes)
-        .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
+    let client_enc_key = safe_deserialize::<UnifiedPublicEncKey>(
+        std::io::Cursor::new(client_enc_key_bytes),
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {

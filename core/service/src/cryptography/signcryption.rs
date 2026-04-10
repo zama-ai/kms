@@ -662,6 +662,7 @@ fn check_format_and_signature(
     // Check that the signature is normalized
     check_normalized(sig)?;
     // Verify signature
+    #[allow(deprecated)]
     unsigncryption_key
         .sender_verf_key
         .pk()
