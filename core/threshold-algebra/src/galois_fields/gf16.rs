@@ -7,9 +7,8 @@ use crate::{
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
 g2p!(
     GF16,
@@ -88,10 +87,8 @@ impl RingWithExceptionalSequence for GF16 {
     }
 }
 
-lazy_static! {
-    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF16>, Vec<Poly<GF16>>>> =
-        RwLock::new(HashMap::new());
-}
+static LAGRANGE_STORE: LazyLock<RwLock<HashMap<Vec<GF16>, Vec<Poly<GF16>>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF16 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
@@ -149,18 +146,14 @@ pub fn two_powers(input: GF16, max_power: usize) -> Vec<GF16> {
 // }
 pub static GF16_NEWTON_INNER_LOOP: [GF16; 3] = [GF16(8), GF16(5), GF16(11)];
 
-lazy_static::lazy_static! {
-    //Pre-compute the set S defined in Fig.58 (i.e. GF16 from generator X)
-    pub static ref GF16_FROM_GENERATOR : Vec<GF16> =
-    {
-
-        let generator = GF16::from(2);
-         (0..16)
-            .scan(GF16::from(1), |state, idx| {
-                let res = if idx == 15 { GF16::from(0) } else { *state };
-                *state = res * generator;
-                Some(res)
-            })
-            .collect()
-    };
-}
+//Pre-compute the set S defined in Fig.58 (i.e. GF16 from generator X)
+pub static GF16_FROM_GENERATOR: LazyLock<Vec<GF16>> = LazyLock::new(|| {
+    let generator = GF16::from(2);
+    (0..16)
+        .scan(GF16::from(1), |state, idx| {
+            let res = if idx == 15 { GF16::from(0) } else { *state };
+            *state = res * generator;
+            Some(res)
+        })
+        .collect()
+});

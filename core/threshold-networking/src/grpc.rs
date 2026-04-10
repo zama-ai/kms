@@ -18,7 +18,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
 use threshold_types::{
@@ -912,10 +912,8 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
-lazy_static::lazy_static! {
-    pub static ref NETWORK_RECEIVED_MEASUREMENT: DashMap<SessionId,usize> =
-        DashMap::new();
-}
+pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
+    LazyLock::new(DashMap::new);
 
 fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,

@@ -1,12 +1,11 @@
 use anyhow::anyhow;
 use itertools::EitherOrBoth::{Both, Left, Right};
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use std::{
     collections::HashMap,
     num::Wrapping,
     ops::{AddAssign, Mul, MulAssign, Neg, SubAssign},
-    sync::RwLock,
+    sync::{LazyLock, RwLock},
 };
 
 use crate::{
@@ -259,12 +258,12 @@ impl ResiduePolyF7Z64 {
     }
 }
 
-lazy_static! {
-    static ref EXCEPTIONAL_SET_STORE_7_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF7Z128>>> =
-        RwLock::new(HashMap::new());
-    static ref EXCEPTIONAL_SET_STORE_7_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF7Z64>>> =
-        RwLock::new(HashMap::new());
-}
+static EXCEPTIONAL_SET_STORE_7_128: LazyLock<
+    RwLock<HashMap<(usize, usize), Vec<ResiduePolyF7Z128>>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
+static EXCEPTIONAL_SET_STORE_7_64: LazyLock<
+    RwLock<HashMap<(usize, usize), Vec<ResiduePolyF7Z64>>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl MemoizedExceptionals for ResiduePolyF7Z64 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
@@ -321,23 +320,25 @@ where
         ResiduePolyF7::<Z>::reduce_mul(&res_coefs)
     }
 }
-lazy_static::lazy_static! {
-    static ref MONOMIALS_F7_Z64: Vec<ResiduePoly<Z64,7>> = (0..7)
+static MONOMIALS_F7_Z64: LazyLock<Vec<ResiduePoly<Z64, 7>>> = LazyLock::new(|| {
+    (0..7)
         .map(|i| {
             let mut coefs_i = [Z64::ZERO; 7];
             coefs_i[i] = Z64::ONE;
             ResiduePoly::from_array(coefs_i)
         })
-        .collect();
+        .collect()
+});
 
-    static ref MONOMIALS_F7_Z128: Vec<ResiduePoly<Z128,7>> = (0..7)
+static MONOMIALS_F7_Z128: LazyLock<Vec<ResiduePoly<Z128, 7>>> = LazyLock::new(|| {
+    (0..7)
         .map(|i| {
             let mut coefs_i = [Z128::ZERO; 7];
             coefs_i[i] = Z128::ONE;
             ResiduePoly::from_array(coefs_i)
         })
-        .collect();
-}
+        .collect()
+});
 
 impl Monomials for ResiduePoly<Z64, 7> {
     fn monomials() -> Vec<Self> {
