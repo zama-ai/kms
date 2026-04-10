@@ -2165,6 +2165,7 @@ async fn custodian_reencrypt(
                 "--custodian-role",
                 &custodian_index.to_string(),
                 "--operator-verf-key",
+                verf_path.to_str().unwrap(),
                 "--mpc-context-id",
                 &mpc_context_id.to_string(),
                 verf_path.to_str().unwrap(),
