@@ -470,6 +470,7 @@ const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidatio
     internal_cus_context_filename: Cow::Borrowed("internal_cus_context_handle"),
     state: 300,
     custodian_count: 5,
+    mpc_context_id: [7u8; 32],
 };
 
 // KMS test
@@ -477,6 +478,7 @@ const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalReco
     test_filename: Cow::Borrowed("internal_recovery_request"),
     amount: 10,
     state: 300,
+    mpc_context_id: [7u8; 32],
 };
 
 // KMS test
@@ -500,6 +502,7 @@ const INTERNAL_CUS_REC_OUT_TEST: InternalCustodianRecoveryOutputTest =
     InternalCustodianRecoveryOutputTest {
         test_filename: Cow::Borrowed("internal_custodian_recovery_output"),
         state: 43,
+        mpc_context_id: [7u8; 32],
     };
 
 // KMS test
