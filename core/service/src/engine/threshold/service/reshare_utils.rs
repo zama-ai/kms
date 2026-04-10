@@ -10,7 +10,9 @@ use crate::{
         Storage, StorageExt, StorageReader, StorageType,
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id,
-        s3::{ReadOnlyS3StorageGetter, build_anonymous_s3_client, find_region_from_s3_url},
+        s3::{
+            ReadOnlyS3StorageGetter, build_anonymous_s3_client, find_region_from_s3_url, split_url,
+        },
     },
 };
 use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
@@ -43,62 +45,6 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
                 write!(f, "VerifiedPublicMaterial::Compressed(...)")
             }
         }
-    }
-}
-
-fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
-    let Some(domain) = url.domain() else {
-        anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
-    };
-    let domain_parts = domain.split('.').collect::<Vec<&str>>();
-    if domain_parts.len() < 2 {
-        tracing::warn!(
-            "Cannot deduce the bucket name from url {:?}. Returning default bucket used in testing",
-            url
-        );
-        Ok("kms".to_owned())
-    } else {
-        Ok(domain_parts[0].to_owned())
-    }
-}
-
-/// Split an S3 URL into its base URL and bucket name.
-/// For example:
-/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
-/// https://s3.eu-west-1.amazonaws.com and zama-zws-dev-tkms-b6q87
-/// where the first part is the URL and the second part is the bucket name.
-///
-/// Code is adapted from
-/// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
-fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
-    // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
-    tracing::info!("Splitting S3 url: {}", s3_bucket_url);
-    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
-    let mut bucket = parsed_url_and_bucket
-        .path()
-        .trim_start_matches('/')
-        .to_owned();
-
-    if bucket.is_empty() {
-        tracing::warn!(
-            "Bucket is empty, attempting to deduce from domain {:?}",
-            parsed_url_and_bucket
-        );
-        // e.g BBBBBB.s3.eu-west-1.amazonaws.com, the bucket is part of the domain
-        bucket = bucket_from_domain(&parsed_url_and_bucket)?;
-        let url = s3_bucket_url
-            .replace(&(bucket.clone() + "."), "")
-            .trim_end_matches('/')
-            .to_owned();
-        tracing::info!(s3_bucket_url, url, bucket, "Bucket from domain");
-        Ok((url, bucket))
-    } else {
-        let url = s3_bucket_url
-            .replace(&bucket, "")
-            .trim_end_matches('/')
-            .to_owned();
-        tracing::info!(s3_bucket_url, url, bucket, "Parsed S3 url");
-        Ok((url, bucket))
     }
 }
 

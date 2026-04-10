@@ -8,7 +8,9 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
-use kms_lib::vault::storage::s3::{S3Storage, build_anonymous_s3_client, find_region_from_s3_url};
+use kms_lib::vault::storage::s3::{
+    S3Storage, build_anonymous_s3_client, find_region_from_s3_url, split_url,
+};
 use kms_lib::vault::storage::{StorageReader, StorageType};
 use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
 
@@ -85,14 +87,11 @@ pub(crate) async fn fetch_kms_verification_keys(
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
     for cur_core in &sim_conf.cores {
+        let (url, bucket) = split_url(&cur_core.s3_endpoint)?;
         let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
-        let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
-        let s3_storage = S3Storage::new(
-            s3_client,
-            cur_core.object_folder.clone(),
-            StorageType::PUB,
-            None,
-        )?;
+        // this is not an operation that is frequently used, so we can create a new s3 client each time
+        let s3_client = build_anonymous_s3_client(&url, region).await?;
+        let s3_storage = S3Storage::new(s3_client, bucket, StorageType::PUB, None)?; // TODO already included in bucket????
         let vk: PublicSigKey = s3_storage
             .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
             .await?;
@@ -109,14 +108,11 @@ pub(crate) async fn fetch_kms_signing_keys(
 ) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
     for cur_core in &sim_conf.cores {
+        let (url, bucket) = split_url(&cur_core.s3_endpoint)?;
         let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
-        let s3_client = build_anonymous_s3_client(&cur_core.s3_endpoint, region).await?;
-        let s3_storage = S3Storage::new(
-            s3_client,
-            cur_core.object_folder.clone(),
-            StorageType::PRIV,
-            None,
-        )?;
+        // this is not an operation that is frequently used, so we can create a new s3 client each time
+        let s3_client = build_anonymous_s3_client(&url, region).await?;
+        let s3_storage = S3Storage::new(s3_client, bucket, StorageType::PUB, None)?; // TODO already included in bucket????
         let sk: PrivateSigKey = s3_storage
             .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
             .await?;
