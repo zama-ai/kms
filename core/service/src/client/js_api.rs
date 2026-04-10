@@ -547,7 +547,7 @@ pub fn process_user_decryption_resp_from_js(
         threshold,
         verify,
     );
-    // Need to convert to BE for JS, evrerything is internally represented as LE
+    // Need to convert to BE for JS, everything is internally represented as LE
     match le_res {
         Ok(le_res) => Ok(le_res
             .into_iter()
