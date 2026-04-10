@@ -42,11 +42,11 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_5_1::safe_serialization::safe_serialize;
-use tfhe_1_5_1::shortint::parameters::{
+use tfhe_1_5_4::safe_serialization::safe_serialize;
+use tfhe_1_5_4::shortint::parameters::{
     LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
 };
-use tfhe_1_5_1::{
+use tfhe_1_5_4::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -172,7 +172,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_4::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -185,7 +185,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_4::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -1160,6 +1160,7 @@ impl KmsV0_13_10 {
             &public_key_set,
             decompression_key,
             &dummy_domain(),
+            Vec::new(), // empty extra_info
         )
         .unwrap();
 

@@ -168,7 +168,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID.",
                 mpc_context_id_str
             ));
-            // TODO @reviewer is this actually correct? I think we use bc2wrap for publicSigKey type? Not sure how it even compiles since PublicSigKey does not implement Unversionize
             let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
