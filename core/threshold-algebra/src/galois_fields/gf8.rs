@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::poly::lagrange_polynomials;
 use crate::structure_traits::RingWithExceptionalSequence;
+use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
 use error_utils::anyhow_error_and_log;
 
 use crate::{
@@ -89,7 +89,7 @@ impl RingWithExceptionalSequence for GF8 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<HashMap<Vec<GF8>, Vec<Poly<GF8>>>>> =
+static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF8>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF8 {

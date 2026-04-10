@@ -8,6 +8,7 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
+use crate::galois_rings::ExceptionalSetMap;
 use crate::{
     base_ring::{Z64, Z128},
     bivariate::compute_powers,
@@ -252,12 +253,10 @@ impl ResiduePolyF6Z64 {
     }
 }
 
-static EXCEPTIONAL_SET_STORE_6_128: LazyLock<
-    RwLock<HashMap<(usize, usize), Vec<ResiduePolyF6Z128>>>,
-> = LazyLock::new(|| RwLock::new(HashMap::new()));
-static EXCEPTIONAL_SET_STORE_6_64: LazyLock<
-    RwLock<HashMap<(usize, usize), Vec<ResiduePolyF6Z64>>>,
-> = LazyLock::new(|| RwLock::new(HashMap::new()));
+static EXCEPTIONAL_SET_STORE_6_128: LazyLock<RwLock<ExceptionalSetMap<ResiduePolyF6Z128>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+static EXCEPTIONAL_SET_STORE_6_64: LazyLock<RwLock<ExceptionalSetMap<ResiduePolyF6Z64>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl MemoizedExceptionals for ResiduePolyF6Z64 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {

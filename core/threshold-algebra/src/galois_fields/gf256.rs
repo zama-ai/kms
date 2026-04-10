@@ -1,4 +1,4 @@
-use crate::poly::lagrange_polynomials;
+use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
 use error_utils::anyhow_error_and_log;
 use std::collections::HashMap;
 
@@ -87,7 +87,7 @@ impl RingWithExceptionalSequence for GF256 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<HashMap<Vec<GF256>, Vec<Poly<GF256>>>>> =
+static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF256>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF256 {

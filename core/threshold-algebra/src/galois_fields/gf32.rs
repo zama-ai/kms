@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::poly::lagrange_polynomials;
+use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
 use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
@@ -87,7 +87,7 @@ impl RingWithExceptionalSequence for GF32 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<HashMap<Vec<GF32>, Vec<Poly<GF32>>>>> =
+static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF32>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF32 {
