@@ -182,7 +182,7 @@ where
     Ok((pk, PrivateBgvKeySet::from_eval_domain(sk_ntt_mod_q1)))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use std::time::Duration;
 
