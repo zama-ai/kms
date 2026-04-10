@@ -775,6 +775,7 @@ pub struct RecoveryValidationMaterialTest {
     pub internal_cus_context_filename: Cow<'static, str>,
     pub state: u64,
     pub custodian_count: usize,
+    pub mpc_context_id: [u8; 32],
 }
 
 impl TestType for RecoveryValidationMaterialTest {
