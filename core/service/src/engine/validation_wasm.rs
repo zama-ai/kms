@@ -13,8 +13,6 @@ use crate::{
     client::user_decryption_wasm::{ParsedUserDecryptionRequest, compute_link},
     cryptography::{
         compute_user_decrypt_message,
-        encryption::UnifiedPublicEncKey,
-        internal_crypto_types::LegacySerialization,
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
@@ -82,12 +80,8 @@ pub(crate) fn check_ext_user_decryption_signature(
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
-    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
-    let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
-        anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
-    })?;
     let extra_data = request.extra_data();
-    let message = compute_user_decrypt_message(payload, &unified_pk, extra_data)?;
+    let message = compute_user_decrypt_message(payload, request.enc_key(), extra_data)?;
     tracing::debug!(
         "Verifying external user decryption signature for UserDecryptResponseVerification"
     );
@@ -593,7 +587,7 @@ mod tests {
             &sk0,
             &payload,
             &domain,
-            &eph_client_pk,
+            request.enc_key(),
             request.extra_data(),
         )
         .unwrap();
@@ -621,7 +615,7 @@ mod tests {
                 &sk_bad,
                 &payload,
                 &domain,
-                &eph_client_pk,
+                request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -747,7 +741,7 @@ mod tests {
             &sk0,
             &pivot_resp,
             &dummy_domain,
-            &eph_client_pk,
+            client_request.enc_key(),
             &extra_data,
         )
         .unwrap();
@@ -1024,7 +1018,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -1053,7 +1047,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -1082,7 +1076,7 @@ mod tests {
                 &sk3,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -1111,7 +1105,7 @@ mod tests {
                 &sk4,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -1249,7 +1243,7 @@ mod tests {
                     &sk3,
                     &payload,
                     &dummy_domain,
-                    &eph_client_pk,
+                    client_request.enc_key(),
                     &[],
                 )
                 .unwrap();
@@ -1399,7 +1393,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
@@ -1428,7 +1422,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                client_request.enc_key(),
                 &[],
             )
             .unwrap();
