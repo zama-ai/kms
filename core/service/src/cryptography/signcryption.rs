@@ -92,15 +92,7 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
-)]
-pub enum UnifiedSigncryptionKeyOwnedVersioned {
-    V0(UnifiedSigncryptionKeyOwned),
-}
-
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
-#[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
     pub receiver_enc_key: UnifiedPublicEncKey,
