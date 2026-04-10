@@ -3,7 +3,7 @@
 //!
 //! Measures wall-clock time for:
 //!   - CRS generation
-//!   - Proof generation  (CRS and commits pre-computed)
+//!   - Proof generation  (CRS pre-computed)
 //!   - Proof verification in TwoSteps mode (proof pre-computed)
 //!   - Proof verification in Batched mode  (proof pre-computed)
 //!
@@ -22,15 +22,7 @@ use threshold_fhe::zk_utils::{
 };
 use utilities::ALL_PARAMS;
 
-// ---------------------------------------------------------------------------
-// Individual benchmark functions
-// ---------------------------------------------------------------------------
-
 /// Benchmark CRS generation.
-///
-/// A fresh deterministic RNG is re-created inside every iteration so that
-/// criterion measures only the cost of `gen_crs_from_params` itself, not RNG
-/// construction (which is negligible compared to CRS generation).
 fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     let pke_params = pke_params_from_dkg(params);
 
@@ -43,7 +35,6 @@ fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
 }
 
 /// Benchmark proof generation.
-///
 /// The CRS and commits are pre-computed outside the timed region.
 fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     let crs = gen_crs(params);
@@ -75,7 +66,6 @@ fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) 
 }
 
 /// Benchmark proof verification in TwoSteps pairing mode.
-///
 /// The CRS, commits, and proof are all pre-computed outside the timed region.
 fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     let crs = gen_crs(params);
@@ -114,7 +104,6 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 }
 
 /// Benchmark proof verification in Batched pairing mode.
-///
 /// The CRS, commits, and proof are all pre-computed outside the timed region.
 fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     let crs = gen_crs(params);
@@ -147,10 +136,6 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
         });
     });
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 fn main() {
     for (params_name, params) in ALL_PARAMS {

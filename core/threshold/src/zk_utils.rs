@@ -237,10 +237,7 @@ impl ZkTestcase {
     }
 }
 
-/// Generate a CRS for `params` using a deterministic, domain-separated RNG.
-///
-/// The same CRS is produced on every call for a given `params`; this is
-/// required by the KAT and convenient for benchmarks (same work each run).
+/// Deterministically generates a CRS for `params`.
 pub fn gen_crs(params: DKGParams) -> PublicParams<Bls12_446> {
     let pke_params = pke_params_from_dkg(params);
     let mut rng = seeded_rng(*b"ZK_CRS__");
@@ -248,9 +245,6 @@ pub fn gen_crs(params: DKGParams) -> PublicParams<Bls12_446> {
 }
 
 /// Generate a CRS from pre-computed [`PkeZkParams`] and a caller-supplied RNG.
-///
-/// Useful when you want to control the source of randomness (e.g. fresh
-/// entropy in production, a deterministic seed in KAT / benchmarks).
 pub fn gen_crs_from_params(
     pke_params: &PkeZkParams,
     rng: &mut RandomGenerator<SoftwareRandomGenerator>,
@@ -266,14 +260,7 @@ pub fn gen_crs_from_params(
     )
 }
 
-// ---------------------------------------------------------------------------
-// Proof input preparation
-// ---------------------------------------------------------------------------
-
 /// Build the public commit, private commit, and metadata needed for proving.
-///
-/// Uses a deterministic RNG so that the same inputs are reproduced on every
-/// call (required for KAT reproducibility; harmless in benchmarks).
 pub fn gen_proof_inputs(
     crs: &PublicParams<Bls12_446>,
     params: DKGParams,
@@ -303,9 +290,6 @@ pub fn gen_proof_inputs(
 }
 
 /// Generate a ZK proof.
-///
-/// Uses a deterministic proof-seed so the same proof is produced on every call
-/// for a given set of inputs (required for KAT; harmless in benchmarks).
 pub fn gen_proof(
     crs: &PublicParams<Bls12_446>,
     public_commit: &PublicCommit<Bls12_446>,
@@ -327,8 +311,6 @@ pub fn gen_proof(
 }
 
 /// Verify `proof` using the two-step pairing mode.
-///
-/// Returns `Ok(())` on success, `Err(…)` on failure.
 #[allow(clippy::result_unit_err)]
 pub fn verify_two_steps(
     proof: &ProofV2<Bls12_446>,
@@ -345,8 +327,6 @@ pub fn verify_two_steps(
 }
 
 /// Verify `proof` using the batched pairing mode.
-///
-/// Returns `Ok(())` on success, `Err(…)` on failure.
 #[allow(clippy::result_unit_err)]
 pub fn verify_batched(
     proof: &ProofV2<Bls12_446>,
@@ -364,9 +344,6 @@ pub fn verify_batched(
 
 /// Verify `proof` in both [`VerificationPairingMode::TwoSteps`] and
 /// [`VerificationPairingMode::Batched`] modes.
-///
-/// Panics with a descriptive message if either mode fails.  Intended for use
-/// in the KAT binary where a failure should be immediately visible.
 pub fn run_verify(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,

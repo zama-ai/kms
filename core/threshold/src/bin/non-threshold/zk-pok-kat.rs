@@ -16,10 +16,7 @@ struct KatCli {
     path_to_kat_folder: String,
 }
 
-// ---------------------------------------------------------------------------
 // KAT file I/O helpers
-// ---------------------------------------------------------------------------
-
 fn write_or_assert(path: &Path, bytes: &[u8], generate_kat: bool, label: &str) {
     if generate_kat {
         std::fs::write(path, bytes).unwrap();
@@ -55,10 +52,6 @@ fn read_value<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> T {
     }))
     .unwrap()
 }
-
-// ---------------------------------------------------------------------------
-// KAT-specific wrappers (add optional save / KAT-file comparison)
-// ---------------------------------------------------------------------------
 
 fn generate_and_save_crs(
     params: DKGParams,
@@ -103,10 +96,6 @@ fn verify_proof(proof: &ProofV2<Bls12_446>, crs: &PublicParams<Bls12_446>, param
     run_verify(proof, crs, &public_commit, &metadata);
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
 fn main() {
     let args = KatCli::parse();
     println!("STARTING TFHE ZK POK KAT WITH {:?}", args);
@@ -121,9 +110,7 @@ fn main() {
         );
     }
 
-    // Run KATs with NIST_PARAMS_P32_SNS_FGLWE
-    use threshold_execution::tfhe_internals::parameters::NIST_PARAMS_P32_SNS_FGLWE;
-    let params = NIST_PARAMS_P32_SNS_FGLWE;
+    let params = threshold_execution::tfhe_internals::parameters::NIST_PARAMS_P32_SNS_FGLWE;
 
     let crs = generate_and_save_crs(params, base, args.generate_kat);
 

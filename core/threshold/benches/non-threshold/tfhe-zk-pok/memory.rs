@@ -2,7 +2,7 @@
 //!
 //! Measures peak heap allocation for:
 //!   - CRS generation
-//!   - Proof generation  (CRS and commits pre-computed)
+//!   - Proof generation  (CRS pre-computed)
 //!   - Proof verification in TwoSteps mode (proof pre-computed)
 //!   - Proof verification in Batched mode  (proof pre-computed)
 //!
@@ -26,16 +26,8 @@ use threshold_fhe::zk_utils::{
     pke_params_from_dkg, seeded_rng, verify_batched, verify_two_steps,
 };
 
-// ---------------------------------------------------------------------------
-// Global allocator required by peak_alloc
-// ---------------------------------------------------------------------------
-
 #[global_allocator]
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
@@ -43,9 +35,7 @@ fn main() {
     for (params_name, dkg_params) in ALL_PARAMS {
         let pke_params: PkeZkParams = pke_params_from_dkg(dkg_params);
 
-        // ------------------------------------------------------------------
         // CRS generation
-        // ------------------------------------------------------------------
         {
             let bench_name = format!("non-threshold_zk-pok_{params_name}_crs_gen_memory");
             // Input: PkeZkParams (Copy).  A fresh deterministic RNG is created
@@ -61,16 +51,13 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Proof generation - Compute load: Proof
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_proof_gen_load_proof_memory");
             let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
             let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            // Pack all pre-computed inputs into a single tuple so that
-            // `bench_memory` can hand a `&mut` reference to the closure.
+
             let mut proof_inputs: (
                 PublicParams<Bls12_446>,
                 PublicCommit<Bls12_446>,
@@ -92,16 +79,13 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Proof generation - Compute load: Verify
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_proof_gen_load_verify_memory");
             let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
             let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            // Pack all pre-computed inputs into a single tuple so that
-            // `bench_memory` can hand a `&mut` reference to the closure.
+
             let mut proof_inputs: (
                 PublicParams<Bls12_446>,
                 PublicCommit<Bls12_446>,
@@ -123,9 +107,7 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Verification – TwoSteps mode - Compute load: Proof
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_two_steps_load_proof_memory");
@@ -158,9 +140,7 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Verification – TwoSteps mode - Compute load: Proof
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_two_steps_load_verify_memory");
@@ -193,9 +173,7 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Verification – Batched mode - Compute load: Proof
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_batched_load_proof_memory");
@@ -228,9 +206,7 @@ fn main() {
             );
         }
 
-        // ------------------------------------------------------------------
         // Verification – Batched mode - Compute load: Verify
-        // ------------------------------------------------------------------
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_batched_load_verify_memory");
