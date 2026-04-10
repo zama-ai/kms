@@ -879,6 +879,68 @@ impl TestType for InternalCustodianSetupMessageTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedPublicEncKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedPublicEncKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedPublicEncKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedPrivateEncKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedPrivateEncKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedPrivateEncKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PkeSchemeTypeTest {
+    pub test_filename: Cow<'static, str>,
+}
+
+impl TestType for PkeSchemeTypeTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PkeSchemeType".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -907,6 +969,9 @@ pub enum TestMetadataKMS {
     InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),
     InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
     OperatorBackupOutput(OperatorBackupOutputTest),
+    UnifiedPublicEncKey(UnifiedPublicEncKeyTest),
+    UnifiedPrivateEncKey(UnifiedPrivateEncKeyTest),
+    PkeSchemeType(PkeSchemeTypeTest),
 }
 
 /// KMS-grpc metadata

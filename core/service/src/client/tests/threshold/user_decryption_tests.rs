@@ -58,7 +58,6 @@ async fn test_user_decryption_threshold_nightly(
         TEST_PARAM,
         key_id,
         false,
-        false,
         pt,
         EncryptionConfig {
             compression: true,
@@ -95,7 +94,6 @@ async fn test_user_decryption_threshold(
         TEST_PARAM,
         key_id,
         false,
-        false,
         pt,
         EncryptionConfig {
             compression: true,
@@ -125,7 +123,6 @@ async fn test_user_decryption_threshold_malicious(
         TEST_PARAM,
         key_id,
         false,
-        false,
         pt,
         EncryptionConfig {
             compression: true,
@@ -149,7 +146,6 @@ async fn test_user_decryption_threshold_malicious_failure() {
     user_decryption_threshold(
         TEST_PARAM,
         &TEST_THRESHOLD_KEY_ID_4P,
-        false,
         false,
         TestingPlaintext::U32(u32::MAX),
         EncryptionConfig {
@@ -179,7 +175,6 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
     user_decryption_threshold(
         TEST_PARAM,
         &TEST_THRESHOLD_KEY_ID_4P,
-        false,
         false,
         TestingPlaintext::U16(u16::MAX),
         EncryptionConfig {
@@ -216,38 +211,6 @@ async fn test_user_decryption_threshold_precompute_sns(
         TEST_PARAM,
         key_id,
         false,
-        false,
-        TestingPlaintext::U8(42),
-        EncryptionConfig {
-            compression: false,
-            precompute_sns: true,
-        },
-        4,
-        secure,
-        amount_parties,
-        None,
-        None,
-        Some(decryption_mode),
-    )
-    .await;
-}
-
-#[rstest::rstest]
-#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_threshold_precompute_sns_legacy(
-    #[case] secure: bool,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-    #[case] decryption_mode: DecryptionMode,
-) {
-    user_decryption_threshold(
-        TEST_PARAM,
-        key_id,
-        false,
-        true,
         TestingPlaintext::U8(42),
         EncryptionConfig {
             compression: false,
@@ -277,37 +240,6 @@ async fn test_user_decryption_threshold_and_write_transcript(
     user_decryption_threshold(
         TEST_PARAM,
         key_id,
-        true,
-        false,
-        TestingPlaintext::U8(42),
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: false,
-        },
-        1,
-        secure,
-        amount_parties,
-        None,
-        None,
-        None,
-    )
-    .await;
-}
-
-#[cfg(feature = "wasm_tests")]
-#[rstest::rstest]
-#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_threshold_and_write_transcript_legacy(
-    #[case] secure: bool,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-) {
-    user_decryption_threshold(
-        TEST_PARAM,
-        key_id,
-        true,
         true,
         TestingPlaintext::U8(42),
         EncryptionConfig {
@@ -340,7 +272,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
         DEFAULT_PARAM,
         key_id,
         true,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -373,7 +304,6 @@ async fn default_user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -404,7 +334,6 @@ async fn default_user_decryption_threshold_precompute_sns(
     user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
-        false,
         false,
         msg,
         EncryptionConfig {
@@ -438,7 +367,6 @@ async fn default_user_decryption_threshold_with_crash(
         DEFAULT_PARAM,
         key_id,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -459,14 +387,11 @@ async fn default_user_decryption_threshold_with_crash(
     .await;
 }
 
-/// Note that the `legacy` argument is used to determine whether to use the legacy
-/// user decryption request, created using [Client::user_decryption_request_legacy] or the current one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_threshold(
     dkg_params: DKGParams,
     key_id: &RequestId,
     _write_transcript: bool,
-    legacy: bool,
     msg: TestingPlaintext,
     enc_config: EncryptionConfig,
     parallelism: usize,
@@ -500,11 +425,6 @@ pub(crate) async fn user_decryption_threshold(
                 ciphertext_format: ct_format.into(),
                 external_handle: j.to_be_bytes().to_vec(),
             }];
-            let encryption_scheme = if legacy {
-                PkeSchemeType::MlKem1024
-            } else {
-                PkeSchemeType::MlKem512
-            };
             let (req, enc_pk, enc_sk) = internal_client
                 .user_decryption_request(
                     &dummy_domain(),
@@ -513,7 +433,7 @@ pub(crate) async fn user_decryption_threshold(
                     &key_id.to_string().try_into().unwrap(),
                     None,
                     None,
-                    encryption_scheme,
+                    PkeSchemeType::MlKem512,
                     &[],
                 )
                 .unwrap();
@@ -646,13 +566,7 @@ pub(crate) async fn user_decryption_threshold(
                 agg_resp,
             };
             let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                if legacy {
-                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
-                } else {
-                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
-                }
-            } else if legacy {
-                crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
+                crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
             } else {
                 crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
             };

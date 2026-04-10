@@ -670,7 +670,7 @@ message OperatorBackupOutput {
 
 enum PkeSchemeType {
   MLKEM512 = 0;
-  MLKEM1024 = 1;
+  reserved 1; // was MLKEM1024, removed — no longer supported
 }
 
 enum SigningSchemeType {

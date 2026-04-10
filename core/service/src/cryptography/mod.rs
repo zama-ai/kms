@@ -1,14 +1,11 @@
 #[cfg(feature = "non-wasm")]
 pub mod attestation;
 pub mod decompression;
+pub mod encryption;
 pub mod error;
 pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;
 pub mod signatures;
-// Allow our deprecated modules for now as we need to be backwards compatible
-#[allow(deprecated)]
-pub mod encryption;
-#[allow(deprecated)]
 pub mod signcryption;
 
 #[cfg(any(feature = "non-wasm", test))]

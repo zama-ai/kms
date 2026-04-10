@@ -29,7 +29,6 @@ async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) {
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         false,
-        false,
         TestingPlaintext::U8(48),
         EncryptionConfig {
             compression: true,
@@ -52,30 +51,6 @@ async fn test_user_decryption_centralized_precompute_sns(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         false,
-        false,
-        TestingPlaintext::U8(48),
-        EncryptionConfig {
-            compression,
-            precompute_sns: true,
-        },
-        4,
-        secure,
-    )
-    .await;
-}
-
-#[rstest::rstest]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_centralized_precompute_sns_legacy(
-    #[values(true, false)] secure: bool,
-    #[values(true, false)] compression: bool,
-) {
-    user_decryption_centralized(
-        &TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        false,
-        true,
         TestingPlaintext::U8(48),
         EncryptionConfig {
             compression,
@@ -95,27 +70,6 @@ async fn test_user_decryption_centralized_and_write_transcript() {
     user_decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
-        true,
-        false,
-        TestingPlaintext::U8(48),
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: true,
-        },
-        1, // wasm tests are single-threaded
-        true,
-    )
-    .await;
-}
-
-#[cfg(feature = "wasm_tests")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn test_user_decryption_centralized_and_write_transcript_legacy() {
-    user_decryption_centralized(
-        &TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        true,
         true,
         TestingPlaintext::U8(48),
         EncryptionConfig {
@@ -138,7 +92,6 @@ async fn default_user_decryption_centralized_and_write_transcript() {
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         true,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -161,7 +114,6 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -183,7 +135,6 @@ async fn default_user_decryption_centralized_no_compression(#[values(true, false
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
-        false,
         false,
         msg,
         EncryptionConfig {
@@ -210,7 +161,6 @@ async fn default_user_decryption_centralized_precompute_sns(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression,
@@ -222,14 +172,11 @@ async fn default_user_decryption_centralized_precompute_sns(
     .await;
 }
 
-/// Note that the `legacy` argument is used to determine whether to use the legacy
-/// user decryption request, i.e using MlKem1024 and bincode2 serialization.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
     _write_transcript: bool,
-    legacy: bool,
     msg: TestingPlaintext,
     enc_config: EncryptionConfig,
     parallelism: usize,
@@ -262,36 +209,18 @@ pub(crate) async fn user_decryption_centralized(
             }];
             let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
 
-            // This is the legacy version of the user decryption request
-            // where the encryption key is MlKem1024 serialized using bincode2.
-            // The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
-            if legacy {
-                internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        key_id,
-                        None,
-                        None,
-                        PkeSchemeType::MlKem1024,
-                        &[],
-                    )
-                    .unwrap()
-            } else {
-                internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        key_id,
-                        None,
-                        None,
-                        PkeSchemeType::MlKem512,
-                        &[],
-                    )
-                    .unwrap()
-            }
+            internal_client
+                .user_decryption_request(
+                    &dummy_domain(),
+                    typed_ciphertexts,
+                    &request_id,
+                    key_id,
+                    None,
+                    None,
+                    PkeSchemeType::MlKem512,
+                    &[],
+                )
+                .unwrap()
         })
         .collect();
 
@@ -399,13 +328,7 @@ pub(crate) async fn user_decryption_centralized(
             };
 
             let path_prefix = if *dkg_params != PARAMS_TEST_BK_SNS {
-                if legacy {
-                    crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH
-                } else {
-                    crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
-                }
-            } else if legacy {
-                crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH
+                crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
             } else {
                 crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
             };

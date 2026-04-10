@@ -11,11 +11,12 @@ use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
-    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PkeSchemeTypeTest,
+    PrivateSigKeyTest, PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPrivateEncKeyTest,
+    UnifiedPublicEncKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -39,7 +40,10 @@ use kms_lib::{
         },
     },
     cryptography::{
-        encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
+        encryption::{
+            Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        },
         hybrid_ml_kem::HybridKemCt,
         signatures::{
             PrivateSigKey, PublicSigKey, SigningSchemeType, compute_eip712_signature, gen_sig_keys,
@@ -1104,6 +1108,65 @@ fn test_operator_backup_output(
     }
 }
 
+fn test_unified_public_enc_key(
+    dir: &Path,
+    test: &UnifiedPublicEncKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: UnifiedPublicEncKey = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_, expected) = encryption.keygen().unwrap();
+
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid UnifiedPublicEncKey:\n Expected:\n{expected:?}\nGot:\n{original:?}"),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_unified_private_enc_key(
+    dir: &Path,
+    test: &UnifiedPrivateEncKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: UnifiedPrivateEncKey = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (expected, _) = encryption.keygen().unwrap();
+
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid UnifiedPrivateEncKey:\n Expected:\n{expected:?}\nGot:\n{original:?}"),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_pke_scheme_type(
+    dir: &Path,
+    test: &PkeSchemeTypeTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: PkeSchemeType = load_and_unversionize(dir, test, format)?;
+
+    if original != PkeSchemeType::MlKem512 {
+        Err(test.failure(
+            format!("Invalid PkeSchemeType:\n Expected: MlKem512\nGot:\n{original:?}"),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1190,6 +1253,15 @@ impl TestedModule for KMS {
             }
             Self::Metadata::OperatorBackupOutput(test) => {
                 test_operator_backup_output(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedPublicEncKey(test) => {
+                test_unified_public_enc_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedPrivateEncKey(test) => {
+                test_unified_private_enc_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PkeSchemeType(test) => {
+                test_pke_scheme_type(test_dir.as_ref(), test, format).into()
             }
         }
     }

@@ -4,9 +4,9 @@ use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to
 use crate::engine::utils::MetricedError;
 use crate::{
     anyhow_error_and_log,
+    consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::UnifiedPublicEncKey,
-        internal_crypto_types::LegacySerialization,
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
@@ -261,9 +261,11 @@ fn unpack_user_decrypt_req(
     };
 
     let (link, _) = req.compute_link_checked()?;
-    // Deserialize to validate the enc_key bytes, but don't return the typed key —
-    // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
-    let _client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
+    let _client_enc_key = tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+        std::io::Cursor::new(&req.enc_key),
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .map_err(|e| {
         Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
             "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
         ))

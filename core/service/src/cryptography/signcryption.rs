@@ -453,10 +453,6 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
     };
     let to_sign = [msg.as_ref(), signcrypt_key.receiver_id, &serialized_enc_key].concat();
     let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
@@ -484,9 +480,6 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
     let ciphertext = match &signcrypt_key.receiver_enc_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
             hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
-        }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            hybrid_ml_kem::enc::<ml_kem::MlKem1024, _>(rng, &to_encrypt, &public_enc_key.0)
         }
     }?;
     // LEGACY: approach to serialization
@@ -601,9 +594,6 @@ fn inner_unsigncrypt(
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
         }
-        UnifiedPrivateEncKey::MlKem1024(dec_key) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
-        }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
     check_format_and_signature(dsep, msg.clone(), &sig, unsign_key)?;
@@ -661,10 +651,6 @@ fn check_format_and_signature(
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
     };
     let msg_signed = [
         dsep.to_vec(),
@@ -698,9 +684,6 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let decrypted_plaintext = match dec_key {
         UnifiedPrivateEncKey::MlKem512(dk) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &dk.0)?
-        }
-        UnifiedPrivateEncKey::MlKem1024(dk) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.clone(), &dk.0)?
         }
     };
 
@@ -841,18 +824,6 @@ mod tests {
             let mut cipher = correct_cipher.clone();
             cipher.payload[0] ^= 1;
 
-            assert!(
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-                    .is_err()
-            );
-        }
-
-        // wrong scheme
-        {
-            let mut cipher = correct_cipher.clone();
-            cipher.pke_type = PkeSchemeType::MlKem1024;
             assert!(
                 client_signcryption_keys
                     .unsigncryption_key

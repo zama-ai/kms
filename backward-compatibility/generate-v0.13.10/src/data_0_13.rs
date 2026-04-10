@@ -16,7 +16,7 @@ use kms_0_13_10::backup::{
 };
 use kms_0_13_10::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_13_10::cryptography::{
-    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
+    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
     signcryption::{
@@ -95,8 +95,10 @@ use backward_compatibility::{
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
     TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    UnifiedCipherTest, UnifiedPrivateEncKeyTest, UnifiedPublicEncKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, PkeSchemeTypeTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
     KMS_MODULE_NAME,
 };
 
@@ -403,6 +405,23 @@ const BACKUP_CIPHERTEXT_TEST: BackupCiphertextTest = BackupCiphertextTest {
     test_filename: Cow::Borrowed("backup_ciphertext"),
     unified_cipher_filename: Cow::Borrowed("unified_ciphertext_handle"),
     state: 200,
+};
+
+// KMS test
+const UNIFIED_PUBLIC_ENC_KEY_TEST: UnifiedPublicEncKeyTest = UnifiedPublicEncKeyTest {
+    test_filename: Cow::Borrowed("unified_public_enc_key"),
+    state: 456,
+};
+
+// KMS test
+const UNIFIED_PRIVATE_ENC_KEY_TEST: UnifiedPrivateEncKeyTest = UnifiedPrivateEncKeyTest {
+    test_filename: Cow::Borrowed("unified_private_enc_key"),
+    state: 456,
+};
+
+// KMS test
+const PKE_SCHEME_TYPE_TEST: PkeSchemeTypeTest = PkeSchemeTypeTest {
+    test_filename: Cow::Borrowed("pke_scheme_type"),
 };
 
 // KMS test
@@ -1344,6 +1363,34 @@ impl KmsV0_13_10 {
         );
         TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
+
+    fn gen_unified_public_enc_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_ENC_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_, enc_key) = encryption.keygen().unwrap();
+
+        store_versioned_test!(&enc_key, dir, &UNIFIED_PUBLIC_ENC_KEY_TEST.test_filename);
+        TestMetadataKMS::UnifiedPublicEncKey(UNIFIED_PUBLIC_ENC_KEY_TEST)
+    }
+
+    fn gen_unified_private_enc_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_PRIVATE_ENC_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (dec_key, _) = encryption.keygen().unwrap();
+
+        store_versioned_test!(&dec_key, dir, &UNIFIED_PRIVATE_ENC_KEY_TEST.test_filename);
+        TestMetadataKMS::UnifiedPrivateEncKey(UNIFIED_PRIVATE_ENC_KEY_TEST)
+    }
+
+    fn gen_pke_scheme_type(dir: &PathBuf) -> TestMetadataKMS {
+        let pke_scheme_type = PkeSchemeType::MlKem512;
+        store_versioned_test!(
+            &pke_scheme_type,
+            dir,
+            &PKE_SCHEME_TYPE_TEST.test_filename
+        );
+        TestMetadataKMS::PkeSchemeType(PKE_SCHEME_TYPE_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_13_10;
@@ -1584,6 +1631,9 @@ impl KMSCoreVersion for V0_13_10 {
             KmsV0_13_10::gen_threshold_fhe_keys(&dir),
             KmsV0_13_10::gen_internal_cus_rec_out(&dir),
             KmsV0_13_10::gen_operator_backup_output(&dir),
+            KmsV0_13_10::gen_unified_public_enc_key(&dir),
+            KmsV0_13_10::gen_unified_private_enc_key(&dir),
+            KmsV0_13_10::gen_pke_scheme_type(&dir),
         ]
     }
 

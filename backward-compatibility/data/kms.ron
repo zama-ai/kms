@@ -1103,4 +1103,27 @@
             seed: 42,
         )),
     ),
+    (
+        kms_core_version_min: "0.13.10",
+        kms_core_module: "kms",
+        metadata: UnifiedPublicEncKey((
+            test_filename: "unified_public_enc_key",
+            state: 456,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.10",
+        kms_core_module: "kms",
+        metadata: UnifiedPrivateEncKey((
+            test_filename: "unified_private_enc_key",
+            state: 456,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.10",
+        kms_core_module: "kms",
+        metadata: PkeSchemeType((
+            test_filename: "pke_scheme_type",
+        )),
+    ),
 ]
