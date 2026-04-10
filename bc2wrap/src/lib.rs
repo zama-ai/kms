@@ -7,12 +7,22 @@
 // (i.e. matches the MAX_EN_DECODE_MESSAGE_SIZE constant in core/threshold)
 pub const BINCODE_SMALL_DESER_SIZE_LIMIT: usize = 1024 * 1024 * 1024 * 2;
 
-/// wrapper around bincode::serde::encode_to_vec that uses the legacy config
+/// Wrapper around bincode::serde::encode_to_vec that uses the legacy config
 /// (using bincode v2 underneath)
 pub fn serialize<T: serde::Serialize + ?Sized>(
     value: &T,
 ) -> Result<Vec<u8>, bincode::error::EncodeError> {
     bincode::serde::encode_to_vec(value, bincode::config::legacy())
+}
+
+/// Wrapper around [`bincode::serde::encode_into_std_write`] that uses the legacy config
+/// (using bincode v2 underneath)
+pub fn serialize_into<T, W>(value: &T, w: &mut W) -> Result<usize, bincode::error::EncodeError>
+where
+    T: serde::Serialize + ?Sized,
+    W: std::io::Write,
+{
+    bincode::serde::encode_into_std_write(value, w, bincode::config::legacy())
 }
 
 /// wrapper around bincode::serde::decode_from_slice that discards the length info and uses the legacy config
