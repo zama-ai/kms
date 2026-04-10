@@ -27,11 +27,10 @@ pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
 
 /// The default maximum interval between retries (Cap at 60s intervals)
-pub static MAX_INTERVAL: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(60));
+pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The default maximum elapsed time before giving up on retrying
-pub(crate) static MAX_ELAPSED_TIME: LazyLock<Option<Duration>> =
-    LazyLock::new(|| Some(Duration::from_secs(60)));
+pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(60);
 
 /// maximum number of seconds that a party waits for a network message during a protocol
 pub(crate) static NETWORK_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(5));
@@ -55,5 +54,5 @@ pub static NETWORK_TIMEOUT_ASYNC: LazyLock<Duration> =
 pub(crate) static NETWORK_TIMEOUT_BK_SNS: LazyLock<Duration> =
     LazyLock::new(|| Duration::from_secs(1200));
 
-// max message size for decoding - enconding message on gRPC protocol
+// max message size for decoding - encoding message on gRPC protocol
 pub static MAX_EN_DECODE_MESSAGE_SIZE: LazyLock<usize> = LazyLock::new(|| 2 * 1024 * 1024 * 1024);

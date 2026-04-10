@@ -88,7 +88,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.max_interval)
         } else {
-            *MAX_INTERVAL
+            MAX_INTERVAL
         }
     }
 
@@ -96,7 +96,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             conf.max_elapsed_time.map(Duration::from_secs)
         } else {
-            *MAX_ELAPSED_TIME
+            Some(MAX_ELAPSED_TIME)
         }
     }
 
