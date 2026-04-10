@@ -216,13 +216,12 @@ where
     lhs.iter().zip_eq(rhs).map(|(x, y)| y * x).collect_vec()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use super::*;
-    use algebra::structure_traits::Sample;
+    use algebra::structure_traits::{Sample, Zero};
 
     use aes_prng::AesRng;
-    use algebra::structure_traits::Zero;
     use rand::SeedableRng;
 
     fn naive_mul<T>(a: &[T], b: &[T], n: usize) -> Vec<T>
