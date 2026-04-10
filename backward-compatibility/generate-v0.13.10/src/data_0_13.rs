@@ -20,7 +20,7 @@ use kms_0_13_10::cryptography::{
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
     signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedUnsigncryptionKeyOwned,
+        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
 use kms_0_13_10::engine::base::{
@@ -95,7 +95,7 @@ use backward_compatibility::{
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
     TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionTest,
+    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
     UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
     KMS_MODULE_NAME,
 };
@@ -379,6 +379,12 @@ fn signcryption_payload_test() -> SigncryptionPayloadTest {
         link: vec![222, 173, 190, 239],
     }
 }
+
+// KMS test
+const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKeyTest {
+    test_filename: Cow::Borrowed("signcryption_key"),
+    state: 100,
+};
 
 // KMS test
 const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncryptionKeyTest {
@@ -679,6 +685,21 @@ impl KmsV0_13_10 {
         std::fs::write(dir.join(&filename), serialized).unwrap();
 
         TestMetadataKMS::SigncryptionPayload(test)
+    }
+
+    fn gen_signcryption_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(SIGNCRYPTION_KEY_TEST.state);
+        let (_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
+            server_sig_key,
+            enc_key,
+            client_verf_key.verf_key_id(),
+        );
+        store_versioned_test!(&signcrypt_key, dir, &SIGNCRYPTION_KEY_TEST.test_filename);
+        TestMetadataKMS::UnifiedSigncryptionKeyOwned(SIGNCRYPTION_KEY_TEST)
     }
 
     fn gen_designcryption_key(dir: &PathBuf) -> TestMetadataKMS {
@@ -1545,6 +1566,7 @@ impl KMSCoreVersion for V0_13_10 {
             KmsV0_13_10::gen_crs_metadata(&dir),
             KmsV0_13_10::gen_typed_plaintext(&dir),
             KmsV0_13_10::gen_signcryption_payload(&dir),
+            KmsV0_13_10::gen_signcryption_key(&dir),
             KmsV0_13_10::gen_designcryption_key(&dir),
             KmsV0_13_10::gen_unified_signcryption(&dir),
             KmsV0_13_10::gen_backup_ciphertext(&dir),

@@ -14,8 +14,8 @@ use backward_compatibility::{
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, data_dir,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -390,6 +390,36 @@ fn test_public_sig_key(
         Err(test.failure(
             format!(
                 "Invalid public sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_signcryption_keys(
+    dir: &Path,
+    test: &UnifiedSigncryptionKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedSigncryptionKeyOwned =
+        load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_, server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _) = gen_sig_keys(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_, enc_key) = encryption.keygen().unwrap();
+    let new_versionized = UnifiedSigncryptionKeyOwned::new(
+        server_sig_key.clone(),
+        enc_key,
+        client_verf_key.verf_key_id().to_vec(),
+    );
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedSigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1112,6 +1142,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedSigncryptionKeyOwned(test) => {
+                test_signcryption_keys(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
                 test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
