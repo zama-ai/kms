@@ -95,3 +95,4 @@ peak_alloc = { workspace = true }
 
 [features]
 choreographer = ["threshold-fhe/choreographer", "threshold-fhe/non-wasm", "dep:dashmap", "dep:futures", "dep:async-trait", "dep:observability"]
+slow_tests = []

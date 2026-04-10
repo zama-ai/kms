@@ -287,7 +287,6 @@ pub async fn run_key_gen_centralized(
                     &pub_storage,
                 )
                 .await
-                .unwrap()
                 .unwrap();
             (server_key, public_key)
         };

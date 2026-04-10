@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use crate::client::client_wasm::Client;
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::safe_serialize_hash_element_versioned;
@@ -6,6 +8,8 @@ use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use hashing::SAFE_SER_SIZE_LIMIT;
+use hashing::hash_element;
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
@@ -19,6 +23,7 @@ use kms_grpc::rpc_types::{PubDataType, alloy_to_protobuf_domain};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe_versionable::{Unversionize, Versionize};
 
 impl Client {
@@ -158,28 +163,6 @@ impl Client {
         self.verify_external_signature(&sol_type, domain, &resp.external_signature)
     }
 
-    /// Retrieve a server key based on the result from storage.
-    /// The method will return the key if retrieval is successful,
-    /// but will return None in case some sanity check fails.
-    async fn retrieve_server_key_no_verification<R: StorageReader>(
-        &self,
-        key_gen_result: &KeyGenResult,
-        storage: &R,
-    ) -> anyhow::Result<Option<ServerKey>> {
-        if let Some(server_key) = self
-            .retrieve_key_no_verification(key_gen_result, PubDataType::ServerKey, storage)
-            .await?
-        {
-            Ok(Some(server_key))
-        } else {
-            tracing::warn!(
-                "Server key not found with request ID {:?}",
-                key_gen_result.request_id
-            );
-            Ok(None)
-        }
-    }
-
     // TODO(zama-ai/kms-internal#2727)
     // this only checks the signature is valid against one of the server addresses
     // we should fix it so that it does a proper verification
@@ -191,21 +174,19 @@ impl Client {
         domain: &Eip712Domain,
         _extra_data: Vec<u8>,
         storage: &R,
-    ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
-        let (server_key, public_key) = match tokio::try_join!(
-            self.retrieve_server_key_no_verification(key_gen_result, storage),
-            self.retrieve_public_key_no_verification(key_gen_result, storage)
-        )? {
-            (Some(sk), Some(pk)) => (sk, pk),
-            _ => {
-                return Ok(None);
-            }
-        };
-
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
+    ) -> anyhow::Result<(ServerKey, CompactPublicKey)> {
+        let req_id = parse_optional_grpc_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::Other("invalid request id".into()),
+        )?;
+        let srv_data_type = PubDataType::ServerKey.to_string();
+        let pbl_data_type = PubDataType::PublicKey.to_string();
+        let (srvk_bytes, pblk_bytes) = tokio::try_join!(
+            storage.load_bytes(&req_id, &srv_data_type),
+            storage.load_bytes(&req_id, &pbl_data_type),
+        )?;
+        let server_key_digest = hash_element(&DSEP_PUBDATA_KEY, &srvk_bytes);
+        let public_key_digest = hash_element(&DSEP_PUBDATA_KEY, &pblk_bytes);
 
         let expected_server_key_digest = key_gen_result.key_digests.first().ok_or_else(|| {
             anyhow::anyhow!(
@@ -281,8 +262,11 @@ impl Client {
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
-
-        Ok(Some((server_key, public_key)))
+        let server_key = safe_deserialize(Cursor::new(&srvk_bytes), SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let public_key = safe_deserialize(Cursor::new(&pblk_bytes), SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok((server_key, public_key))
     }
 
     /// Retrieve a compressed keyset based on the result from storage.
@@ -370,29 +354,6 @@ impl Client {
         Ok(Some(compressed_keyset))
     }
 
-    /// Retrieve and validate a public key based on the result from storage.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
-    async fn retrieve_public_key_no_verification<R: StorageReader>(
-        &self,
-        key_gen_result: &KeyGenResult,
-        storage: &R,
-    ) -> anyhow::Result<Option<CompactPublicKey>> {
-        let request_id: RequestId = parse_optional_grpc_request_id(
-            &key_gen_result.request_id,
-            RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
-        )
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        tracing::debug!(
-            "getting compact public key using storage {} with request id {}",
-            storage.info(),
-            &request_id
-        );
-        self.retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-            .await
-    }
-
     /// Retrieve and validate a decompression key based on the result from storage.
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
@@ -423,9 +384,9 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<S>> {
         let mut key_digests = key_gen_result.key_digests.clone();
-
+        let key_type_s = key_type.to_string();
         let key_digest = key_digests
-            .extract_if(.., |kd| kd.key_type == key_type.to_string())
+            .extract_if(.., |kd| kd.key_type == key_type_s)
             .next()
             .ok_or_else(|| {
                 anyhow::anyhow!("Key type {key_type} not found in key generation result")
