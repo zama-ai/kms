@@ -119,19 +119,10 @@ pub fn bfv_to_bgv(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-    use crate::algebra::ntt::NTTConstants;
-    use crate::bgv::ddec::keygen_shares;
-    use crate::bgv::endpoints::threshold_decrypt;
-    use crate::bgv::runtime::BGVTestRuntime;
     use crate::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
-    use threshold_execution::runtime::test_runtime::generate_fixed_roles;
-    use threshold_types::network::NetworkMode;
-    use threshold_types::role::Role;
 
     #[test]
     fn test_bfv_keygen() {
@@ -161,33 +152,49 @@ mod tests {
         assert_eq!(plaintext_from_bgv, plaintext_vec);
     }
 
-    #[test]
-    fn test_threshold_bfv() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let (pk, sk) = keygen::<AesRng>(&mut rng);
+    #[cfg(feature = "slow_tests")]
+    mod slow_tests {
+        use super::super::*;
+        use crate::algebra::ntt::NTTConstants;
+        use crate::bgv::ddec::keygen_shares;
+        use crate::bgv::endpoints::threshold_decrypt;
+        use crate::bgv::runtime::BGVTestRuntime;
+        use crate::constants::PLAINTEXT_MODULUS;
+        use aes_prng::AesRng;
+        use rand::{RngCore, SeedableRng};
+        use std::collections::HashMap;
+        use threshold_execution::runtime::test_runtime::generate_fixed_roles;
+        use threshold_types::network::NetworkMode;
+        use threshold_types::role::Role;
 
-        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
-            .collect();
-        let ct = bfv_enc(&mut rng, &plaintext_vec, &pk.a, &pk.b);
-        let bgv_ct = bfv_to_bgv(ct);
+        #[test]
+        fn test_threshold_bfv() {
+            let mut rng = AesRng::seed_from_u64(0);
+            let (pk, sk) = keygen::<AesRng>(&mut rng);
 
-        let n = 4;
-        let t = 1;
-        let keyshares = keygen_shares(&mut rng, &sk, n, t);
-        let ntt_keyshares: Vec<_> = keyshares
-            .iter()
-            .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
-            .collect();
-        let roles = generate_fixed_roles(n);
-        //Delay P1 by 1s every round
-        let delay_map = HashMap::from([(
-            *roles.get(&Role::indexed_from_one(1)).unwrap(),
-            tokio::time::Duration::from_secs(1),
-        )]);
-        let runtime = BGVTestRuntime::new(roles, t, NetworkMode::Async, Some(delay_map));
-        let outputs = threshold_decrypt(&runtime, &ntt_keyshares, &bgv_ct).unwrap();
-        let out_dec = outputs[&Role::indexed_from_one(1)].clone();
-        assert_eq!(out_dec, plaintext_vec);
+            let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+                .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
+                .collect();
+            let ct = bfv_enc(&mut rng, &plaintext_vec, &pk.a, &pk.b);
+            let bgv_ct = bfv_to_bgv(ct);
+
+            let n = 4;
+            let t = 1;
+            let keyshares = keygen_shares(&mut rng, &sk, n, t);
+            let ntt_keyshares: Vec<_> = keyshares
+                .iter()
+                .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
+                .collect();
+            let roles = generate_fixed_roles(n);
+            //Delay P1 by 1s every round
+            let delay_map = HashMap::from([(
+                *roles.get(&Role::indexed_from_one(1)).unwrap(),
+                tokio::time::Duration::from_secs(1),
+            )]);
+            let runtime = BGVTestRuntime::new(roles, t, NetworkMode::Async, Some(delay_map));
+            let outputs = threshold_decrypt(&runtime, &ntt_keyshares, &bgv_ct).unwrap();
+            let out_dec = outputs[&Role::indexed_from_one(1)].clone();
+            assert_eq!(out_dec, plaintext_vec);
+        }
     }
 }
