@@ -171,15 +171,14 @@ mod tests {
     };
 
     use super::SnsRadixOrBoolCiphertext;
-    use crate::tests::test_data_setup::tests::TEST_PARAMETERS;
-    use crate::tfhe_internals::parameters::DKGParams;
+    use crate::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
 
     #[test]
     fn test_packing_factor() {
-        let block_param: ClassicPBSParameters = TEST_PARAMETERS
+        let block_param: ClassicPBSParameters = PARAMS_TEST_BK_SNS
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
-        let sns_param = match TEST_PARAMETERS {
+        let sns_param = match PARAMS_TEST_BK_SNS {
             DKGParams::WithoutSnS(_) => panic!("expected pbs params"),
             DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
         };
