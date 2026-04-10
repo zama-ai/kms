@@ -5,7 +5,7 @@
 
 
 # Assumes the build.sh script was used
-OUTPUT_DIR="./tfhe_kat"
+OUTPUT_DIR="./kat/tfhe"
 
 EXPECTED_HASH_CLIENT_KEY="e632247063e3712eb6de0244fdf08bede700dc7052d018fbc9420e60cfceb36b"
 EXPECTED_HASH_SERVER_KEY="9580a04fc3277c52842ea23b52a45a1ae787d27533f57f4aba8812c64dbdb531"

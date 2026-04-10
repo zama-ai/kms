@@ -44,12 +44,9 @@ ZK_PARAMS_MAP = {
 # Internal operation key → CSV row label.
 # Ordered longest-first so substring checks are unambiguous.
 ZK_OPS = ["verify_two_steps", "verify_batched", "proof_gen", "crs_gen"]
-ZK_OPS_LABEL = {
-    "crs_gen":          "CRSGen",
-    "proof_gen":        "ProofGen",
-    "verify_two_steps": "VerifyTwoSteps",
-    "verify_batched":   "VerifyBatched",
-}
+
+# Compute-load variants present in bench names (crs_gen has no load variant).
+ZK_LOADS = ["load_proof", "load_verify"]
 
 # ---------------------------------------------------------------------------
 # Unit conversions
@@ -89,21 +86,34 @@ class ResultEntry:
 
 class ZkResultEntry:
     def __init__(self):
-        self.crs_gen_latency:          float = -1
-        self.crs_gen_memory:           float = -1
-        self.proof_gen_latency:        float = -1
-        self.proof_gen_memory:         float = -1
-        self.verify_two_steps_latency: float = -1
-        self.verify_two_steps_memory:  float = -1
-        self.verify_batched_latency:   float = -1
-        self.verify_batched_memory:    float = -1
+        # CRS generation — no compute-load variant
+        self.crs_gen_latency:                     float = -1
+        self.crs_gen_memory:                      float = -1
+        # Proof generation
+        self.proof_gen_load_proof_latency:         float = -1
+        self.proof_gen_load_proof_memory:          float = -1
+        self.proof_gen_load_verify_latency:        float = -1
+        self.proof_gen_load_verify_memory:         float = -1
+        # Verification — TwoSteps pairing mode
+        self.verify_two_steps_load_proof_latency:  float = -1
+        self.verify_two_steps_load_proof_memory:   float = -1
+        self.verify_two_steps_load_verify_latency: float = -1
+        self.verify_two_steps_load_verify_memory:  float = -1
+        # Verification — Batched pairing mode
+        self.verify_batched_load_proof_latency:    float = -1
+        self.verify_batched_load_proof_memory:     float = -1
+        self.verify_batched_load_verify_latency:   float = -1
+        self.verify_batched_load_verify_memory:    float = -1
 
     def all_missing(self):
         return all(v == -1 for v in [
-            self.crs_gen_latency,          self.crs_gen_memory,
-            self.proof_gen_latency,        self.proof_gen_memory,
-            self.verify_two_steps_latency, self.verify_two_steps_memory,
-            self.verify_batched_latency,   self.verify_batched_memory,
+            self.crs_gen_latency,                     self.crs_gen_memory,
+            self.proof_gen_load_proof_latency,         self.proof_gen_load_proof_memory,
+            self.proof_gen_load_verify_latency,        self.proof_gen_load_verify_memory,
+            self.verify_two_steps_load_proof_latency,  self.verify_two_steps_load_proof_memory,
+            self.verify_two_steps_load_verify_latency, self.verify_two_steps_load_verify_memory,
+            self.verify_batched_load_proof_latency,    self.verify_batched_load_proof_memory,
+            self.verify_batched_load_verify_latency,   self.verify_batched_load_verify_memory,
         ])
 
 
@@ -188,6 +198,13 @@ def find_zk_op_from_json(data):
     print("Skipping ZK entry {} – unknown op".format(data["id"]))
     return None
 
+def find_zk_load(text):
+    """Return 'load_proof' or 'load_verify' if present in text, else None (e.g. crs_gen)."""
+    for load in ZK_LOADS:
+        if load in text:
+            return load
+    return None
+
 def parse_zk_latency(data):
     params = find_zk_params_from_json(data)
     if params is None:
@@ -195,16 +212,26 @@ def parse_zk_latency(data):
     op = find_zk_op_from_json(data)
     if op is None:
         return
+    load = find_zk_load(data["id"])
     latency = data["mean"]["estimate"] * UNIT_CONV_TO_MS[data["mean"]["unit"]]
     entry = ZK_RESULT_MAP[params]
     if op == "crs_gen":
         entry.crs_gen_latency = latency
     elif op == "proof_gen":
-        entry.proof_gen_latency = latency
+        if load == "load_proof":
+            entry.proof_gen_load_proof_latency = latency
+        elif load == "load_verify":
+            entry.proof_gen_load_verify_latency = latency
     elif op == "verify_two_steps":
-        entry.verify_two_steps_latency = latency
+        if load == "load_proof":
+            entry.verify_two_steps_load_proof_latency = latency
+        elif load == "load_verify":
+            entry.verify_two_steps_load_verify_latency = latency
     elif op == "verify_batched":
-        entry.verify_batched_latency = latency
+        if load == "load_proof":
+            entry.verify_batched_load_proof_latency = latency
+        elif load == "load_verify":
+            entry.verify_batched_load_verify_latency = latency
 
 # ---------------------------------------------------------------------------
 # Shared latency-file entry point
@@ -303,6 +330,7 @@ def parse_zk_memory(line):
     op = find_zk_op_from_line(line)
     if op is None:
         return
+    load = find_zk_load(line)
     result = fetch_mean_memory(line)
     if result is None:
         return
@@ -312,11 +340,20 @@ def parse_zk_memory(line):
     if op == "crs_gen":
         entry.crs_gen_memory = memory
     elif op == "proof_gen":
-        entry.proof_gen_memory = memory
+        if load == "load_proof":
+            entry.proof_gen_load_proof_memory = memory
+        elif load == "load_verify":
+            entry.proof_gen_load_verify_memory = memory
     elif op == "verify_two_steps":
-        entry.verify_two_steps_memory = memory
+        if load == "load_proof":
+            entry.verify_two_steps_load_proof_memory = memory
+        elif load == "load_verify":
+            entry.verify_two_steps_load_verify_memory = memory
     elif op == "verify_batched":
-        entry.verify_batched_memory = memory
+        if load == "load_proof":
+            entry.verify_batched_load_proof_memory = memory
+        elif load == "load_verify":
+            entry.verify_batched_load_verify_memory = memory
 
 # ---------------------------------------------------------------------------
 # Shared memory-file entry point
@@ -357,7 +394,12 @@ def output_result_csv_files():
             w.writerow(["Mult64",  result.mul_latency,     result.mul_memory])
 
 def output_zk_csv_files():
-    """Write one ZK PoK CSV file per parameter set that has at least one result."""
+    """Write one ZK PoK CSV file per parameter set that has at least one result.
+
+    Each non-CRS operation appears twice: once for ZkComputeLoad::Proof proofs
+    and once for ZkComputeLoad::Verify proofs, since the two proof types carry
+    different trade-offs between proving and verification cost.
+    """
     os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
     for params, result in ZK_RESULT_MAP.items():
         if result.all_missing():
@@ -366,10 +408,27 @@ def output_zk_csv_files():
         with open(file_name, "w") as f:
             w = csv.writer(f, delimiter=",")
             w.writerow(["Operation", "avg_latency_ms", "max_memory_kBytes"])
-            w.writerow(["CRSGen",        result.crs_gen_latency,          result.crs_gen_memory])
-            w.writerow(["ProofGen",       result.proof_gen_latency,        result.proof_gen_memory])
-            w.writerow(["VerifyTwoSteps", result.verify_two_steps_latency, result.verify_two_steps_memory])
-            w.writerow(["VerifyBatched",  result.verify_batched_latency,   result.verify_batched_memory])
+            w.writerow(["CRSGen",
+                         result.crs_gen_latency,
+                         result.crs_gen_memory])
+            w.writerow(["ProofGen_LoadProof",
+                         result.proof_gen_load_proof_latency,
+                         result.proof_gen_load_proof_memory])
+            w.writerow(["ProofGen_LoadVerify",
+                         result.proof_gen_load_verify_latency,
+                         result.proof_gen_load_verify_memory])
+            w.writerow(["VerifyTwoSteps_LoadProof",
+                         result.verify_two_steps_load_proof_latency,
+                         result.verify_two_steps_load_proof_memory])
+            w.writerow(["VerifyTwoSteps_LoadVerify",
+                         result.verify_two_steps_load_verify_latency,
+                         result.verify_two_steps_load_verify_memory])
+            w.writerow(["VerifyBatched_LoadProof",
+                         result.verify_batched_load_proof_latency,
+                         result.verify_batched_load_proof_memory])
+            w.writerow(["VerifyBatched_LoadVerify",
+                         result.verify_batched_load_verify_latency,
+                         result.verify_batched_load_verify_memory])
 
 # ---------------------------------------------------------------------------
 # Entry point
