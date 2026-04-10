@@ -104,7 +104,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout)
         } else {
-            *NETWORK_TIMEOUT_LONG
+            NETWORK_TIMEOUT_LONG
         }
     }
 
@@ -112,7 +112,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk)
         } else {
-            *NETWORK_TIMEOUT_BK
+            NETWORK_TIMEOUT_BK
         }
     }
 
@@ -120,7 +120,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk_sns)
         } else {
-            *NETWORK_TIMEOUT_BK_SNS
+            NETWORK_TIMEOUT_BK_SNS
         }
     }
 

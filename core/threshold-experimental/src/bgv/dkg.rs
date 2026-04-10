@@ -305,7 +305,7 @@ mod tests {
 
             session
                 .network()
-                .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
+                .set_timeout_for_next_round(NETWORK_TIMEOUT_ASYNC)
                 .await;
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,

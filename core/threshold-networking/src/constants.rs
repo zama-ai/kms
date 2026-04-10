@@ -33,26 +33,23 @@ pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(60);
 
 /// maximum number of seconds that a party waits for a network message during a protocol
-pub(crate) static NETWORK_TIMEOUT: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(5));
+pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// maximum number of seconds that a party waits for a network message during a protocol
-pub static NETWORK_TIMEOUT_LONG: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs(120));
+pub const NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(120);
 
 /// maximum number of seconds that a party waits for BK round in DKG
 ///
 /// __NOTE__ This value may need changing when running more parties (tested for (5,1))
-pub(crate) static NETWORK_TIMEOUT_BK: LazyLock<Duration> =
-    LazyLock::new(|| Duration::from_secs(300));
+pub(crate) static NETWORK_TIMEOUT_BK: Duration = Duration::from_secs(300);
 
 /// Set artificial timeout of 1year for async network
-pub static NETWORK_TIMEOUT_ASYNC: LazyLock<Duration> =
-    LazyLock::new(|| Duration::from_secs(31536000));
+pub static NETWORK_TIMEOUT_ASYNC: Duration = Duration::from_secs(31536000);
 
 /// maximum number of seconds that a party waits for BK SNS round in DKG
 ///
 /// __NOTE__ This value may need changing when running more parties (tested for (5,1))
-pub(crate) static NETWORK_TIMEOUT_BK_SNS: LazyLock<Duration> =
-    LazyLock::new(|| Duration::from_secs(1200));
+pub(crate) static NETWORK_TIMEOUT_BK_SNS: Duration = Duration::from_secs(1200);
 
 // max message size for decoding - encoding message on gRPC protocol
 pub static MAX_EN_DECODE_MESSAGE_SIZE: LazyLock<usize> = LazyLock::new(|| 2 * 1024 * 1024 * 1024);
