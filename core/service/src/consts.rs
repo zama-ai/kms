@@ -2,6 +2,7 @@
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
+#[cfg(feature = "non-wasm")]
 use std::sync::LazyLock;
 use threshold_execution::tfhe_internals::parameters::{
     BC_PARAMS_SNS, DKGParams, PARAMS_TEST_BK_SNS,
