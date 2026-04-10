@@ -507,8 +507,10 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
-/// * `threshold` - Optional threshold override for reconstruction.
-/// If not provided, it is computed from the number of server addresses as `(n - 1) / 3`.
+/// * `threshold` - Optional expected threshold/degree used during response validation.
+/// Validation requires at least `threshold + 1` matching responses, and the selected pivot
+/// response must have `degree == threshold`. If not provided, it is computed from the number
+/// of server addresses as `(n - 1) / 3`.
 ///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
