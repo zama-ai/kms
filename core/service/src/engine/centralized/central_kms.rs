@@ -519,6 +519,7 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
+    // LEGACY CODE: see `from_legacy_bytes` for docs
     let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(client_enc_key_bytes)
         .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
