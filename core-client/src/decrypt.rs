@@ -6,7 +6,6 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::protobuf_to_alloy_domain,
 };
-use kms_lib::cryptography::encryption::PkeSchemeType;
 use kms_lib::{
     client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest},
     cryptography::signatures::recover_address_from_ext_signature,
@@ -286,7 +285,6 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 &key_id.into(),
                 context_id.as_ref(),
                 epoch_id.as_ref(),
-                PkeSchemeType::MlKem512,
                 &extra_data,
             )?;
 

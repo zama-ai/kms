@@ -514,15 +514,17 @@ impl<
             )
         })?)
         .clone();
-        let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&client_enc_key_bytes_orig)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
+        let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
+            &client_enc_key_bytes_orig,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,

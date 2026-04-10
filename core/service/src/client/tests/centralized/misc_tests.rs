@@ -130,7 +130,6 @@ async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
         consts::DEFAULT_EPOCH_ID,
-        cryptography::encryption::PkeSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         },
@@ -190,7 +189,6 @@ async fn test_largecipher() {
             &DEFAULT_CENTRAL_KEY_ID,
             None,
             None,
-            PkeSchemeType::MlKem512,
             &[],
         )
         .unwrap();
