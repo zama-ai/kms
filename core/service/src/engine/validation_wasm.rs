@@ -330,7 +330,9 @@ fn validate_user_decrypt_responses(
     let threshold = trusted_ctx
         .threshold
         .unwrap_or_else(|| (trusted_ctx.server_addresses.len() - 1) / 3); // Note that this is floored division.
-    let min_occurence = threshold + 1; // We need t+1 responses at least to find the pivot response.
+    let min_occurence = threshold
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("Invalid user decryption threshold: overflow"))?; // We need t+1 responses at least to find the pivot response.
     let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find user decryption pivot"),
