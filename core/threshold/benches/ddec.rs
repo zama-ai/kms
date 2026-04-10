@@ -13,6 +13,7 @@ use threshold_execution::{
     constants::REAL_KEY_PATH,
     endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext, threshold_decrypt64},
     runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
+    tests::ensure_real_keys_setup,
     tfhe_internals::{
         test_feature::{KeySet, keygen_all_party_shares_from_keyset},
         utils::expanded_encrypt,
@@ -39,6 +40,7 @@ impl std::fmt::Display for OneShotConfig {
 }
 
 fn ddec_nsmall(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_nsmall");
 
     let params = vec![
@@ -98,6 +100,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 }
 
 fn ddec_bitdec_nsmall(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_bitdec_nsmall");
 
     let params = vec![
@@ -148,6 +151,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
 }
 
 fn ddec_nlarge(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_nlarge");
 
     let params = vec![
@@ -206,6 +210,7 @@ fn ddec_nlarge(c: &mut Criterion) {
 }
 
 fn ddec_bitdec_nlarge(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_bitdec_nlarge");
 
     let params = vec![

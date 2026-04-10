@@ -1114,6 +1114,7 @@ mod tests {
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::small_session::SmallSessionHandles;
     use crate::small_execution::agree_random::DSEP_AR;
+    use crate::tests::ensure_test_data_setup;
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use crate::tfhe_internals::test_feature::{KeySet, keygen_all_party_shares_from_keyset};
@@ -1270,6 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prss_decrypt_distributed_local_sess() {
+        ensure_test_data_setup();
         let threshold = 2;
         let num_parties = 7;
         // RNG for keys

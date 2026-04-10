@@ -98,12 +98,18 @@ pub async fn regenerate_central_keys(
     // remove ServerKey and FhePrivateKey from all Epochs to avoid stale data
     // from previous runs.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        let _ = pub_storage
+        if let Err(e) = pub_storage
             .delete_data(key_id, &PubDataType::PublicKey.to_string())
-            .await;
-        let _ = pub_storage
+            .await
+        {
+            anyhow::bail!("Failed to delete PublicKey for {key_id}: {e}");
+        }
+        if let Err(e) = pub_storage
             .delete_data(key_id, &PubDataType::ServerKey.to_string())
-            .await;
+            .await
+        {
+            anyhow::bail!("Failed to delete ServerKey for {key_id}: {e}");
+        }
     }
     remove_dir_if_exists(
         priv_storage
