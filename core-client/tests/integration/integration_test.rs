@@ -835,6 +835,7 @@ async fn custodian_reencrypt(
     amount_operators: usize,
     amount_custodians: usize,
     backup_id: RequestId,
+    mpc_context_id: ContextId,
     seeds: &[String],
     recovery_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
@@ -930,6 +931,8 @@ async fn custodian_reencrypt(
                 &custodian_index.to_string(),
                 "--operator-verf-key",
                 verf_path.to_str().unwrap(),
+                "--mpc-context-id",
+                &mpc_context_id.to_string(),
                 "-b",
                 cur_recovery_path.to_str().unwrap(),
                 "-o",
@@ -1067,6 +1070,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
         1,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &[operator_recovery_resp_path],
     )
@@ -1533,6 +1537,7 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianTe
         amount_operators,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &operator_recovery_resp_paths,
     )

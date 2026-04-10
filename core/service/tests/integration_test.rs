@@ -637,6 +637,7 @@ mod kms_custodian_binary_tests {
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{
                 Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -791,6 +792,8 @@ mod kms_custodian_binary_tests {
                     custodian_index.to_string(),
                     "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
+                    "--mpc-context-id".to_string(),
+                    DEFAULT_MPC_CONTEXT.to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
