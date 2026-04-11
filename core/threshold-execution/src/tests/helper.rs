@@ -400,9 +400,7 @@ pub mod testing {
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
-    use crate::tests::{
-        helper::tests_and_benches::get_seed_for_two_sets_role, test_data_setup::tests::DEFAULT_SEED,
-    };
+    use crate::tests::helper::tests_and_benches::get_seed_for_two_sets_role;
     use crate::{
         runtime::{
             sessions::{
@@ -565,7 +563,8 @@ pub mod tests {
     }
 
     /// Deterministic key generation
-    pub fn generate_keys(params: DKGParams, tag: tfhe::Tag) -> KeySet {
+    pub fn generate_keys_deterministically(params: DKGParams, tag: tfhe::Tag) -> KeySet {
+        const DEFAULT_SEED: u64 = 1;
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
         gen_key_set(params, tag, &mut seeded_rng)
     }
@@ -972,23 +971,5 @@ pub mod tests {
             results_honest.into_iter().collect(),
             results_malicious.into_iter().collect(),
         )
-    }
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn setup_data_for_integration() {
-        use crate::constants::{REAL_KEY_PATH, SMALL_TEST_KEY_PATH, TEMP_DKG_DIR};
-        use crate::tests::test_data_setup::tests::{
-            REAL_PARAMETERS, TEST_PARAMETERS, ensure_keys_exist,
-        };
-        use std::fs;
-
-        // Ensure temp/dkg dir exists (also creates the temp dir)
-        if let Err(e) = fs::create_dir_all(TEMP_DKG_DIR) {
-            println!("Error creating temp/dkg directory {TEMP_DKG_DIR}: {e:?}");
-        }
-        // make sure keys exist (generate them if they do not)
-        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS, tfhe::Tag::default());
-        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS, tfhe::Tag::default());
     }
 }

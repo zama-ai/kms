@@ -186,7 +186,7 @@ pub(crate) fn validate_user_decrypt_req(
     (
         Vec<TypedCiphertext>,
         Vec<u8>,
-        UnifiedPublicEncKey,
+        Vec<u8>,
         alloy_primitives::Address,
         RequestId,
         KeyId,
@@ -214,7 +214,7 @@ fn unpack_user_decrypt_req(
     (
         Vec<TypedCiphertext>,
         Vec<u8>,
-        UnifiedPublicEncKey,
+        Vec<u8>,
         alloy_primitives::Address,
         RequestId,
         KeyId,
@@ -261,7 +261,9 @@ fn unpack_user_decrypt_req(
     };
 
     let (link, _) = req.compute_link_checked()?;
-    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
+    // Deserialize to validate the enc_key bytes, but don't return the typed key —
+    // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
+    let _client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
         Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
             "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
         ))
@@ -269,7 +271,7 @@ fn unpack_user_decrypt_req(
     Ok((
         req.typed_ciphertexts.clone(),
         link,
-        client_enc_key,
+        req.enc_key.clone(),
         client_verf_key,
         request_id,
         key_id,

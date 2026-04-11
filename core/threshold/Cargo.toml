@@ -75,7 +75,6 @@ tonic-prost-build.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
-ctor.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
 rustls-webpki.workspace = true
