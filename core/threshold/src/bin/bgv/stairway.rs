@@ -7,7 +7,7 @@ use observability::telemetry::init_tracing;
 use peak_alloc::PeakAlloc;
 use threshold_fhe::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
 use threshold_fhe::conf::party::PartyConf;
-use threshold_fhe::grpc;
+use threshold_fhe::choreography;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]
@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracer_provider = init_tracing(&telemetry_config).await?;
 
     // Use degree 4 as that's the default when compiling the algebra library, doesn't matter at all for BGV
-    let result = grpc::server::run::<4>(&settings, ExperimentalChoreoRoutingHelper).await;
+    let result = choreography::server::run::<4>(&settings, ExperimentalChoreoRoutingHelper).await;
 
     // Sleep to let some time for the process to export all the spans before shutdown
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;

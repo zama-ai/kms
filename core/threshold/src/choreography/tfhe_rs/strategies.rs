@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tonic::transport::server::Router;
 
-use crate::grpc::server::ChoreoRoutingHelper;
+use crate::choreography::server::ChoreoRoutingHelper;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,

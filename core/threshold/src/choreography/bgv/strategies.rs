@@ -9,7 +9,7 @@ use algebra::{
 use threshold_execution::online::preprocessing::PreprocessorFactory;
 use threshold_networking::grpc::GrpcNetworkingManager;
 use threshold_types::role::Role;
-use crate::grpc::server::ChoreoRoutingHelper;
+use crate::choreography::server::ChoreoRoutingHelper;
 use super::grpc::ExperimentalGrpcChoreography;
 
 pub struct ExperimentalChoreoRoutingHelper;
