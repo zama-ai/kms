@@ -203,14 +203,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
                 self.network_round.lock(),
             )
             .await;
-        // Advance the deadline by at least one round timeout, but also ensure
-        // it never falls behind actual wall-clock time. Without this, processing
-        // overhead (e.g., crypto operations, waiting for malicious party timeouts)
-        // can accumulate across rounds, causing the deadline to drift into the past
-        // and honest parties to spuriously timeout on each other.
-        let actual_elapsed = self.init_time.get_or_init(Instant::now).elapsed();
-        *max_elapsed_time =
-            std::cmp::max(*max_elapsed_time + *current_round_timeout, actual_elapsed);
+        *max_elapsed_time += *current_round_timeout;
 
         //Update next round timeout
         *current_round_timeout = *next_round_timeout;
