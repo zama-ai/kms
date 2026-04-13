@@ -301,14 +301,14 @@ jobs:
 
       - name: Checkout Project
         if: ${{ env.NEW_KMS_CHART_VERSION != 'repository' }}
-        uses: ./.github/actions/checkout-project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project (from branch)
         if: ${{ env.NEW_KMS_CHART_VERSION == 'repository' }}
-        uses: ./.github/actions/checkout-project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
