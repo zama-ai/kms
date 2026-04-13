@@ -39,6 +39,7 @@ use kms_grpc::{
 };
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
+use strum::IntoEnumIterator;
 #[cfg(test)]
 use tfhe::CompactPublicKey;
 use tfhe::Versionize;
@@ -1176,6 +1177,102 @@ where
         let priv_storage = self.private_storage.lock().await;
 
         read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
+    }
+
+    /// Synchronize the backup vault with the current private storage contents.
+    ///
+    /// Iterates over all [`PrivDataType`] variants and copies any data present
+    /// in private storage but missing from the backup vault.
+    ///
+    /// When `overwrite` is `true`, existing backup entries are deleted and
+    /// re-written (used when the backup encryption key changes, e.g. on a new
+    /// custodian context). When `false`, existing entries are skipped.
+    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
+        match self.backup_vault {
+            Some(ref backup_vault) => {
+                let private_storage = self.get_private_storage();
+                let private_storage = private_storage.lock().await;
+                let mut backup_vault = backup_vault.lock().await;
+                if !crate::engine::backup_operator::keychain_initialized(&backup_vault).await {
+                    tracing::warn!(
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
+                    );
+                    return Ok(());
+                }
+                for cur_type in PrivDataType::iter() {
+                    match cur_type {
+                        // These types might have epoch-specific data
+                        PrivDataType::FheKeyInfo => {
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        PrivDataType::FhePrivateKey => {
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        // Non epoched types
+                        PrivDataType::PrssSetupCombined => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        #[expect(deprecated)]
+                        PrivDataType::PrssSetup => {
+                            crate::engine::backup_operator::update_legacy_prss_13_4::<PrivS>(
+                                &private_storage,
+                                &mut backup_vault,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        PrivDataType::SigningKey => {
+                            // TODO(#2862) will eventually be epoched
+                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        PrivDataType::CrsInfo => {
+                            crate::engine::backup_operator::update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        PrivDataType::ContextInfo => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, ContextInfo>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            None => Ok(()),
+        }
     }
 }
 

@@ -618,6 +618,23 @@ where
             )
         })?;
 
+        // Update the backup
+        self.inner
+            .crypto_storage
+            .update_backup_vault(false)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_NEW_MPC_CONTEXT,
+                    Some((*new_context.context_id()).into()),
+                    anyhow::anyhow!(
+                        "Failed to update backup vault in connection with new context: {}",
+                        e
+                    ),
+                    tonic::Code::Internal,
+                )
+            })?;
+
         Ok(Response::new(Empty {}))
     }
 

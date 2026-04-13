@@ -965,92 +965,7 @@ where
     PrivS: StorageExt + Sync + Send + 'static,
 {
     pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
-        match self.crypto_storage.backup_vault {
-            Some(ref backup_vault) => {
-                let private_storage = self.crypto_storage.get_private_storage().clone();
-                let private_storage = private_storage.lock().await;
-                let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
-                    backup_vault.lock().await;
-                if !keychain_initialized(&backup_vault).await {
-                    tracing::warn!(
-                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
-                    );
-                    return Ok(());
-                }
-                for cur_type in PrivDataType::iter() {
-                    match cur_type {
-                        // These types might have epoch-specific data
-                        PrivDataType::FheKeyInfo => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        // Non epoched types
-                        PrivDataType::PrssSetupCombined => {
-                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        #[expect(deprecated)]
-                        PrivDataType::PrssSetup => {
-                            update_legacy_prss_13_4::<PrivS>(
-                                &private_storage,
-                                &mut backup_vault,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::SigningKey => {
-                            // TODO(#2862) will eventually be epoched
-                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::CrsInfo => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::ContextInfo => {
-                            update_specific_backup_vault::<PrivS, ContextInfo>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            None => Ok(()),
-        }
+        self.crypto_storage.update_backup_vault(overwrite).await
     }
 }
 
@@ -1189,7 +1104,9 @@ async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     Ok(())
 }
 
-async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>) -> bool {
+pub(crate) async fn keychain_initialized(
+    backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>,
+) -> bool {
     if let Some(KeychainProxy::SecretSharing(ssk)) = &backup_vault_guard.keychain {
         // If the backup key is not there, then it is not initialized
         if ssk.get_backup_enc_key().is_err() {
