@@ -21,11 +21,10 @@ use itertools::Itertools;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::sync::LazyLock;
-use std::sync::RwLock;
+#[cfg(not(test))]
+use std::sync::OnceLock;
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
@@ -349,31 +348,20 @@ macro_rules! impl_field_level {
                 }
             }
 
-            static [<LAGRANGE_STORE_BGV_ $name:upper>]: LazyLock<RwLock<HashMap<Vec<$name>, Vec<Poly<$name>>>>> =
-                LazyLock::new(|| RwLock::new(HashMap::new()));
+            #[cfg(not(test))]
+            static [<LAGRANGE_STORE_BGV_ $name:upper>]: OnceLock<Vec<Poly<$name>>> = OnceLock::new();
 
             impl Field for $name {
-                fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-                    if let Ok(lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].read() {
-                        match lock_lagrange_store.get(points) {
-                            Some(v) => Ok(v.clone()),
-                            None => {
-                                drop(lock_lagrange_store);
-                                if let Ok(mut lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].write() {
-                                    let lagrange_pols = lagrange_polynomials(points);
-                                    lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                                    Ok(lagrange_pols)
-                                } else {
-                                    Err(anyhow_error_and_log(
-                                        "Error writing LAGRANGE_STORE".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error reading LAGRANGE_STORE".to_string(),
-                        ))
+                fn memoize_lagrange(points: &[Self]) -> Vec<Poly<Self>> {
+                    #[cfg(test)]
+                    {
+                        lagrange_polynomials(points)
+                    }
+                    #[cfg(not(test))]
+                    {
+                        [<LAGRANGE_STORE_BGV_ $name:upper>]
+                            .get_or_init(|| lagrange_polynomials(points))
+                            .clone()
                     }
                 }
 

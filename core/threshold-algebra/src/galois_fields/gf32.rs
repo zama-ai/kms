@@ -1,14 +1,11 @@
-use std::collections::HashMap;
-
-use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
+use crate::poly::lagrange_polynomials;
 use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
-use error_utils::anyhow_error_and_log;
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::{LazyLock, RwLock};
+use std::sync::LazyLock;
 
 g2p!(
     GF32,
@@ -87,31 +84,23 @@ impl RingWithExceptionalSequence for GF32 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF32>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+#[cfg(not(test))]
+use std::sync::OnceLock;
+
+#[cfg(not(test))]
+static LAGRANGE_STORE: OnceLock<Vec<Poly<GF32>>> = OnceLock::new();
 
 impl Field for GF32 {
-    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-        if let Ok(lock_lagrange_store) = LAGRANGE_STORE.read() {
-            match lock_lagrange_store.get(points) {
-                Some(v) => Ok(v.clone()),
-                None => {
-                    drop(lock_lagrange_store);
-                    if let Ok(mut lock_lagrange_store) = LAGRANGE_STORE.write() {
-                        let lagrange_pols = lagrange_polynomials(points);
-                        lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                        Ok(lagrange_pols)
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error writing LAGRANGE_STORE".to_string(),
-                        ))
-                    }
-                }
-            }
-        } else {
-            Err(anyhow_error_and_log(
-                "Error reading LAGRANGE_STORE".to_string(),
-            ))
+    fn memoize_lagrange(points: &[Self]) -> Vec<Poly<Self>> {
+        #[cfg(test)]
+        {
+            lagrange_polynomials(points)
+        }
+        #[cfg(not(test))]
+        {
+            LAGRANGE_STORE
+                .get_or_init(|| lagrange_polynomials(points))
+                .clone()
         }
     }
 }

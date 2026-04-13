@@ -92,7 +92,7 @@ pub trait Field
 where
     Self: RingWithExceptionalSequence + Div<Self, Output = Self> + DivAssign<Self>,
 {
-    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>>;
+    fn memoize_lagrange(points: &[Self]) -> Vec<Poly<Self>>;
 
     /// computes the multiplicative inverse of the field element
     fn invert(&self) -> Self {
