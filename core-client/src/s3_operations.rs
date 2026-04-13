@@ -145,9 +145,9 @@ pub(crate) async fn fetch_kms_signing_keys(
                 StorageType::PRIV,
                 Some(&cur_core.object_folder),
             )?;
-            let sk: PrivateSigKey = s3_storage
+            s3_storage
                 .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
-                .await?;
+                .await?
         };
         keys_map.insert(cur_core.party_id, sk);
     }
