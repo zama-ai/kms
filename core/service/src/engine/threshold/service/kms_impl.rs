@@ -42,7 +42,9 @@ use tonic_health::{
 };
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::{
+    threshold::service::epoch_manager::RealThresholdEpochManager, traits::ContextManager,
+};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,

@@ -1125,6 +1125,40 @@ mod tests {
 
             // check that the signing key exists
             let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
+
+            // Setup dummy MPC context
+            let context = ContextInfo {
+                mpc_nodes: vec![NodeInfo {
+                    mpc_identity: "Node1".to_string(),
+                    party_id: 1,
+                    verification_key: Some(pk.clone()),
+                    external_url: "http://localhost:12345".to_string(),
+                    ca_cert: None,
+                    public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
+                    extra_verification_keys: vec![],
+                }],
+                context_id: *DEFAULT_MPC_CONTEXT,
+                software_version: SoftwareVersion {
+                    major: 0,
+                    minor: 1,
+                    patch: 0,
+                    tag: None,
+                },
+                threshold: 0,
+                pcr_values: vec![],
+            };
+            store_versioned_at_request_id(
+                &mut *guarded_priv_storage,
+                &(*DEFAULT_MPC_CONTEXT).into(),
+                &context,
+                &PrivDataType::ContextInfo.to_string(),
+            )
+            .await
+            .unwrap();
+
+            // check that the signing key exists
+            let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
         }
 
         (pk, sk, crypto_storage)
