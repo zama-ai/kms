@@ -1083,7 +1083,9 @@ mod tests {
 
     const DUMMY_SIGNING_KEY_REQ_ID: [u8; 32] = [1u8; 32];
 
-    async fn setup_crypto_storage() -> (
+    async fn setup_crypto_storage(
+        make_default_context: bool,
+    ) -> (
         PublicSigKey,
         PrivateSigKey,
         CryptoMaterialStorage<RamStorage, RamStorage>,
@@ -1126,39 +1128,38 @@ mod tests {
             // check that the signing key exists
             let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
 
-            // Setup dummy MPC context
-            let context = ContextInfo {
-                mpc_nodes: vec![NodeInfo {
-                    mpc_identity: "Node1".to_string(),
-                    party_id: 1,
-                    verification_key: Some(pk.clone()),
-                    external_url: "http://localhost:12345".to_string(),
-                    ca_cert: None,
-                    public_storage_url: "http://storage".to_string(),
-                    public_storage_prefix: None,
-                    extra_verification_keys: vec![],
-                }],
-                context_id: *DEFAULT_MPC_CONTEXT,
-                software_version: SoftwareVersion {
-                    major: 0,
-                    minor: 1,
-                    patch: 0,
-                    tag: None,
-                },
-                threshold: 0,
-                pcr_values: vec![],
-            };
-            store_versioned_at_request_id(
-                &mut *guarded_priv_storage,
-                &(*DEFAULT_MPC_CONTEXT).into(),
-                &context,
-                &PrivDataType::ContextInfo.to_string(),
-            )
-            .await
-            .unwrap();
-
-            // check that the signing key exists
-            let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
+            if make_default_context {
+                // Setup dummy default MPC context
+                let context = ContextInfo {
+                    mpc_nodes: vec![NodeInfo {
+                        mpc_identity: "Node1".to_string(),
+                        party_id: 1,
+                        verification_key: Some(pk.clone()),
+                        external_url: "http://localhost:12345".to_string(),
+                        ca_cert: None,
+                        public_storage_url: "http://storage".to_string(),
+                        public_storage_prefix: None,
+                        extra_verification_keys: vec![],
+                    }],
+                    context_id: *DEFAULT_MPC_CONTEXT,
+                    software_version: SoftwareVersion {
+                        major: 0,
+                        minor: 1,
+                        patch: 0,
+                        tag: None,
+                    },
+                    threshold: 0,
+                    pcr_values: vec![],
+                };
+                store_versioned_at_request_id(
+                    &mut *guarded_priv_storage,
+                    &(*DEFAULT_MPC_CONTEXT).into(),
+                    &context,
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .unwrap();
+            }
         }
 
         (pk, sk, crypto_storage)
@@ -1166,7 +1167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
@@ -1194,9 +1195,7 @@ mod tests {
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.clone().try_into().unwrap()),
         });
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -1206,6 +1205,7 @@ mod tests {
 
         let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
+        assert_eq!(1, context_manager.session_maker.context_count().await);
 
         // check that the context is stored
         {
@@ -1253,7 +1253,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context_load_from_storage() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        // Don't setup a default MPC context
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             mpc_nodes: vec![NodeInfo {
@@ -1291,10 +1292,10 @@ mod tests {
                 Arc::new(RwLock::new(MetaStore::new(100, 10))),
                 session_maker,
             );
-
             let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
 
+            // The new context (observe that our scafolding in this test does not setup a default context)
             assert_eq!(1, context_manager.session_maker.context_count().await);
         }
 
@@ -1341,7 +1342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context_load_multiple_from_storage() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_ids = [
             ContextId::from_bytes([10u8; 32]),
             ContextId::from_bytes([11u8; 32]),
@@ -1424,7 +1425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context_load_multiple_from_storage_with_error() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_ids = [
             ContextId::from_bytes([10u8; 32]),
             ContextId::from_bytes([11u8; 32]),
@@ -1550,7 +1551,7 @@ mod tests {
     // be skipped with warnings rather than causing a startup failure.
     #[tokio::test]
     async fn test_load_mpc_context_without_signing_key() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let context_id = ContextId::from_bytes([5u8; 32]);
         let new_context = ContextInfo {
             mpc_nodes: vec![NodeInfo {
@@ -1629,7 +1630,8 @@ mod tests {
     #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_custodian_context() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        // We need the default MPC context to be able to use calls to custodian context APIs
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         // Generate custodian keys
         let threshold = 1;
@@ -1682,11 +1684,7 @@ mod tests {
             );
 
             let response = context_manager.new_custodian_context(request).await;
-            println!(
-                "New custodian context response: {:#?}",
-                &response.err().map(|e| e.to_string())
-            );
-            // assert!(response.is_ok());
+            assert!(response.is_ok());
             (context_manager, first_context_id)
         };
 
@@ -1867,7 +1865,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_centralized_context_cache() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
         let context_id = ContextId::from_bytes([5u8; 32]);
         let new_context = ContextInfo {
@@ -1961,7 +1959,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_centralized_context_exists_and_consistent() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
         let context_id = ContextId::from_bytes([6u8; 32]);
         let new_context = ContextInfo {
@@ -2029,7 +2027,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_centralized_multiple_contexts() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
 
         let context_manager = CentralizedContextManager::new(
