@@ -847,9 +847,7 @@ mod tests {
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::{
-        kms::v1::{CustodianContext, CustodianSetupMessage},
-    };
+    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
 
