@@ -8,6 +8,7 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "testing")]
 use kms_lib::cryptography::signatures::PrivateSigKey;
+use kms_lib::vault::storage::file::FileStorage;
 use kms_lib::vault::storage::s3::{
     S3Storage, build_anonymous_s3_client, find_region_from_s3_url, split_url,
 };
@@ -87,19 +88,30 @@ pub(crate) async fn fetch_kms_verification_keys(
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
     for cur_core in &sim_conf.cores {
-        let (url, bucket) = split_url(&cur_core.s3_endpoint)?;
-        let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
-        // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let s3_storage = S3Storage::new(
-            s3_client,
-            bucket,
-            StorageType::PUB,
-            Some(&cur_core.object_folder),
-        )?;
-        let vk: PublicSigKey = s3_storage
-            .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
-            .await?;
+        let (protocol, domain, bucket) = split_url(&cur_core.s3_endpoint)?;
+        let vk: PublicSigKey = if protocol == "file://" {
+            let storage = FileStorage::new(
+                Some(Path::new(&bucket)),
+                StorageType::PUB,
+                Some(&cur_core.object_folder),
+            )?;
+            storage
+                .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                .await?
+        } else {
+            let url = format!("{protocol}{domain}");
+            let region = find_region_from_s3_url(&url)?;
+            let s3_client = build_anonymous_s3_client(&url, region).await?;
+            let s3_storage = S3Storage::new(
+                s3_client,
+                bucket,
+                StorageType::PUB,
+                Some(&cur_core.object_folder),
+            )?;
+            s3_storage
+                .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                .await?
+        };
         keys_map.insert(cur_core.party_id, vk);
     }
 
@@ -113,19 +125,30 @@ pub(crate) async fn fetch_kms_signing_keys(
 ) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
     for cur_core in &sim_conf.cores {
-        let (url, bucket) = split_url(&cur_core.s3_endpoint)?;
-        let region = find_region_from_s3_url(&cur_core.s3_endpoint)?;
-        // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let s3_storage = S3Storage::new(
-            s3_client,
-            bucket,
-            StorageType::PRIV,
-            Some(&cur_core.object_folder),
-        )?;
-        let sk: PrivateSigKey = s3_storage
-            .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
-            .await?;
+        let (protocol, domain, bucket) = split_url(&cur_core.s3_endpoint)?;
+        let sk: PrivateSigKey = if protocol == "file://" {
+            let storage = FileStorage::new(
+                Some(Path::new(&bucket)),
+                StorageType::PRIV,
+                Some(&cur_core.object_folder),
+            )?;
+            storage
+                .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+                .await?
+        } else {
+            let url = format!("{protocol}{domain}");
+            let region = find_region_from_s3_url(&url)?;
+            let s3_client = build_anonymous_s3_client(&url, region).await?;
+            let s3_storage = S3Storage::new(
+                s3_client,
+                bucket,
+                StorageType::PRIV,
+                Some(&cur_core.object_folder),
+            )?;
+            let sk: PrivateSigKey = s3_storage
+                .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+                .await?;
+        };
         keys_map.insert(cur_core.party_id, sk);
     }
     Ok(keys_map)

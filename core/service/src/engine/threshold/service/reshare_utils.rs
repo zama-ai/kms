@@ -84,7 +84,8 @@ async fn fetch_public_fhe_materials_from_peers<
         //
         // the public storage URL consists of the bucket name and the URL
         // we need to parse this information accordingly
-        let (url, bucket) = split_url(&node.public_storage_url)?;
+        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
+        let url = format!("{protocol}{domain}");
         let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
@@ -463,7 +464,8 @@ async fn fetch_public_crs_materials_from_peers<
         //
         // the public storage URL consists of the bucket name and the URL
         // we need to parse this information accordingly
-        let (url, bucket) = split_url(&node.public_storage_url)?;
+        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
+        let url = format!("{protocol}{domain}");
         let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
@@ -610,12 +612,13 @@ mod tests {
     use tfhe::shortint::ClassicPBSParameters;
 
     #[test]
-    fn test_split_devnet_url() {
-        let (url, bucket) = super::split_url(
+    fn test_split_url() {
+        let (protocol, domain, bucket) = super::split_url(
             &"https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
         )
         .unwrap();
-        assert_eq!(url.as_str(), "https://s3.eu-west-1.amazonaws.com");
+        assert_eq!(protocol.as_str(), "https://");
+        assert_eq!(domain.as_str(), "s3.eu-west-1.amazonaws.com");
         assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
     }
 
