@@ -12,7 +12,6 @@ use threshold_execution::online::{
 };
 use threshold_types::role::Role;
 
-#[cfg(feature = "testing")]
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen,
     online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
@@ -21,7 +20,6 @@ use threshold_execution::{
 };
 use threshold_types::session_id::SessionId;
 
-#[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};
 
 fn redis_tidy() {
@@ -39,6 +37,7 @@ macro_rules! test_triples {
         paste! {
 
 
+            #[serial_test::serial]
             #[tokio::test]
             async fn [<test_redis_preprocessing $z:lower>]() {
                 redis_tidy();
@@ -82,6 +81,7 @@ macro_rules! test_triples {
     };
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_triples() {
     redis_tidy();
@@ -120,6 +120,7 @@ async fn test_store_fetch_100_triples() {
     assert_eq!(triples, fetched_triples);
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_randoms() {
     redis_tidy();
@@ -144,6 +145,7 @@ async fn test_store_fetch_100_randoms() {
     assert_eq!(randoms, fetched_shares);
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_bits() {
     redis_tidy();
@@ -168,6 +170,7 @@ async fn test_store_fetch_100_bits() {
     assert_eq!(bits, fetched_bits);
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_fetch_more_than_stored() {
     redis_tidy();
@@ -198,6 +201,7 @@ async fn test_fetch_more_than_stored() {
     );
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_cleanup_on_drop() {
     redis_tidy();
@@ -239,7 +243,6 @@ async fn test_cleanup_on_drop() {
 test_triples![create_base_preprocessing_residue_64 Z64];
 test_triples![create_base_preprocessing_residue_128 Z128];
 
-#[cfg(feature = "testing")]
 fn test_dkg_orchestrator_large(
     num_sessions: u128,
     num_parties: usize,
@@ -351,7 +354,7 @@ fn test_dkg_orchestrator_large(
     .unwrap();
 }
 
-#[cfg(feature = "testing")]
+#[serial_test::serial]
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
     use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
@@ -377,7 +380,7 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     );
 }
 
-#[cfg(feature = "testing")]
+#[serial_test::serial]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_execution::online::preprocessing::{

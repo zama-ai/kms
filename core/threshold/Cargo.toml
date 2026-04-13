@@ -15,28 +15,23 @@ aes-prng.workspace = true
 algebra = { workspace = true, default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
-attestation-doc-validation = { workspace = true, optional = true}
-backoff = { workspace = true, features = ["tokio"], optional = true }
 bc2wrap.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 dashmap.workspace = true
 error-utils.workspace = true
-threshold-execution.workspace = true
+threshold-execution = { workspace = true, features = ["malicious_strategies"]}
 futures.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 hex.workspace = true
-hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
 minijinja = { workspace = true, optional = true }
-threshold-networking = { workspace = true, optional = true }
-observability = { workspace = true, optional = true }
-opentelemetry = { workspace = true, optional = true }
+observability.workspace = true
+threshold-networking.workspace = true
 paste.workspace = true
 peak_alloc = { workspace = true, optional = true }
 rand.workspace = true
-redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 sha2.workspace = true
 strum = { workspace = true, features = ["derive"] }
@@ -49,23 +44,22 @@ tfhe = { workspace = true, features = [
     "zk-pok",
 ] }
 tfhe-csprng.workspace = true
-tfhe-zk-pok = { workspace = true, optional = true }
+tfhe-zk-pok.workspace = true
 tokio = { workspace = true, features = [
     "sync",
     "rt",
     "macros",
     "time",
-], optional = true }
-tokio-rustls = { workspace = true, optional = true }
-tonic = { workspace = true, features = ["tls-ring"], optional = true }
-tonic-health = { workspace = true, optional = true }
-tower = { workspace = true, features = ["retry", "timeout"], optional = true }
-tower-http = { workspace = true, features = ["trace"], optional = true }
-threshold-experimental = { workspace = true, optional = true }
+]}
+tokio-rustls = { workspace = true }
+tonic = { workspace = true, features = ["tls-ring"] }
+tonic-health = { workspace = true }
+tower = { workspace = true, features = ["retry", "timeout"] }
+tower-http = { workspace = true, features = ["trace"] }
+threshold-experimental = { workspace = true }
 threshold-types.workspace = true
-thread-handles = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["log"] }
-x509-parser = { workspace = true, optional = true }
+x509-parser = { workspace = true }
 zeroize.workspace = true
 
 [build-dependencies]
@@ -81,38 +75,20 @@ threshold-execution = { workspace = true, features = ["testing"] }
 threshold-experimental.workspace = true
 pprof.workspace = true
 rayon.workspace = true
+redis.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
+thread-handles.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-threshold-fhe = { workspace = true, features = ["testing", "measure_memory"] }
+threshold-fhe = { workspace = true, features = ["measure_memory"] }
 
 [package.metadata.cargo-machete]
-ignored = ["getrandom", "opentelemetry"]
+ignored = ["getrandom"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
-
-[[bin]]
-name = "stairwayctl"
-path = "src/bin/bgv/stairwayctl.rs"
-required-features = ["choreographer"]
-
-[[bin]]
-name = "moby"
-path = "src/bin/tfhe/moby.rs"
-required-features = ["choreographer"]
-
-[[bin]]
-name = "stairway"
-path = "src/bin/bgv/stairway.rs"
-required-features = ["choreographer"]
-
-[[bin]]
-name = "mobygo"
-path = "src/bin/tfhe/mobygo.rs"
-required-features = ["choreographer"]
 
 [[bin]]
 name = "gen-experiment"
@@ -131,15 +107,30 @@ path = "src/bin/non-threshold/kat.rs"
 name = "non-threshold-zk-pok-kat"
 path = "src/bin/non-threshold/zk-pok-kat.rs"
 
+[[bin]]
+name = "moby"
+path = "src/bin/tfhe/moby.rs"
+
+[[bin]]
+name = "mobygo"
+path = "src/bin/tfhe/mobygo.rs"
+
+[[bin]]
+name = "stairway"
+path = "src/bin/bgv/stairway.rs"
+
+[[bin]]
+name = "stairwayctl"
+path = "src/bin/bgv/stairwayctl.rs"
+
 [[bench]]
 name = "ddec"
 harness = false
-required-features = ["testing", "extension_degree_8"]
+required-features = ["extension_degree_8"]
 
 [[bench]]
 name = "bench_switch_and_squash"
 harness = false
-required-features = ["testing"]
 
 [[bench]]
 name = "bench_prss"
@@ -149,17 +140,17 @@ required-features = ["extension_degree_8"]
 [[bench]]
 name = "prep"
 harness = false
-required-features = ["testing", "extension_degree_8"]
+required-features = ["extension_degree_8"]
 
 [[bench]]
 name = "bit_dec"
 harness = false
-required-features = ["testing", "extension_degree_8"]
+required-features = ["extension_degree_8"]
 
 [[bench]]
 name = "ceremony"
 harness = false
-required-features = ["testing", "extension_degree_8"]
+required-features = ["extension_degree_8"]
 
 
 # BGV benchmarks
@@ -247,49 +238,13 @@ harness = false
 
 
 [features]
-default = ["non-wasm", "extension_degree_4"]
-# Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
-testing = ["non-wasm", "threshold-execution/testing", "dep:tokio", "dep:test-utils"]
+default = ["extension_degree_4"]
 templating = ["minijinja"]
-measure_memory = ["dep:peak_alloc"]
-malicious_strategies = ["testing"]
+measure_memory = ["peak_alloc"]
 
-# put all the dependencies that do not work well with wasm
-# namely libraries that don't work on 32-bit architectures
-# or uses tokio
-non-wasm = [
-	"threshold-execution/non-wasm",
-	"dep:threshold-networking",
-
-    "dep:attestation-doc-validation",
-    "dep:backoff",
-    "dep:hyper-rustls-ring",
-    "dep:observability",
-    "dep:opentelemetry",
-    "dep:redis",
-    "dep:tfhe-zk-pok",
-    "dep:thread-handles",
-    "dep:tokio",
-    "dep:tokio-rustls",
-    "dep:tonic",
-    "dep:tonic-health",
-    "dep:tower",
-    "dep:tower-http",
-    "dep:x509-parser",
-]
-
-extension_degree_3 = ["algebra/extension_degree_3", "threshold-execution/extension_degree_3"]
-extension_degree_4 = ["algebra/extension_degree_4", "threshold-execution/extension_degree_4"]
-extension_degree_5 = ["algebra/extension_degree_5", "threshold-execution/extension_degree_5"]
-extension_degree_6 = ["algebra/extension_degree_6", "threshold-execution/extension_degree_6"]
-extension_degree_7 = ["algebra/extension_degree_7", "threshold-execution/extension_degree_7"]
-extension_degree_8 = ["algebra/extension_degree_8", "threshold-execution/extension_degree_8"]
-
-all_extension_degrees = [
-    "extension_degree_3",
-    "extension_degree_4",
-    "extension_degree_5",
-    "extension_degree_6",
-    "extension_degree_7",
-    "extension_degree_8",
-]
+extension_degree_3 = ["algebra/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8"]

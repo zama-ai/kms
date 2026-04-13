@@ -3,9 +3,9 @@ use observability::conf::{Settings, TelemetryConfig};
 use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
+use threshold_fhe::choreography::tfhe_rs::strategies::DefaultChoreoRoutingHelper;
 use threshold_fhe::conf::party::PartyConf;
 use threshold_fhe::grpc;
-use threshold_fhe::choreography::tfhe_rs::strategies::DefaultChoreoRoutingHelper;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]

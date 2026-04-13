@@ -78,7 +78,7 @@ strum.workspace = true
 strum_macros.workspace = true
 tempfile.workspace = true
 tfhe.workspace = true
-threshold-fhe = { workspace = true, features = ["testing"] }
+threshold-networking.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-rustls.workspace = true
 tonic = { workspace = true }
@@ -99,7 +99,6 @@ futures.workspace = true
 kms-core-client = { workspace = true, features = ["testing"] }
 serial_test.workspace = true
 test-context.workspace = true
-threshold-networking.workspace = true
 toml.workspace = true
 
 [build-dependencies]

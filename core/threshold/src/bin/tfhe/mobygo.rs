@@ -1,6 +1,4 @@
 //! CLI tool for interacting with a group of mobys
-#![cfg(feature = "choreographer")]
-
 use clap::{Args, Parser, Subcommand};
 use itertools::Itertools;
 use observability::{

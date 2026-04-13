@@ -16,7 +16,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]] # Bin to generate keys
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
-required-features = ["testing", "threshold-fhe/testing"]
+required-features = ["testing"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
@@ -105,9 +105,6 @@ tfhe = { workspace = true, features = [
 tfhe-versionable.workspace = true
 thiserror.workspace = true
 thread-handles = { workspace = true, optional = true }
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "extension_degree_4",
-] }
 threshold-execution.workspace = true
 threshold-networking = { workspace = true, optional = true }
 threshold-types.workspace = true
@@ -138,7 +135,7 @@ zeroize.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
-threshold-execution = { workspace = true, features = ["testing", "malicious_strategies", "extension_degree_4"] }
+threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
@@ -147,9 +144,6 @@ serial_test.workspace = true
 sysinfo.workspace = true
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "testing", "malicious_strategies",
-] }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 
 
@@ -159,8 +153,6 @@ testing = ["dep:tempfile"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "dep:threshold-networking",
-    "threshold-fhe/non-wasm",
-
     "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -186,13 +178,11 @@ non-wasm = [
     "dep:x509-parser",
 ]
 slow_tests = ["testing"]
-wasm_tests = ["testing", "threshold-execution/extension_degree_4"]
+wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
-    "threshold-fhe/testing",
     "threshold-execution/testing",
     "threshold-networking/testing",
-
     "dep:nsm-nitro-enclave-utils"
 ]

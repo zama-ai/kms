@@ -12,13 +12,13 @@ use threshold_networking::choreography_gen::{
     ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
 
-#[cfg(feature = "measure_memory")]
-use crate::allocator::MEM_ALLOCATOR;
 use super::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, ReshareParams,
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
+#[cfg(feature = "measure_memory")]
+use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
 use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
@@ -2683,7 +2683,6 @@ pub use crate::choreography::server_utils::{
     fill_network_memory_info_single_session, gen_random_sid,
 };
 
-#[cfg(feature = "testing")]
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     session: &mut BaseSession,
     params: DKGParams,
@@ -2693,21 +2692,11 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
+    tracing::warn!("Using local key generation, this is very much insecure.");
     use threshold_execution::tfhe_internals::test_feature::insecure_initialize_key_material;
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
     insecure_initialize_key_material(session, params, tag).await
-}
-
-#[cfg(not(feature = "testing"))]
-async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
-    _session: &mut BaseSession,
-    _params: DKGParams,
-    _tag: tfhe::Tag,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
-    panic!(
-        "Require the testing feature on the moby cluster to perform a local intialization of the keys"
-    )
 }
 
 pub fn create_small_session<

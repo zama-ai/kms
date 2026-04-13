@@ -60,7 +60,4 @@ tfhe = { workspace = true, features = [
 tonic-prost-build.workspace = true
 
 [features]
-experimental = ["choreographer", "testing"]
 testing = ["threshold-execution/testing"]
-malicious_strategies = ["testing"]
-choreographer = ["malicious_strategies"]
