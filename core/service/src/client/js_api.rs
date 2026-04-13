@@ -507,6 +507,11 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
+/// * `threshold` - Optional expected threshold/degree used during response validation.
+/// Validation requires at least `threshold + 1` matching responses, and the selected pivot
+/// response must have `degree == threshold`. If not provided, it is computed from the number
+/// of server addresses as `(n - 1) / 3`.
+///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
@@ -517,6 +522,7 @@ pub fn process_user_decryption_resp_from_js(
     agg_resp: JsValue,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
+    threshold: Option<usize>,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
@@ -540,9 +546,10 @@ pub fn process_user_decryption_resp_from_js(
         agg_resp,
         enc_pk,
         enc_sk,
+        threshold,
         verify,
     );
-    // Need to convert to BE for JS, evrerything is internally represented as LE
+    // Need to convert to BE for JS, everything is internally represented as LE
     match le_res {
         Ok(le_res) => Ok(le_res
             .into_iter()
@@ -574,6 +581,9 @@ pub fn process_user_decryption_resp_from_js(
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
+/// * `threshold` - Optional threshold override for reconstruction.
+/// If not provided, it is computed from the number of server addresses as `(n - 1) / 3`.
+///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
@@ -584,6 +594,7 @@ pub fn process_user_decryption_resp(
     agg_resp: Vec<UserDecryptionResponse>,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
+    threshold: Option<usize>,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
@@ -595,14 +606,15 @@ pub fn process_user_decryption_resp(
         client.process_user_decryption_resp(
             &request,
             &eip712_domain,
-            &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            threshold,
+            &agg_resp,
         )
     } else {
         client.insecure_process_user_decryption_resp(
-            &agg_resp,
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            &agg_resp,
         )
     };
     match user_decrypt_resp {
