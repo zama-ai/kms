@@ -155,14 +155,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             // Lock the storage components in the correct order to avoid deadlocks.
             let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -232,48 +228,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
                 pk_result.is_ok() && server_result.is_ok()
             };
-            let threshold_key_clone = threshold_fhe_keys.clone();
-            let f3 = async move {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            key_id,
-                            epoch_id,
-                            &threshold_key_clone,
-                            &PrivDataType::FheKeyInfo.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
-                            );
-                        } else {
-                            log_storage_success(
-                                key_id,
-                                guarded_backup_vault.info(),
-                                &PrivDataType::FheKeyInfo.to_string(),
-                                false,
-                                true,
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of key material for request {key_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
         // Try to store the new data
         tracing::info!("Storing Keys objects for key ID {}", key_id);
 
-        if r1 && r2 && r3 {
+        if r1 && r2 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
@@ -383,14 +343,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let guarded_meta_storage = meta_store.write().await;
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             // Lock the storage components in the correct order to avoid deadlocks.
             let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -446,48 +402,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
                 server_result.is_ok()
             };
-            let threshold_key_clone = threshold_fhe_keys.clone();
-            let f3 = async move {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            key_id,
-                            epoch_id,
-                            &threshold_key_clone,
-                            &PrivDataType::FheKeyInfo.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
-                            );
-                        } else {
-                            log_storage_success(
-                                key_id,
-                                guarded_backup_vault.info(),
-                                &PrivDataType::FheKeyInfo.to_string(),
-                                false,
-                                true,
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of key material for request {key_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
         // Try to store the new data
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
 
-        if r1 && r2 && r3 {
+        if r1 && r2 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);

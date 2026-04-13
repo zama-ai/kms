@@ -239,7 +239,10 @@ pub(crate) async fn crs_gen_background<
     crypto_storage
         .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
         .await;
-
+    // Update backup
+    if let Err(e) = crypto_storage.inner.update_backup_vault(false).await {
+        tracing::error!("Failed to update backup vault after CRS generation: {e}");
+    }
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
     tracing::info!(
         "CRS generation of request {} completed successfully.",

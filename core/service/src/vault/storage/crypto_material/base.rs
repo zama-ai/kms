@@ -274,13 +274,9 @@ where
         };
         let info = private_keys_or_shares.get_metadata().clone();
         let mut guarded_meta_storage = meta_store.write().await;
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             let mut pub_storage = self.public_storage.lock().await;
             let mut priv_storage = self.private_storage.lock().await;
-            let back_vault = match self.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -337,44 +333,7 @@ where
                 }
                 server_result.is_ok()
             };
-
-            let threshold_key_clone = private_keys_or_shares.clone();
-            let f3 = async move {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            key_id,
-                            epoch_id,
-                            &threshold_key_clone,
-                            &private_keys_or_shares_type.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted {kms_type} FHE keys to backup storage for request {key_id}: {e}"
-                            );
-                        } else {
-                            log_storage_success(
-                                key_id,
-                                guarded_backup_vault.info(),
-                                &private_keys_or_shares_type.to_string(),
-                                false,
-                                true,
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of key material for request {key_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
 
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
@@ -384,7 +343,7 @@ where
             tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
         }
 
-        if r1 && r2 && r3 && meta_update_result.is_ok() {
+        if r1 && r2 && meta_update_result.is_ok() {
             // Update fhe_keys cache (no pk_cache update for compressed keys)
             {
                 let mut guarded_fhe_keys = fhe_keys_cache.write().await;
@@ -545,14 +504,10 @@ where
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             // Enforce locking order for internal types
             let mut pub_storage = self.public_storage.lock().await;
             let mut priv_storage = self.private_storage.lock().await;
-            let back_vault = match self.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let result = store_versioned_at_request_and_epoch_id(
@@ -589,37 +544,10 @@ where
                 }
                 result.is_ok()
             };
-            let f3 = async {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            crs_id,
-                            epoch_id,
-                            &crs_info,
-                            &PrivDataType::CrsInfo.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted crs info to backup storage for request {crs_id}: {e}"
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of CRS material for request {crs_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
 
-        if !(r1 && r2 && r3) {
+        if !(r1 && r2) {
             // Some store op failed, we need to purge any potentially
             // dangling data and update the meta store accordingly.
             // Try to delete stored data to avoid anything dangling
@@ -667,10 +595,6 @@ where
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
         let mut priv_storage = self.private_storage.lock().await;
-        let back_vault = match self.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
-        };
 
         let f1 = async {
             let result =
@@ -703,30 +627,8 @@ where
 
             priv_result.is_err()
         };
-        let f3 = async {
-            match back_vault {
-                Some(mut back_vault) => {
-                    let vault_result = delete_at_request_and_epoch_id(
-                        &mut (*back_vault),
-                        req_id,
-                        epoch_id,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await;
-                    if let Err(e) = &vault_result {
-                        tracing::warn!(
-                            "Failed to delete CRS info from backup storage for request {}: {}",
-                            req_id,
-                            e
-                        );
-                    }
-                    vault_result.is_err()
-                }
-                None => false, // No backup vault, so no error
-            }
-        };
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        if r1 || r2 || r3 {
+        let (r1, r2) = tokio::join!(f1, f2);
+        if r1 || r2 {
             tracing::error!("Failed to delete crs material for request {}", req_id);
         } else {
             tracing::info!("Deleted all crs material for request {}", req_id);

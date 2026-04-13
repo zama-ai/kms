@@ -1413,7 +1413,10 @@ impl<
                     .await;
             }
         }
-
+        // Update backup
+        if let Err(e) = crypto_storage.inner.update_backup_vault(false).await {
+            tracing::error!("Failed to update backup vault after key generation: {e}");
+        }
         tracing::info!(
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
