@@ -211,7 +211,7 @@ jobs:
       #
       - name: Set up Docker Buildx
         if: matrix.cargo-check == false
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           platforms: linux/amd64 # Target platform for builds
           buildkitd-flags: --debug # Enable debug logging for BuildKit
@@ -251,7 +251,7 @@ jobs:
           ./get_helm.sh
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
@@ -260,7 +260,7 @@ jobs:
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to harbor Container Registry
         if: matrix.cargo-check == false
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
@@ -280,7 +280,7 @@ jobs:
       # Setup cache for dockerfile and inject in docker
       #
       - name: Setup Cache
-        uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
+        uses: runs-on/cache@a5f51d6f3fece787d03b7b4e981c82538a0654ed # v4
         id: cache
         env:
           RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
@@ -407,7 +407,7 @@ jobs:
 
       - name: Upload Test Results
         if: always() && !cancelled() && env.EXIT_CODE == 0
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
@@ -438,7 +438,7 @@ jobs:
 
       - name: Upload kms-core logs
         if: always() && matrix.cargo-check == false
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kms-core-${{ matrix.deployment-type }}-logs
           path: |

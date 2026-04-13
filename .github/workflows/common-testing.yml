@@ -168,14 +168,14 @@ jobs:
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }}
@@ -185,7 +185,7 @@ jobs:
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
         if: inputs.package-name == 'simulator'
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
@@ -405,7 +405,7 @@ jobs:
 
       - name: Upload Test Results
         if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
@@ -451,7 +451,7 @@ jobs:
 
       - name: Archive integration test trace logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
           path: '**/*.log'

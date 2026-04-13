@@ -204,7 +204,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Login to zws GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
@@ -365,7 +365,7 @@ jobs:
       # ======================================================================
       - name: Upload Argo workflow logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: argo-workflow-logs.txt
           path: argo-workflow-logs.txt
@@ -402,7 +402,7 @@ jobs:
 
       - name: Upload kms-core logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kms-core-logs
           path: kms-core-*.txt
