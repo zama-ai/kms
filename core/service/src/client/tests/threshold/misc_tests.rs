@@ -510,7 +510,7 @@ async fn nightly_test_complete_session_notification() {
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;
         let received_plaintexts = internal_client
-            .process_decryption_resp(Some(req.clone()), &responses, min_count_agree)
+            .process_decryption_resp(Some(req.clone()), min_count_agree, &responses)
             .unwrap();
 
         // check that the plaintexts are correct

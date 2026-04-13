@@ -600,12 +600,12 @@ fn validate_public_decrypt_responses(
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
-/// * `agg_resp` — Untrusted aggregated server responses received over the network.
 /// * `min_agree_count` — Trusted minimum number of agreeing responses required.
+/// * `agg_resp` — Untrusted aggregated server responses received over the network.
 pub(crate) fn validate_public_decrypt_responses_against_request(
     trusted_ctx: &PublicDecTrustedValidationContext,
-    agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
+    agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<()> {
     let resp_parsed_payloads = validate_public_decrypt_responses(trusted_ctx, agg_resp)?;
     if resp_parsed_payloads.len() < min_agree_count as usize {
@@ -1938,7 +1938,7 @@ mod tests {
         {
             let agg_resp = vec![];
             assert!(
-                validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1)
+                validate_public_decrypt_responses_against_request(&trusted_ctx, 1, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP)
@@ -1949,7 +1949,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert!(
-                validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 3)
+                validate_public_decrypt_responses_against_request(&trusted_ctx, 3, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP)
@@ -1985,7 +1985,7 @@ mod tests {
                 request: Some(&bad_request),
             };
             assert!(
-                validate_public_decrypt_responses_against_request(&bad_ctx, &agg_resp, 2)
+                validate_public_decrypt_responses_against_request(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE)
@@ -1997,7 +1997,7 @@ mod tests {
             let mut bad_resp = resp1.clone();
             bad_resp.external_signature[0] ^= 1;
             let agg_resp = vec![resp0.clone(), bad_resp];
-            validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 1).unwrap();
+            validate_public_decrypt_responses_against_request(&trusted_ctx, 1, &agg_resp).unwrap();
         }
 
         // request ID
@@ -2034,7 +2034,7 @@ mod tests {
                 request: Some(&bad_request),
             };
             assert!(
-                validate_public_decrypt_responses_against_request(&bad_ctx, &agg_resp, 2)
+                validate_public_decrypt_responses_against_request(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK)
@@ -2051,13 +2051,13 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            validate_public_decrypt_responses_against_request(&none_ctx, &agg_resp, 2).unwrap();
+            validate_public_decrypt_responses_against_request(&none_ctx, 2, &agg_resp).unwrap();
         }
 
         // happy path
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_public_decrypt_responses_against_request(&trusted_ctx, &agg_resp, 2).unwrap();
+            validate_public_decrypt_responses_against_request(&trusted_ctx, 2, &agg_resp).unwrap();
         }
     }
 
