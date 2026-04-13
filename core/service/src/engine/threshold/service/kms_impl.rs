@@ -562,7 +562,7 @@ where
         .await;
 
     let session_maker = SessionMaker::new_initialized(
-        &crypto_storage.inner,
+        &crypto_storage,
         networking_manager,
         verifier,
         base_kms.new_rng().await,

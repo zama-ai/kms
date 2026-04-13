@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     engine::{context::ContextInfo, utils::MetricedError},
-    vault::storage::{Storage, StorageExt, crypto_material::CryptoMaterialStorage},
+    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
@@ -90,7 +90,7 @@ impl SessionMaker {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
     >(
-        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,

@@ -1139,7 +1139,7 @@ where
         log_storage_success_optional_variant(
             context_id,
             priv_storage.info(),
-            "context info",
+            &PrivDataType::ContextInfo.to_string(),
             false,
             None,
         );
@@ -1152,7 +1152,7 @@ where
         log_storage_success_optional_variant(
             context_id,
             priv_storage.info(),
-            "context info",
+            &PrivDataType::ContextInfo.to_string(),
             false,
             None,
         );
@@ -1168,15 +1168,6 @@ where
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
         Ok(context_map.into_values().collect())
-    }
-
-    /// Read all PRSS info from storage
-    pub async fn read_all_prss_info(
-        &self,
-    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
-        let priv_storage = self.private_storage.lock().await;
-
-        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
     }
 
     /// Synchronize the backup vault with the current private storage contents.
@@ -1222,11 +1213,11 @@ where
                         }
                         // Non epoched types
                         PrivDataType::PrssSetupCombined => {
-                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                PRSSSetupCombined,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
                             )
                             .await?;
                         }
@@ -1241,11 +1232,11 @@ where
                         }
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched
-                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                PrivateSigKey,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
                             )
                             .await?;
                         }
@@ -1259,11 +1250,11 @@ where
                             .await?;
                         }
                         PrivDataType::ContextInfo => {
-                            crate::engine::backup_operator::update_specific_backup_vault::<PrivS, ContextInfo>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                ContextInfo,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
                             )
                             .await?;
                         }

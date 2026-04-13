@@ -20,14 +20,15 @@ use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::ThresholdFheKeys,
+        threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::meta_store::MetaStore,
     vault::{
         Vault,
         storage::{
             Storage, StorageExt, StorageReader, crypto_material::log_storage_success,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
         },
     },
 };
@@ -68,6 +69,38 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// Get an Arc of the private storage device.
     pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
         Arc::clone(&self.inner.private_storage)
+    }
+
+    pub async fn write_prss_info(
+        &self,
+        epoch_id: &EpochId,
+        prss_info: &PRSSSetupCombined,
+    ) -> anyhow::Result<()> {
+        let mut priv_storage = self.inner.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_storage,
+            &(*epoch_id).into(),
+            prss_info,
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await?;
+        log_storage_success(
+            epoch_id,
+            priv_storage.info(),
+            &PrivDataType::PrssSetupCombined.to_string(),
+            false,
+            true,
+        );
+        Ok(())
+    }
+
+    /// Read all PRSS info from storage
+    pub async fn read_all_prss_info(
+        &self,
+    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
+        let priv_storage = self.inner.private_storage.lock().await;
+
+        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
     }
 
     /// Write the CRS to the storage backend.

@@ -95,7 +95,6 @@ use crate::{
         crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
-        store_versioned_at_request_id,
     },
 };
 
@@ -277,7 +276,7 @@ impl<
 {
     /// This will load all PRSS setups from storage into session maker.
     pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
-        let all_prss = self.crypto_storage.inner.read_all_prss_info().await?;
+        let all_prss = self.crypto_storage.read_all_prss_info().await?;
 
         for (epoch_id, prss) in all_prss {
             self.session_maker.add_epoch(epoch_id.into(), prss).await;
@@ -357,18 +356,8 @@ impl<
             threshold: base_session.parameters.threshold(),
         };
 
-        // serialize and write PRSS Setup to storage into private storage
-        let private_storage = Arc::clone(&crypto_storage.inner.private_storage);
-        let mut priv_storage = private_storage.lock().await;
-
-        // Ensure data can be stored before updating the model in ram
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            &(*epoch_id).into(),
-            &prss,
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await?;
+        crypto_storage.write_prss_info(epoch_id, &prss).await?;
+        crypto_storage.inner.update_backup_vault(false).await?;
 
         session_maker.add_epoch(*epoch_id, prss).await;
 
@@ -1442,6 +1431,7 @@ pub(crate) mod tests {
             StorageType,
             file::FileStorage,
             ram::{self, RamStorage},
+            store_versioned_at_request_id,
         },
     };
     use aes_prng::AesRng;
