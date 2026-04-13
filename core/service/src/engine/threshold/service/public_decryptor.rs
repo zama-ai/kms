@@ -874,7 +874,7 @@ mod tests {
         )
         .await;
 
-        if let Err(e) = public_decryptor
+        public_decryptor
             .crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
@@ -884,9 +884,9 @@ mod tests {
                 Arc::clone(&key_meta_store),
             )
             .await
-        {
-            tracing::error!("Failed to write threshold keys for key {key_id}: {e}");
-        }
+            .expect(&format!(
+                "failed to write threshold keys for key {key_id} in test setup"
+            ));
         {
             // check existance
             let _guard = public_decryptor
