@@ -71,11 +71,11 @@ where
                     .client_ca_root(ca_cert);
                 Server::builder()
                     .tls_config(tls_config)?
-                    .timeout(*NETWORK_TIMEOUT_LONG)
+                    .timeout(NETWORK_TIMEOUT_LONG)
             }
             (_, _) => {
                 tracing::warn!("attempting to build an insecure kms-core server");
-                Server::builder().timeout(*NETWORK_TIMEOUT_LONG)
+                Server::builder().timeout(NETWORK_TIMEOUT_LONG)
             }
         };
         Ok(server)
@@ -87,7 +87,7 @@ where
     choreo_health_reporter.set_serving::<GrpcServer>().await;
 
     let choreo_grpc_layer = tower::ServiceBuilder::new()
-        .timeout(*NETWORK_TIMEOUT_LONG)
+        .timeout(NETWORK_TIMEOUT_LONG)
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span));
 
     let choreo_router = make_server(false)?
@@ -113,7 +113,7 @@ where
     // so the section below is similar to the "CHOREO" section.
     let (core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
     core_health_reporter.set_serving::<GrpcServer>().await;
-    let core_grpc_layer = tower::ServiceBuilder::new().timeout(*NETWORK_TIMEOUT_LONG);
+    let core_grpc_layer = tower::ServiceBuilder::new().timeout(NETWORK_TIMEOUT_LONG);
 
     let core_router = make_server(true)?
         .layer(core_grpc_layer)

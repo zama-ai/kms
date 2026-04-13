@@ -8,6 +8,7 @@ use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
@@ -506,7 +507,7 @@ pub async fn async_user_decrypt<
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
-    client_enc_key: &UnifiedPublicEncKey,
+    client_enc_key_bytes: &[u8],
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
@@ -517,6 +518,10 @@ pub async fn async_user_decrypt<
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
+
+    // LEGACY CODE: see `from_legacy_bytes` for docs
+    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(client_enc_key_bytes)
+        .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
@@ -538,7 +543,7 @@ pub async fn async_user_decrypt<
             fhe_type,
             ct_format,
             req_digest,
-            client_enc_key,
+            &client_enc_key,
             client_address.as_ref(),
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
@@ -562,7 +567,7 @@ pub async fn async_user_decrypt<
         sig_key,
         &payload,
         domain,
-        client_enc_key,
+        client_enc_key_bytes,
         extra_data,
     )?;
 

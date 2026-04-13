@@ -47,7 +47,7 @@ pub async fn user_decrypt_impl<
     let (
         typed_ciphertexts,
         link,
-        client_enc_key,
+        client_enc_key_bytes,
         client_address,
         request_id,
         key_id,
@@ -152,7 +152,7 @@ pub async fn user_decrypt_impl<
                 &mut rng,
                 &typed_ciphertexts,
                 &link,
-                &client_enc_key,
+                &client_enc_key_bytes,
                 &client_address,
                 server_verf_key,
                 &domain,

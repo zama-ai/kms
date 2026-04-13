@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
-use crate::poly::lagrange_polynomials;
+use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
 use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use error_utils::anyhow_error_and_log;
 use g2p::{GaloisField, g2p};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
 g2p!(
     GF32,
@@ -88,10 +87,8 @@ impl RingWithExceptionalSequence for GF32 {
     }
 }
 
-lazy_static! {
-    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF32>, Vec<Poly<GF32>>>> =
-        RwLock::new(HashMap::new());
-}
+static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF32>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF32 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
@@ -132,18 +129,14 @@ pub fn two_powers(input: GF32, max_power: usize) -> Vec<GF32> {
     res
 }
 
-lazy_static::lazy_static! {
-    //Pre-compute the set S defined in Fig.58 (i.e. GF32 from generator X)
-    pub static ref GF32_FROM_GENERATOR : Vec<GF32> =
-    {
-
-        let generator = GF32::from(2);
-         (0..32)
-            .scan(GF32::from(1), |state, idx| {
-                let res = if idx == 31 { GF32::from(0) } else { *state };
-                *state = res * generator;
-                Some(res)
-            })
-            .collect()
-    };
-}
+//Pre-compute the set S defined in Fig.58 (i.e. GF32 from generator X)
+pub static GF32_FROM_GENERATOR: LazyLock<Vec<GF32>> = LazyLock::new(|| {
+    let generator = GF32::from(2);
+    (0..32)
+        .scan(GF32::from(1), |state, idx| {
+            let res = if idx == 31 { GF32::from(0) } else { *state };
+            *state = res * generator;
+            Some(res)
+        })
+        .collect()
+});

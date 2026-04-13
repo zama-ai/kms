@@ -19,7 +19,6 @@ hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring.workspace = true
 error-utils.workspace = true
 futures-util.workspace = true
-lazy_static.workspace = true
 observability.workspace = true
 oid-registry.workspace = true
 prost.workspace = true

@@ -18,7 +18,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
 use threshold_types::{
@@ -88,7 +88,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.max_interval)
         } else {
-            *MAX_INTERVAL
+            MAX_INTERVAL
         }
     }
 
@@ -96,7 +96,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             conf.max_elapsed_time.map(Duration::from_secs)
         } else {
-            *MAX_ELAPSED_TIME
+            Some(MAX_ELAPSED_TIME)
         }
     }
 
@@ -104,7 +104,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout)
         } else {
-            *NETWORK_TIMEOUT_LONG
+            NETWORK_TIMEOUT_LONG
         }
     }
 
@@ -112,7 +112,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk)
         } else {
-            *NETWORK_TIMEOUT_BK
+            NETWORK_TIMEOUT_BK
         }
     }
 
@@ -120,7 +120,7 @@ impl OptionConfigWrapper {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk_sns)
         } else {
-            *NETWORK_TIMEOUT_BK_SNS
+            NETWORK_TIMEOUT_BK_SNS
         }
     }
 
@@ -912,10 +912,8 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
-lazy_static::lazy_static! {
-    pub static ref NETWORK_RECEIVED_MEASUREMENT: DashMap<SessionId,usize> =
-        DashMap::new();
-}
+pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
+    LazyLock::new(DashMap::new);
 
 fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,

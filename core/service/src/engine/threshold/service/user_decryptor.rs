@@ -52,6 +52,7 @@ use crate::{
     anyhow_error_and_log,
     cryptography::{
         compute_external_user_decrypt_signature,
+        encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
@@ -169,6 +170,12 @@ impl<
     ///
     /// This function does not perform user decryption in a background thread.
     /// The return type should be [UserDecryptCallValues] except the final item in the tuple
+    ///
+    /// Note that the argument `client_enc_key_bytes` must be the original
+    /// bytes that was provided by the user, it should not go through any re-serialization.
+    /// The same information is in `signcryption_key.receiver_enc_key` but in there it is
+    /// already serialized, that's why the original bytes representation is still needed
+    /// for signing later on.
     #[allow(clippy::too_many_arguments)]
     async fn inner_user_decrypt(
         req_id: &RequestId,
@@ -179,6 +186,7 @@ impl<
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
         signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+        client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
             HashMap<(RequestId, EpochId), ThresholdFheKeys>,
             ThresholdFheKeys,
@@ -384,7 +392,7 @@ impl<
             &signcryption_key.signing_key,
             &payload,
             domain,
-            &signcryption_key.receiver_enc_key,
+            &client_enc_key_bytes_orig,
             &extra_data,
         )?;
         Ok((payload, external_signature, extra_data))
@@ -456,7 +464,7 @@ impl<
         let (
             typed_ciphertexts,
             link,
-            client_enc_key,
+            client_enc_key_bytes_orig, // the original bytes for the encryption key
             client_address,
             req_id,
             key_id,
@@ -506,6 +514,15 @@ impl<
             )
         })?)
         .clone();
+        let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&client_enc_key_bytes_orig)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_REQUEST,
+                    Some(req_id),
+                    anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,
@@ -543,6 +560,7 @@ impl<
                 typed_ciphertexts,
                 link,
                 signcryption_key,
+                client_enc_key_bytes_orig,
                 fhe_keys_rlock,
                 dec_mode,
                 &domain,

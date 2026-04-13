@@ -182,7 +182,7 @@ where
     Ok((pk, PrivateBgvKeySet::from_eval_domain(sk_ntt_mod_q1)))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use std::time::Duration;
 
@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
@@ -286,7 +286,7 @@ mod tests {
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_with_offline() {
         let parties = 5;
         let threshold = 1;
@@ -305,7 +305,7 @@ mod tests {
 
             session
                 .network()
-                .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
+                .set_timeout_for_next_round(NETWORK_TIMEOUT_ASYNC)
                 .await;
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,

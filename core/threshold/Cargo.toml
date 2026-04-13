@@ -29,7 +29,6 @@ hex.workspace = true
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
-lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
 threshold-networking = { workspace = true, optional = true }
 observability = { workspace = true, optional = true }
@@ -76,7 +75,6 @@ tonic-prost-build.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
-ctor.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
 pprof.workspace = true
 rustls-webpki.workspace = true

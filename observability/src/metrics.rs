@@ -1,6 +1,6 @@
 use crate::metrics_names::{TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE};
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
@@ -573,11 +573,7 @@ impl Drop for DurationGuard<'_> {
 }
 
 // Global metrics instance
-lazy_static::lazy_static! {
-    pub static ref METRICS: CoreMetrics = {
-        CoreMetrics::new()
-    };
-}
+pub static METRICS: LazyLock<CoreMetrics> = LazyLock::new(CoreMetrics::new);
 
 /// Configuration for metrics initialization
 #[derive(Debug, Clone)]
@@ -601,7 +597,7 @@ mod tests {
 
     #[test]
     fn metric_families_match_allowlist() {
-        // Touch the lazy_static to ensure metrics are registered
+        // Touch the LazyLock to ensure metrics are registered
         let _ = &*METRICS;
 
         // Seed Vec-type metrics so they appear in gather()

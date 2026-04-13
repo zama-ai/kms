@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tfhe::FheUint80;
 use tfhe::integer::BooleanBlock;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -72,10 +73,8 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
-lazy_static::lazy_static! {
-    pub static ref INSECURE_PREPROCESSING_ID: RequestId =
-        crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
-}
+pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
+    LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersioned {

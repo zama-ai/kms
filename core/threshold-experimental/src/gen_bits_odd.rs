@@ -143,7 +143,7 @@ impl BitGenOdd for RealBitGenOdd {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "slow_tests"))]
 mod tests {
     use crate::algebra::levels::LevelKsw;
     use algebra::{
@@ -159,7 +159,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bitgen() {
         let parties = 4;
         let threshold = 1;

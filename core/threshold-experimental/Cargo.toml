@@ -68,7 +68,6 @@ futures = { workspace = true, optional = true }
 threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
 itertools.workspace = true
-lazy_static.workspace = true
 threshold-networking.workspace = true
 num-integer.workspace = true
 observability = { workspace = true, optional = true }
@@ -95,3 +94,4 @@ peak_alloc = { workspace = true }
 
 [features]
 choreographer = ["threshold-fhe/choreographer", "threshold-fhe/non-wasm", "dep:dashmap", "dep:futures", "dep:async-trait", "dep:observability"]
+slow_tests = []

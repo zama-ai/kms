@@ -18,9 +18,10 @@ cfg_if::cfg_if! {
     }
 }
 
-/// keygen directories
-pub const TEMP_DIR: &str = "temp";
-pub const TEMP_DKG_DIR: &str = "temp/dkg";
+/// keygen directories (anchored to the workspace root so paths are stable
+/// regardless of which crate's tests are running or what the CWD is).
+/// threshold-execution lives at `core/threshold-execution/`, so `/../..` reaches the workspace root.
+pub const TEMP_DIR: &str = concatcp!(env!("CARGO_MANIFEST_DIR"), "/../../temp");
 
 pub const SMALL_TEST_KEY_PATH: &str = concatcp!(TEMP_DIR, "/small_test_keys.bin");
 pub const REAL_KEY_PATH: &str = concatcp!(TEMP_DIR, "/default_keys.bin");
