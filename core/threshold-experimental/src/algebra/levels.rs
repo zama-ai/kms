@@ -23,7 +23,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-#[cfg(not(test))]
 use std::sync::OnceLock;
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
@@ -348,21 +347,12 @@ macro_rules! impl_field_level {
                 }
             }
 
-            #[cfg(not(test))]
             static [<LAGRANGE_STORE_BGV_ $name:upper>]: OnceLock<Vec<Poly<$name>>> = OnceLock::new();
 
             impl Field for $name {
-                fn memoize_lagrange(points: &[Self]) -> Vec<Poly<Self>> {
-                    #[cfg(test)]
-                    {
-                        lagrange_polynomials(points)
-                    }
-                    #[cfg(not(test))]
-                    {
-                        [<LAGRANGE_STORE_BGV_ $name:upper>]
-                            .get_or_init(|| lagrange_polynomials(points))
-                            .clone()
-                    }
+                fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>] {
+                    [<LAGRANGE_STORE_BGV_ $name:upper>]
+                        .get_or_init(|| lagrange_polynomials(points))
                 }
 
                 fn invert(&self) -> Self {

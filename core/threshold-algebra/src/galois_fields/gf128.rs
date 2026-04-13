@@ -5,7 +5,7 @@ use crate::{
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 g2p!(
     GF128,
@@ -84,24 +84,11 @@ impl RingWithExceptionalSequence for GF128 {
     }
 }
 
-#[cfg(not(test))]
-use std::sync::OnceLock;
-
-#[cfg(not(test))]
 static LAGRANGE_STORE: OnceLock<Vec<Poly<GF128>>> = OnceLock::new();
 
 impl Field for GF128 {
-    fn memoize_lagrange(points: &[Self]) -> Vec<Poly<Self>> {
-        #[cfg(test)]
-        {
-            lagrange_polynomials(points)
-        }
-        #[cfg(not(test))]
-        {
-            LAGRANGE_STORE
-                .get_or_init(|| lagrange_polynomials(points))
-                .clone()
-        }
+    fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>] {
+        LAGRANGE_STORE.get_or_init(|| lagrange_polynomials(points))
     }
 }
 
