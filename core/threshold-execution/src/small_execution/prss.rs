@@ -871,10 +871,12 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
     broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
     session: &mut S,
 ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
+    // We count through a set of voting roles in order to avoid one party voting for the same value multiple times
     let mut count: HashMap<PartySet, ValueVotes<Z>> = HashMap::new();
     for (role, broadcast_val) in broadcast_result {
         let vec_pairs = match broadcast_val {
             BroadcastValue::PRSSVotes(vec_values) => vec_values,
+            // If the party does not broadcast the type as expected they are considered malicious
             _ => {
                 session.add_corrupt_with_reason(
                     *role,

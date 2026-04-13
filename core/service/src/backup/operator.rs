@@ -627,6 +627,7 @@ impl Operator {
             let (cus_enc_key, custodian_verf_key) = match self.custodian_keys.get(&role_j) {
                 Some((enc_pk, sig_pk)) => (enc_pk, sig_pk),
                 None => {
+                    // Note that we do not error out since we might now have gotten all the expected correct custodian setup messages
                     tracing::warn!("Could not find custodian keys for role {role_j}");
                     skipped_roles.push(role_j);
                     continue;

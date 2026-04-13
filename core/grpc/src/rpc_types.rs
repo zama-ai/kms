@@ -1436,6 +1436,7 @@ mod tests {
             err_msg.contains("Received unsupported FHE type for ABI encoding"),
             "expected unsupported type error: {err_msg}"
         );
+        // check that we also log an error when trying to encode unsupported types in pts_mix3
         assert!(
             err_msg.contains("Error in"),
             "expected error to be logged (via anyhow_error_and_log): {err_msg}"
