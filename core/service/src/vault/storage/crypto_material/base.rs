@@ -379,37 +379,41 @@ where
 
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
 
-        let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
-
-        if r1 && r2 && r3 && meta_update_result.is_ok() {
-            // Update fhe_keys cache (no pk_cache update for compressed keys)
-            {
-                let mut guarded_fhe_keys = fhe_keys_cache.write().await;
-                let previous =
-                    guarded_fhe_keys.insert((*key_id, *epoch_id), private_keys_or_shares);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "{kms_type} FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                } else {
-                    tracing::debug!(
-                        "Added new compressed threshold FHE keys to cache for {}",
-                        key_id
-                    );
+        if r1 && r2 && r3 {
+            let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
+            if meta_update_result.is_ok() {
+                // Update fhe_keys cache (no pk_cache update for compressed keys)
+                {
+                    let mut guarded_fhe_keys = fhe_keys_cache.write().await;
+                    let previous =
+                        guarded_fhe_keys.insert((*key_id, *epoch_id), private_keys_or_shares);
+                    if previous.is_some() {
+                        tracing::warn!(
+                            "{kms_type} FHE keys already exist in cache for {}, overwriting",
+                            key_id
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Added new compressed threshold FHE keys to cache for {}",
+                            key_id
+                        );
+                    }
                 }
+                tracing::info!("Finished storing compressed key for Key Id {key_id}.");
+                Ok(())
+            } else {
+                self.purge_key_material(key_id, epoch_id, kms_type, guarded_meta_storage)
+                    .await;
+                meta_update_result.map_err(|e| {
+                    anyhow::anyhow!(
+                        "Error while updating meta store for compressed key {key_id}: {e}"
+                    )
+                })
             }
-            tracing::info!("Finished storing compressed key for Key Id {key_id}.");
-            Ok(())
         } else {
             self.purge_key_material(key_id, epoch_id, kms_type, guarded_meta_storage)
                 .await;
-            if !r1 || !r2 || !r3 {
-                anyhow::bail!("Storage write failed for compressed key {key_id}");
-            }
-            meta_update_result.map_err(|e| {
-                anyhow::anyhow!("Error while updating meta store for compressed key {key_id}: {e}")
-            })
+            anyhow::bail!("Storage write failed for compressed key {key_id}");
         }
     }
 

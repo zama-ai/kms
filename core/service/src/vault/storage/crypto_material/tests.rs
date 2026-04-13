@@ -304,6 +304,82 @@ async fn write_central_keys() {
 }
 
 #[tokio::test]
+async fn write_central_keys_failed_storage_sets_terminal_error() {
+    let param = TEST_PARAM;
+    let crypto_storage = CentralizedCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+    );
+    let pub_storage = crypto_storage.inner.public_storage.clone();
+
+    let req_id =
+        derive_request_id("write_central_keys_failed_storage_sets_terminal_error").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("write_central_keys_failed_storage_sets_terminal_error_epoch")
+            .unwrap()
+            .into();
+
+    let pbs_params: ClassicPBSParameters =
+        param.get_params_basics_handle().to_classic_pbs_parameters();
+    let sns_params = match param {
+        DKGParams::WithoutSnS(_) => panic!("expect sns"),
+        DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_params,
+    };
+    let config =
+        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
+    let client_key = tfhe::ClientKey::generate(config);
+    let public_key = CompactPublicKey::new(&client_key);
+    let server_key = ServerKey::new(&client_key);
+    let key_info = KmsFheKeyHandles {
+        client_key,
+        decompression_key: None,
+        public_key_info: dummy_info(),
+    };
+    let fhe_key_set = FhePubKeySet {
+        public_key,
+        server_key,
+    };
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_id).unwrap();
+    }
+
+    {
+        let mut storage_guard = pub_storage.lock().await;
+        storage_guard.set_available_writes(0);
+    }
+
+    let result = crypto_storage
+        .write_centralized_keys_with_meta_store(
+            &req_id,
+            &epoch_id,
+            key_info,
+            fhe_key_set,
+            meta_store.clone(),
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "expected storage failure to surface an error, got: {result:?}"
+    );
+
+    let status = {
+        let guard = meta_store.read().await;
+        guard
+            .retrieve(&req_id)
+            .expect("request should remain tracked in meta store after failure")
+    };
+    assert!(
+        status.get().await.as_ref().is_err(),
+        "expected terminal error status in meta store after storage failure"
+    );
+}
+
+#[tokio::test]
 async fn write_threshold_empty_update() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")

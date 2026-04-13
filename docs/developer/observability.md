@@ -189,8 +189,8 @@ let result = build_request(payload, request_id, config)
 
 ### Testing
 
-Test logging is handled by the `observability` crate's `test_config` module.
-Call `observability::test_config::init_test_logging()` at the start of tests
+Test logging is provided by the `test_utils` crate and consumed by `observability`.
+Call `test_utils::test_logging::init_test_logging()` at the start of tests
 that need logging output. The logging configuration supports repo-specific
 controls for console/file logging via environment variables.
 

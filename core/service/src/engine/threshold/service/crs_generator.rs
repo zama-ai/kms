@@ -423,6 +423,7 @@ impl<
             .await
         {
             tracing::error!("Failed to write CRS for request {req_id}: {e}");
+            return;
         }
 
         let crs_stop_timer = Instant::now();

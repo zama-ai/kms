@@ -241,6 +241,7 @@ pub(crate) async fn crs_gen_background<
         .await
     {
         tracing::error!("Failed to write CRS for request {req_id}: {e}");
+        return;
     }
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());

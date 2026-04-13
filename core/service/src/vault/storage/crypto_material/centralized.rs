@@ -197,22 +197,35 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         };
 
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        let meta_update =
-            guarded_meta_store.update(key_id, Ok(key_info.public_key_info.to_owned()));
-        if r1 && r2 && r3 && meta_update.is_ok() {
-            let mut guarded_fhe_keys = self.fhe_keys.write().await;
-            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
-            if previous.is_some() {
-                tracing::warn!(
-                    "FHE keys already exist in cache for {}, overwriting",
+        if r1 && r2 && r3 {
+            let meta_update =
+                guarded_meta_store.update(key_id, Ok(key_info.public_key_info.clone()));
+            if meta_update.is_ok() {
+                let mut guarded_fhe_keys = self.fhe_keys.write().await;
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
+                if previous.is_some() {
+                    tracing::warn!(
+                        "FHE keys already exist in cache for {}, overwriting",
+                        key_id
+                    );
+                }
+                tracing::info!(
+                    "Successfully stored centralized keygen material for request {}",
                     key_id
                 );
+                Ok(())
+            } else {
+                // Try to delete stored data to avoid anything dangling
+                // Ignore any failure to delete something since
+                // it might be because the data did not get created
+                // In any case, we can't do much.
+                self.inner
+                    .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
+                    .await;
+                meta_update.map_err(|e| {
+                    anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
+                })
             }
-            tracing::info!(
-                "Successfully stored centralized keygen material for request {}",
-                key_id
-            );
-            Ok(())
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since
@@ -221,12 +234,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             self.inner
                 .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
                 .await;
-            if !r1 || !r2 || !r3 {
-                anyhow::bail!("Storage write failed for key {key_id}");
-            }
-            meta_update.map_err(|e| {
-                anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
-            })
+            anyhow::bail!("Storage write failed for key {key_id}");
         }
     }
 
