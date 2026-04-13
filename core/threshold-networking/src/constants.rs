@@ -33,8 +33,10 @@ lazy_static! {
     /// The default maximum elapsed time before giving up on retrying
     pub(crate) static ref MAX_ELAPSED_TIME: Option<Duration> = Some(Duration::from_secs(60));
 
-    /// maximum number of seconds that a party waits for a network message during a protocol
-    pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Maximum number of seconds that a party waits for a network message during a protocol.
+    /// This is only used by the local test networking (`LocalNetworking`), not in production.
+    /// The value must be large enough to tolerate CPU contention when many tests run in parallel.
+    pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// maximum number of seconds that a party waits for a network message during a protocol
     pub static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(120);
