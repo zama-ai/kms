@@ -136,6 +136,7 @@ zeroize.workspace = true
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
+threshold-experiments.workspace = true
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true

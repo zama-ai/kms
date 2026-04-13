@@ -83,16 +83,14 @@ jobs:
             core-service:
               - 'core/grpc/**'
               - 'core/service/**'
-              - 'core/threshold/**'
-              - 'core/threshold-*/**'
+              - 'core/threshold*/**'
               - 'core/test-utils/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-threshold:
-              - 'core/threshold/**'
-              - 'core/threshold-*/**'
+              - 'core/threshold*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
@@ -616,12 +614,12 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/threshold-experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
       args-tests: '-F slow_tests --lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      package-name: 'threshold-experiments'
+      app-cache-dir: 'threshold-experiments'
       nextest-test-threads: 4
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -662,13 +660,13 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/threshold-experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
       args-tests: '-F slow_tests --lib'
       run-redis: true
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      package-name: 'threshold-experiments'
+      app-cache-dir: 'threshold-experiments'
       nextest-test-threads: 4
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -708,10 +706,10 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/threshold-experiments'
       args-tests: '--lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      package-name: 'threshold-experiments'
+      app-cache-dir: 'threshold-experiments'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

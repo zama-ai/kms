@@ -4242,6 +4242,7 @@ dependencies = [
  "thread-handles",
  "threshold-algebra",
  "threshold-execution",
+ "threshold-experiments",
  "threshold-hashing",
  "threshold-networking",
  "threshold-types",
@@ -7654,7 +7655,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "threshold-fhe"
+name = "threshold-experiments"
 version = "0.13.20-0"
 dependencies = [
  "aes-prng",
@@ -7695,7 +7696,7 @@ dependencies = [
  "threshold-algebra",
  "threshold-execution",
  "threshold-experimental",
- "threshold-fhe",
+ "threshold-experiments",
  "threshold-networking",
  "threshold-types",
  "tokio",

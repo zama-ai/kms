@@ -459,7 +459,7 @@ where
             // Observe that the following is the shut down of the core (which communicates with the other cores)
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
-                "Starting graceful shutdown of core/threshold {}",
+                "Starting graceful shutdown of core/threshold-experiments {}",
                 mpc_socket_addr
             );
             threshold_health_reporter
@@ -497,7 +497,7 @@ where
             ))
         })?;
         tracing::info!(
-            "core/threshold on {} shutdown completed successfully",
+            "core/threshold-experiments on {} shutdown completed successfully",
             mpc_socket_addr
         );
         Ok(())

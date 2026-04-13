@@ -10,7 +10,7 @@ use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
-use threshold_fhe::conf::party::CertificatePaths;
+use threshold_experiments::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
@@ -579,7 +579,7 @@ mod kms_server_binary_test {
             .unwrap();
 
         // Note that we're testing the type `CertificatePaths`
-        // which is from core/threshold but using the binary in core/service.
+        // which is from core/threshold-experiments but using the binary in core/service.
         Command::cargo_bin(KMS_GEN_TLS_CERTS)
             .unwrap()
             .args([
