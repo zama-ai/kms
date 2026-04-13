@@ -135,7 +135,6 @@ const_format = "=0.2.34"  # Compile-time string formatting - HIGH RISK: Individu
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
 crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }  # Big integer operations for crypto - LOW RISK: RustCrypto org
-ctor = "=0.4.2"  # Constructor functions - HIGH RISK: Individual maintainer (mmastrac), test-only dependency
 dashmap = "=6.1.0"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
