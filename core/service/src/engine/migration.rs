@@ -8,20 +8,23 @@ use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use std::sync::LazyLock;
 use threshold_execution::small_execution::prss::PRSSSetup;
 
-lazy_static::lazy_static! {
-static ref LEGACY_DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
-    1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
-    4,
-]);
+static LEGACY_DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
+    ContextId::from_bytes([
+        1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+        3, 4,
+    ])
+});
 
 // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
-static ref LEGACY_DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-]);
-}
+static LEGACY_DEFAULT_EPOCH_ID: LazyLock<EpochId> = LazyLock::new(|| {
+    EpochId::from_bytes([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
+    ])
+});
 
 /// Migrate from 0.12.x to 0.13.x (including all 0.13.0 to 0.13.9 versions)
 /// This involves migrating FHE key material from the legacy storage format to the new epoch-aware format, and migrating the legacy PRSS setup to the new combined format.
