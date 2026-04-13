@@ -2168,7 +2168,6 @@ async fn custodian_reencrypt(
                 verf_path.to_str().unwrap(),
                 "--mpc-context-id",
                 &mpc_context_id.to_string(),
-                verf_path.to_str().unwrap(),
                 "-b",
                 cur_recovery_path.to_str().unwrap(),
                 "-o",
