@@ -44,6 +44,5 @@ impl From<&Party> for Identity {
     }
 }
 
-#[cfg(feature = "choreographer")]
 pub mod choreo;
 pub mod party;

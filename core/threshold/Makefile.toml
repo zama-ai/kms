@@ -63,7 +63,7 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=default,experimental,choreographer", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
+args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=testing,choreographer", "-t", "bgv-core", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 # Generate the certificate for TLS communication of the parties
 # Note: templating feature isn't required, but allows to compile the code only once since gen-experiment requires the feature
@@ -207,9 +207,9 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 
 ##For BGV we set NUM_PARTIES to 4 as we only need small sessions
 [tasks.bgv-bench-fake-dkg]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="bgv"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
 [tasks.bgv-bench-real-dkg]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="bgv"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }

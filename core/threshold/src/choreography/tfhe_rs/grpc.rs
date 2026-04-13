@@ -14,7 +14,7 @@ use threshold_networking::choreography_gen::{
 
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
-use crate::choreography::requests::{
+use super::requests::{
     CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, ReshareParams,
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
@@ -27,12 +27,9 @@ use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
 use error_utils::anyhow_error_and_log;
-use futures_util::{
-    TryFutureExt,
-    future::{join_all, try_join_all},
-};
+use futures_util::TryFutureExt;
 use itertools::Itertools;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
@@ -2681,63 +2678,10 @@ where
     }
 }
 
-/// Fill the current span with the following information:
-/// - total number of sessions
-/// - max number of rounds across all sessions
-/// - total number of bytes sent across all sessions
-/// - total number of bytes received across all sessions
-/// - peak memory usage in bytes as given by the custom allocator
-pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
-    let span = tracing::Span::current();
-    // Take the max number of rounds across all sessions
-    // (as they ran in parallel the sum isn't really a good measure)
-    let num_rounds_per_session = join_all(
-        sessions
-            .iter()
-            .map(|session| session.network().get_current_round()),
-    )
-    .await;
-    let num_rounds_per_session = sessions
-        .iter()
-        .zip(num_rounds_per_session)
-        .filter(|(_, rounds)| *rounds > 0)
-        .collect_vec();
-    let num_rounds = num_rounds_per_session
-        .iter()
-        .fold(0, |cur_max, (_, rounds)| cur_max.max(*rounds));
-
-    span.record("total_num_sessions", sessions.len());
-    span.record("network_round", num_rounds);
-
-    let total_num_byte_sent = join_all(
-        num_rounds_per_session
-            .iter()
-            .map(|(session, _)| session.network().get_num_byte_sent()),
-    )
-    .await
-    .iter()
-    .sum::<usize>();
-
-    let total_num_byte_received = try_join_all(
-        num_rounds_per_session
-            .iter()
-            .map(|(session, _)| session.network().get_num_byte_received()),
-    )
-    .await
-    .unwrap()
-    .iter()
-    .sum::<usize>();
-
-    span.record("network_sent", total_num_byte_sent);
-    span.record("network_received", total_num_byte_received);
-
-    #[cfg(feature = "measure_memory")]
-    span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
-}
-
-pub async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
-    fill_network_memory_info_multiple_sessions(vec![session]).await;
-}
+pub use crate::choreography::server_utils::{
+    create_small_sessions, fill_network_memory_info_multiple_sessions,
+    fill_network_memory_info_single_session, gen_random_sid,
+};
 
 #[cfg(feature = "testing")]
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
@@ -2766,16 +2710,6 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     )
 }
 
-/// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid
-/// (so it's easier to find "real" sid by looking at bin rep)
-pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
-    SessionId::from(
-        ((rng.next_u64() as u128) << 64)
-            | ((rng.next_u32() as u128) << 32)
-            | (current_sid & 0xFFFF_FFFF),
-    )
-}
-
 pub fn create_small_session<
     Z: ErrorCorrect + Invert + PRSSConversions,
     PRSSSetupType: DerivePRSSState<Z>,
@@ -2786,22 +2720,6 @@ pub fn create_small_session<
     create_small_sessions(vec![base_session], prss_setup)
         .pop()
         .unwrap()
-}
-
-pub fn create_small_sessions<
-    Z: ErrorCorrect + Invert + PRSSConversions,
-    PRSSSetupType: DerivePRSSState<Z>,
->(
-    base_sessions: Vec<BaseSession>,
-    prss_setup: &PRSSSetupType,
-) -> Vec<GenericSmallSessionStruct<Z, PRSSSetupType::OutputType>> {
-    base_sessions
-        .into_iter()
-        .map(|base_session| {
-            let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-            GenericSmallSessionStruct::new_from_prss_state(base_session, prss_state).unwrap()
-        })
-        .collect_vec()
 }
 
 pub fn create_large_session(base_session: BaseSession) -> LargeSession {

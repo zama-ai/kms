@@ -6,26 +6,19 @@ use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use threshold_fhe::grpc::server::ChoreoRoutingHelper;
-use tonic::transport::server::Router;
 
-use crate::algebra::levels::{LevelEll, LevelKsw, LevelOne};
-use crate::algebra::ntt::{Const, N65536};
-use crate::bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey};
-use crate::bgv::ddec::noise_flood_decryption;
-use crate::bgv::dkg::bgv_distributed_keygen;
-use crate::bgv::dkg_orchestrator::BGVPreprocessingOrchestrator;
-use crate::bgv::dkg_preproc::InMemoryBGVDkgPreprocessing;
-use crate::bgv::utils::transfer_secret_key;
-use crate::bgv::utils::{gen_key_set, transfer_pub_key};
-use crate::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
-use crate::constants::INPUT_PARTY_ID;
-use crate::constants::PLAINTEXT_MODULUS;
-use algebra::{
-    base_ring::{Z64, Z128},
-    galois_rings::common::ResiduePoly,
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
-};
+use threshold_experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne};
+use threshold_experimental::algebra::ntt::{Const, N65536};
+use threshold_experimental::bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey};
+use threshold_experimental::bgv::ddec::noise_flood_decryption;
+use threshold_experimental::bgv::dkg::bgv_distributed_keygen;
+use threshold_experimental::bgv::dkg_orchestrator::BGVPreprocessingOrchestrator;
+use threshold_experimental::bgv::dkg_preproc::InMemoryBGVDkgPreprocessing;
+use threshold_experimental::bgv::utils::transfer_secret_key;
+use threshold_experimental::bgv::utils::{gen_key_set, transfer_pub_key};
+use super::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
+use threshold_experimental::constants::INPUT_PARTY_ID;
+use threshold_experimental::constants::PLAINTEXT_MODULUS;
 use itertools::Itertools;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -41,13 +34,11 @@ use threshold_execution::runtime::sessions::small_session::SmallSession;
 use threshold_execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
-use threshold_fhe::choreography::{
-    grpc::{
-        create_small_sessions, fill_network_memory_info_multiple_sessions,
-        fill_network_memory_info_single_session, gen_random_sid,
-    },
-    requests::Status,
+use crate::choreography::server_utils::{
+    create_small_sessions, fill_network_memory_info_multiple_sessions,
+    fill_network_memory_info_single_session, gen_random_sid,
 };
+use crate::choreography::tfhe_rs::requests::Status;
 use threshold_networking::choreography_gen::choreography_server::{
     Choreography, ChoreographyServer,
 };
@@ -79,26 +70,6 @@ use super::requests::{
     PrssInitParams, SupportedRing, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
 };
 
-pub struct ExperimentalChoreoRoutingHelper;
-
-impl<const EXTENSION_DEGREE: usize> ChoreoRoutingHelper<EXTENSION_DEGREE>
-    for ExperimentalChoreoRoutingHelper
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-{
-    fn add_to_router<L>(
-        &self,
-        router: Router<L>,
-        my_role: Role,
-        networking: Arc<GrpcNetworkingManager>,
-        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
-    ) -> Router<L> {
-        router.add_service(
-            ExperimentalGrpcChoreography::new(my_role, networking, factory).into_server(),
-        )
-    }
-}
 
 #[derive(Clone)]
 enum SupportedPRSSSetup {

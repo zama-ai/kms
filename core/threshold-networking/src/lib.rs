@@ -6,6 +6,7 @@ pub mod health_check;
 pub mod local;
 pub mod sending_service;
 pub mod tls;
+pub mod tls_certs;
 
 mod ggen {
     #![allow(clippy::derive_partial_eq_without_eq)]

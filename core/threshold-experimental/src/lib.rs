@@ -20,11 +20,5 @@ pub mod bgv {
 }
 pub mod constants;
 
-#[cfg(feature = "choreographer")]
-pub mod choreography {
-    pub mod choreographer;
-    pub mod grpc;
-    pub mod requests;
-}
 pub mod gen_bits_odd;
 pub mod random;

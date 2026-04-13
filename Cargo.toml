@@ -81,7 +81,7 @@ backward-compatibility = { path = "./backward-compatibility" }  # Internal backw
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 error-utils = { path = "./core/error-utils", default-features = false }
 threshold-execution = { path = "./core/threshold-execution", default-features = false }
-experimental = { package = "threshold-experimental", path = "./core/threshold-experimental", default-features = false }
+threshold-experimental = { path = "./core/threshold-experimental", default-features = false }
 hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", default-features = false }
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library

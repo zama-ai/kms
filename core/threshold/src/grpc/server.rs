@@ -1,4 +1,4 @@
-use crate::{choreography::grpc::GrpcChoreography, conf::party::PartyConf};
+use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -6,11 +6,7 @@ use algebra::{
 };
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use threshold_execution::{
-    large_execution::offline::SecureLargePreprocessing,
-    online::preprocessing::{PreprocessorFactory, create_memory_factory, create_redis_factory},
-    small_execution::{offline::SecureSmallPreprocessing, prss::RobustSecurePrssInit},
-};
+use threshold_execution::online::preprocessing::{PreprocessorFactory, create_memory_factory, create_redis_factory};
 use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
 use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use threshold_types::role::Role;
@@ -148,10 +144,3 @@ where
     }
 }
 
-pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
-    EXTENSION_DEGREE,
-    RobustSecurePrssInit,
-    SecureSmallPreprocessing,
-    SecureLargePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-    SecureLargePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
->;

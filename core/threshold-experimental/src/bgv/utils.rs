@@ -18,8 +18,7 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::timeout_at;
 
-#[cfg(feature = "choreographer")]
-pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
+pub fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
     use rand::SeedableRng;
     let mut rng = aes_prng::AesRng::seed_from_u64(0);
 

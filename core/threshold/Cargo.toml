@@ -36,7 +36,6 @@ opentelemetry = { workspace = true, optional = true }
 paste.workspace = true
 peak_alloc = { workspace = true, optional = true }
 rand.workspace = true
-rcgen = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 sha2.workspace = true
@@ -62,6 +61,7 @@ tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tonic-health = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
+threshold-experimental = { workspace = true, optional = true }
 threshold-types.workspace = true
 thread-handles = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["log"] }
@@ -76,14 +76,17 @@ tonic-prost-build.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
+crypto-bigint.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
+threshold-experimental.workspace = true
 pprof.workspace = true
+rayon.workspace = true
 rustls-webpki.workspace = true
 serial_test.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-threshold-fhe = { workspace = true, features = ["testing"] }
+threshold-fhe = { workspace = true, features = ["testing", "measure_memory"] }
 
 [package.metadata.cargo-machete]
 ignored = ["getrandom", "opentelemetry"]
@@ -92,13 +95,23 @@ ignored = ["getrandom", "opentelemetry"]
 crate-type = ["lib", "cdylib"]
 
 [[bin]]
+name = "stairwayctl"
+path = "src/bin/bgv/stairwayctl.rs"
+required-features = ["choreographer"]
+
+[[bin]]
 name = "moby"
-path = "src/bin/moby/moby.rs"
+path = "src/bin/tfhe/moby.rs"
+required-features = ["choreographer"]
+
+[[bin]]
+name = "stairway"
+path = "src/bin/bgv/stairway.rs"
 required-features = ["choreographer"]
 
 [[bin]]
 name = "mobygo"
-path = "src/bin/moby/mobygo.rs"
+path = "src/bin/tfhe/mobygo.rs"
 required-features = ["choreographer"]
 
 [[bin]]
@@ -147,6 +160,43 @@ required-features = ["testing", "extension_degree_8"]
 name = "ceremony"
 harness = false
 required-features = ["testing", "extension_degree_8"]
+
+
+# BGV benchmarks
+[[bench]]
+name = "bgv"
+harness = false
+
+[[bench]]
+name = "algebra"
+harness = false
+
+[[bench]]
+name = "decoding"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "non-threshold_bgv_basic-ops_speed"
+path = "benches/non-threshold/bgv/speed/basic_ops.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_speed"
+path = "benches/non-threshold/bgv/speed/keygen.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_basic-ops_memory"
+path = "benches/non-threshold/bgv/memory/basic_ops.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_memory"
+path = "benches/non-threshold/bgv/memory/keygen.rs"
+required-features = ["measure_memory"]
+harness = false
 
 
 # TFHE-rs benchmarks
@@ -200,9 +250,7 @@ harness = false
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["non-wasm", "threshold-execution/testing", "dep:tokio", "dep:test-utils"]
-slow_tests = ["testing", "all_extension_degrees", "algebra/all_extension_degrees"]
 templating = ["minijinja"]
-choreographer = ["malicious_strategies", "threshold-networking/choreographer", "threshold-execution/malicious_strategies"]
 measure_memory = ["dep:peak_alloc"]
 malicious_strategies = ["testing"]
 
@@ -218,7 +266,6 @@ non-wasm = [
     "dep:hyper-rustls-ring",
     "dep:observability",
     "dep:opentelemetry",
-    "dep:rcgen",
     "dep:redis",
     "dep:tfhe-zk-pok",
     "dep:thread-handles",

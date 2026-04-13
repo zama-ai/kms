@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tonic::transport::server::Router;
 
-use crate::grpc::server::{ChoreoRoutingHelper, SecureGrpcChoreography};
+use crate::grpc::server::ChoreoRoutingHelper;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -11,12 +11,13 @@ use algebra::{
 use threshold_execution::online::preprocessing::PreprocessorFactory;
 use threshold_types::role::Role;
 
-use crate::choreography::grpc::GrpcChoreography;
+use crate::choreography::tfhe_rs::grpc::GrpcChoreography;
 use threshold_execution::{
     large_execution::{
         coinflip::RealCoinflip, double_sharing::RealDoubleSharing,
         local_double_share::RealLocalDoubleShare, local_single_share::RealLocalSingleShare,
-        offline::RealLargePreprocessing, share_dispute::RealShareDispute,
+        offline::{RealLargePreprocessing, SecureLargePreprocessing},
+        share_dispute::RealShareDispute,
         single_sharing::RealSingleSharing, vss::RealVss,
     },
     malicious_execution::{
@@ -27,11 +28,20 @@ use threshold_execution::{
     },
     sharing::open::SecureRobustOpen,
     small_execution::{
-        agree_random::RobustRealAgreeRandom, offline::RealSmallPreprocessing,
-        prss::RobustRealPrssInit,
+        agree_random::RobustRealAgreeRandom,
+        offline::{RealSmallPreprocessing, SecureSmallPreprocessing},
+        prss::{RobustRealPrssInit, RobustSecurePrssInit},
     },
 };
 use threshold_networking::grpc::GrpcNetworkingManager;
+
+pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
+    EXTENSION_DEGREE,
+    RobustSecurePrssInit,
+    SecureSmallPreprocessing,
+    SecureLargePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    SecureLargePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+>;
 
 /// Moby that lies in all its broadcast as the Sender following
 /// [`MaliciousBroadcastSenderEcho`]

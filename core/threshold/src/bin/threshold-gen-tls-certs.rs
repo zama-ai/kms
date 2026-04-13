@@ -1,4 +1,4 @@
-use threshold_fhe::tls_certs;
+use threshold_networking::tls_certs;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

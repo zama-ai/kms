@@ -18,9 +18,12 @@ use threshold_execution::{
 };
 use threshold_fhe::{
     choreography::{
-        choreographer::{ChoreoRuntime, KeySetMaybeCompressed},
-        grpc::SupportedRing,
-        requests::{SessionType, TfheType, ThroughtputParams},
+        client_utils::ChoreoRuntime,
+        tfhe_rs::{
+            choreographer::KeySetMaybeCompressed,
+            grpc::SupportedRing,
+            requests::{SessionType, TfheType, ThroughtputParams},
+        },
     },
     conf::choreo::ChoreoConf,
 };

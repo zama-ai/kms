@@ -1,11 +1,13 @@
+//! MPC party binary for the BGV threshold network.
+//! Uses the experimental BGV/BFV choreography routing helper.
 use clap::Parser;
 use observability::conf::{Settings, TelemetryConfig};
 use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
+use threshold_fhe::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
 use threshold_fhe::conf::party::PartyConf;
 use threshold_fhe::grpc;
-use threshold_fhe::malicious_moby::DefaultChoreoRoutingHelper;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]
@@ -13,15 +15,17 @@ use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 pub static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
 #[derive(Parser, Debug)]
-#[clap(name = "moby")]
-#[clap(about = "MPC party in a FHE threshold network")]
+#[clap(name = "stairway")]
+#[clap(about = "MPC party in a BGV threshold network")]
 pub struct Cli {
     /// Config file with the party's configuration.
     #[clap(short, long)]
     conf_file: Option<String>,
 }
 
-// Below we set EXTENSION_DEGREE to be the highest available from the compilation flags
+// Below we set EXTENSION_DEGREE to be the highest available from the compilation flags.
+// The BGV choreography server does not use EXTENSION_DEGREE internally, but it is required
+// by the generic parameter of `grpc::server::run`.
 #[cfg(all(
     feature = "extension_degree_3",
     not(any(
@@ -71,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "measure_memory")]
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    println!("STARTING MOBY BINARY WITH EXTENSION DEGREE {EXTENSION_DEGREE}");
+    println!("STARTING STAIRWAY BINARY WITH EXTENSION DEGREE {EXTENSION_DEGREE}");
     let args = Cli::parse();
 
     let settings_builder = Settings::builder();
@@ -87,21 +91,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let telemetry_config = settings.telemetry.clone().unwrap_or_else(|| {
         TelemetryConfig::builder()
-            .tracing_service_name("moby".to_string())
+            .tracing_service_name("stairway".to_string())
             .build()
     });
 
     let tracer_provider = init_tracing(&telemetry_config).await?;
 
-    // TODO(dp): Need a new binary that lives in `threshold-experimental` that does essentially
-    // the same thing as this `moby` binary, but uses `ExperimentalChoreoRoutingHelper` instead of `DefaultChoreoRoutingHelper`.
-    // Is it acceptable to have two binaries? `moby` and also `moby-stairway`? The alternative would be to move the `moby` binary to
-    // `threshold-experimental` and build it there.
+    let result =
+        grpc::server::run::<EXTENSION_DEGREE>(&settings, ExperimentalChoreoRoutingHelper).await;
 
-    // Run the server and get the result
-    let result = grpc::server::run::<EXTENSION_DEGREE>(&settings, DefaultChoreoRoutingHelper).await;
-
-    // After the server has completed, shut down telemetry
     // Sleep to let some time for the process to export all the spans before shutdown
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 

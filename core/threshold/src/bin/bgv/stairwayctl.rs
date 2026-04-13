@@ -17,10 +17,15 @@ use threshold_experimental::{
         ntt::{Const, N65536},
     },
     bgv::basics::{PublicKey, bgv_pk_encrypt},
-    choreography::{choreographer::BgvChoreoExt, requests::SupportedRing},
     constants::PLAINTEXT_MODULUS,
 };
-use threshold_fhe::{choreography::choreographer::ChoreoRuntime, conf::choreo::ChoreoConf};
+use threshold_fhe::{
+    choreography::{
+        bgv::{choreographer::BgvChoreoExt, requests::SupportedRing},
+        client_utils::ChoreoRuntime,
+    },
+    conf::choreo::ChoreoConf,
+};
 use threshold_types::session_id::SessionId;
 
 #[derive(Args, Debug)]
