@@ -141,7 +141,7 @@ jobs:
           metrics: cpu,network,memory,disk,io
 
       - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: ./.github/actions/checkout-project
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -168,14 +168,14 @@ jobs:
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }}
@@ -185,7 +185,7 @@ jobs:
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
         if: inputs.package-name == 'simulator'
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: ./.github/actions/docker-setup-buildx
         with:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
@@ -193,12 +193,14 @@ jobs:
       ############################################################################
       # Rust toolchain setup
       #
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
         with:
-          toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
-          cache: false
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -211,12 +213,6 @@ jobs:
           # The cache may contain an older version that doesn't support test-groups
           cargo install cargo-nextest@0.9.124 --locked --force
           cargo install grcov --locked
-
-      - name: Install Protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: '26.x'
-          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
         env:

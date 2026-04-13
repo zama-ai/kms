@@ -256,7 +256,7 @@ jobs:
       # TOOLING SETUP
       # ====================================================================
       - name: Login to hub.zama.org Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
@@ -301,14 +301,14 @@ jobs:
 
       - name: Checkout Project
         if: ${{ env.NEW_KMS_CHART_VERSION != 'repository' }}
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: ./.github/actions/checkout-project
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Checkout Project (from branch)
         if: ${{ env.NEW_KMS_CHART_VERSION == 'repository' }}
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: ./.github/actions/checkout-project
         with:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

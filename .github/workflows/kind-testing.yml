@@ -175,7 +175,7 @@ jobs:
 
     steps:
       - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: ./.github/actions/checkout-project
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -211,7 +211,7 @@ jobs:
       #
       - name: Set up Docker Buildx
         if: matrix.cargo-check == false
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: ./.github/actions/docker-setup-buildx
         with:
           platforms: linux/amd64 # Target platform for builds
           buildkitd-flags: --debug # Enable debug logging for BuildKit
@@ -260,7 +260,7 @@ jobs:
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to harbor Container Registry
         if: matrix.cargo-check == false
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
@@ -270,11 +270,12 @@ jobs:
       # Rust toolchain setup
       #
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: ./.github/actions/setup-rust-and-protoc
         with:
-          toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
-          cache: false
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+          setup-protoc: "false"
 
       # ==========================================================================
       # Setup cache for dockerfile and inject in docker
@@ -296,10 +297,11 @@ jobs:
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        uses: ./.github/actions/setup-rust-and-protoc
         with:
-          version: '26.x'
-          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
+          setup-rust: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup cargo nextest and grcov
         if: matrix.cargo-check == false
@@ -436,16 +438,32 @@ jobs:
           chmod +x ci/scripts/manage_lifecycle.sh
           ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
-      - name: Upload kms-core logs
+      - name: Detect kms-core logs
         if: always() && matrix.cargo-check == false
+        id: detect-kms-logs
+        run: |
+          shopt -s nullglob
+          files=(logs/*.log logs/port-forward/*.log setup_kms.log)
+          if [ ${#files[@]} -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Found ${#files[@]} log files for upload."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No kms-core logs found; skipping artifact upload."
+          fi
+        shell: bash
+
+      - name: Upload kms-core logs
+        if: always() && matrix.cargo-check == false && steps.detect-kms-logs.outputs.found == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kms-core-${{ matrix.deployment-type }}-logs
           path: |
-            /tmp/kms-service-*.log
-            /tmp/kms-core-*.log
+            logs/*.log
+            logs/port-forward/*.log
+            setup_kms.log
           retention-days: 7 # Keep logs for 7 days
-          if-no-files-found: warn # Only warn if no log files are found
+          if-no-files-found: error
 
       - name: Check Test Results
         if: always() && matrix.cargo-check == false
