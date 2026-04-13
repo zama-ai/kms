@@ -336,6 +336,7 @@ pub(crate) async fn key_gen_background<
                         tracing::error!(
                             "Failed to write centralized keys for request {req_id}: {e}"
                         );
+                        return;
                     }
                 }
                 CentralizedKeyGenResult::Compressed(compressed_keyset, key_info) => {
@@ -352,6 +353,7 @@ pub(crate) async fn key_gen_background<
                         tracing::error!(
                             "Failed to write compressed centralized keys for request {req_id}: {e}"
                         );
+                        return;
                     }
                 }
             }

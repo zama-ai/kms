@@ -1359,6 +1359,7 @@ impl<
                     .await
                 {
                     tracing::error!("Failed to write threshold keys for request {req_id}: {e}");
+                    return;
                 }
             }
             ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
@@ -1418,6 +1419,7 @@ impl<
                     tracing::error!(
                         "Failed to write compressed threshold keys for request {req_id}: {e}"
                     );
+                    return;
                 }
             }
         }
