@@ -915,13 +915,12 @@ mod kms_custodian_binary_tests {
             backup_pke,
         )
         .unwrap();
-        let mpc_context = kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]);
         let validation_material = RecoveryValidationMaterial::new(
             ct_map.clone(),
             commitments.clone(),
             custodian_context,
             &signing_key,
-            mpc_context,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         let mut ciphertexts = BTreeMap::new();

@@ -8,6 +8,7 @@ use crate::{
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -18,7 +19,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{RequestId, identifiers::ContextId, kms::v1::CustodianContext};
+use kms_grpc::{RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
 use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
@@ -606,13 +607,12 @@ fn operator_handle_init(
             .unwrap();
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
-        let mpc_context = ContextId::from_bytes([7u8; 32]);
         let validation_material = RecoveryValidationMaterial::new(
             cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
             &signing_key,
-            mpc_context,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         operators.insert(

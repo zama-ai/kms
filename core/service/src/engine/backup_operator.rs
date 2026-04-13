@@ -1209,6 +1209,7 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
@@ -1297,13 +1298,12 @@ mod tests {
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
-        let mpc_context = kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]);
         let rec_material = RecoveryValidationMaterial::new(
             cts,
             commitments,
             internal_custodian_context,
             &sig_key,
-            mpc_context,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         (rec_material, verf_key, dec_key, enc_key)

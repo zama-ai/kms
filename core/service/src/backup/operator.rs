@@ -839,6 +839,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{SigningSchemeType, gen_sig_keys},
@@ -847,7 +848,6 @@ mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::{
-        identifiers::ContextId,
         kms::v1::{CustodianContext, CustodianSetupMessage},
     };
     use rand::SeedableRng;
@@ -907,13 +907,12 @@ mod tests {
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
-        let mpc_context = ContextId::from_bytes([7u8; 32]);
         let rvm = RecoveryValidationMaterial::new(
             cts,
             commitments,
             internal_custodian_context,
             &sig_key,
-            mpc_context,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         assert!(rvm.validate(&verf_key));
