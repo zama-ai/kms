@@ -638,7 +638,8 @@ async fn filter_custodian_data(
         }
     }
     let threshold = recovery_material.custodian_context().threshold as usize;
-    if parsed_custodian_rec.len() < 1 + threshold {
+    let required_min = threshold + 1;
+    if parsed_custodian_rec.len() < required_min {
         let received = parsed_custodian_rec.len();
         tracing::error!(
             received,
@@ -647,6 +648,7 @@ async fn filter_custodian_data(
             "Cannot recover the backup decryption key: not enough valid recovery outputs"
         );
         return Err(BackupError::RecoveryThresholdNotMet {
+            required_min,
             received,
             threshold,
             skipped: skip_reasons,

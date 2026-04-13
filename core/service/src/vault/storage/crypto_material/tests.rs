@@ -5,12 +5,16 @@ use crate::{
     engine::base::{KeyGenMetadata, derive_request_id},
 };
 use aes_prng::AesRng;
-use kms_grpc::{EpochId, RequestId, rpc_types::PubDataType};
+use kms_grpc::{
+    EpochId, RequestId,
+    rpc_types::{PrivDataType, PubDataType},
+};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::{CompactPublicKey, ConfigBuilder, ServerKey, shortint::ClassicPBSParameters};
+use tfhe::{core_crypto::prelude::NormalizedHammingWeightBound, xof_key_set::CompressedXofKeySet};
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
@@ -27,6 +31,7 @@ use crate::{
     },
     util::meta_store::MetaStore,
     vault::storage::{
+        StorageReader, StorageReaderExt,
         crypto_material::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
@@ -80,6 +85,29 @@ async fn write_crs() {
         err.contains("Error while updating meta store for"),
         "expected meta-store update failure when empty, got: {err}"
     );
+    {
+        let guard = pub_storage.lock().await;
+        let crs_exists = guard
+            .data_exists(&req_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+        assert!(!crs_exists, "CRS should be purged after meta-store failure");
+    }
+    {
+        let guard = crypto_storage.private_storage.lock().await;
+        let crs_info_exists = guard
+            .data_exists_at_epoch(
+                &req_id,
+                &default_epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !crs_info_exists,
+            "CRS metadata should be purged after meta-store failure"
+        );
+    }
 
     // update the meta store and we should be ok
     {
@@ -116,6 +144,17 @@ async fn write_crs() {
         err.contains("Error while updating meta store for"),
         "expected meta-store conflict on double write, got: {err}"
     );
+    {
+        let guard = pub_storage.lock().await;
+        let crs_exists = guard
+            .data_exists(&req_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+        assert!(
+            crs_exists,
+            "Already-committed CRS should remain after duplicate-write conflict"
+        );
+    }
 
     // writing on a failed storage device should fail
     {
@@ -123,6 +162,10 @@ async fn write_crs() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_crs_2").unwrap();
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&new_req_id).unwrap();
+    }
     let result = crypto_storage
         .write_crs_with_meta_store(
             &new_req_id,
@@ -143,7 +186,7 @@ async fn write_crs() {
     {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
-        assert!(!guard.exists(&new_req_id));
+        assert!(guard.exists(&new_req_id));
     }
 }
 
@@ -403,6 +446,39 @@ async fn write_threshold_empty_update() {
         err.contains("Error while updating meta store for"),
         "expected meta-store update failure when empty, got: {err}"
     );
+    {
+        let guard = crypto_storage.inner.public_storage.lock().await;
+        let pk_exists = guard
+            .data_exists(&req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        let sk_exists = guard
+            .data_exists(&req_id, &PubDataType::ServerKey.to_string())
+            .await
+            .unwrap();
+        assert!(
+            !pk_exists && !sk_exists,
+            "threshold public material should be purged after meta-store failure"
+        );
+    }
+    {
+        let guard = crypto_storage.inner.private_storage.lock().await;
+        let key_info_exists = guard
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
+            .await
+            .unwrap();
+        assert!(
+            !key_info_exists,
+            "threshold private material should be purged after meta-store failure"
+        );
+    }
+    let cache_read = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+    assert!(
+        cache_read.is_err(),
+        "threshold cache should not retain failed writes"
+    );
 
     // update the meta store and the write should be ok
     {
@@ -474,6 +550,40 @@ async fn write_threshold_keys_meta_update() {
         err.contains("Error while updating meta store for"),
         "expected meta-store conflict on double write, got: {err}"
     );
+    {
+        let guard = crypto_storage.inner.public_storage.lock().await;
+        let pk_exists = guard
+            .data_exists(&req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        let sk_exists = guard
+            .data_exists(&req_id, &PubDataType::ServerKey.to_string())
+            .await
+            .unwrap();
+        assert!(
+            pk_exists && sk_exists,
+            "Already-committed threshold public material should remain on duplicate conflict"
+        );
+    }
+    {
+        let guard = crypto_storage.inner.private_storage.lock().await;
+        let key_info_exists = guard
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
+            .await
+            .unwrap();
+        assert!(
+            key_info_exists,
+            "Already-committed threshold private material should remain on duplicate conflict"
+        );
+    }
+
+    let refreshed = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+    assert!(
+        refreshed.is_ok(),
+        "threshold read path should still succeed after duplicate conflict"
+    );
 }
 
 #[tokio::test]
@@ -515,6 +625,10 @@ async fn write_threshold_keys_failed_storage() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&new_req_id).unwrap();
+    }
     let result = crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
@@ -534,7 +648,7 @@ async fn write_threshold_keys_failed_storage() {
     {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
-        assert!(!guard.exists(&new_req_id));
+        assert!(guard.exists(&new_req_id));
     }
 }
 
@@ -568,6 +682,81 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         err.to_string().contains(&expected_msg),
         "Unexpected error message: {}",
         err
+    );
+}
+
+#[tokio::test]
+async fn write_threshold_compressed_empty_update_cleans_up() {
+    let req_id = derive_request_id("write_threshold_compressed_empty_update").unwrap();
+    let epoch_id: EpochId = derive_request_id("write_threshold_compressed_empty_update_epoch")
+        .unwrap()
+        .into();
+    let (crypto_storage, mut threshold_fhe_keys, _fhe_key_set) = setup_threshold_store(&req_id);
+
+    let params = TEST_PARAM;
+    let config = params.to_tfhe_config();
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+    let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
+        config,
+        vec![42, 43, 44, 45],
+        params.get_params_basics_handle().get_sec() as u32,
+        max_norm_hwt,
+        req_id.into(),
+    )
+    .unwrap();
+    threshold_fhe_keys.public_material =
+        PublicKeyMaterial::new_compressed(compressed_keyset.clone())
+            .expect("compressed material should be valid");
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let result = crypto_storage
+        .write_threshold_keys_with_dkg_meta_store_compressed(
+            &req_id,
+            &epoch_id,
+            threshold_fhe_keys,
+            &compressed_keyset,
+            meta_store,
+        )
+        .await;
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Error while updating meta store for"),
+        "expected meta-store update failure when empty, got: {err}"
+    );
+
+    {
+        let guard = crypto_storage.inner.public_storage.lock().await;
+        let compressed_exists = guard
+            .data_exists(&req_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .unwrap();
+        assert!(
+            !compressed_exists,
+            "compressed public material should be purged after meta-store failure"
+        );
+    }
+    {
+        let guard = crypto_storage.inner.private_storage.lock().await;
+        let key_info_exists = guard
+            .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FheKeyInfo.to_string())
+            .await
+            .unwrap();
+        assert!(
+            !key_info_exists,
+            "compressed private material should be purged after meta-store failure"
+        );
+    }
+    let cache_read = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+    assert!(
+        cache_read.is_err(),
+        "compressed threshold cache should not retain failed writes"
     );
 }
 

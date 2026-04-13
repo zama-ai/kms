@@ -4,7 +4,10 @@
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
-use crate::util::meta_store::update_ok_req_in_meta_store;
+use crate::util::meta_store::{
+    ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
+    update_ok_req_in_meta_store,
+};
 use crate::vault::storage::{StorageReader, store_versioned_at_request_and_epoch_id};
 use crate::{
     anyhow_error_and_warn_log,
@@ -659,6 +662,8 @@ where
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
     ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
+
         let info = crs_info.clone();
         let storage_ok = self
             .inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
@@ -666,12 +671,26 @@ where
         if !storage_ok {
             anyhow::bail!("Storage write failed for CRS {crs_id}");
         }
+        let mut guarded_meta_store = meta_store.write().await;
         let meta_ok =
-            update_ok_req_in_meta_store(&mut meta_store.write().await, crs_id, info, op_metric_tag);
-        if meta_ok {
-            Ok(())
-        } else {
-            anyhow::bail!("Error while updating meta store for {crs_id}")
+            update_ok_req_in_meta_store(&mut guarded_meta_store, crs_id, info, op_metric_tag);
+        if !meta_ok {
+            self.handle_crs_meta_update_failure(crs_id, epoch_id, guarded_meta_store)
+                .await;
+            anyhow::bail!("Error while updating meta store for {crs_id}");
+        }
+        Ok(())
+    }
+
+    async fn handle_crs_meta_update_failure(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
+    ) {
+        if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
+            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
+                .await;
         }
     }
 

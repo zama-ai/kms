@@ -68,9 +68,10 @@ pub enum BackupError {
         skipped: Vec<SetupSkipReason>,
     },
     #[error(
-        "only received {received} valid recovery outputs (threshold: {threshold}), skipped: {skipped:?}"
+        "not enough valid recovery outputs: expected at least {required_min}, got {received} (threshold parameter: {threshold}), skipped: {skipped:?}"
     )]
     RecoveryThresholdNotMet {
+        required_min: usize,
         received: usize,
         threshold: usize,
         skipped: Vec<RecoverySkipReason>,

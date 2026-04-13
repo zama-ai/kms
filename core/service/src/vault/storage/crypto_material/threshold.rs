@@ -22,7 +22,9 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::ThresholdFheKeys,
     },
-    util::meta_store::MetaStore,
+    util::meta_store::{
+        MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
+    },
     vault::{
         Vault,
         storage::{
@@ -285,6 +287,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, key_id).await?;
+
         let info = threshold_fhe_keys.meta_data.clone();
         let storage_ok = self
             .inner_write_threshold_keys(
@@ -298,11 +302,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         if !storage_ok {
             anyhow::bail!("Storage write failed for threshold key {key_id}");
         }
-        meta_store
-            .write()
-            .await
-            .update(key_id, Ok(info))
-            .map_err(|e| anyhow::anyhow!("Error while updating meta store for {key_id}: {e}"))
+        let mut guarded_meta_store = meta_store.write().await;
+        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
+            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
+                .await;
+            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
+        }
+        Ok(())
     }
 
     /// Write the key materials (result of a compressed keygen) to storage and cache
@@ -318,6 +324,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, key_id).await?;
+
         let info = threshold_fhe_keys.meta_data.clone();
         let storage_ok = self
             .inner_write_threshold_keys_compressed(
@@ -331,11 +339,30 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         if !storage_ok {
             anyhow::bail!("Storage write failed for compressed threshold key {key_id}");
         }
-        meta_store
-            .write()
-            .await
-            .update(key_id, Ok(info))
-            .map_err(|e| anyhow::anyhow!("Error while updating meta store for {key_id}: {e}"))
+        let mut guarded_meta_store = meta_store.write().await;
+        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
+            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
+                .await;
+            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
+        }
+        Ok(())
+    }
+
+    async fn handle_threshold_meta_update_failure(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
+    ) {
+        if should_purge_after_meta_update_failure(&guarded_meta_store, key_id) {
+            self.purge_key_material(key_id, epoch_id, guarded_meta_store)
+                .await;
+        } else {
+            drop(guarded_meta_store);
+        }
+
+        let mut guarded_fhe_keys = self.fhe_keys.write().await;
+        guarded_fhe_keys.remove(&(*key_id, *epoch_id));
     }
 
     #[allow(clippy::too_many_arguments)]
