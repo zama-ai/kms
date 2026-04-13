@@ -80,12 +80,15 @@ jobs:
             core-service:
               - 'core/grpc/**'
               - 'core/service/**'
+              - 'core/thread-handles/**'
               - 'core/threshold/**'
+              - 'core/threshold-*/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-threshold:
               - 'core/threshold/**'
+              - 'core/threshold-*/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
