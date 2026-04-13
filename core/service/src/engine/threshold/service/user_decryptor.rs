@@ -786,9 +786,9 @@ mod tests {
                 Arc::clone(&key_meta_store),
             )
             .await
-            .expect(&format!(
-                "failed to write threshold keys for key {key_id} in test setup"
-            ));
+            .unwrap_or_else(|_| {
+                panic!("failed to write threshold keys for key {key_id} in test setup")
+            });
 
         {
             // check existance
