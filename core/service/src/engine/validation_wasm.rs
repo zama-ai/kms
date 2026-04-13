@@ -298,6 +298,8 @@ fn select_most_common_user_dec(
 
 /// Validates individual user decryption responses against a majority-vote pivot,
 /// checking metadata consistency, signatures, and degree constraints.
+/// This function only supports thresholds t that is n = 3t + 1,
+/// if n > 3t + 1, then the responses with a party ID that is higher than 3t + 1 are ignored.
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
@@ -459,6 +461,8 @@ fn validate_user_decrypt_responses(
 /// Validates the aggregated user decryption responses received from the servers
 /// against the given user decryption request. Returns the validated responses
 /// mapped to the server ID on success.
+/// This function only supports thresholds t that is n = 3t + 1,
+/// if n > 3t + 1, then the responses with a party ID that is higher than 3t + 1 are ignored.
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
@@ -1621,7 +1625,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_user_decrypt_responses_with_custom_threshold() {
+    fn test_validate_user_decrypt_responses_with_5_responses() {
+        // our verification functions only support 4 responses when threshold is 1
+        // in this case we use 5, so the last one will be filtered out
+
         let mut rng = AesRng::seed_from_u64(0);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
@@ -1682,7 +1689,7 @@ mod tests {
                     sk,
                     &payload,
                     &dummy_domain,
-                    &eph_client_pk,
+                    client_request.enc_key(),
                     &[],
                 )
                 .unwrap();
@@ -1718,33 +1725,7 @@ mod tests {
             );
         }
 
-        // Test 2: 2 responses have different digests, 3 match;
-        // threshold=Some(1) means min_occurence=2, so 3 matching is enough
-        {
-            let trusted_ctx = UserDecTrustedValidationContext {
-                server_addresses: &server_addresses,
-                client_request: &client_request,
-                eip712_domain: &dummy_domain,
-                threshold: Some(1),
-            };
-            let agg_resp = vec![
-                make_resp(1, &sk1, digest.clone()),
-                make_resp(2, &sk2, digest.clone()),
-                make_resp(3, &sk3, digest.clone()),
-                make_resp(4, &sk4, vec![9, 9, 9, 9]),
-                make_resp(5, &sk5, vec![8, 8, 8, 8]),
-            ];
-
-            assert_eq!(
-                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
-                    .unwrap()
-                    .as_slice()
-                    .len(),
-                3
-            );
-        }
-
-        // Test 3: all responses have different digests, no 2 match;
+        // Test 2: all responses have different digests, no 2 match;
         // threshold=Some(1) means min_occurence=2, so pivot selection fails
         {
             let trusted_ctx = UserDecTrustedValidationContext {
