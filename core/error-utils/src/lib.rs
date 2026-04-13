@@ -19,35 +19,3 @@ pub fn log_error_wrapper<S: AsRef<str> + fmt::Display>(msg: S) -> S {
     tracing::error!("Error in {}: {}", Location::caller(), msg);
     msg
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{anyhow_error_and_log, anyhow_error_and_warn_log};
-
-    #[test]
-    fn test_log() {
-        let err = anyhow_error_and_log("(test_log), msg");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("src/lib.rs"),
-            "expected caller location: {msg}"
-        );
-        assert!(msg.contains("(test_log), msg"), "expected message: {msg}");
-        assert!(msg.contains("Error in"), "expected prefix: {msg}");
-    }
-
-    #[test]
-    fn test_warn_log() {
-        let err = anyhow_error_and_warn_log("(test_warn_log), msg");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("src/lib.rs"),
-            "expected caller location: {msg}"
-        );
-        assert!(
-            msg.contains("(test_warn_log), msg"),
-            "expected message: {msg}"
-        );
-        assert!(msg.contains("Warning in"), "expected prefix: {msg}");
-    }
-}

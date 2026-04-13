@@ -1189,14 +1189,13 @@ pub(crate) mod tests {
             .await?;
         }
         let sk_handle = compute_handle(&keys.sig_pk)?;
-        ram_storage
+        let _ = ram_storage
             .store_data(
                 &keys.sig_sk,
                 &RequestId::from_str(&sk_handle)?,
                 &PrivDataType::SigningKey.to_string(),
             )
-            .await
-            .map(|_| ())?;
+            .await?;
         Ok(ram_storage)
     }
 

@@ -1,5 +1,9 @@
-//! Shared test-logging configuration used by the `observability` crate's
-//! test-mode subscriber and integration test helpers.
+//! Shared test-logging configuration.
+//!
+//! This module owns filter presets, env-var resolution, and the
+//! `init_test_logging()` entry point used by integration tests.
+//! The `observability` crate's `init_tracing()` also consumes these
+//! helpers for its test-mode branch.
 
 use std::{
     io,
@@ -225,7 +229,7 @@ pub fn try_init_test_stderr_subscriber() {
         .try_init()
         && parse_boolish_env(std::env::var("KMS_TEST_LOG_INIT_DEBUG").ok().as_deref())
     {
-        eprintln!("[observability] skipped stderr-only subscriber init: {err}");
+        eprintln!("[test-utils] skipped stderr-only subscriber init: {err}");
     }
 }
 

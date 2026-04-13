@@ -236,7 +236,6 @@ use kms_lib::consts::{
 };
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
-use observability::test_config::init_test_logging as init_logging;
 use serde::Deserialize;
 use serial_test::serial;
 use std::collections::HashMap;
@@ -245,6 +244,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
+use test_utils::test_logging::init_test_logging as init_logging;
 #[cfg(feature = "threshold_tests")]
 use tfhe::zk::CompactPkeCrs;
 use tracing::info;

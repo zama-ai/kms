@@ -383,6 +383,8 @@ impl MetricedError {
         // Ensure that we only handle the error once
         if !self.returned {
             self.returned = true;
+            #[cfg(test)]
+            HANDLE_ERROR_CALL_COUNT.with(|c| c.set(c.get() + 1));
             // Increment the method specific metric
             METRICS.increment_error_counter(
                 self.op_metric,
@@ -441,6 +443,11 @@ impl From<MetricedError> for Status {
     }
 }
 #[cfg(test)]
+thread_local! {
+    static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -474,6 +481,7 @@ mod tests {
 
     #[test]
     fn test_metriced_error_drop_without_return() {
+        let before = super::HANDLE_ERROR_CALL_COUNT.with(|c| c.get());
         let error = MetricedError::new(
             "test_op_drop",
             Some(RequestId::zeros()),
@@ -484,6 +492,12 @@ mod tests {
         assert!(!error.returned);
         drop(error);
         // Confirm that Drop invokes handle_error when the error was not returned.
+        let after = super::HANDLE_ERROR_CALL_COUNT.with(|c| c.get());
+        assert_eq!(
+            after,
+            before + 1,
+            "Drop should have called handle_error exactly once"
+        );
     }
 
     #[test]

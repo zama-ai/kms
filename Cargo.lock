@@ -4339,6 +4339,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "test-context",
+ "test-utils",
  "test-utils-cc",
  "tfhe",
  "threshold-execution",
@@ -4951,6 +4952,7 @@ dependencies = [
  "strum_macros",
  "sysinfo",
  "tempfile",
+ "test-utils",
  "thiserror 2.0.12",
  "tokio",
  "tonic",
@@ -7414,6 +7416,7 @@ dependencies = [
  "bc2wrap",
  "serde",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]

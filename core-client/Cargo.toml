@@ -92,6 +92,7 @@ validator.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 assert_cmd.workspace = true
+test-utils.workspace = true
 test-utils-cc = { path = "./test-utils-cc" }
 futures.workspace = true
 # Self-import for integration tests

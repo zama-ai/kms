@@ -380,6 +380,7 @@ pub mod testing {
             network: Arc::new(net_producer.user_net(role, NetworkMode::Sync, None)),
             rng: AesRng::seed_from_u64(role.one_based() as u64),
             corrupt_roles: HashSet::new(),
+            corrupt_reasons: std::collections::HashMap::new(),
         }
     }
 
@@ -587,6 +588,7 @@ pub mod tests {
             network: Arc::new(net_producer.user_net(id, network_mode, None)),
             rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
+            corrupt_reasons: std::collections::HashMap::new(),
         }
     }
 

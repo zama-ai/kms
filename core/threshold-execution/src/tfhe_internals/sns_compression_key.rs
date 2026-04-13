@@ -39,8 +39,7 @@ where
                 pmax,
                 session,
             )
-            .await?
-            .0,
+            .await?,
             params,
         })
     }

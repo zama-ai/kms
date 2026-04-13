@@ -652,7 +652,7 @@ mod kms_custodian_binary_tests {
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        observability::test_config::init_test_logging();
+        test_utils::test_logging::init_test_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {

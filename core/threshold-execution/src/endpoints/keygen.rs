@@ -372,7 +372,7 @@ where
 
     // Generate the shared LWE hat secret key and corresponding public key share
     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
-    let (lwe_hat_secret_key_share, _) = LweSecretKeyShare::new_from_preprocessing(
+    let lwe_hat_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
         params_basics_handle.lwe_hat_dimension(),
         preprocessing,
         params_basics_handle.get_sk_deviations().map(|d| d.pmax),
@@ -389,7 +389,6 @@ where
             session,
         )
         .await?
-        .0
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -398,7 +397,7 @@ where
 
     // Generate the GLWE secret key
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Start");
-    let (glwe_secret_key_share, _) = GlweSecretKeyShare::new_from_preprocessing(
+    let glwe_secret_key_share = GlweSecretKeyShare::new_from_preprocessing(
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
@@ -433,7 +432,7 @@ where
     let (glwe_secret_key_share_sns, glwe_secret_key_share_sns_compression) = match params {
         DKGParams::WithSnS(sns_params) => {
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Start");
-            let (glwe_secret_key_share_sns, _) = GlweSecretKeyShare::new_from_preprocessing(
+            let glwe_secret_key_share_sns = GlweSecretKeyShare::new_from_preprocessing(
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,

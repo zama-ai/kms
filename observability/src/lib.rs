@@ -4,4 +4,3 @@ pub mod metrics;
 pub mod metrics_names;
 pub mod sys_metrics;
 pub mod telemetry;
-pub mod test_config;
