@@ -610,4 +610,47 @@ mod tests {
         ct.cipher.kem_ct[0] ^= 1;
         assert!(sk.decrypt::<TestType>(&ct).is_err());
     }
+
+    #[test]
+    fn deserialize_and_validate_accepts_mlkem512() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_sk, pk) = enc.keygen().unwrap();
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let pk2 = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap();
+        assert_eq!(pk, pk2);
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_mlkem1024() {
+        // Construct the MlKem1024 variant via `crate::` rather than the `kms_lib` self-import,
+        // because `PublicEncKey`'s inner field is `pub(crate)` and cannot be accessed from
+        // outside the crate. Using `crate::` consistently for both types also avoids the
+        // "multiple versions of crate `kms_lib` in the dependency graph" type mismatch that
+        // arises when mixing `crate::PublicEncKey` with `kms_lib::UnifiedPublicEncKey`.
+        use crate::cryptography::encryption::{
+            PublicEncKey, UnifiedPublicEncKey as CrateUnifiedPublicEncKey,
+        };
+        use ml_kem::KemCore;
+
+        let mut rng = AesRng::seed_from_u64(0);
+        let (_dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
+        #[allow(deprecated)]
+        let key = CrateUnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&key, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        assert!(matches!(err, CryptographyError::MlKem1024Unsupported));
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_invalid_bytes() {
+        let err = UnifiedPublicEncKey::deserialize_and_validate(b"not a valid key").unwrap_err();
+        assert!(matches!(err, CryptographyError::DeserializationError(..)));
+    }
 }
