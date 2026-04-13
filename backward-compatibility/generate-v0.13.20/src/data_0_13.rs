@@ -1,6 +1,6 @@
-//! Data generation for kms-core v0_13_20
+//! Data generation for kms-core v0.13.20
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0_13_20
+//! for kms-core v0.13.20
 
 use aes_prng::AesRng;
 use algebra_0_13_20::{
@@ -1551,7 +1551,7 @@ impl KmsGrpcV0_13_20 {
 }
 
 impl KMSCoreVersion for V0_13_20 {
-    const VERSION_NUMBER: &'static str = "0_13_20";
+    const VERSION_NUMBER: &'static str = "0.13.20";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {
