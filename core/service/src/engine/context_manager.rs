@@ -5,14 +5,8 @@ use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::engine::backup_operator::{
-    update_legacy_prss_13_4, update_specific_backup_vault,
-    update_specific_backup_vault_for_all_epochs,
-};
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use crate::engine::threshold::service::ThresholdFheKeys;
-use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
+use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
@@ -35,14 +29,12 @@ use kms_grpc::kms::v1::{
     CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
     NewCustodianContextRequest, NewMpcContextRequest,
 };
-use kms_grpc::rpc_types::PrivDataType;
 use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
-use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
 use tokio::sync::RwLock;
@@ -246,7 +238,6 @@ where
         let (lock_acquired_time, total_lock_time) = {
             let lock_start = std::time::Instant::now();
             let lock_acquired_time = lock_start.elapsed();
-            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             let mut guarded_backup_vault = backup_vault.lock().await;
             // First update the backup vault's context ID
             if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
@@ -266,76 +257,10 @@ where
                     "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
                 ));
             }
-            for cur_type in PrivDataType::iter() {
-                match cur_type {
-                    // These types might have epoch-specific data
-                    PrivDataType::FheKeyInfo => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FhePrivateKey => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    // Non epoched types
-                    PrivDataType::PrssSetupCombined => {
-                        update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    #[expect(deprecated)]
-                    PrivDataType::PrssSetup => {
-                        update_legacy_prss_13_4::<PrivS>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::SigningKey => {
-                        // TODO(#2862) will eventually be epoched
-                        update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::CrsInfo => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::ContextInfo => {
-                        update_specific_backup_vault::<PrivS, ContextInfo>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                }
-            }
+            // Ensure we free the lock on backup vault before performing the new backup!
+            drop(guarded_backup_vault);
+            // Now redo the backup
+            self.crypto_storage.update_backup_vault(false).await?;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
