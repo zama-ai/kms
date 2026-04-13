@@ -226,27 +226,27 @@ mod tests {
 
     fn naive_mul<T>(a: &[T], b: &[T], n: usize) -> Vec<T>
     where
-        T: Zero + Copy,
+        T: Zero + Copy + Send + Sync,
         T: Add<Output = T>,
         T: Mul<Output = T>,
         T: Sub<Output = T>,
     {
-        let mut c = Vec::with_capacity(n);
-        for _ in 0..n {
-            c.push(T::ZERO);
-        }
+        use rayon::prelude::*;
 
-        for i in 0..n {
-            for j in 0..n {
-                let w = c[(i + j) % n];
-                if (i + j) < n {
-                    c[i + j] = w + a[i] * b[j];
-                } else {
-                    c[(i + j) % n] = w - a[i] * b[j]
+        (0..n)
+            .into_par_iter()
+            .map(|k| {
+                let mut pos = T::ZERO;
+                let mut neg = T::ZERO;
+                for j in 0..=k {
+                    pos = pos + a[k - j] * b[j];
                 }
-            }
-        }
-        c
+                for j in (k + 1)..n {
+                    neg = neg + a[k + n - j] * b[j];
+                }
+                pos - neg
+            })
+            .collect()
     }
 
     #[test]
