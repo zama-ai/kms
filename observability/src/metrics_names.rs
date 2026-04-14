@@ -58,10 +58,6 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_KEY_ID: &str = "key_id";
-pub const TAG_CRS_ID: &str = "crs_id";
-pub const TAG_CONTEXT_ID: &str = "context_id";
-pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type"; // TODO not used yet
 pub const TAG_PARTY_ID: &str = "party_id";

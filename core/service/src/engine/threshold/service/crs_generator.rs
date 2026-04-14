@@ -13,8 +13,7 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard},
     metrics_names::{
-        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
-        TAG_CRS_ID, TAG_PARTY_ID,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -108,11 +107,7 @@ impl<
             .map_err(|e| {
                 MetricedError::new(op_tag, Some(verified.req_id), e, tonic::Code::NotFound)
             })?;
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_CRS_ID, verified.req_id.as_str()),
-            (TAG_CONTEXT_ID, verified.context_id.as_str()),
-        ];
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags.clone());
 
         // Validate the request ID before proceeding

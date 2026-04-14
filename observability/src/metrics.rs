@@ -1,11 +1,20 @@
-use crate::metrics_names::{TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE};
+use crate::metrics_names::{
+    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_USER_DECRYPTION_KIND,
+};
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
 /// Label keys for the duration histogram (must match all tag keys used by callers)
-const DURATION_LABEL_KEYS: &[&str] = &[TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE];
+const DURATION_LABEL_KEYS: &[&str] = &[
+    TAG_OPERATION_TYPE,
+    TAG_PARTY_ID,
+    TAG_TFHE_TYPE,
+    TAG_PUBLIC_DECRYPTION_KIND,
+    TAG_USER_DECRYPTION_KIND,
+];
 
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
