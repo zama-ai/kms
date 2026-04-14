@@ -130,7 +130,7 @@ pub(crate) async fn fetch_kms_signing_keys(
             let storage = FileStorage::new(
                 Some(Path::new(&bucket)),
                 StorageType::PRIV,
-                Some(&cur_core.object_folder),
+                cur_core.private_object_folder.as_deref(),
             )?;
             storage
                 .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
@@ -143,7 +143,7 @@ pub(crate) async fn fetch_kms_signing_keys(
                 s3_client,
                 bucket,
                 StorageType::PRIV,
-                Some(&cur_core.object_folder),
+                cur_core.private_object_folder.as_deref(),
             )?;
             s3_storage
                 .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
