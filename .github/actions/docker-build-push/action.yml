@@ -87,7 +87,7 @@ runs:
       env:
         CONTEXT: ${{ inputs.context }}
       with:
-        context: "${CONTEXT}"
+        context: ${{ env.CONTEXT }}
         file: ${{ inputs.file }}
         build-args: ${{ inputs.build-args }}
         build-contexts: ${{ inputs.build-contexts }}
