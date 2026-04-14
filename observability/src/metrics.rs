@@ -603,6 +603,7 @@ impl Default for MetricsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn metric_families_match_allowlist() {
@@ -663,5 +664,60 @@ mod tests {
             names, expected_metrics,
             "Metric families changed. If intentional, update the allowlist in this test."
         );
+    }
+
+    #[test]
+    fn duration_histogram_uses_only_low_cardinality_labels() {
+        let _ = &*METRICS;
+
+        METRICS.observe_duration_with_tags(
+            "_test_cardinality",
+            Duration::from_millis(1),
+            &[
+                (TAG_PARTY_ID, "1".to_string()),
+                (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
+                (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
+            ],
+        );
+
+        let duration_family = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_operation_duration_ms")
+            .expect("duration histogram should be registered");
+        let observed_metric = duration_family
+            .get_metric()
+            .iter()
+            .find(|metric| {
+                metric.get_label().iter().any(|label| {
+                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
+                })
+            })
+            .expect("seeded duration sample should be present");
+
+        let actual_labels: BTreeSet<&str> = observed_metric
+            .get_label()
+            .iter()
+            .map(|label| label.name())
+            .collect();
+        let expected_labels: BTreeSet<&str> = DURATION_LABEL_KEYS.iter().copied().collect();
+
+        assert_eq!(
+            actual_labels, expected_labels,
+            "duration histogram labels should stay low-cardinality"
+        );
+
+        println!("Actual labels: {actual_labels:#?}");
+
+        assert!(
+            actual_labels.len() <= 5,
+            "duration histogram should have at most 5 labels to avoid high cardinality"
+        );
+
+        for disallowed_label in ["key_id", "context_id", "epoch_id", "crs_id"] {
+            assert!(
+                !actual_labels.contains(disallowed_label),
+                "high-cardinality label {disallowed_label} should not be exported"
+            );
+        }
     }
 }
