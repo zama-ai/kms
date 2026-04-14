@@ -264,9 +264,9 @@ fn unpack_user_decrypt_req(
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
     let _client_enc_key =
         UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
-            Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
+            anyhow::anyhow!(
                 "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            ))
+            )
         })?;
     Ok((
         req.typed_ciphertexts.clone(),

@@ -474,7 +474,7 @@ impl TryFrom<i32> for PkeSchemeType {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(PkeSchemeType::MlKem512),
-            1 => Err(anyhow::anyhow!("ML-KEM 1024 is no longer supported")),
+            1 => Err(CryptographyError::MlKem1024Unsupported.into()),
             // Future encryption schemes can be added here
             _ => Err(anyhow::anyhow!("Unsupported PkeSchemeType: {:?}", value)),
         }
