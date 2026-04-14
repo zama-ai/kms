@@ -1,9 +1,9 @@
 services:
 {% for i in range(n_parties) %}
-  p{{ i+1 }}:
+  core1.p{{ i+1 }}:
     image: {{image_name}}:latest
     pull_policy: missing
-    hostname: p{{ i+1 }}
+    hostname: core1.p{{ i+1 }}
     cap_add:
       - NET_ADMIN
     command:
@@ -11,7 +11,7 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
-      - RUST_LOG=debug
+      - RUST_LOG=opentelemetry_sdk=info,debug
       - NO_COLOR=true
       - MOBY_STRATEGY={% if loop.index == 1%}{{moby_strategy}}{% else %}secure{% endif %}
       - DDEC__NET_CONF__NETWORK_TIMEOUT={% if moby_strategy != "secure" %}10{% else %}120{% endif %}
@@ -21,7 +21,7 @@ services:
       - DDEC__NET_CONF__NETWORK_TIMEOUT_BK=300
       - DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS=1200
       - DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE=2147483648
-      - DDEC__PROTOCOL__HOST__ADDRESS=p{{ i+1 }}
+      - DDEC__PROTOCOL__HOST__ADDRESS=core1.p{{ i+1 }}
       - DDEC__PROTOCOL__HOST__PORT=50000
       - DDEC__PROTOCOL__HOST__ID={{ i+1 }}
       - DDEC__PROTOCOL__HOST__CHOREOPORT=60000
@@ -33,8 +33,8 @@ services:
       - DDEC__TELEMETRY__BATCH__SCHEDULED_DELAY_MS=100
       - DDEC__TELEMETRY__BATCH__EXPORT_TIMEOUT_MS=5000
       - DDEC__REDIS__HOST=redis://redis-p{{ i+1 }}:6379
-      - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
-      - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
+      - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}-core1.pem
+      - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}-core1.pem
       - DDEC__CERTPATHS__CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
     volumes:
       - ../parameters:/app/ddec/parameters
@@ -44,7 +44,7 @@ services:
       - {{ 50000 + i+1 }}:50000
       - {{ 60000 + i+1 }}:60000
     healthcheck:
-      test: "grpc_health_probe -tls -tls-ca-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-key /app/ddec/certs/key_p{{ i+1 }}.pem --addr=p{{ i+1 }}:50000"
+      test: "grpc_health_probe -tls -tls-ca-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-cert /app/ddec/certs/cert_p{{ i+1 }}-core1.pem -tls-client-key /app/ddec/certs/key_p{{ i+1 }}-core1.pem --addr=core1.p{{ i+1 }}:50000"
       interval: 5s
       timeout: 5s
       retries: 20

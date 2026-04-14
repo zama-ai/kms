@@ -27,6 +27,6 @@ export_timeout_ms = 5000
 threshold = {{ threshold }}
 peers = [
     {% for i in range(n_parties) %}
-    { physical_address = "localhost", logical_address = "p{{ i+1 }}", physical_port = {{ 50000 + i + 1 }}, logical_port = 50000, choreo_physical_port = {{ 60000 + i + 1 }}, choreo_logical_port = 60000, id = {{ i+1 }}, use_tls = true },
+    { physical_address = "localhost", logical_address = "core1.p{{ i+1 }}", physical_port = {{ 50000 + i + 1 }}, logical_port = 50000, choreo_physical_port = {{ 60000 + i + 1 }}, choreo_logical_port = 60000, id = {{ i+1 }}, use_tls = true },
     {% endfor %}
 ]

@@ -69,7 +69,7 @@ args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=
 # Note: templating feature isn't required, but allows to compile the code only once since gen-experiment requires the feature
 [tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--bin", "threshold-gen-tls-certs","--release","--features", "templating",  "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-o", "test_certs"]
+args = ["run", "--bin", "threshold-gen-tls-certs","--release","--features", "templating",  "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-n", "1", "-o", "test_certs"]
 
 #Generate the toml config file for the choreographer for a cluster of parties accessible from localhost
 [tasks.gen-local-choreo]
