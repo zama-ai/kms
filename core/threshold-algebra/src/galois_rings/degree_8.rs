@@ -1,14 +1,14 @@
 use anyhow::anyhow;
 use itertools::EitherOrBoth::{Both, Left, Right};
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use std::{
     collections::HashMap,
     num::Wrapping,
     ops::{AddAssign, Mul, MulAssign, Neg, SubAssign},
-    sync::RwLock,
+    sync::{LazyLock, RwLock},
 };
 
+use crate::galois_rings::ExceptionalSetMap;
 use crate::{
     base_ring::{Z64, Z128},
     bivariate::compute_powers,
@@ -335,12 +335,10 @@ impl ResiduePolyF8Z64 {
     }
 }
 
-lazy_static! {
-    static ref EXCEPTIONAL_SET_STORE_8_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF8Z128>>> =
-        RwLock::new(HashMap::new());
-    static ref EXCEPTIONAL_SET_STORE_8_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF8Z64>>> =
-        RwLock::new(HashMap::new());
-}
+static EXCEPTIONAL_SET_STORE_8_128: LazyLock<RwLock<ExceptionalSetMap<ResiduePolyF8Z128>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+static EXCEPTIONAL_SET_STORE_8_64: LazyLock<RwLock<ExceptionalSetMap<ResiduePolyF8Z64>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl MemoizedExceptionals for ResiduePolyF8Z64 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
@@ -397,23 +395,25 @@ where
         ResiduePolyF8::<Z>::reduce_mul(&res_coefs)
     }
 }
-lazy_static::lazy_static! {
-    static ref MONOMIALS_F8_Z64: Vec<ResiduePoly<Z64,8>> = (0..8)
+static MONOMIALS_F8_Z64: LazyLock<Vec<ResiduePoly<Z64, 8>>> = LazyLock::new(|| {
+    (0..8)
         .map(|i| {
             let mut coefs_i = [Z64::ZERO; 8];
             coefs_i[i] = Z64::ONE;
             ResiduePoly::from_array(coefs_i)
         })
-        .collect();
+        .collect()
+});
 
-    static ref MONOMIALS_F8_Z128: Vec<ResiduePoly<Z128,8>> = (0..8)
+static MONOMIALS_F8_Z128: LazyLock<Vec<ResiduePoly<Z128, 8>>> = LazyLock::new(|| {
+    (0..8)
         .map(|i| {
             let mut coefs_i = [Z128::ZERO; 8];
             coefs_i[i] = Z128::ONE;
             ResiduePoly::from_array(coefs_i)
         })
-        .collect();
-}
+        .collect()
+});
 
 impl Monomials for ResiduePoly<Z64, 8> {
     fn monomials() -> Vec<Self> {
