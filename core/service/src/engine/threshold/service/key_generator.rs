@@ -483,7 +483,7 @@ impl<
         )
         .await?;
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
-        timer.tags(metric_tags.clone());
+        timer.tags(metric_tags);
 
         let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request

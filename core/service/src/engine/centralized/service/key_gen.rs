@@ -89,7 +89,7 @@ pub async fn key_gen_impl<
         ));
     }
 
-    // Check for existance of request preprocessing ID
+    // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID

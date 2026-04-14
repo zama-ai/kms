@@ -881,7 +881,7 @@ mod tests {
             )
             .await;
         {
-            // check existance
+            // check existence
             let _guard = public_decryptor
                 .crypto_storage
                 .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)

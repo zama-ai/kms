@@ -108,7 +108,7 @@ impl<
                 MetricedError::new(op_tag, Some(verified.req_id), e, tonic::Code::NotFound)
             })?;
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
-        timer.tags(metric_tags.clone());
+        timer.tags(metric_tags);
 
         // Validate the request ID before proceeding
         self.crypto_storage
@@ -118,7 +118,7 @@ impl<
                 MetricedError::new(
                     op_tag,
                     None,
-                    format!("Could not check crs existance in storage: {e}"),
+                    format!("Could not check crs existence in storage: {e}"),
                     tonic::Code::AlreadyExists,
                 )
             })?;
