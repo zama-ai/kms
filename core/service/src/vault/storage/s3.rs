@@ -490,75 +490,43 @@ impl Intercept for HostHeaderInterceptor {
     }
 }
 
-/// Split an S3 URL into its protocol, domain and bucket name.
+/// Split an S3 URL into its base URL and bucket name.
 /// For example:
 /// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
-/// protocol: "https://", domain: "s3.eu-west-1.amazonaws.com", bucket: "zama-zws-dev-tkms-b6q87"
-///
-/// The URL http://localhost:9000/kms will be split into
-/// protocol: "http://", domain: "localhost:9000", bucket: "kms"
-///
-/// The URL file:///tmp/somepath will be split into
-/// protocol: "file://", domain: "", bucket: "/tmp/somepath"
+/// https://s3.eu-west-1.amazonaws.com and zama-zws-dev-tkms-b6q87
+/// where the first part is the URL and the second part is the bucket name.
 ///
 /// Code is adapted from
 /// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
-pub fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String, String)> {
+pub fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
+    // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
     tracing::info!("Splitting S3 url: {}", s3_bucket_url);
-    let parsed = url::Url::parse(s3_bucket_url.as_str())?;
-    let protocol = format!("{}://", parsed.scheme());
+    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
+    let mut bucket = parsed_url_and_bucket
+        .path()
+        .trim_start_matches('/')
+        .to_owned();
 
-    // Build domain as host + optional port
-    let domain = match (parsed.host_str(), parsed.port()) {
-        (Some(host), Some(port)) => format!("{host}:{port}"),
-        (Some(host), None) => host.to_string(),
-        _ => String::new(),
-    };
-
-    // Extract bucket from path or domain
-    let path_bucket = parsed.path().trim_start_matches('/').to_owned();
-
-    if path_bucket.is_empty() {
+    if bucket.is_empty() {
         tracing::warn!(
             "Bucket is empty, attempting to deduce from domain {:?}",
-            parsed
+            parsed_url_and_bucket
         );
         // e.g BBBBBB.s3.eu-west-1.amazonaws.com, the bucket is part of the domain
-        let bucket_from_domain = bucket_from_domain(&parsed)?;
-        // Remove bucket subdomain from domain string
-        let domain = domain
-            .replace(&(bucket_from_domain.clone() + "."), "")
+        bucket = bucket_from_domain(&parsed_url_and_bucket)?;
+        let url = s3_bucket_url
+            .replace(&(bucket.clone() + "."), "")
             .trim_end_matches('/')
-            .to_string();
-
-        tracing::info!(
-            s3_bucket_url,
-            protocol,
-            domain,
-            bucket_from_domain,
-            "Bucket from domain"
-        );
-        Ok((protocol, domain, bucket_from_domain))
-    } else if protocol == "file://" {
-        // For file:// URLs, the full path is the "bucket" (filesystem root)
-        let full_path = parsed.path().to_string();
-        tracing::info!(
-            s3_bucket_url,
-            protocol,
-            domain,
-            bucket = full_path,
-            "File URL"
-        );
-        Ok((protocol, domain, full_path))
+            .to_owned();
+        tracing::info!(s3_bucket_url, url, bucket, "Bucket from domain");
+        Ok((url, bucket))
     } else {
-        tracing::info!(
-            s3_bucket_url,
-            protocol,
-            domain,
-            path_bucket,
-            "Parsed S3 url"
-        );
-        Ok((protocol, domain, path_bucket))
+        let url = s3_bucket_url
+            .replace(&bucket, "")
+            .trim_end_matches('/')
+            .to_owned();
+        tracing::info!(s3_bucket_url, url, bucket, "Parsed S3 url");
+        Ok((url, bucket))
     }
 }
 

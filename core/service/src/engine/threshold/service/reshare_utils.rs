@@ -84,8 +84,7 @@ async fn fetch_public_fhe_materials_from_peers<
         //
         // the public storage URL consists of the bucket name and the URL
         // we need to parse this information accordingly
-        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
-        let url = format!("{protocol}{domain}");
+        let (url, bucket) = split_url(&node.public_storage_url)?;
         let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
@@ -464,8 +463,7 @@ async fn fetch_public_crs_materials_from_peers<
         //
         // the public storage URL consists of the bucket name and the URL
         // we need to parse this information accordingly
-        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
-        let url = format!("{protocol}{domain}");
+        let (url, bucket) = split_url(&node.public_storage_url)?;
         let region = find_region_from_s3_url(&node.public_storage_url)?;
 
         // this is not an operation that is frequently used, so we can create a new s3 client each time
@@ -613,44 +611,12 @@ mod tests {
 
     #[test]
     fn test_split_url() {
-        // Virtual-hosted style: bucket is a subdomain
-        let (protocol, domain, bucket) = super::split_url(
+        let (url, bucket) = super::split_url(
             &"https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
         )
         .unwrap();
-        assert_eq!(protocol.as_str(), "https://");
-        assert_eq!(domain.as_str(), "s3.eu-west-1.amazonaws.com");
+        assert_eq!(url.as_str(), "https://s3.eu-west-1.amazonaws.com");
         assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
-
-        // Path-style: bucket is in the URL path
-        let (protocol, domain, bucket) =
-            super::split_url(&"http://localhost:9000/kms".to_string()).unwrap();
-        assert_eq!(protocol.as_str(), "http://");
-        assert_eq!(domain.as_str(), "localhost:9000");
-        assert_eq!(bucket.as_str(), "kms");
-
-        // MinIO mock endpoint with path bucket
-        let (protocol, domain, bucket) =
-            super::split_url(&"http://dev-s3-mock:9000/kms".to_string()).unwrap();
-        assert_eq!(protocol.as_str(), "http://");
-        assert_eq!(domain.as_str(), "dev-s3-mock:9000");
-        assert_eq!(bucket.as_str(), "kms");
-
-        // file:// URL (used in isolated tests)
-        let (protocol, domain, bucket) =
-            super::split_url(&"file:///tmp/test-material".to_string()).unwrap();
-        assert_eq!(protocol.as_str(), "file://");
-        assert_eq!(domain.as_str(), "");
-        assert_eq!(bucket.as_str(), "/tmp/test-material");
-
-        // Path-style S3 with region
-        let (protocol, domain, bucket) = super::split_url(
-            &"https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string(),
-        )
-        .unwrap();
-        assert_eq!(protocol.as_str(), "https://");
-        assert_eq!(domain.as_str(), "s3.us-west-1.amazonaws.com");
-        assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87/");
     }
 
     async fn setup_public_materials_test(
