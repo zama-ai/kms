@@ -467,7 +467,6 @@ pub fn central_public_decrypt<
 >(
     keys: &KmsFheKeyHandles,
     cts: &[TypedCiphertext],
-    metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use observability::{
         metrics,
@@ -481,7 +480,6 @@ pub fn central_public_decrypt<
         .map(|ct| {
             let mut inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .tags(metric_tags.clone())
                 .start();
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
@@ -511,7 +509,6 @@ pub async fn async_user_decrypt<
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
-    metric_tags: Vec<(&'static str, String)>,
     extra_data: &[u8],
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
     use observability::{
@@ -527,7 +524,6 @@ pub async fn async_user_decrypt<
     for typed_ciphertext in typed_ciphertexts {
         let mut inner_timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_INNER)
-            .tags(metric_tags.clone())
             .start();
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type()?;

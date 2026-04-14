@@ -148,7 +148,6 @@ pub async fn user_decrypt_impl<
                 &client_address,
                 server_verf_key,
                 &domain,
-                vec![],
                 &extra_data,
             )
             .await;
@@ -345,7 +344,7 @@ pub async fn public_decrypt_impl<
         // run the computation in a separate rayon thread to avoid blocking the tokio runtime
         let (send, recv) = tokio::sync::oneshot::channel();
         rayon::spawn_fifo(move || {
-            let decryptions = central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, vec![]);
+            let decryptions = central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
             let _ = send.send(decryptions);
         });
         let decryptions = recv.await;
