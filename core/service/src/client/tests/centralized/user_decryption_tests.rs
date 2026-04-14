@@ -362,9 +362,10 @@ pub(crate) async fn user_decryption_centralized(
                 .process_user_decryption_resp(
                     &client_request,
                     &eip712_domain,
-                    &responses,
                     enc_pk,
                     enc_sk,
+                    None,
+                    &responses,
                 )
                 .unwrap()
         } else {
@@ -375,7 +376,7 @@ pub(crate) async fn user_decryption_centralized(
                         "d8da6bf26964af9d7eed9e03e53415d37aa96045"
                     ))]));
             internal_client
-                .insecure_process_user_decryption_resp(&responses, enc_sk)
+                .insecure_process_user_decryption_resp(enc_sk, &responses)
                 .unwrap()
         };
 

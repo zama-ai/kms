@@ -29,7 +29,6 @@ hex.workspace = true
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
-lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
 threshold-networking = { workspace = true, optional = true }
 observability = { workspace = true, optional = true }

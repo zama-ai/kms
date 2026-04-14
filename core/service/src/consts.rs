@@ -2,6 +2,8 @@
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
+#[cfg(feature = "non-wasm")]
+use std::sync::LazyLock;
 use threshold_execution::tfhe_internals::parameters::{
     BC_PARAMS_SNS, DKGParams, PARAMS_TEST_BK_SNS,
 };
@@ -79,46 +81,50 @@ cfg_if::cfg_if! {
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
-        lazy_static::lazy_static! {
-            pub static ref TEST_CENTRAL_KEY_ID: RequestId =
-                derive_request_id("TEST_CENTRAL_KEY_ID").unwrap();
-            pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
-
-            derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
-            pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
-                derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap();
-            pub static ref TEST_THRESHOLD_KEY_ID_13P: RequestId =
-                derive_request_id("TEST_THRESHOLD_KEY_ID_13P").unwrap();
-            pub static ref TEST_CENTRAL_CRS_ID: RequestId = derive_request_id("TEST_CENTRAL_CRS_ID").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_4P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_10P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_10P").unwrap();
-            pub static ref TEST_THRESHOLD_CRS_ID_13P: RequestId = derive_request_id("TEST_THRESHOLD_CRS_ID_13P").unwrap();
-            pub static ref OTHER_CENTRAL_TEST_ID: RequestId = derive_request_id("OTHER_TEST_ID").unwrap();
-            pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
-                derive_request_id("DEFAULT_CENTRAL_KEY_ID").unwrap();
-            pub static ref DEFAULT_THRESHOLD_KEY_ID_4P: RequestId =
-                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_KEY_ID_10P: RequestId =
-                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_10P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_KEY_ID_13P: RequestId =
-                derive_request_id("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap();
-            pub static ref DEFAULT_CENTRAL_CRS_ID: RequestId = derive_request_id("DEFAULT_CENTRAL_CRS_ID").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_4P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_10P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap();
-            pub static ref DEFAULT_THRESHOLD_CRS_ID_13P: RequestId = derive_request_id("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap();
-            pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
-            pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
-                derive_request_id("OTHER_DEFAULT_ID").unwrap();
-            pub static ref PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
-                Some(format!("PUB-p{}", i))
-            ).collect::<Vec<Option<String>>>();
-            pub static ref PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
-                Some(format!("PRIV-p{}", i))
-            ).collect::<Vec<Option<String>>>();
-            pub static ref BACKUP_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
-                Some(format!("BACKUP-p{}", i))
-            ).collect::<Vec<Option<String>>>();
-        }
+        pub static TEST_CENTRAL_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_CENTRAL_KEY_ID").unwrap());
+        pub static TEST_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap());
+        pub static TEST_THRESHOLD_KEY_ID_10P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap());
+        pub static TEST_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_KEY_ID_13P").unwrap());
+        pub static TEST_CENTRAL_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_CENTRAL_CRS_ID").unwrap());
+        pub static TEST_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_4P").unwrap());
+        pub static TEST_THRESHOLD_CRS_ID_10P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_10P").unwrap());
+        pub static TEST_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("TEST_THRESHOLD_CRS_ID_13P").unwrap());
+        pub static OTHER_CENTRAL_TEST_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("OTHER_TEST_ID").unwrap());
+        pub static DEFAULT_CENTRAL_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_KEY_ID").unwrap());
+        pub static DEFAULT_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_4P").unwrap());
+        pub static DEFAULT_THRESHOLD_KEY_ID_10P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_10P").unwrap());
+        pub static DEFAULT_THRESHOLD_KEY_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_KEY_ID_13P").unwrap());
+        pub static DEFAULT_CENTRAL_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_CENTRAL_CRS_ID").unwrap());
+        pub static DEFAULT_THRESHOLD_CRS_ID_4P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_4P").unwrap());
+        pub static DEFAULT_THRESHOLD_CRS_ID_10P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_10P").unwrap());
+        pub static DEFAULT_THRESHOLD_CRS_ID_13P: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_THRESHOLD_CRS_ID_13P").unwrap());
+        pub static DEFAULT_DEC_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("DEFAULT_DEC_ID").unwrap());
+        pub static OTHER_CENTRAL_DEFAULT_ID: LazyLock<RequestId> =
+            LazyLock::new(|| derive_request_id("OTHER_DEFAULT_ID").unwrap());
+        pub static PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
+            LazyLock::new(|| (1..=13).map(|i| Some(format!("PUB-p{}", i))).collect());
+        pub static PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
+            LazyLock::new(|| (1..=13).map(|i| Some(format!("PRIV-p{}", i))).collect());
+        pub static BACKUP_STORAGE_PREFIX_THRESHOLD_ALL: LazyLock<Vec<Option<String>>> =
+            LazyLock::new(|| (1..=13).map(|i| Some(format!("BACKUP-p{}", i))).collect());
     }
 }
 
@@ -126,12 +132,14 @@ cfg_if::cfg_if! {
 cfg_if::cfg_if! {
     // these are for the "fast" tests, so use 4 parties
     if #[cfg(all(not(feature = "slow_tests"), any(test, feature = "testing")))] {
-        lazy_static::lazy_static! {
-            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_4P;
-            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_4P;
-            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_4P;
-            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = *DEFAULT_THRESHOLD_CRS_ID_4P;
-        }
+        pub static TEST_THRESHOLD_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *TEST_THRESHOLD_KEY_ID_4P);
+        pub static TEST_THRESHOLD_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *TEST_THRESHOLD_CRS_ID_4P);
+        pub static DEFAULT_THRESHOLD_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_THRESHOLD_KEY_ID_4P);
+        pub static DEFAULT_THRESHOLD_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_THRESHOLD_CRS_ID_4P);
     }
 }
 
@@ -139,12 +147,14 @@ cfg_if::cfg_if! {
 cfg_if::cfg_if! {
     // these are for the slow_tests, so use 13 parties
     if #[cfg(all(feature = "slow_tests", any(test, feature = "testing")))] {
-        lazy_static::lazy_static! {
-            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_13P;
-            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_13P;
-            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_13P;
-            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = *DEFAULT_THRESHOLD_CRS_ID_13P;
-        }
+        pub static TEST_THRESHOLD_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *TEST_THRESHOLD_KEY_ID_13P);
+        pub static TEST_THRESHOLD_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *TEST_THRESHOLD_CRS_ID_13P);
+        pub static DEFAULT_THRESHOLD_KEY_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_THRESHOLD_KEY_ID_13P);
+        pub static DEFAULT_THRESHOLD_CRS_ID: LazyLock<RequestId> =
+            LazyLock::new(|| *DEFAULT_THRESHOLD_CRS_ID_13P);
     }
 }
 
@@ -163,27 +173,31 @@ cfg_if::cfg_if! {
 }
 
 #[cfg(feature = "non-wasm")]
-lazy_static::lazy_static! {
-    // The static ID we will use for the signing key for each of the MPC parties.
-    // We do so, since there is ever only one conceptual signing key per party (at least for now).
-    // This is a bit hackish, but it works for now.
-    pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+// The static ID we will use for the signing key for each of the MPC parties.
+// We do so, since there is ever only one conceptual signing key per party (at least for now).
+// This is a bit hackish, but it works for now.
+pub static SIGNING_KEY_ID: LazyLock<RequestId> =
+    LazyLock::new(|| derive_request_id("SIGNING_KEY_ID").unwrap());
 
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // In the future we will remove the default context.
-    pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
-        7u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        1,
-    ]);
+// TODO(zama-ai/kms-internal/issues/2758)
+// In the future we will remove the default context.
+#[cfg(feature = "non-wasm")]
+pub static DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
+    ContextId::from_bytes([
+        7u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
+    ])
+});
 
-    // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
-    pub static ref DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
-        8u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-    ]);
-}
+// The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
+#[cfg(feature = "non-wasm")]
+pub static DEFAULT_EPOCH_ID: LazyLock<EpochId> = LazyLock::new(|| {
+    EpochId::from_bytes([
+        8u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
+    ])
+});
 
 #[cfg(feature = "insecure")]
-lazy_static::lazy_static! {
-    pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();
-}
+pub static MOCK_NITRO_SIGNING_KEY_BYTES: LazyLock<Vec<u8>> =
+    LazyLock::new(|| include_bytes!("../certs/mock_nitro_signing_key.der").into());

@@ -69,12 +69,12 @@ test('centralized user decryption response', (_t) => {
     const enc_sk = transcript_to_enc_sk(transcript);
 
     // test user decrypt using wasm objects
-    const pt = process_user_decryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
+    const pt = process_user_decryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, null, true);
     assert.deepEqual(1, pt.length);
     assert.deepEqual(48, pt[0].bytes[0]);
 
     const response2 = transcript_to_response(transcript);
-    const pt2 = process_user_decryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
+    const pt2 = process_user_decryption_resp(client, null, null, response2, enc_pk, enc_sk, null, false);
     assert.deepEqual(1, pt2.length);
     assert.deepEqual(48, pt2[0].bytes[0]);
 });
@@ -106,10 +106,10 @@ test('centralized user decryption response with js', (_t) => {
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
-    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, null, true)[0].bytes;
     assert.deepEqual(48, pt.at(-1));
 
-    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, null, false)[0].bytes;
     assert.deepEqual(48, pt2.at(-1));
 });
 
@@ -135,20 +135,20 @@ test('threshold user decryption response', (_t) => {
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
-    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, null, true)[0].bytes;
     assert.deepEqual(42, pt.at(-1));
 
     const response2_js = transcript_to_response_js(transcript);
-    const pt2 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, null, false)[0].bytes;
     assert.deepEqual(42, pt2.at(-1));
 
     // test again using fewer shares
     response_js.pop();
-    const pt3 = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    const pt3 = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, null, true)[0].bytes;
     assert.deepEqual(42, pt3.at(-1));
 
     response2_js.pop();
-    const pt4 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, false)[0].bytes;
+    const pt4 = process_user_decryption_resp_from_js(client, null, null, response2_js, enc_pk, enc_sk, null, false)[0].bytes;
     assert.deepEqual(42, pt4.at(-1));
 });
 
@@ -164,10 +164,16 @@ test('threshold user decryption response with js', (_t) => {
     const enc_sk = transcript_to_enc_sk(transcript);
 
     // test user decrypt using js objects
-    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true)[0].bytes;
+    // use verification without explicit threshold
+    const pt = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, null, true)[0].bytes;
     assert.deepEqual(42, pt.at(-1));
 
-    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false)[0].bytes;
+    // use verification with explicit threshold
+    const pt1 = process_user_decryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, 1, true)[0].bytes;
+    assert.deepEqual(42, pt1.at(-1));
+
+    // no verification
+    const pt2 = process_user_decryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, null, false)[0].bytes;
     assert.deepEqual(42, pt2.at(-1));
 });
 
