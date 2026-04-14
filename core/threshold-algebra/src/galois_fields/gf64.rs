@@ -1,5 +1,5 @@
-use crate::poly::lagrange_polynomials;
 use crate::{
+    galois_fields::LagrangeMap,
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
@@ -84,11 +84,11 @@ impl RingWithExceptionalSequence for GF64 {
     }
 }
 
-static LAGRANGE_STORE: OnceLock<Vec<Poly<GF64>>> = OnceLock::new();
+pub(crate) static LAGRANGE_STORE: OnceLock<LagrangeMap<GF64>> = OnceLock::new();
 
 impl Field for GF64 {
-    fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>] {
-        LAGRANGE_STORE.get_or_init(|| lagrange_polynomials(points))
+    fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+        LAGRANGE_STORE.get()?.get(points).map(|v| v.as_slice())
     }
 }
 

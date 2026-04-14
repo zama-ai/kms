@@ -1,7 +1,7 @@
 use algebra::{
     PRSSConversions,
     error_correction::error_correction,
-    poly::{Poly, lagrange_polynomials},
+    poly::Poly,
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         ErrorCorrect, Field, FromU128, Invert, One, Ring, RingWithExceptionalSequence, Sample,
@@ -23,7 +23,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::sync::OnceLock;
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
@@ -347,12 +346,11 @@ macro_rules! impl_field_level {
                 }
             }
 
-            static [<LAGRANGE_STORE_BGV_ $name:upper>]: OnceLock<Vec<Poly<$name>>> = OnceLock::new();
-
             impl Field for $name {
-                fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>] {
-                    [<LAGRANGE_STORE_BGV_ $name:upper>]
-                        .get_or_init(|| lagrange_polynomials(points))
+                fn cached_lagrange_polys(_points: &[Self]) -> Option<&'static [Poly<Self>]> {
+                    // BGV level types are experimental; no pre-computed store.
+                    // Falls back to direct computation in lagrange_interpolation.
+                    None
                 }
 
                 fn invert(&self) -> Self {

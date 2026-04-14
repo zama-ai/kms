@@ -600,14 +600,11 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
 
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
-    // In tests, bypass memoization to allow different point sets per test.
-    // memoize_lagrange uses OnceLock which caches a single point set per field type.
-    #[cfg(test)]
-    let lagrange_polys = lagrange_polynomials(points);
-    #[cfg(not(test))]
-    let lagrange_polys = F::memoize_lagrange(points);
-
-    lagrange_interpolation_with_polys(lagrange_polys, values)
+    if let Some(cached) = F::cached_lagrange_polys(points) {
+        lagrange_interpolation_with_polys(cached, values)
+    } else {
+        lagrange_interpolation_with_polys(lagrange_polynomials(points), values)
+    }
 }
 
 /// interpolate a polynomial using pre-computed Lagrange basis polynomials and y-coordinates

@@ -92,7 +92,9 @@ pub trait Field
 where
     Self: RingWithExceptionalSequence + Div<Self, Output = Self> + DivAssign<Self>,
 {
-    fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>];
+    /// Looks up pre-computed Lagrange polynomials for the given point set.
+    /// Returns `None` if the store has not been initialized.
+    fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]>;
 
     /// computes the multiplicative inverse of the field element
     fn invert(&self) -> Self {

@@ -1,8 +1,7 @@
-use crate::poly::lagrange_polynomials;
-use crate::structure_traits::RingWithExceptionalSequence;
 use crate::{
+    galois_fields::LagrangeMap,
     poly::Poly,
-    structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
+    structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
@@ -85,11 +84,11 @@ impl RingWithExceptionalSequence for GF8 {
     }
 }
 
-static LAGRANGE_STORE: OnceLock<Vec<Poly<GF8>>> = OnceLock::new();
+pub(crate) static LAGRANGE_STORE: OnceLock<LagrangeMap<GF8>> = OnceLock::new();
 
 impl Field for GF8 {
-    fn memoize_lagrange(points: &[Self]) -> &'static [Poly<Self>] {
-        LAGRANGE_STORE.get_or_init(|| lagrange_polynomials(points))
+    fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+        LAGRANGE_STORE.get()?.get(points).map(|v| v.as_slice())
     }
 }
 
