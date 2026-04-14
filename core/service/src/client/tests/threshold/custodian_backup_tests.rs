@@ -8,15 +8,19 @@ cfg_if::cfg_if! {
         use crate::client::tests::common::standard_keygen_config;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+        use crate::consts::DEFAULT_MPC_CONTEXT;
+        use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
         use crate::cryptography::signatures::PublicSigKey;
         use crate::engine::base::CrsGenMetadata;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
+        use crate::engine::context::ContextInfo;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
         use crate::util::key_setup::test_tools::TestingPlaintext;
         use crate::vault::storage::file::FileStorage;
+        use crate::vault::storage::read_context_at_id;
         use crate::vault::storage::read_versioned_at_request_and_epoch_id;
         use crate::vault::storage::read_versioned_at_request_id;
         use crate::vault::storage::StorageType;
@@ -25,6 +29,7 @@ cfg_if::cfg_if! {
         use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
         use kms_grpc::kms::v1::CustodianRecoveryOutput;
         use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
+        use kms_grpc::rpc_types::PubDataType;
         use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
         use std::collections::HashMap;
         use tfhe::safe_serialization::safe_deserialize;
@@ -35,7 +40,6 @@ cfg_if::cfg_if! {
 }
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-#[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
@@ -517,6 +521,372 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let recovered_keys = read_signing_keys(test_path, priv_storage_prefixes).await;
     for (i, key) in recovered_keys.iter().enumerate() {
         assert_eq!(key, &sig_keys[i]);
+    }
+}
+
+/// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
+/// after server startup with `ensure_default_prss: true`.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_prss_in_custodian_backup_threshold() {
+    let amount_parties = 4;
+    let amount_custodians = 3;
+    let threshold = 1;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
+    let req_new_cus: RequestId = derive_request_id(&format!(
+        "test_prss_in_custodian_backup_threshold_{amount_parties}_{amount_custodians}_{threshold}"
+    ))
+    .unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let _mnemonics = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // PRSS is stored with epoch_id.into() as the request_id (non-epoched layout)
+    let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
+    let prss_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
+        test_path,
+        &req_new_cus,
+        &prss_req_id,
+        &PrivDataType::PrssSetupCombined.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        prss_backup.len(),
+        amount_parties,
+        "Expected one PRSS backup entry per party"
+    );
+    for entry in &prss_backup {
+        assert_eq!(entry.priv_data_type, PrivDataType::PrssSetupCombined);
+    }
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+}
+
+/// Test that FHE key material is present in the custodian backup vault
+/// immediately after key generation (not just after recovery).
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_keygen_backup_presence_threshold() {
+    let amount_parties = 4;
+    let amount_custodians = 3;
+    let threshold = 1;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
+    let req_new_cus: RequestId =
+        derive_request_id("test_keygen_backup_presence_threshold_cus").unwrap();
+    let req_key_id: RequestId =
+        derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let _mnemonics = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Generate a key
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let _keys = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &req_key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        test_path,
+        0,
+    )
+    .await;
+
+    // Verify FHE key material appears in backup immediately after keygen
+    let key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_new_cus,
+        &req_key_id,
+        *DEFAULT_EPOCH_ID,
+        &PrivDataType::FheKeyInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        key_backup.len(),
+        amount_parties,
+        "Expected one FheKeyInfo backup entry per party after keygen"
+    );
+    for entry in &key_backup {
+        assert_eq!(entry.priv_data_type, PrivDataType::FheKeyInfo);
+    }
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+}
+
+/// Test that re-creating a custodian context with pre-existing key material
+/// results in re-encrypted backup entries (different ciphertexts).
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_custodian_reencryption_with_existing_data_threshold() {
+    let amount_parties = 4;
+    let amount_custodians = 3;
+    let threshold = 1;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
+    let req_cus_a: RequestId =
+        derive_request_id("test_custodian_reencryption_cus_a").unwrap();
+    let req_cus_b: RequestId =
+        derive_request_id("test_custodian_reencryption_cus_b").unwrap();
+    let req_key_id: RequestId =
+        derive_request_id("test_custodian_reencryption_key").unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+
+    // Create first custodian context
+    let _mnemonics_a = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_cus_a,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Generate a key
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let _keys = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &req_key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        test_path,
+        0,
+    )
+    .await;
+
+    // Read backup under first custodian context
+    let backup_a: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_cus_a,
+        &req_key_id,
+        *DEFAULT_EPOCH_ID,
+        &PrivDataType::FheKeyInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(backup_a.len(), amount_parties);
+
+    // Create second custodian context (triggers re-encryption of all backup data)
+    let _mnemonics_b = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_cus_b,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Read backup under second custodian context
+    let backup_b: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_cus_b,
+        &req_key_id,
+        *DEFAULT_EPOCH_ID,
+        &PrivDataType::FheKeyInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        backup_b.len(),
+        amount_parties,
+        "Expected backup entries under new custodian context after re-encryption"
+    );
+
+    // Verify ciphertexts differ (re-encrypted, not copied)
+    for i in 0..amount_parties {
+        assert_ne!(
+            backup_a[i].ciphertext, backup_b[i].ciphertext,
+            "Backup ciphertexts should differ after custodian context change (party {i})"
+        );
+    }
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+}
+
+/// Test that creating a new MPC context results in the ContextInfo
+/// being backed up in the custodian backup vault (threshold mode).
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_mpc_context_backup_threshold() {
+    let amount_parties = 4;
+    let amount_custodians = 3;
+    let threshold = 1;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
+    let req_new_cus: RequestId =
+        derive_request_id("test_mpc_context_backup_threshold_cus").unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let _mnemonics = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Build a new MPC context by cloning the default one
+    let priv_store_0 = FileStorage::new(
+        test_path,
+        StorageType::PRIV,
+        priv_storage_prefixes[0].as_deref(),
+    )
+    .unwrap();
+    let default_context: ContextInfo =
+        read_context_at_id(&priv_store_0, &DEFAULT_MPC_CONTEXT).await.unwrap();
+    let new_context = {
+        let mut ctx = default_context.clone();
+        let mut rng = AesRng::seed_from_u64(99);
+        let context_id = RequestId::new_random(&mut rng);
+        ctx.context_id = context_id.into();
+        // Fill in verification keys from public storage
+        let all_pub_storage: Vec<FileStorage> = pub_storage_prefixes
+            .iter()
+            .map(|prefix| {
+                FileStorage::new(test_path, StorageType::PUB, prefix.as_deref()).unwrap()
+            })
+            .collect();
+        for node in ctx.mpc_nodes.iter_mut() {
+            let pk: PublicSigKey = read_versioned_at_request_id(
+                &all_pub_storage[node.party_id as usize - 1],
+                &SIGNING_KEY_ID,
+                &PubDataType::VerfKey.to_string(),
+            )
+            .await
+            .unwrap();
+            node.verification_key = Some(pk);
+        }
+        ctx
+    };
+    let new_context_id = *new_context.context_id();
+
+    // Send new MPC context to all parties
+    {
+        let req = internal_client
+            .new_mpc_context_request(new_context)
+            .unwrap();
+        let mut req_tasks = JoinSet::new();
+        for (_, client) in kms_clients.iter() {
+            let req_clone = req.clone();
+            let mut client = client.clone();
+            req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
+        }
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len());
+    }
+
+    // Verify ContextInfo for the new context appears in backup
+    let context_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
+        test_path,
+        &req_new_cus,
+        &new_context_id.into(),
+        &PrivDataType::ContextInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        context_backup.len(),
+        amount_parties,
+        "Expected ContextInfo backup entry per party after new MPC context"
+    );
+    for entry in &context_backup {
+        assert_eq!(entry.priv_data_type, PrivDataType::ContextInfo);
+    }
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
     }
 }
 

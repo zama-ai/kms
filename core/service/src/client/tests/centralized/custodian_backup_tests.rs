@@ -1,3 +1,4 @@
+use crate::backup::BackupCiphertext;
 use crate::backup::custodian::Custodian;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::test_tools::centralized_custodian_handles;
@@ -6,14 +7,15 @@ use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
 use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
-use crate::consts::{DEFAULT_EPOCH_ID, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
-use crate::cryptography::signatures::PrivateSigKey;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::engine::context::ContextInfo;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::key_setup::test_tools::{
     purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
 };
 use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::{StorageType, read_versioned_at_request_id};
+use crate::vault::storage::{StorageType, read_context_at_id, read_versioned_at_request_id};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS, cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
@@ -381,6 +383,144 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .unwrap();
     // Check the data is correctly recovered
     assert_eq!(sig_key, new_sig_key);
+}
+
+/// Test that FHE key material is present in the custodian backup vault
+/// immediately after key generation (centralized mode).
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_keygen_backup_presence_central() {
+    let amount_custodians = 3;
+    let threshold = 1;
+    let req_new_cus: RequestId =
+        derive_request_id("test_keygen_backup_presence_central_cus").unwrap();
+    let key_id: RequestId =
+        derive_request_id("test_keygen_backup_presence_central_key").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_server, mut kms_client, mut internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
+    let _mnemonics = run_new_cus_context(
+        &mut kms_client,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    run_key_gen_centralized(
+        &mut kms_client,
+        &internal_client,
+        &key_id,
+        &epoch_id,
+        FheParameter::Test,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+
+    // Verify FHE key material appears in backup immediately after keygen
+    let key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_new_cus,
+        &key_id,
+        epoch_id,
+        &PrivDataType::FhePrivateKey.to_string(),
+        &[None],
+    )
+    .await;
+    assert_eq!(
+        key_backup.len(),
+        1,
+        "Expected one FhePrivateKey backup entry for centralized mode"
+    );
+    assert_eq!(key_backup[0].priv_data_type, PrivDataType::FhePrivateKey);
+
+    // Shut down the servers
+    kms_server.assert_shutdown().await;
+}
+
+/// Test that creating a new MPC context results in the ContextInfo
+/// being backed up in the custodian backup vault (centralized mode).
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_mpc_context_backup_central() {
+    let amount_custodians = 3;
+    let threshold = 1;
+    let req_new_cus: RequestId =
+        derive_request_id("test_mpc_context_backup_central_cus").unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_server, mut kms_client, mut internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
+    let _mnemonics = run_new_cus_context(
+        &mut kms_client,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Build a new MPC context by cloning the default one
+    let priv_store = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
+    let default_context: ContextInfo =
+        read_context_at_id(&priv_store, &DEFAULT_MPC_CONTEXT).await.unwrap();
+    let new_context = {
+        let mut ctx = default_context.clone();
+        let mut rng = AesRng::seed_from_u64(42);
+        let context_id = kms_grpc::RequestId::new_random(&mut rng);
+        ctx.context_id = context_id.into();
+        // Fill in verification key from public storage
+        let pub_store = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
+        for node in ctx.mpc_nodes.iter_mut() {
+            let pk: PublicSigKey = read_versioned_at_request_id(
+                &pub_store,
+                &SIGNING_KEY_ID,
+                &PubDataType::VerfKey.to_string(),
+            )
+            .await
+            .unwrap();
+            node.verification_key = Some(pk);
+        }
+        ctx
+    };
+    let new_context_id = *new_context.context_id();
+
+    // Send new MPC context
+    let req = internal_client
+        .new_mpc_context_request(new_context)
+        .unwrap();
+    kms_client
+        .new_mpc_context(tonic::Request::new(req))
+        .await
+        .unwrap();
+
+    // Verify ContextInfo for the new context appears in backup
+    let context_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
+        test_path,
+        &req_new_cus,
+        &new_context_id.into(),
+        &PrivDataType::ContextInfo.to_string(),
+        &[None],
+    )
+    .await;
+    assert_eq!(
+        context_backup.len(),
+        1,
+        "Expected ContextInfo backup entry after new MPC context"
+    );
+    assert_eq!(context_backup[0].priv_data_type, PrivDataType::ContextInfo);
+
+    // Shut down the servers
+    kms_server.assert_shutdown().await;
 }
 
 async fn emulate_custodian(
