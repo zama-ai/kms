@@ -45,8 +45,8 @@ pub struct LocalNetworking<R: RoleTrait> {
 impl<R: RoleTrait> Default for LocalNetworking<R> {
     fn default() -> Self {
         Self {
-            current_network_timeout: Mutex::new(*NETWORK_TIMEOUT),
-            next_network_timeout: Mutex::new(*NETWORK_TIMEOUT),
+            current_network_timeout: Mutex::new(NETWORK_TIMEOUT),
+            next_network_timeout: Mutex::new(NETWORK_TIMEOUT),
             max_elapsed_time: Mutex::new(Duration::ZERO),
             pairwise_channels: Default::default(),
             owner: Default::default(),
@@ -91,8 +91,8 @@ impl<R: RoleTrait> LocalNetworkingProducer<R> {
     ) -> LocalNetworking<R> {
         // Async network means a timeout of 1 year
         let timeout = match network_mode {
-            NetworkMode::Sync => *NETWORK_TIMEOUT,
-            NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
+            NetworkMode::Sync => NETWORK_TIMEOUT,
+            NetworkMode::Async => NETWORK_TIMEOUT_ASYNC,
         };
 
         LocalNetworking {
@@ -250,11 +250,11 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn set_timeout_for_bk(&self) {
-        self.set_timeout_for_next_round(*NETWORK_TIMEOUT_BK).await
+        self.set_timeout_for_next_round(NETWORK_TIMEOUT_BK).await
     }
 
     async fn set_timeout_for_bk_sns(&self) {
-        self.set_timeout_for_next_round(*NETWORK_TIMEOUT_BK_SNS)
+        self.set_timeout_for_next_round(NETWORK_TIMEOUT_BK_SNS)
             .await
     }
 

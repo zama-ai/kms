@@ -82,7 +82,7 @@ impl ChoreoRuntime {
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 let channel = Channel::builder(endpoint.clone())
-                    .timeout(*NETWORK_TIMEOUT_LONG)
+                    .timeout(NETWORK_TIMEOUT_LONG)
                     .tcp_nodelay(true)
                     .connect_lazy();
                 Ok((*role, channel))

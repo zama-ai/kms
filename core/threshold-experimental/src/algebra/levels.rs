@@ -18,13 +18,13 @@ use crypto_bigint::modular::ConstMontyParams;
 use crypto_bigint::{U64, U128, U192, U256, U320, U384, U448, U512, U576, U640, U704, U768, U1536};
 use error_utils::anyhow_error_and_log;
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::sync::LazyLock;
 use std::sync::RwLock;
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
@@ -349,10 +349,8 @@ macro_rules! impl_field_level {
                 }
             }
 
-            lazy_static! {
-                static ref [<LAGRANGE_STORE_BGV_ $name:upper>]: RwLock<HashMap<Vec<$name>, Vec<Poly<$name>>>> =
-                    RwLock::new(HashMap::new());
-            }
+            static [<LAGRANGE_STORE_BGV_ $name:upper>]: LazyLock<RwLock<HashMap<Vec<$name>, Vec<Poly<$name>>>>> =
+                LazyLock::new(|| RwLock::new(HashMap::new()));
 
             impl Field for $name {
                 fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {

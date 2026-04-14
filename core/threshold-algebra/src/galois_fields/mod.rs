@@ -1,3 +1,9 @@
+use crate::poly::Poly;
+use std::collections::HashMap;
+
+/// Map from evaluation points to their precomputed Lagrange polynomials.
+pub(crate) type LagrangeMap<F> = HashMap<Vec<F>, Vec<Poly<F>>>;
+
 pub mod common;
 #[cfg(feature = "extension_degree_7")]
 pub mod gf128;

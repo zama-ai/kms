@@ -422,9 +422,10 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 .process_user_decryption_resp(
                     &client_request,
                     &eip712_domain,
-                    &resp_response_vec,
                     &enc_pk,
                     &enc_sk,
+                    None,
+                    &resp_response_vec,
                 )
                 .inspect_err(|e| {
                     tracing::error!(
@@ -634,8 +635,8 @@ pub(crate) async fn get_public_decrypt_responses(
     // check the internal signatures
     internal_client.process_decryption_resp(
         dec_req,
-        &resp_response_vec,
         num_expected_responses as u32,
+        &resp_response_vec,
     )?;
 
     // check the external signatures
