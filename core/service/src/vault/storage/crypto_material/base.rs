@@ -5,7 +5,7 @@
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::meta_store::update_ok_req_in_meta_store;
-use crate::vault::storage::{StorageReader, store_versioned_at_request_and_epoch_id};
+use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,

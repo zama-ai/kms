@@ -26,9 +26,8 @@ use crate::{
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, StorageReader, crypto_material::log_storage_success,
-            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id,
+            Storage, StorageExt, crypto_material::log_storage_success, read_all_data_versioned,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
     },
 };
