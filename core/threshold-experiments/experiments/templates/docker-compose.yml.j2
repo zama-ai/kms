@@ -11,7 +11,7 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - NO_COLOR=true
       - MOBY_STRATEGY={% if loop.index == 1%}{{moby_strategy}}{% else %}secure{% endif %}
       - DDEC__NET_CONF__NETWORK_TIMEOUT={% if moby_strategy != "secure" %}10{% else %}120{% endif %}

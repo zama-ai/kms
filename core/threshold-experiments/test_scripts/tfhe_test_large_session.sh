@@ -1,6 +1,6 @@
 echo "Running test script on config file $1".
 #build mobygo
-cargo build --bin mobygo --features="choreographer"
+cargo build --bin mobygo
 ROOT_DIR=$(cargo locate-project --workspace -q --message-format plain|grep -o '.*/')
 MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
