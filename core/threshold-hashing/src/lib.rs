@@ -186,7 +186,7 @@ pub(crate) mod tests {
     fn hashing_writer_matches_hash_element() {
         let dsep = b"dsepdsep";
         let data = b"some payload...";
-        let hash = hash_element(&dsep, data);
+        let hash = hash_element(dsep, data);
 
         let mut writer = HashingWriter::new(dsep);
         writer.write_all(data).unwrap();

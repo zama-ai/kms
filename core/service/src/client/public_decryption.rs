@@ -49,16 +49,31 @@ impl Client {
 
     /// Validates the aggregated decryption response `agg_resp` against the
     /// original `DecryptionRequest` `request`, and returns the decrypted
-    /// plaintext if valid and at least [min_agree_count] agree on the result.
-    /// Returns `None` if validation fails.
+    /// plaintext if valid and at least `min_agree_count` agree on the result.
     ///
     /// __NOTE__: If the original request is not provided, we can __not__ check
     /// that the response correctly contains the digest of the request.
+    ///
+    /// # Arguments
+    ///
+    /// All arguments except `agg_resp` are **trusted** (client-side state):
+    ///
+    /// * `request` — The original public decryption request constructed by this
+    ///   client. Used to verify that the server responses match the request
+    ///   (digest, ciphertext handles, domain). Pass `None` to skip request-level
+    ///   checks (not recommended in production).
+    /// * `min_agree_count` — Minimum number of server responses that must agree
+    ///   on the same plaintext for the result to be accepted.
+    ///
+    /// The following argument is **untrusted** (received from the network):
+    ///
+    /// * `agg_resp` — The aggregated server responses. These are validated
+    ///   (signatures, digest matching, majority agreement) before use.
     pub fn process_decryption_resp(
         &self,
         request: Option<PublicDecryptionRequest>,
-        agg_resp: &[PublicDecryptionResponse],
         min_agree_count: u32,
+        agg_resp: &[PublicDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         use crate::engine::validation::select_most_common_public_dec;
 
@@ -82,7 +97,7 @@ impl Client {
             extra_data,
             request: request.as_ref(),
         };
-        validate_public_decrypt_responses_against_request(&trusted_ctx, agg_resp, min_agree_count)?;
+        validate_public_decrypt_responses_against_request(&trusted_ctx, min_agree_count, agg_resp)?;
 
         let pivot_payload = some_or_err(
             select_most_common_public_dec(min_agree_count as usize, agg_resp),

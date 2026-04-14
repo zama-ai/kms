@@ -2,16 +2,15 @@ use std::collections::HashMap;
 
 use error_utils::anyhow_error_and_log;
 
-use crate::poly::lagrange_polynomials;
+use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
 
 use crate::{
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
 g2p!(
     GF128,
@@ -90,10 +89,8 @@ impl RingWithExceptionalSequence for GF128 {
     }
 }
 
-lazy_static! {
-    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF128>, Vec<Poly<GF128>>>> =
-        RwLock::new(HashMap::new());
-}
+static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF128>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 impl Field for GF128 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
@@ -134,18 +131,14 @@ pub fn two_powers(input: GF128, max_power: usize) -> Vec<GF128> {
     res
 }
 
-lazy_static::lazy_static! {
-    //Pre-compute the set S defined in Fig.58 (i.e. GF128 from generator X)
-    pub static ref GF128_FROM_GENERATOR : Vec<GF128> =
-    {
-
-        let generator = GF128::from(2);
-         (0..128)
-            .scan(GF128::from(1), |state, idx| {
-                let res = if idx == 127 { GF128::from(0) } else { *state };
-                *state = res * generator;
-                Some(res)
-            })
-            .collect()
-    };
-}
+//Pre-compute the set S defined in Fig.58 (i.e. GF128 from generator X)
+pub static GF128_FROM_GENERATOR: LazyLock<Vec<GF128>> = LazyLock::new(|| {
+    let generator = GF128::from(2);
+    (0..128)
+        .scan(GF128::from(1), |state, idx| {
+            let res = if idx == 127 { GF128::from(0) } else { *state };
+            *state = res * generator;
+            Some(res)
+        })
+        .collect()
+});
