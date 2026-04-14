@@ -44,9 +44,10 @@ runs:
 
     - name: Install Protoc
       if: ${{ inputs.setup-protoc == 'true' }}
-      shell: bash
-      run: |
-        PB_REL="https://github.com/protocolbuffers/protobuf/releases"
-        curl -LO $PB_REL/download/v${{ inputs.protoc-version }}/protoc-${{ inputs.protoc-version }}-linux-x86_64.zip
-        unzip protoc-${{ inputs.protoc-version }}-linux-x86_64.zip -d $HOME/.local
-        export PATH="$PATH:$HOME/.local/bin"
+      env:
+        PROTOC_VERSION: ${{ inputs.protoc-version }}
+        PROTOC_REPO_TOKEN: ${{ inputs.protoc-repo-token }}
+      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      with:
+        version: "${PROTOC_VERSION}"
+        repo-token: "${PROTOC_REPO_TOKEN}" # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc

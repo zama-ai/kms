@@ -174,7 +174,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to GitHub Container Registry
+      - name: Login to Chainguard Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev

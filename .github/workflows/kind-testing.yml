@@ -281,7 +281,7 @@ jobs:
       # Setup cache for dockerfile and inject in docker
       #
       - name: Setup Cache
-        uses: runs-on/cache@a5f51d6f3fece787d03b7b4e981c82538a0654ed # v4
+        uses: runs-on/cache@a5f51d6f3fece787d03b7b4e981c82538a0654ed # latest commit on `v4` branch at this time
         id: cache
         env:
           RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
