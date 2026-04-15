@@ -93,7 +93,7 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-            - tools:
+            tools:
               - 'tools/**'
             docs:
               - 'docs/**'
