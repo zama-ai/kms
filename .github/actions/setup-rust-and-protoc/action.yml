@@ -1,0 +1,53 @@
+name: Setup Rust and Protoc
+description: Reusable setup for Rust toolchain and Protobuf compiler
+
+inputs:
+  setup-rust:
+    description: Whether to install the Rust toolchain
+    required: false
+    default: "true"
+  rust-toolchain:
+    description: Rust toolchain version or channel
+    required: false
+    default: stable
+  rust-components:
+    description: Optional comma-separated Rust components
+    required: false
+    default: ""
+  rust-cache:
+    description: Enable cache in setup-rust-toolchain
+    required: false
+    default: "false"
+  setup-protoc:
+    description: Whether to install Protoc
+    required: false
+    default: "true"
+  protoc-version:
+    description: Protoc version selector
+    required: false
+    default: "26.1"
+  protoc-repo-token:
+    description: Token used by setup-protoc to avoid API rate limit
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Rust
+      if: ${{ inputs.setup-rust == 'true' }}
+      uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      with:
+        toolchain: ${{ inputs.rust-toolchain }}
+        components: ${{ inputs.rust-components }}
+        cache: ${{ inputs.rust-cache }}
+
+    - name: Install Protoc
+      if: ${{ inputs.setup-protoc == 'true' }}
+      env:
+        PROTOC_VERSION: ${{ inputs.protoc-version }}
+        PROTOC_REPO_TOKEN: ${{ inputs.protoc-repo-token }}
+      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      with:
+        version: ${{ env.PROTOC_VERSION }}
+        repo-token: ${{ env.PROTOC_REPO_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
