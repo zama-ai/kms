@@ -4362,24 +4362,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kms-test-tracing"
-version = "0.13.20-0"
-dependencies = [
- "kms-test-tracing-macro",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "kms-test-tracing-macro"
-version = "0.13.20-0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "kv-log-macro"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
