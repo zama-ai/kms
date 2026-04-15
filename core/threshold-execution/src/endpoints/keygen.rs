@@ -37,7 +37,10 @@ use error_utils::anyhow_error_and_log;
 use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
-    core_crypto::entities::LweBootstrapKey,
+    core_crypto::{
+        entities::LweBootstrapKey,
+        prelude::{SeededLweBootstrapKey, UnsignedInteger},
+    },
     shortint::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
@@ -50,6 +53,7 @@ use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
 
 pub(crate) const DSEP_KG: DomainSep = *b"TFHE_GEN";
+pub(crate) const DSEP_PRF_KG: DomainSep = *b"PRF_KGEN";
 
 ///Sample the random but public seed
 async fn sample_seed<
@@ -867,6 +871,59 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
         SoftwareRandomGenerator,
     >(bsk, DSEP_KG);
     (decompressed_key, count)
+}
+
+/// Generates a compressed bootstrapping key (BSK) for the homomorphic PRF.
+///
+/// The BSK encrypts a randomly sampled LWE key (the PRF seed) under the
+/// provided GLWE key. The LWE key shares are discarded after generation,
+/// so no party learns the PRF secret key.
+#[instrument(name="TFHE.HomPRF-BSK-Gen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+pub async fn distributed_homprf_bsk_gen<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: DKGParams,
+    preprocessing: &mut P,
+    session: &mut S,
+) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_PRF_KG));
+
+    // The LWE key share is the PRF key/seed
+    let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
+        params_basics_handle.lwe_dimension(),
+        preprocessing,
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
+
+    let bsk = generate_compressed_bootstrap_key(
+        glwe_secret_key_share,
+        &lwe_secret_key_share,
+        params_basics_handle.get_bk_params(),
+        &mut mpc_encryption_rng,
+        session,
+        preprocessing,
+        seed,
+    )
+    .await?;
+
+    // lwe_secret_key_share is dropped — nobody knows the PRF key
+    Ok(bsk)
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -2707,4 +2764,71 @@ pub mod tests {
     async fn integration_compressed_keygen_from_existing_private_keyset_bk_sns_f4() {
         integration_keygen_from_existing_test_bk_sns::<4>(true).await
     }
+
+    /// Fast test: verifies all parties produce the same homprf BSK
+    /// using DummyPreprocessing and small test params.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn homprf_bsk_gen_consistency_f4() {
+        let params = PARAMS_TEST_BK_SNS;
+        let num_parties = 5;
+        let threshold = 1;
+        let tag = tfhe::Tag::default();
+
+        let mut task = |mut session: LargeSession, _: Option<String>| {
+            let tag = tag.clone();
+            async move {
+                let my_role = session.my_role();
+                let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
+
+                // Run DKG to get GLWE key shares
+                let (_pk, sk) = super::SecureOnlineDistributedKeyGen128::<4>::keygen(
+                    &mut session,
+                    &mut dkg_preproc,
+                    params,
+                    tag,
+                )
+                .await
+                .unwrap();
+
+                let glwe_sk_share = sk.glwe_secret_key_share.clone().unsafe_cast_to_z128();
+
+                // Run homprf BSK generation
+                let homprf_seeded_bsk = super::distributed_homprf_bsk_gen::<Z128, _, _, u64, 4>(
+                    &glwe_sk_share,
+                    params,
+                    &mut dkg_preproc,
+                    &mut session,
+                )
+                .await
+                .unwrap();
+
+                (my_role, homprf_seeded_bsk)
+            }
+        };
+
+        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
+        let results = execute_protocol_large_w_extra_data::<_, _, ResiduePoly<Z128, 4>, 4>(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            None,
+            &mut task,
+        )
+        .await;
+
+        // All parties must produce the same BSK
+        let bsk_ref = &results[0].1;
+        for (_role, bsk) in &results[1..] {
+            assert_eq!(bsk, bsk_ref);
+        }
+    }
+
+    // TODO: add an OPRF test using `FheUint8::generate_oblivious_pseudo_random`
+    // that substitutes the homprf BSK into the server key and verifies
+    // statistically different outputs compared to the original BSK.
+    // This requires realistic params (e.g. NIST_PARAMS_P32_NO_SNS_FGLWE with
+    // lwe_dimension=928) and should be gated behind `#[cfg(feature = "slow_tests")]`.
 }
