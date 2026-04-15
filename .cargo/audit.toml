@@ -12,6 +12,9 @@
 # when socat proxies are used, the connection goes to localhost and if we don't
 # overload the server names, the handshake would fail because localhost isn't
 # `sts.*.amazonaws.com`).
+# RUSTSEC-2026-0098 and RUSTSEC-2026-0099 can be ignored for now, as they could only be exploited by AWS itself.
+# We are currently in the process of removing code that is affected by RUSTSEC-2026-0049, RUSTSEC-2026-0098
+#and RUSTSEC-2026-0099, and we will remove the ignores below for them once that is done.
 ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0049", "RUSTSEC-2026-0098", "RUSTSEC-2026-0099"]
 informational_warnings = ["unmaintained"]
 severity_threshold = "medium"
