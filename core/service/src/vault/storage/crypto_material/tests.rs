@@ -298,7 +298,7 @@ async fn write_threshold_empty_update() {
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "Failed to ensure existance of threshold key material for {req_id}."
+        "Failed to ensure existence of threshold key material for {req_id}."
     )));
     // write to an empty meta store should fail
     crypto_storage

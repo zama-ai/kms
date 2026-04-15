@@ -1,13 +1,10 @@
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        error::CryptographyError, hybrid_ml_kem, hybrid_ml_kem::HybridKemCt,
-        internal_crypto_types::LegacySerialization,
-    },
+    cryptography::{error::CryptographyError, hybrid_ml_kem, hybrid_ml_kem::HybridKemCt},
 };
 use ml_kem::EncodedSizeUser;
 use ml_kem::KemCore;
-use ml_kem::{MlKem512, MlKem1024};
+use ml_kem::MlKem512;
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
@@ -59,50 +56,6 @@ impl HasPkeScheme for UnifiedPublicEncKey {
     }
 }
 
-// LEGACY: Remove once it is no longer needed
-impl LegacySerialization for UnifiedPublicEncKey {
-    fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError> {
-        match self {
-            UnifiedPublicEncKey::MlKem512(user_pk) => {
-                let mut enc_key_buf = Vec::new();
-                tfhe::safe_serialization::safe_serialize(
-                    &UnifiedPublicEncKey::MlKem512(user_pk.clone()),
-                    &mut enc_key_buf,
-                    SAFE_SER_SIZE_LIMIT,
-                )
-                .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-                Ok(enc_key_buf)
-            }
-            // LEGACY: The following bincode serialization is done to be backward compatible
-            // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
-            // It should be replaced with safe serialization (as above) in the future.
-            UnifiedPublicEncKey::MlKem1024(user_pk) => {
-                bc2wrap::serialize(user_pk).map_err(CryptographyError::BincodeEncodeError)
-            }
-        }
-    }
-
-    fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError> {
-        // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
-        // NOTE: we need to do some backward compatibility support here so
-        // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
-
-        match bc2wrap::deserialize_safe::<PublicEncKey<ml_kem::MlKem1024>>(bytes) {
-            Ok(inner) => {
-                // we got an old MlKem1024 public key, wrap it in the enum
-                tracing::warn!("🔒 Using MlKem1024 public encryption key");
-                Ok(UnifiedPublicEncKey::MlKem1024(inner))
-            }
-            // in case the old deserialization fails, try the new format
-            Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
-                std::io::Cursor::new(&bytes),
-                crate::consts::SAFE_SER_SIZE_LIMIT,
-            )
-            .map_err(|e| CryptographyError::DeserializationError(e.to_string())),
-        }
-    }
-}
-
 impl UnifiedPublicEncKey {
     /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
     pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
@@ -110,6 +63,19 @@ impl UnifiedPublicEncKey {
             UnifiedPublicEncKey::MlKem512(pk) => pk,
             _ => panic!("Expected MlKem512 public encryption key"),
         }
+    }
+
+    /// Deserialize from bytes and reject MlKem1024 keys.
+    pub fn deserialize_and_validate(bytes: &[u8]) -> Result<Self, CryptographyError> {
+        let key: Self = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(bytes),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
+        if matches!(key, UnifiedPublicEncKey::MlKem1024(_)) {
+            return Err(CryptographyError::MlKem1024Unsupported);
+        }
+        Ok(key)
     }
 }
 
@@ -247,10 +213,9 @@ impl Encrypt for UnifiedPublicEncKey {
                 hybrid_ml_kem::enc::<MlKem512, _>(rng, &serialized_msg, &public_enc_key.0)?,
                 PkeSchemeType::MlKem512,
             ),
-            UnifiedPublicEncKey::MlKem1024(public_enc_key) => (
-                hybrid_ml_kem::enc::<MlKem1024, _>(rng, &serialized_msg, &public_enc_key.0)?,
-                PkeSchemeType::MlKem1024,
-            ),
+            UnifiedPublicEncKey::MlKem1024(_) => {
+                return Err(CryptographyError::MlKem1024Unsupported);
+            }
         };
         Ok(UnifiedCipher::new(inner_ct, scheme))
     }
@@ -462,8 +427,8 @@ impl Decrypt for UnifiedPrivateEncKey {
             UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
                 hybrid_ml_kem::dec::<MlKem512>(cipher.cipher.to_owned(), &private_enc_key.0)?
             }
-            UnifiedPrivateEncKey::MlKem1024(private_enc_key) => {
-                hybrid_ml_kem::dec::<MlKem1024>(cipher.cipher.to_owned(), &private_enc_key.0)?
+            UnifiedPrivateEncKey::MlKem1024(_) => {
+                return Err(CryptographyError::MlKem1024Unsupported);
             }
         };
         let mut res_buf = std::io::Cursor::new(raw_plaintext);
@@ -509,7 +474,7 @@ impl TryFrom<i32> for PkeSchemeType {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(PkeSchemeType::MlKem512),
-            1 => Ok(PkeSchemeType::MlKem1024),
+            1 => Err(CryptographyError::MlKem1024Unsupported.into()),
             // Future encryption schemes can be added here
             _ => Err(anyhow::anyhow!("Unsupported PkeSchemeType: {:?}", value)),
         }
@@ -549,12 +514,7 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
                 )
             }
             PkeSchemeType::MlKem1024 => {
-                let (decapsulation_key, encapsulation_key) =
-                    hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut self.rng);
-                (
-                    UnifiedPrivateEncKey::MlKem1024(PrivateEncKey(decapsulation_key)),
-                    UnifiedPublicEncKey::MlKem1024(PublicEncKey(encapsulation_key)),
-                )
+                return Err(CryptographyError::MlKem1024Unsupported);
             }
         };
         Ok((sk, pk))
@@ -649,5 +609,48 @@ mod tests {
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct.cipher.kem_ct[0] ^= 1;
         assert!(sk.decrypt::<TestType>(&ct).is_err());
+    }
+
+    #[test]
+    fn deserialize_and_validate_accepts_mlkem512() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_sk, pk) = enc.keygen().unwrap();
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let pk2 = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap();
+        assert_eq!(pk, pk2);
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_mlkem1024() {
+        // Construct the MlKem1024 variant via `crate::` rather than the `kms_lib` self-import,
+        // because `PublicEncKey`'s inner field is `pub(crate)` and cannot be accessed from
+        // outside the crate. Using `crate::` consistently for both types also avoids the
+        // "multiple versions of crate `kms_lib` in the dependency graph" type mismatch that
+        // arises when mixing `crate::PublicEncKey` with `kms_lib::UnifiedPublicEncKey`.
+        use crate::cryptography::encryption::{
+            PublicEncKey, UnifiedPublicEncKey as CrateUnifiedPublicEncKey,
+        };
+        use ml_kem::KemCore;
+
+        let mut rng = AesRng::seed_from_u64(0);
+        let (_dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
+        #[allow(deprecated)]
+        let key = CrateUnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&key, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        assert!(matches!(err, CryptographyError::MlKem1024Unsupported));
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_invalid_bytes() {
+        let err = UnifiedPublicEncKey::deserialize_and_validate(b"not a valid key").unwrap_err();
+        assert!(matches!(err, CryptographyError::DeserializationError(..)));
     }
 }
