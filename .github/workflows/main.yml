@@ -70,6 +70,7 @@ jobs:
               - 'core-client/tests-utils/**'
               - 'core-client/tests-utils-cc/**'
               - 'observability/**'
+              - 'core/thread-handles/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-client-k8s-tests:
@@ -83,13 +84,15 @@ jobs:
               - 'core/service/**'
               - 'core/threshold/**'
               - 'core/threshold-*/**'
-              - 'core/test-utils/**'
+              - 'core/test-utils/**';
+              - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-threshold:
               - 'core/threshold/**'
               - 'core/threshold-*/**'
+              - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
