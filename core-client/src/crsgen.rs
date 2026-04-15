@@ -1,27 +1,27 @@
 use crate::s3_operations::fetch_public_elements;
-use crate::{dummy_domain, CmdConfig, CoreClientConfig, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::CrsgenVerification;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS};
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, safe_serialize_hash_element_versioned};
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_crsgen(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -31,6 +31,9 @@ pub(crate) async fn do_crsgen(
     param: FheParameter,
     insecure: bool,
     destination_prefix: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -41,8 +44,14 @@ pub(crate) async fn do_crsgen(
         cc_conf.num_majority
     };
 
-    let crs_req =
-        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
+    let crs_req = internal_client.crs_gen_request(
+        &req_id,
+        context_id,
+        epoch_id,
+        max_num_bits,
+        Some(param),
+        &dummy_domain(),
+    )?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -71,9 +80,24 @@ pub(crate) async fn do_crsgen(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("CRS gen request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Error in CRS gen request: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} CRS gen requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
 
     // get all responses
     let resp_response_vec = get_crsgen_responses(
@@ -92,6 +116,7 @@ pub(crate) async fn do_crsgen(
         destination_prefix,
         req_id,
         domain,
+        extra_data,
         resp_response_vec,
         cmd_conf.download_all,
     )
@@ -108,18 +133,20 @@ pub(crate) async fn fetch_and_check_crsgen(
     destination_prefix: &Path,
     request_id: RequestId,
     domain: Eip712Domain,
+    extra_data: Vec<u8>,
     responses: Vec<CrsGenResult>,
     download_all: bool,
 ) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
+    if responses.len() < num_expected_responses {
+        anyhow::bail!(
+            "Expected at least {} CRS gen responses, but got only {}",
+            num_expected_responses,
+            responses.len()
+        );
+    }
 
     // Download the generated CRS.
-    let party_ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
         cc_conf,
@@ -131,8 +158,13 @@ pub(crate) async fn fetch_and_check_crsgen(
     let core_config = cc_conf
         .cores
         .iter()
-        .find(|c| c.party_id == party_ids[0])
-        .unwrap();
+        .find(|c| c == &&party_confs[0])
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "core client config not found for party {:?} in CRS gen",
+                party_confs[0].party_id
+            )
+        })?;
 
     // Even if we did not download all CRSes, we still check that they are identical
     // by checking all signatures against the first downloaded CRS.
@@ -147,16 +179,30 @@ pub(crate) async fn fetch_and_check_crsgen(
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
-
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
+        tracing::info!(
+            "Received CrsGenResult with request ID {}. Signature:{}. Digest:{}",
+            resp_req_id,
+            hex::encode(&response.crs_digest),
+            hex::encode(&response.external_signature)
         );
-        let external_signature = response.external_signature;
 
-        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+        if request_id != resp_req_id {
+            anyhow::bail!(
+                "Request ID of CRS gen response ({}) does not match the request ({})",
+                resp_req_id,
+                request_id
+            );
+        }
+
+        check_crsgen_ext_signature(
+            &crs,
+            &request_id,
+            &response.external_signature,
+            &domain,
+            extra_data.clone(),
+            kms_addrs,
+        )
+        .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of CRS successful.");
     }
@@ -164,7 +210,7 @@ pub(crate) async fn fetch_and_check_crsgen(
 }
 
 pub(crate) async fn get_crsgen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -173,9 +219,9 @@ pub(crate) async fn get_crsgen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -197,7 +243,12 @@ pub(crate) async fn get_crsgen_responses(
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 // do at most max_iter retries
-                assert!(ctr < max_iter, "timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for CRS gen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -211,20 +262,40 @@ pub(crate) async fn get_crsgen_responses(
 
                 tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
             }
-            (core_id,request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("CRS gen response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return CRS gen result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Error in CRS gen response: {e}");
+            }
+        }
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} CRS gen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
+    }
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
@@ -238,12 +309,23 @@ fn check_crsgen_ext_signature(
     crs_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
+    _extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
+    tracing::info!(
+        "Checking external signature on CRS gen result. crs_id={},digest={}",
+        crs_id,
+        hex::encode(&crs_digest),
+    );
+
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+    let sol_type = CrsgenVerification::new(
+        crs_id,
+        max_num_bits,
+        crs_digest, /* TODO: reenable for RFC005 extra_data */
+    );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -261,14 +343,14 @@ mod tests {
     use super::*;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
-        consts::{SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
+        consts::{DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM},
+        cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
     use std::str::FromStr;
     use tfhe::zk::CompactPkeCrs;
-    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+    use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
     #[tokio::test]
     async fn test_eip712_sigs() {
@@ -291,6 +373,7 @@ mod tests {
             &mut priv_storage,
             TEST_PARAM,
             crs_id,
+            &DEFAULT_EPOCH_ID,
             true,
         )
         .await;
@@ -324,20 +407,24 @@ mod tests {
         let max_num_bits = max_num_bits_from_crs(&crs);
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
             .expect("serialization should succeed");
-        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+        let crs_sol_struct = CrsgenVerification::new(
+            crs_id,
+            max_num_bits,
+            crs_digest, /* TODO: reenable for RFC005 vec![] */
+        );
 
         // sign with EIP712
         let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain)
             .expect("signature computation should succeed");
 
         // check that the signature verifies and unwraps without error
-        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr])
+        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, vec![], &[addr])
             .expect("signature should be valid");
 
         // check that verification fails for a wrong address
         let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
+            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, vec![], &[wrong_address])
                 .unwrap_err()
                 .to_string()
                 .contains("External signature verification failed for crsgen as it does not contain the right address")
@@ -346,7 +433,7 @@ mod tests {
         // check that verification fails for signature that is too short
         let short_sig = [0_u8; 37];
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, vec![], &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("Expected external signature of length 65 Bytes, but got 37")
@@ -355,7 +442,7 @@ mod tests {
         // check that verification fails for a byte string that is not a signature
         let malformed_sig = [23_u8; 65];
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, vec![], &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("signature error")
@@ -364,7 +451,7 @@ mod tests {
         // check that verification fails for a signature that does not match the message
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, vec![], &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("External signature verification failed for crsgen as it does not contain the right address")

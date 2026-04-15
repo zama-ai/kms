@@ -1,24 +1,35 @@
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome};
-#[cfg(not(feature = "experimental"))]
-use crate::choreography::grpc::GrpcChoreography;
-use crate::conf::party::PartyConf;
-use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
-use crate::execution::runtime::party::Role;
-#[cfg(feature = "experimental")]
-use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
-#[cfg(not(feature = "experimental"))]
-use crate::malicious_execution::malicious_moby::add_strategy_to_router;
-use crate::networking::constants::NETWORK_TIMEOUT_LONG;
-use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
+use crate::{choreography::grpc::GrpcChoreography, conf::party::PartyConf};
+use algebra::{
+    base_ring::{Z64, Z128},
+    galois_rings::common::ResiduePoly,
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+};
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use tonic::transport::{Server, ServerTlsConfig};
+use threshold_execution::{
+    large_execution::offline::SecureLargePreprocessing,
+    online::preprocessing::{PreprocessorFactory, create_memory_factory, create_redis_factory},
+    small_execution::{offline::SecureSmallPreprocessing, prss::RobustSecurePrssInit},
+};
+use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
+use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
+use threshold_types::role::Role;
+use tonic::transport::{Server, ServerTlsConfig, server::Router};
 use tower_http::trace::TraceLayer;
+
+pub trait ChoreoRoutingHelper<const EXTENSION_DEGREE: usize> {
+    fn add_to_router<L>(
+        &self,
+        router: Router<L>,
+        my_role: Role,
+        networking: Arc<GrpcNetworkingManager>,
+        factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
+    ) -> Router<L>;
+}
 
 pub async fn run<const EXTENSION_DEGREE: usize>(
     settings: &PartyConf,
+    routing_helper: impl ChoreoRoutingHelper<EXTENSION_DEGREE>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
@@ -60,11 +71,11 @@ where
                     .client_ca_root(ca_cert);
                 Server::builder()
                     .tls_config(tls_config)?
-                    .timeout(*NETWORK_TIMEOUT_LONG)
+                    .timeout(NETWORK_TIMEOUT_LONG)
             }
             (_, _) => {
                 tracing::warn!("attempting to build an insecure kms-core server");
-                Server::builder().timeout(*NETWORK_TIMEOUT_LONG)
+                Server::builder().timeout(NETWORK_TIMEOUT_LONG)
             }
         };
         Ok(server)
@@ -76,22 +87,15 @@ where
     choreo_health_reporter.set_serving::<GrpcServer>().await;
 
     let choreo_grpc_layer = tower::ServiceBuilder::new()
-        .timeout(*NETWORK_TIMEOUT_LONG)
+        .timeout(NETWORK_TIMEOUT_LONG)
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span));
 
     let choreo_router = make_server(false)?
         .layer(choreo_grpc_layer)
         .add_service(choreo_health_service);
 
-    #[cfg(not(feature = "experimental"))]
-    let choreo_router = add_strategy_to_router(choreo_router, my_role, networking.clone(), factory);
-
-    #[cfg(feature = "experimental")]
-    let choreo_router = {
-        let choreography =
-            ExperimentalGrpcChoreography::new(my_role, networking.clone(), factory).into_server();
-        choreo_router.add_service(choreography)
-    };
+    let choreo_router =
+        routing_helper.add_to_router(choreo_router, my_role, networking.clone(), factory);
 
     tracing::info!(
         "Successfully created choreo server with party id {:?} on port {:?}.",
@@ -109,7 +113,7 @@ where
     // so the section below is similar to the "CHOREO" section.
     let (core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
     core_health_reporter.set_serving::<GrpcServer>().await;
-    let core_grpc_layer = tower::ServiceBuilder::new().timeout(*NETWORK_TIMEOUT_LONG);
+    let core_grpc_layer = tower::ServiceBuilder::new().timeout(NETWORK_TIMEOUT_LONG);
 
     let core_router = make_server(true)?
         .layer(core_grpc_layer)
@@ -144,15 +148,10 @@ where
     }
 }
 
-#[cfg(not(feature = "experimental"))]
 pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
     EXTENSION_DEGREE,
-    crate::execution::small_execution::prss::RobustSecurePrssInit,
-    crate::execution::small_execution::offline::SecureSmallPreprocessing,
-    crate::execution::large_execution::offline::SecureLargePreprocessing<
-        ResiduePoly<Z64, EXTENSION_DEGREE>,
-    >,
-    crate::execution::large_execution::offline::SecureLargePreprocessing<
-        ResiduePoly<Z128, EXTENSION_DEGREE>,
-    >,
+    RobustSecurePrssInit,
+    SecureSmallPreprocessing,
+    SecureLargePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    SecureLargePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 >;

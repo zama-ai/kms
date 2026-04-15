@@ -1,14 +1,13 @@
 use clap::Parser;
-use kms_core_client::{execute_cmd, setup_logging, CmdConfig};
-use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::util::key_setup::ensure_client_keys_exist;
+use kms_core_client::{CmdConfig, execute_cmd, setup_logging};
+use kms_lib::engine::context::SoftwareVersion;
 use std::path::Path;
 use validator::Validate;
 
 // CLI
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    println!("Starting KMS Core Client v{}", env!("CARGO_PKG_VERSION"));
+    println!("Starting KMS Core Client v{}", SoftwareVersion::current()?);
 
     // Parse command line arguments and configuration file
     // TODO: handle different deployment modes in the configuration
@@ -20,9 +19,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     }
 
     let keys_folder: &Path = Path::new("keys");
-
-    ensure_client_keys_exist(Some(keys_folder), &SIGNING_KEY_ID, true).await;
-
     let res = execute_cmd(&config, keys_folder).await;
 
     match res {

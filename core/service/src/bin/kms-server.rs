@@ -4,43 +4,41 @@ use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{KMSType, PubDataType};
 use kms_lib::{
     conf::{
-        init_conf, init_conf_kms_core_telemetry,
+        CoreConfig, init_conf, init_conf_kms_core_telemetry,
         threshold::{PeerConf, ThresholdPartyConf, TlsConf},
-        CoreConfig,
     },
-    consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
+    consts::SIGNING_KEY_ID,
     cryptography::{
         attestation::{
-            make_security_module, AutoRefreshCertResolver, CertResolver, SecurityModuleProxy,
+            AutoRefreshCertResolver, CertResolver, SecurityModuleProxy, make_security_module,
         },
         signatures::PrivateSigKey,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
-        threshold::service::new_real_threshold_kms,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
+        migration::migrate_to_0_13_10, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
+        Vault,
         aws::build_aws_sdk_config,
         keychain::{
-            awskms::build_aws_kms_client, make_keychain_proxy, Keychain, RootKeyMeasurements,
+            Keychain, RootKeyMeasurements, awskms::build_aws_kms_client, make_keychain_proxy,
         },
         storage::{
-            crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
-            s3::build_s3_client, StorageCache, StorageReader, StorageType,
+            StorageReader, StorageType, crypto_material::get_core_signing_key, make_storage,
+            read_text_at_request_id, s3::build_s3_client,
         },
-        Vault,
     },
 };
-use std::{env, net::ToSocketAddrs, sync::Arc, thread};
-use threshold_fhe::{
-    networking::tls::{build_ca_certs_map, AttestedVerifier},
-    thread_handles::init_rayon_thread_pool,
-};
+use std::{net::ToSocketAddrs, sync::Arc, thread};
+use thread_handles::init_rayon_thread_pool;
+use threshold_networking::tls::AttestedVerifier;
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
-    client::{danger::DangerousClientConfigBuilder, ClientConfig},
-    crypto::{aws_lc_rs::default_provider as aws_lc_rs_default_provider, CryptoProvider},
+    client::{ClientConfig, danger::DangerousClientConfigBuilder},
+    crypto::{CryptoProvider, aws_lc_rs::default_provider as aws_lc_rs_default_provider},
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
     sign::{CertifiedKey, SingleCertAndKey},
@@ -106,7 +104,7 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
     tracing::info!(
         "Starting threshold KMS server v{}, with id {:?}, listening for MPC communication on {:?}...",
-        env!("CARGO_PKG_VERSION"),
+        SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable."),
         threshold_config.my_id,
         mpc_socket_addr
     );
@@ -138,20 +136,20 @@ async fn build_tls_config(
     #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
     let verf_key = sk.verf_key();
-    let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
         .unwrap_or_else(|_| {
             panic!("Failed to load default crypto provider");
         });
     let crypto_provider = CryptoProvider::get_default()
-        .ok_or(anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
+        .ok_or_else(|| anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
     // Communication between MPC parties can be optionally protected
     // with mTLS which requires a TLS certificate valid both for server
     // and client authentication.
-    let (ca_certs_list, my_peer) = match peers {
+    let my_peer = match peers {
         Some(peers) => {
-            let cert_list = peers
+            // Sanity check that the certificates are ok.
+            let _cert_list = peers
                 .iter()
                 .map(|peer| {
                     peer.tls_cert
@@ -163,143 +161,137 @@ async fn build_tls_config(
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
-            let myself = peers
+            peers
                 .iter()
-                .find(|p| p.verification_address == Some(verf_key.address()));
-            (cert_list, myself)
+                .find(|p| p.verification_address == Some(verf_key.address()))
         }
-        None => (vec![], None),
+        None => None,
     };
 
-    // NOTE: ca_certs can be empty if peerlist is not set
-    let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
-
-    let (
-        cert_resolver,
-        trusted_releases,
-        pcr8_expected,
-        ignore_aws_ca_chain,
-        attest_private_vault_root_key,
-    ) = match tls_config {
-        TlsConf::Manual { ref cert, ref key } => {
-            tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
-            let cert = match my_peer {
-                Some(peer) => cert.into_pem(peer)?,
-                None => {
-                    tracing::info!(
-                        "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
-                    );
-                    cert.unchecked_pem()?
-                }
-            };
-            let key = key.into_pem()?;
-            let cert_resolver = Arc::new(CertResolver::Single(SingleCertAndKey::from(
-                CertifiedKey::from_der(
-                    vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()],
-                    PrivateKeyDer::try_from(key.contents.as_slice())
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                        .clone_key(),
-                    crypto_provider,
-                )?,
-            )));
-            (cert_resolver, None, false, false, false)
-        }
-
-        // When remote attestation is used, the enclave generates a
-        // self-signed TLS certificate for a private key that never
-        // leaves its memory. This certificate includes the AWS
-        // Nitro attestation document and the certificate used
-        // by the MPC party to sign the enclave image it is
-        // running. The private key is not supplied, since it needs
-        // to be generated inside an AWS Nitro enclave.
-        TlsConf::Auto {
-            ref eif_signing_cert,
-            ref trusted_releases,
-            ref ignore_aws_ca_chain,
-            ref attest_private_vault_root_key,
-            ref renew_slack_after_expiration,
-            ref renew_fail_retry_timeout,
-        } => {
-            let security_module = security_module
-                .as_ref()
-                .unwrap_or_else(|| panic!("TLS identity and security module not present"));
-            let (sk, ca_cert) = match eif_signing_cert {
-                Some(eif_signing_cert) => {
-                    tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
-                    (
-                        None,
-                        match my_peer {
-                            Some(peer) => eif_signing_cert.into_pem(peer)?,
-                            None => {
-                                tracing::info!(
-                                    "No peerlist present, skipping TLS certificate validation against peerlist"
-                                );
-                                eif_signing_cert.unchecked_pem()?
-                            }
-                        },
-                    )
-                }
-                None => {
-                    tracing::info!(
-                        "Using TLS certificate with Nitro remote attestation signed by onboard CA"
-                    );
-                    let ca_cert_bytes = read_text_at_request_id(
-                        public_vault,
-                        &SIGNING_KEY_ID,
-                        &PubDataType::CACert.to_string(),
-                    )
-                    .await?;
-                    let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
-
-                    // check if the CA certificate matches the KMS signing key
-                    let ca_cert_x509 = ca_cert.parse_x509()?;
-                    if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
-                        ca_cert_x509.public_key().parsed()?
-                    {
-                        let ca_pk = Box::new(pk_sec1.data());
-                        #[allow(deprecated)]
-                        let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
-                        ensure!(
-                    **ca_pk == *sk_vk,
-                    "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
-                    hex::encode(*ca_pk),
-                    hex::encode(sk_vk)
+    let (cert_resolver, pcr8_expected, ignore_aws_ca_chain, attest_private_vault_root_key) =
+        match tls_config {
+            TlsConf::Manual { cert, key } => {
+                tracing::info!(
+                    "Using third-party TLS certificate without Nitro remote attestation"
+                );
+                let cert = match my_peer {
+                    Some(peer) => cert.into_pem(peer)?,
+                    None => {
+                        tracing::info!(
+                            "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
                         );
-                    } else {
-                        panic!("CA certificate public key isn't ECDSA");
-                    };
-                    (Some(sk), ca_cert)
-                }
-            };
+                        cert.unchecked_pem()?
+                    }
+                };
+                let key = key.into_pem()?;
+                let cert_resolver = Arc::new(CertResolver::Single(SingleCertAndKey::from(
+                    CertifiedKey::from_der(
+                        vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()],
+                        PrivateKeyDer::try_from(key.contents.as_slice())
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                            .clone_key(),
+                        crypto_provider,
+                    )?,
+                )));
+                (cert_resolver, false, false, false)
+            }
 
-            let attest_private_vault_root_key_flag =
-                attest_private_vault_root_key.is_some_and(|m| m);
+            // When remote attestation is used, the enclave generates a
+            // self-signed TLS certificate for a private key that never
+            // leaves its memory. This certificate includes the AWS
+            // Nitro attestation document and the certificate used
+            // by the MPC party to sign the enclave image it is
+            // running. The private key is not supplied, since it needs
+            // to be generated inside an AWS Nitro enclave.
+            TlsConf::Auto {
+                eif_signing_cert,
+                trusted_releases: _,
+                ignore_aws_ca_chain,
+                attest_private_vault_root_key,
+                renew_slack_after_expiration,
+                renew_fail_retry_timeout,
+            } => {
+                let security_module = security_module
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("TLS identity and security module not present"));
+                let (sk, ca_cert) = match eif_signing_cert {
+                    Some(eif_signing_cert) => {
+                        tracing::info!(
+                            "Using wrapped TLS certificate with Nitro remote attestation"
+                        );
+                        (
+                            None,
+                            match my_peer {
+                                Some(peer) => eif_signing_cert.into_pem(peer)?,
+                                None => {
+                                    tracing::info!(
+                                        "No peerlist present, skipping TLS certificate validation against peerlist"
+                                    );
+                                    eif_signing_cert.unchecked_pem()?
+                                }
+                            },
+                        )
+                    }
+                    None => {
+                        tracing::info!(
+                            "Using TLS certificate with Nitro remote attestation signed by onboard CA"
+                        );
+                        let ca_cert_bytes = read_text_at_request_id(
+                            public_vault,
+                            &SIGNING_KEY_ID,
+                            &PubDataType::CACert.to_string(),
+                        )
+                        .await?;
+                        let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
-            let cert_resolver = Arc::new(CertResolver::AutoRefresh(
-                AutoRefreshCertResolver::new(
-                    sk,
-                    ca_cert,
-                    security_module.clone(),
-                    if attest_private_vault_root_key_flag {
-                        private_vault_root_key_measurements
-                    } else {
-                        None
-                    },
-                    renew_slack_after_expiration.unwrap_or(5),
-                    renew_fail_retry_timeout.unwrap_or(60),
+                        // check if the CA certificate matches the KMS signing key
+                        let ca_cert_x509 = ca_cert.parse_x509()?;
+                        if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
+                            ca_cert_x509.public_key().parsed()?
+                        {
+                            let ca_pk = Box::new(pk_sec1.data());
+                            #[allow(deprecated)]
+                            let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
+                            ensure!(
+                                **ca_pk == *sk_vk,
+                                "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
+                                hex::encode(*ca_pk),
+                                hex::encode(sk_vk)
+                            );
+                        } else {
+                            panic!("CA certificate public key isn't ECDSA");
+                        };
+                        (Some(sk), ca_cert)
+                    }
+                };
+
+                let attest_private_vault_root_key_flag =
+                    attest_private_vault_root_key.is_some_and(|m| m);
+
+                let cert_resolver = Arc::new(CertResolver::AutoRefresh(
+                    AutoRefreshCertResolver::new(
+                        sk,
+                        ca_cert,
+                        security_module.clone(),
+                        if attest_private_vault_root_key_flag {
+                            private_vault_root_key_measurements
+                        } else {
+                            None
+                        },
+                        renew_slack_after_expiration.unwrap_or(5),
+                        renew_fail_retry_timeout.unwrap_or(60),
+                    )
+                    .await?,
+                ));
+
+                (
+                    cert_resolver,
+                    eif_signing_cert.is_some(),
+                    ignore_aws_ca_chain.is_some_and(|m| m),
+                    attest_private_vault_root_key_flag,
                 )
-                .await?,
-            ));
-
-            (
-                cert_resolver,
-                Some(trusted_releases.iter().cloned().collect()),
-                eif_signing_cert.is_some(),
-                ignore_aws_ca_chain.is_some_and(|m| m),
-                attest_private_vault_root_key_flag,
-            )
-        }
-    };
+            }
+        };
 
     let verifier = Arc::new(AttestedVerifier::new(
         if attest_private_vault_root_key {
@@ -314,10 +306,9 @@ async fn build_tls_config(
         mock_enclave,
         ignore_aws_ca_chain,
     )?);
-    // Adding a context to the verifier is optional at this point and
-    // can be done at any point of the application lifecycle, for
-    // example, when a new context is set through a GRPC call.
-    verifier.add_context(context_id.derive_session_id()?, ca_certs, trusted_releases)?;
+
+    // We do not need to add context to verifier here
+    // because it'll be added using [ensure_default_threshold_context_in_storage].
 
     let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_client_cert_verifier(verifier.clone())
@@ -355,15 +346,13 @@ fn main() -> anyhow::Result<()> {
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let (mut core_config, tracer_provider, meter_provider) =
+    let (mut core_config, tracer_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
-    if let Some(t) = core_config.threshold.as_mut() {
-        if args.ignore_peerlist {
-            tracing::warn!(
-                "Ignoring peerlist from configuration file as per command line argument"
-            );
-            t.peers = None;
-        }
+    if let Some(t) = core_config.threshold.as_mut()
+        && args.ignore_peerlist
+    {
+        tracing::warn!("Ignoring peerlist from configuration file as per command line argument");
+        t.peers = None;
     };
 
     // Initialize the rayon pool used inside MPC protocols
@@ -459,17 +448,6 @@ async fn main_exec() -> anyhow::Result<()> {
         None
     };
 
-    // storage cache (don't forget to remove `storage_cache_size` from the
-    // config if weird inconsistencies appear)
-    let public_storage_cache = core_config
-        .public_vault
-        .as_ref()
-        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
-    let private_storage_cache = core_config
-        .private_vault
-        .as_ref()
-        .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
-
     // security module (used for remote attestation with AWS KMS or mTLS)
     let need_security_module = need_awskms_client
         || core_config
@@ -490,13 +468,9 @@ async fn main_exec() -> anyhow::Result<()> {
         .map(Arc::new);
 
     // public vault
-    let public_storage = make_storage(
-        core_config.public_vault.as_ref().map(|v| v.storage.clone()),
-        StorageType::PUB,
-        public_storage_cache,
-        s3_client.clone(),
-    )
-    .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
+    let public_storage_conf = core_config.public_vault.as_ref().map(|v| v.storage.clone());
+    let public_storage = make_storage(public_storage_conf, StorageType::PUB, s3_client.clone())
+        .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
         storage: public_storage.clone(),
         keychain: None,
@@ -509,10 +483,23 @@ async fn main_exec() -> anyhow::Result<()> {
             .as_ref()
             .map(|v| v.storage.clone()),
         StorageType::PRIV,
-        private_storage_cache,
         s3_client.clone(),
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
+
+    let attest_private_vault_root_key_policy = core_config
+        .threshold
+        .as_ref()
+        .and_then(|t| t.tls.as_ref())
+        .and_then(|tls| match tls {
+            TlsConf::Manual { .. } => Some(false),
+            TlsConf::Auto {
+                attest_private_vault_root_key,
+                ..
+            } => *attest_private_vault_root_key,
+        })
+        .is_some_and(|m| m);
+
     let private_keychain = OptionFuture::from(
         core_config
             .private_vault
@@ -526,16 +513,27 @@ async fn main_exec() -> anyhow::Result<()> {
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
                     Some(&public_vault.storage),
+                    attest_private_vault_root_key_policy,
                 )
             }),
     )
     .await
     .transpose()
     .inspect_err(|e| tracing::warn!("Could not initialize private keychain: {e}"))?;
-    let private_vault = Vault {
+    let mut private_vault = Vault {
         storage: private_storage,
         keychain: private_keychain,
     };
+
+    // Migrate legacy FHE keys to epoch-aware format.
+    // Must run after Vault init so the keychain can decrypt AppKeyBlob-wrapped data from older versions.
+    let kms_type = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    migrate_to_0_13_10(&mut private_vault, kms_type)
+        .await
+        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
@@ -543,14 +541,7 @@ async fn main_exec() -> anyhow::Result<()> {
     let backup_storage = core_config
         .backup_vault
         .as_ref()
-        .map(|v| {
-            make_storage(
-                Some(v.storage.clone()),
-                StorageType::BACKUP,
-                None,
-                s3_client,
-            )
-        })
+        .map(|v| make_storage(Some(v.storage.clone()), StorageType::BACKUP, s3_client))
         .transpose()
         .inspect_err(|e| tracing::warn!("Could not initialize backup storage: {e}"))?;
     let backup_keychain = OptionFuture::from(
@@ -564,6 +555,7 @@ async fn main_exec() -> anyhow::Result<()> {
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
                     Some(&public_vault),
+                    false,
                 )
             }),
     )
@@ -602,25 +594,32 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
-    let mode = match core_config.threshold {
-        Some(_) => KMSType::Threshold,
-        None => KMSType::Centralized,
-    };
     // load key
     let base_kms = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => BaseKmsStruct::new(mode, sk)?,
+        Ok(sk) => BaseKmsStruct::new(kms_type, sk)?,
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
-                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done as TLS is not available!\n
-                Make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done and TLS must not be available!\n
+                Make sure to use a configuration file without TLS configured and\n
+                make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_key(mode, verf_key)
+            BaseKmsStruct::new_no_signing_key(kms_type, verf_key)
         }
     };
+
+    // Validate keychain recovery material now that we have the verification key
+    if let Some(ref keychain) = private_vault.keychain {
+        keychain.validate_recovery_material(&base_kms.verf_key())?;
+    }
+    if let Some(ref vault) = backup_vault
+        && let Some(ref keychain) = vault.keychain
+    {
+        keychain.validate_recovery_material(&base_kms.verf_key())?;
+    }
 
     // compute corresponding public key and derive address from private sig key
     #[allow(deprecated)]
@@ -636,7 +635,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let mpc_listener = make_mpc_listener(threshold_config).await;
 
             let tls_identity = match &threshold_config.tls {
-                Some(tls_config) => Some({
+                Some(tls_config) => Some(
                     build_tls_config(
                         &threshold_config.peers,
                         tls_config,
@@ -650,8 +649,8 @@ async fn main_exec() -> anyhow::Result<()> {
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
-                    .await?
-                }),
+                    .await?,
+                ),
                 None => {
                     tracing::warn!(
                         "No TLS identity - using plaintext communication between MPC nodes"
@@ -672,24 +671,25 @@ async fn main_exec() -> anyhow::Result<()> {
                 tracing::warn!("KMS server will connect to peers directly");
             };
             let service_config = core_config.service.clone();
-            let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
-                core_config,
-                public_vault,
-                private_vault,
-                backup_vault,
-                security_module,
-                mpc_listener,
-                base_kms,
-                tls_identity,
-                need_peer_tcp_proxy,
-                false,
-                std::future::pending(),
-            )
-            .await?;
+            let (kms, (health_reporter, health_service), metastore_status_service) =
+                new_real_threshold_kms(
+                    core_config,
+                    public_vault,
+                    private_vault,
+                    backup_vault,
+                    security_module,
+                    mpc_listener,
+                    base_kms,
+                    tls_identity,
+                    need_peer_tcp_proxy,
+                    false,
+                    std::future::pending(),
+                )
+                .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);
             tracing::info!(
                 "Starting threshold KMS server v{}...",
-                env!("CARGO_PKG_VERSION"),
+                SoftwareVersion::current()?
             );
             run_server(
                 service_config,
@@ -697,6 +697,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
+                health_reporter,
                 std::future::pending(),
             )
             .await?;
@@ -704,15 +705,19 @@ async fn main_exec() -> anyhow::Result<()> {
         None => {
             tracing::info!(
                 "Starting centralized KMS server v{}...",
-                env!("CARGO_PKG_VERSION"),
+                SoftwareVersion::current()?
             );
-            let (kms, health_service) = RealCentralizedKms::new(
+            // create the default context if it does not exist
+            let sk = (*base_kms.sig_key()?).clone();
+            let service_config = core_config.service.clone();
+            create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
+            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+                core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
-                (*base_kms.sig_key()?).clone(),
-                core_config.rate_limiter_conf,
+                sk,
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
@@ -724,16 +729,19 @@ async fn main_exec() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
-                core_config.service,
+                service_config,
                 service_listener,
                 Arc::new(kms),
                 meta_store_status_service,
                 health_service,
+                health_reporter,
                 std::future::pending(),
             )
             .await?
         }
     }
+
+    tracing::info!("KMS tracing shutting down...");
 
     // Sleep to let some time for the process to export all the spans before exit
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -741,10 +749,6 @@ async fn main_exec() -> anyhow::Result<()> {
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
         eprintln!("Error shutting down tracer provider: {e}");
-    }
-
-    if let Err(e) = meter_provider.shutdown() {
-        eprintln!("Error shutting down meter provider: {e}");
     }
 
     Ok(())

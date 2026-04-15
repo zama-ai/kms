@@ -2,9 +2,9 @@ use super::SecurityModule;
 
 use nsm_nitro_enclave_utils::{
     api::nsm::{Request, Response},
-    driver::{dev::DevNitro, Driver},
+    driver::{Driver, dev::DevNitro},
 };
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 
 impl SecurityModule for DevNitro {
     async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {

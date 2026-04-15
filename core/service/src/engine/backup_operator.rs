@@ -1,8 +1,14 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::engine::utils::query_key_material_availability;
+use crate::consts::DEFAULT_EPOCH_ID;
+use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
+use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::engine::utils::{MetricedError, query_key_material_availability};
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
+    StorageExt, StorageReaderExt, delete_at_request_and_epoch_id, delete_at_request_id,
+    read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
 };
 use crate::{
     anyhow_error_and_log,
@@ -17,31 +23,32 @@ use crate::{
         signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
     },
     engine::{
-        base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
-        context::ContextInfo,
-        threshold::service::ThresholdFheKeys,
-        traits::BackupOperator,
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+        base::BaseKmsStruct, threshold::service::ThresholdFheKeys, traits::BackupOperator,
+        validation::RequestIdParsingErr,
     },
     vault::{
+        Vault,
         keychain::KeychainProxy,
         storage::{
-            crypto_material::CryptoMaterialStorage, store_versioned_at_request_id, Storage,
-            StorageReader,
+            Storage, StorageReader, crypto_material::CryptoMaterialStorage,
+            store_versioned_at_request_id,
         },
-        Vault,
     },
 };
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
+    RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::PubDataType,
-    RequestId,
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::PrivDataType,
+};
+use observability::metrics_names::{
+    OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_FETCH_PK, OP_RESTORE_FROM_BACKUP,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -49,9 +56,10 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_execution::small_execution::prss::PRSSSetup;
+use threshold_types::role::Role;
 use tokio::sync::{Mutex, MutexGuard};
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response};
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -129,6 +137,52 @@ where
             ephem_operator_pub_key,
         ))
     }
+
+    pub(crate) async fn validate_custodian_backup_recovery_request(
+        &self,
+        ephemeral_dec_key: &UnifiedPrivateEncKey,
+        ephemeral_enc_key: &UnifiedPublicEncKey,
+        req: CustodianRecoveryRequest,
+    ) -> anyhow::Result<(
+        RequestId,
+        RecoveryValidationMaterial,
+        HashMap<Role, InternalCustodianRecoveryOutput>,
+    )> {
+        let context_id = parse_optional_grpc_request_id(
+            &req.custodian_context_id,
+            RequestIdParsingErr::BackupRecovery,
+        )?;
+        let recovery_material = {
+            load_recovery_validation_material(
+                &self.crypto_storage.get_public_storage(),
+                &context_id,
+                &self.base_kms.verf_key(),
+            )
+            .await?
+        };
+        let parsed_custodian_rec = {
+            filter_custodian_data(
+                req.custodian_recovery_outputs,
+                &recovery_material,
+                &self.base_kms.verf_key(),
+                ephemeral_dec_key,
+                ephemeral_enc_key,
+            )
+            .await?
+        };
+        // Check that we have enough valid recovery outputs
+        if parsed_custodian_rec.len()
+            < (recovery_material.custodian_context().threshold as usize) + 1
+        {
+            return Err(anyhow::anyhow!(
+                "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+                parsed_custodian_rec.len(),
+                recovery_material.custodian_context().threshold
+            ));
+        }
+
+        Ok((context_id, recovery_material, parsed_custodian_rec))
+    }
 }
 
 #[tonic::async_trait]
@@ -140,20 +194,30 @@ where
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<OperatorPublicKey>, Status> {
+    ) -> Result<Response<OperatorPublicKey>, MetricedError> {
         match self.crypto_storage.backup_vault {
             Some(ref v) => {
                 let v = v.lock().await;
                 match v.keychain {
                     Some(KeychainProxy::SecretSharing(ref k)) => {
                         let public_key = k.operator_public_key_bytes().map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_FETCH_PK,
+                                None,
+                                anyhow::anyhow!("Could not get operator public key: {e}"),
                                 tonic::Code::Internal,
-                                format!("Could not get operator public key: {e}"),
                             )
                         })?;
                         let attestation_document = match &self.security_module {
-                            Some(sm) => sm.attest(public_key.clone(), None).await.map_err(|e| Status::new(Code::Internal, format!("Could not issue attestation document for operator backup public key: {e}")))?,
+                            Some(sm) => {
+                                sm.attest(public_key.clone(), None).await
+                                .map_err(|e|
+                                    MetricedError::new(
+                                        OP_FETCH_PK,
+                                        None,
+                                        anyhow::anyhow!("Could not issue attestation document for operator backup public key: {e}"),
+                                        tonic::Code::Internal))?
+                            },
                             None => vec![],
                         };
                         Ok(Response::new(OperatorPublicKey {
@@ -161,15 +225,21 @@ where
                             attestation_document,
                         }))
                     }
-                    _ => Err(Status::new(
+                    _ => Err(MetricedError::new(
+                        OP_FETCH_PK,
+                        None,
+                        anyhow::anyhow!(
+                            "Backup vault does not support operator public key retrieval"
+                        ),
                         tonic::Code::Unimplemented,
-                        "Backup vault does not support operator public key retrieval",
                     )),
                 }
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_FETCH_PK,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -178,19 +248,25 @@ where
     async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
-    ) -> Result<Response<RecoveryRequest>, Status> {
+    ) -> Result<Response<RecoveryRequest>, MetricedError> {
         let inner = request.into_inner();
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_keys.lock().await;
         if guarded_priv_key.is_some() {
             match inner.overwrite_ephemeral_key {
                 true => {
-                    tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
+                    tracing::warn!(
+                        "Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!"
+                    );
                 }
                 false => {
-                    return Err(Status::new(
+                    return Err(MetricedError::new(
+                        OP_CUSTODIAN_RECOVERY_INIT,
+                        None,
+                        anyhow::anyhow!(
+                            "Ephemeral decryption key already exists. Use the `overwrite_ephemeral_key` flag to overwrite it, thus invalidating any previous recovery initialization!"
+                        ),
                         tonic::Code::AlreadyExists,
-                        "Ephemeral decryption key already exists. Use the `overwrite_ephemeral_key` flag to overwrite it, thus invalidating any previous recovery initialization!",
                     ));
                 }
             }
@@ -198,9 +274,11 @@ where
         let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
             .await
             .map_err(|e| {
-                Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_RECOVERY_INIT,
+                    None,
+                    anyhow::anyhow!("Failed to get latest backup id: {e}"),
                     tonic::Code::Internal,
-                    format!("Failed to get latest backup id: {e}"),
                 )
             })?;
         let recovery_material: RecoveryValidationMaterial = {
@@ -210,26 +288,32 @@ where
                 .read_data(&backup_id, &PubDataType::RecoveryMaterial.to_string())
                 .await
                 .map_err(|e| {
-                    Status::new(
+                    MetricedError::new(
+                        OP_CUSTODIAN_RECOVERY_INIT,
+                        None,
+                        anyhow::anyhow!("Failed to read inner recovery request: {e}"),
                         tonic::Code::Internal,
-                        format!("Failed to read inner recovery request: {e}"),
                     )
                 })?
         };
         // Validate that the recovery material is correct
         if !recovery_material.validate(&self.base_kms.verf_key()) {
-            return Err(Status::new(
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_RECOVERY_INIT,
+                None,
+                anyhow::anyhow!("Could not validate the signature on the recovery material"),
                 tonic::Code::InvalidArgument,
-                "Could not validate the signature on the recovery material",
             ));
         }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
             .await
             .map_err(|e| {
-                Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_RECOVERY_INIT,
+                    None,
+                    anyhow::anyhow!("Failed to generate recovery request: {e}"),
                     tonic::Code::Internal,
-                    format!("Failed to generate recovery request: {e}"),
                 )
             })?;
         // We already ensured that no key is previously set, so ignore the result
@@ -246,7 +330,7 @@ where
     async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         let (ephemeral_dec_key, ephemeral_enc_key) = {
             let guarded_ephemeral_keys = self.ephemeral_keys.lock().await;
             match guarded_ephemeral_keys.clone() {
@@ -254,61 +338,31 @@ where
                     (ephemeral_dec_key, ephemeral_enc_key)
                 }
                 None => {
-                    return Err(Status::new(
+                    return Err(MetricedError::new(
+                        OP_CUSTODIAN_BACKUP_RECOVERY,
+                        None,
+                        anyhow::anyhow!("Ephemeral decryption key has not been generated"),
                         tonic::Code::FailedPrecondition,
-                        "Ephemeral decryption key has not been generated",
                     ));
                 }
             }
         };
         let inner = request.into_inner();
-        let context_id: RequestId = parse_optional_proto_request_id(
-            &inner.custodian_context_id,
-            RequestIdParsingErr::BackupRecovery,
-        )?;
-        let recovery_material = {
-            load_recovery_validation_material(
-                &self.crypto_storage.get_public_storage(),
-                &context_id,
-                &self.base_kms.verf_key(),
-            )
-            .await
-            .map_err(|e| {
-                Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to load recovery validation material: {e}"),
-                )
-            })?
-        };
-        let parsed_custodian_rec = {
-            filter_custodian_data(
-                inner.custodian_recovery_outputs,
-                &recovery_material,
-                &self.base_kms.verf_key(),
+        let (context_id, recovery_material, parsed_custodian_rec) = self
+            .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
+                inner,
             )
             .await
             .map_err(|e| {
-                Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to prune custodian recovery outputs: {e}"),
-                )
-            })?
-        };
-        // Check that we have enough valid recovery outputs
-        if parsed_custodian_rec.len()
-            < (recovery_material.custodian_context().threshold as usize) + 1
-        {
-            return Err(Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Failed to validate custodian backup recovery request: {e}"),
                     tonic::Code::InvalidArgument,
-                    format!(
-                        "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                        parsed_custodian_rec.len(),
-                        recovery_material.custodian_context().threshold
-                    ),
-                ));
-        }
+                )
+            })?;
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -316,43 +370,74 @@ where
                 match backup_vault.keychain {
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         // Amount of custodians get defined during context creation
-                        let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
+                        let amount_custodians = recovery_material
+                            .payload
+                            .custodian_context
+                            .custodian_nodes
+                            .len();
                         let operator = Operator::new_for_validating(
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             (*self.base_kms.verf_key()).clone(),
                             recovery_material.custodian_context().threshold as usize,
                             amount_custodians,
                         ).map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!("Failed to create operator for secret sharing based decryption: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to create operator for secret sharing based decryption: {e}"),
                             )
                         })?;
-                        let custodian_outputs: Vec<InternalCustodianRecoveryOutput> = parsed_custodian_rec.values().cloned().collect();
-                        let serialized_dec_key = operator.verify_and_recover(&custodian_outputs, &recovery_material, context_id, &ephemeral_dec_key, &ephemeral_enc_key).map_err(|e| {
-                            Status::new(
-                                tonic::Code::Unauthenticated,
-                                format!("Failed to verify the backup decryption request: {e}"),
+                        let custodian_outputs: Vec<InternalCustodianRecoveryOutput> =
+                            parsed_custodian_rec.values().cloned().collect();
+                        let serialized_dec_key = operator
+                            .verify_and_recover(
+                                &custodian_outputs,
+                                &recovery_material,
+                                context_id,
+                                &ephemeral_dec_key,
+                                &ephemeral_enc_key,
                             )
-                        })?;
-                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
-                            Status::new(
+                            .map_err(|e| {
+                                MetricedError::new(
+                                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                                    None,
+                                    anyhow::anyhow!(
+                                        "Failed to verify the backup decryption request: {e}"
+                                    ),
+                                    tonic::Code::Unauthenticated,
+                                )
+                            })?;
+                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
+                            std::io::Cursor::new(&serialized_dec_key),
+                            SAFE_SER_SIZE_LIMIT,
+                        )
+                        .map_err(|e| {
+                            MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!("Failed to deserialize backup decryption key: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to deserialize backup decryption key: {e}"),
                             )
                         })?;
                         keychain.set_dec_key(Some(backup_dec_key));
                         Ok(Response::new(Empty {}))
                     }
-                    _ => Err(Status::new(
+                    _ => Err(MetricedError::new(
+                        OP_CUSTODIAN_BACKUP_RECOVERY,
+                        None,
+                        anyhow::anyhow!(
+                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                        ),
                         tonic::Code::Unavailable,
-                        "Backup vault is not setup with a keychain for custodian-based backup recovery",
                     )),
                 }
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -370,7 +455,7 @@ where
     async fn restore_from_backup(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 // Do the actual restoring
@@ -382,9 +467,11 @@ where
                     restore_data(&backup_vault, &mut private_storage)
                         .await
                         .map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_RESTORE_FROM_BACKUP,
+                                None,
+                                anyhow::anyhow!("Failed to restore backup data: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to restore backup data: {e}"),
                             )
                         })?;
                 }
@@ -397,9 +484,11 @@ where
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_RESTORE_FROM_BACKUP,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -407,7 +496,7 @@ where
     async fn get_key_material_availability(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError> {
         let priv_storage = self.crypto_storage.get_private_storage();
         let priv_guard = priv_storage.lock().await;
 
@@ -423,6 +512,7 @@ where
         Ok(Response::new(response))
     }
 }
+
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
@@ -460,19 +550,19 @@ async fn filter_custodian_data(
             bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
         if current_verf_key != *my_verf_key {
             tracing::warn!(
-                    "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
-                    current_verf_key.address(),
-                    my_verf_key.address(),
-                );
+                "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
+                current_verf_key.address(),
+                my_verf_key.address(),
+            );
             continue;
         }
         if cur_recovery_output.custodian_role == 0
             || cur_recovery_output.custodian_role > custodian_recovery_outputs.len() as u64
         {
             tracing::warn!(
-                    "Received recovery output with invalid custodian role {}. The output will be ignored.",
-                    cur_recovery_output.custodian_role,
-                );
+                "Received recovery output with invalid custodian role {}. The output will be ignored.",
+                cur_recovery_output.custodian_role,
+            );
             continue;
         }
         let cur_verf = match recovery_material.custodian_context().custodian_nodes.get(
@@ -523,9 +613,9 @@ async fn filter_custodian_data(
                     std::collections::hash_map::Entry::Occupied(_) => {
                         /* do nothing if occupied */
                         tracing::warn!(
-                                    "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
-                                    current_verf_key.address(),
-                                );
+                            "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
+                            current_verf_key.address(),
+                        );
                     }
                     std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                         vacant_entry.insert(output);
@@ -534,19 +624,19 @@ async fn filter_custodian_data(
             }
             Err(e) => {
                 tracing::warn!(
-                            "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
-                                current_verf_key.address(),
-                        );
+                    "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
+                    current_verf_key.address(),
+                );
                 continue;
             }
         }
     }
     if parsed_custodian_rec.len() < 1 + recovery_material.custodian_context().threshold as usize {
         return Err(anyhow_error_and_log(format!(
-                "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                parsed_custodian_rec.len(),
-                recovery_material.custodian_context().threshold)
-            ));
+            "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+            parsed_custodian_rec.len(),
+            recovery_material.custodian_context().threshold
+        )));
     }
     Ok(parsed_custodian_rec)
 }
@@ -654,9 +744,9 @@ where
                 .await?
             {
                 tracing::warn!(
-                "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
-                data_type_enum
-            );
+                    "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
+                    data_type_enum
+                );
                 continue;
             }
             let cur_data: T = backup_vault
@@ -684,6 +774,7 @@ where
 {
     for cur_type in PrivDataType::iter() {
         match cur_type {
+            // These types might have epoch-specific data
             PrivDataType::FheKeyInfo => {
                 restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
                     priv_storage,
@@ -691,14 +782,6 @@ where
                     cur_type,
                 )
                 .await?;
-            }
-            PrivDataType::SigningKey => {
-                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
-                    .await?;
-            }
-            PrivDataType::CrsInfo => {
-                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
-                    .await?;
             }
             PrivDataType::FhePrivateKey => {
                 restore_data_type_for_all_epochs::<PrivS, KmsFheKeyHandles>(
@@ -708,14 +791,27 @@ where
                 )
                 .await?;
             }
+            // Non epoched types
+            PrivDataType::PrssSetupCombined => {
+                restore_data_type::<PrivS, PRSSSetupCombined>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
-                tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
+                restore_legacy_prss_13_4::<PrivS>(priv_storage, backup_vault).await?;
             }
-            PrivDataType::PrssSetupCombined => {
-                tracing::info!(
-                    "Combined PRSS setup data is not backed up currently. Skipping for now."
-                );
+            PrivDataType::SigningKey => {
+                // TODO(#2862) will eventually be epoched
+                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
+            PrivDataType::CrsInfo => {
+                restore_data_type_for_all_epochs::<PrivS, CrsGenMetadata>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
             }
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
@@ -726,7 +822,10 @@ where
     Ok(())
 }
 
-async fn update_specific_backup_vault_for_all_epochs<
+/// Update the backup vault with the data from the private storage for the specified data type.
+///
+/// Note: this method updates material that is epoched, for non-epoched material use `update_specific_backup_vault` instead.
+pub(crate) async fn update_specific_backup_vault_for_all_epochs<
     S1: StorageExt + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
         + tfhe::Unversionize
@@ -740,10 +839,19 @@ async fn update_specific_backup_vault_for_all_epochs<
     priv_storage: &S1,
     backup_vault: &mut Vault,
     data_type_enum: PrivDataType,
+    overwrite: bool,
 ) -> anyhow::Result<()>
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
+    if data_type_enum != PrivDataType::FheKeyInfo
+        && data_type_enum != PrivDataType::FhePrivateKey
+        && data_type_enum != PrivDataType::CrsInfo
+    {
+        anyhow::bail!(
+            "This method is only meant to be used for epoched material, but the provided data type is not epoched."
+        );
+    }
     let epoch_ids = priv_storage
         .all_epoch_ids_for_data(&data_type_enum.to_string())
         .await?;
@@ -752,28 +860,48 @@ where
             .all_data_ids_at_epoch(&epoch_id, &data_type_enum.to_string())
             .await?;
         for request_id in req_ids.iter() {
-            if !backup_vault
+            if backup_vault
                 .data_exists_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
                 .await?
+                && !overwrite
             {
-                let cur_data: T = priv_storage
-                    .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
-                    .await?;
-                store_versioned_at_request_and_epoch_id(
+                // The data is there and we are not overwriting anything, so skip before performing more IO
+                continue;
+            }
+            // First ensure we can actually read the data we want to back up
+            let cur_data: T = priv_storage
+                .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                .await?;
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous operator contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_and_epoch_id(
                     backup_vault,
                     request_id,
                     &epoch_id,
-                    &cur_data,
                     &data_type_enum.to_string(),
                 )
                 .await?;
             }
+            // Finally store the new backup data
+            store_versioned_at_request_and_epoch_id(
+                backup_vault,
+                request_id,
+                &epoch_id,
+                &cur_data,
+                &data_type_enum.to_string(),
+            )
+            .await?;
         }
     }
     Ok(())
 }
 
-async fn update_specific_backup_vault<
+/// Update the backup vault with the data from the private storage for the specified data type.
+/// Note: this method only updates material that is _not_ epoched.
+/// For epoched material, use `update_specific_backup_vault_for_all_epochs` instead.
+pub(crate) async fn update_specific_backup_vault<
     S1: Storage + Sync + Send + 'static,
     T: serde::de::DeserializeOwned
         + tfhe::Unversionize
@@ -787,29 +915,46 @@ async fn update_specific_backup_vault<
     priv_storage: &S1,
     backup_vault: &mut Vault,
     data_type_enum: PrivDataType,
+    overwrite: bool,
 ) -> anyhow::Result<()>
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
+    if data_type_enum == PrivDataType::FheKeyInfo || data_type_enum == PrivDataType::FhePrivateKey {
+        anyhow::bail!(
+            "This method is only meant to be used for non-epoched material, but the provided data type is epoched."
+        );
+    }
     let req_ids = priv_storage
         .all_data_ids(&data_type_enum.to_string())
         .await?;
     for request_id in req_ids.iter() {
-        if !backup_vault
+        if backup_vault
             .data_exists(request_id, &data_type_enum.to_string())
             .await?
+            && !overwrite
         {
-            let cur_data: T = priv_storage
-                .read_data(request_id, &data_type_enum.to_string())
-                .await?;
-            store_versioned_at_request_id(
-                backup_vault,
-                request_id,
-                &cur_data,
-                &data_type_enum.to_string(),
-            )
-            .await?;
+            // The data is there and we are not overwriting anything, so skip before performing more IO
+            continue;
         }
+        // First ensure we can actually read the data we want to back up
+        let cur_data: T = priv_storage
+            .read_data(request_id, &data_type_enum.to_string())
+            .await?;
+        // In case we need to overwrite, delete the old data
+        if overwrite {
+            // Delete the old backup data
+            // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+            delete_at_request_id(backup_vault, request_id, &data_type_enum.to_string()).await?;
+        }
+        // Finally store the new backup data
+        store_versioned_at_request_id(
+            backup_vault,
+            request_id,
+            &cur_data,
+            &data_type_enum.to_string(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -819,7 +964,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    pub async fn update_backup_vault(&self) -> anyhow::Result<()> {
+    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
@@ -827,32 +972,20 @@ where
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
                     backup_vault.lock().await;
                 if !keychain_initialized(&backup_vault).await {
-                    tracing::warn!("Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update.");
+                    tracing::warn!(
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
+                    );
                     return Ok(());
                 }
                 for cur_type in PrivDataType::iter() {
                     match cur_type {
-                        PrivDataType::SigningKey => {
-                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
-                        }
+                        // These types might have epoch-specific data
                         PrivDataType::FheKeyInfo => {
                             update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::CrsInfo => {
-                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
+                                overwrite,
                             )
                             .await?;
                         }
@@ -861,25 +994,54 @@ where
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        // Non epoched types
+                        PrivDataType::PrssSetupCombined => {
+                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
                             )
                             .await?;
                         }
                         #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
-                            tracing::info!(
-                                "PRSS setup data is not backed up currently. Skipping for now."
-                            );
+                            update_legacy_prss_13_4::<PrivS>(
+                                &private_storage,
+                                &mut backup_vault,
+                                overwrite,
+                            )
+                            .await?;
                         }
-                        PrivDataType::PrssSetupCombined => {
-                            tracing::info!(
-                                "Combined PRSS setup data is not backed up currently. Skipping for now."
-                            );
+                        PrivDataType::SigningKey => {
+                            // TODO(#2862) will eventually be epoched
+                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
+                        }
+                        PrivDataType::CrsInfo => {
+                            update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
+                                &private_storage,
+                                &mut backup_vault,
+                                cur_type,
+                                overwrite,
+                            )
+                            .await?;
                         }
                         PrivDataType::ContextInfo => {
                             update_specific_backup_vault::<PrivS, ContextInfo>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
+                                overwrite,
                             )
                             .await?;
                         }
@@ -890,6 +1052,141 @@ where
             None => Ok(()),
         }
     }
+}
+
+// *WARNING* this function only works with n=13, t=4
+#[allow(deprecated)]
+pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
+    priv_storage: &PrivS,
+    backup_vault: &mut Vault,
+    overwrite: bool,
+) -> anyhow::Result<()> {
+    let prss_128_id = derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_64_id = derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_128_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z128>>(
+        priv_storage,
+        &prss_128_id,
+        &PrivDataType::PrssSetup.to_string(),
+    )
+    .await
+    .inspect_err(|e| {
+        tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
+    });
+    let prss_64_res = read_versioned_at_request_id::<PrivS, PRSSSetup<ResiduePolyF4Z64>>(
+        priv_storage,
+        &prss_64_id,
+        &PrivDataType::PrssSetup.to_string(),
+    )
+    .await
+    .inspect_err(|e| {
+        tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+    });
+    match (prss_128_res, prss_64_res) {
+        (Ok(prss_128), Ok(prss_64)) => {
+            // In case we need to overwrite, delete the old data
+            if overwrite {
+                // Delete the old backup data
+                // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_128_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+                delete_at_request_id(
+                    backup_vault,
+                    &prss_64_id,
+                    &PrivDataType::PrssSetup.to_string(),
+                )
+                .await?;
+            }
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                backup_vault,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e), Ok(_prss_64)) => {
+            tracing::error!(
+                "Legacy PRSS Z128 is not available, cannot update PRSS backup data: {e}"
+            );
+        }
+        (Ok(_prss_128), Err(e)) => {
+            tracing::error!(
+                "Legacy PRSS Z64 is not available, cannot update PRSS backup data: {e}"
+            );
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::warn!(
+                "Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[allow(deprecated)]
+async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
+    priv_storage: &mut PrivS,
+    backup_vault: &Vault,
+) -> anyhow::Result<()> {
+    let prss_128_id = derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_64_id = derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID))?;
+    let prss_128_res: anyhow::Result<PRSSSetup<ResiduePolyF4Z128>> = backup_vault
+        .read_data(&prss_128_id, &PrivDataType::PrssSetup.to_string())
+        .await
+        .inspect_err(|e| {
+            tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
+        });
+    let prss_64_res: anyhow::Result<PRSSSetup<ResiduePolyF4Z64>> = backup_vault
+        .read_data(&prss_64_id, &PrivDataType::PrssSetup.to_string())
+        .await
+        .inspect_err(|e| {
+            tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+        });
+    match (prss_128_res, prss_64_res) {
+        (Ok(prss_128), Ok(prss_64)) => {
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_128_id,
+                &prss_128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_id(
+                priv_storage,
+                &prss_64_id,
+                &prss_64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await?;
+        }
+        (Err(e), Ok(_prss_64)) => {
+            tracing::error!(
+                "Legacy PRSS Z128 is not available, cannot update PRSS backup data: {e}"
+            );
+        }
+        (Ok(_prss_128), Err(e)) => {
+            tracing::error!(
+                "Legacy PRSS Z64 is not available, cannot update PRSS backup data: {e}"
+            );
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::warn!(
+                "Neither Legacy PRSS Z128 nor Z64 are available, cannot update PRSS backup data: Z128 error: {e1}, Z64 error: {e2}"
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>) -> bool {
@@ -905,21 +1202,30 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
-        backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
+        backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         cryptography::{
-            signatures::{gen_sig_keys, SigningSchemeType},
+            signatures::{SigningSchemeType, gen_sig_keys},
             signcryption::UnifiedSigncryption,
         },
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
+    use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
     use std::{
         collections::BTreeMap,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    fn make_unencrypted_vault() -> Vault {
+        Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: None,
+        }
+    }
 
     fn dummy_recovery_material(
         threshold: u32,
@@ -1007,7 +1313,7 @@ mod tests {
         }
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_missing_cus_output() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1026,7 +1332,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1044,7 +1350,7 @@ mod tests {
         assert!(logs_contain("Cannot recover the backup decryption key"));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1060,7 +1366,7 @@ mod tests {
         ));
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_signature() {
         // Note there is no node information in the dummy material
@@ -1076,13 +1382,15 @@ mod tests {
         assert!(logs_contain(
             "Could not validate signcryption for custodian"
         ));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Only received 0 valid recovery outputs")); // Signatures are wrong so no valid outputs
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Only received 0 valid recovery outputs")
+        ); // Signatures are wrong so no valid outputs
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_missing_verification_key() {
         // Note there is no node information in the dummy material
@@ -1102,5 +1410,275 @@ mod tests {
         assert!(logs_contain(
             "Could not find verification key for custodian role"
         ));
+    }
+    #[tokio::test]
+    async fn test_update_backup_vault() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id_1 = derive_request_id("multi_1").unwrap();
+        let req_id_2 = derive_request_id("multi_2").unwrap();
+
+        // Store two data items in private storage
+        let data_1 = TestType { i: 10 };
+        let data_2 = TestType { i: 20 };
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &req_id_1,
+            &data_1,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &req_id_2,
+            &data_2,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Run backup
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify both items were backed up
+        let restored_1: TestType = backup_vault
+            .read_data(&req_id_1, &data_type.to_string())
+            .await
+            .unwrap();
+        let restored_2: TestType = backup_vault
+            .read_data(&req_id_2, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored_1.i, 10);
+        assert_eq!(restored_2.i, 20);
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_vault_without_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id = derive_request_id("test_backup_2").unwrap();
+
+        // Store original data in private storage
+        let data = TestType { i: 42 };
+        store_versioned_at_request_id(&mut priv_storage, &req_id, &data, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Pre-populate backup vault with different data
+        let old_data = TestType { i: 1 };
+        backup_vault
+            .store_data(&old_data, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup without overwrite
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify the old data was NOT overwritten
+        let restored: TestType = backup_vault
+            .read_data(&req_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_vault_with_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningKey;
+        let req_id = derive_request_id("test_backup_3").unwrap();
+
+        // Store new data in private storage
+        let data = TestType { i: 99 };
+        store_versioned_at_request_id(&mut priv_storage, &req_id, &data, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Pre-populate backup vault with old data
+        let old_data = TestType { i: 1 };
+        backup_vault
+            .store_data(&old_data, &req_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup with overwrite
+        update_specific_backup_vault::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            true,
+        )
+        .await
+        .unwrap();
+
+        // Verify the data was overwritten with the new value
+        let restored: TestType = backup_vault
+            .read_data(&req_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 99);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("multi_epoch").unwrap();
+        let epoch_1 = EpochId::from_bytes([10u8; 32]);
+        let epoch_2 = EpochId::from_bytes([20u8; 32]);
+
+        // Store data at two different epochs
+        let data_1 = TestType { i: 111 };
+        let data_2 = TestType { i: 222 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_1,
+            &data_1,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_2,
+            &data_2,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Run backup
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify both epochs were backed up
+        let restored_1: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_1, &data_type.to_string())
+            .await
+            .unwrap();
+        let restored_2: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_2, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored_1.i, 111);
+        assert_eq!(restored_2.i, 222);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault_without_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("epoch_test_2").unwrap();
+        let epoch_id = EpochId::from_bytes([2u8; 32]);
+
+        // Store new data in private storage
+        let data = TestType { i: 50 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &data,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Pre-populate backup vault with old data at the same epoch
+        let old_data = TestType { i: 5 };
+        backup_vault
+            .store_data_at_epoch(&old_data, &req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup without overwrite
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Verify the old data was NOT overwritten
+        let restored: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 5);
+    }
+
+    #[tokio::test]
+    async fn test_update_epoch_backup_vault_with_overwrite() {
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::FheKeyInfo;
+        let req_id = derive_request_id("epoch_test_3").unwrap();
+        let epoch_id = EpochId::from_bytes([3u8; 32]);
+
+        // Store new data in private storage
+        let data = TestType { i: 77 };
+        store_versioned_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &data,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Pre-populate backup vault with old data
+        let old_data = TestType { i: 7 };
+        backup_vault
+            .store_data_at_epoch(&old_data, &req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Run backup with overwrite=true
+        update_specific_backup_vault_for_all_epochs::<RamStorage, TestType>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            true,
+        )
+        .await
+        .unwrap();
+
+        // The new data is still in storage and has replaced the old backup
+        let restored: TestType = backup_vault
+            .read_data_at_epoch(&req_id, &epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored.i, 77);
     }
 }

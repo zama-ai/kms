@@ -10,7 +10,7 @@ use kms_lib::{
     cryptography::signatures::PublicSigKey,
 };
 
-use crate::CoreClientConfig;
+use crate::{CoreClientConfig, CoreConf};
 
 /// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
@@ -27,9 +27,9 @@ pub async fn fetch_public_elements(
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
     download_all: bool,
-) -> anyhow::Result<Vec<usize>> {
+) -> anyhow::Result<Vec<CoreConf>> {
     // set of core ids, to track which cores we successfully contacted
-    let mut successful_core_ids: HashSet<usize> = HashSet::new();
+    let mut successful_core_ids: HashSet<CoreConf> = HashSet::new();
 
     // go over list of cores to retrieve the public elements from
     'cores: for cur_core in &sim_conf.cores {
@@ -52,14 +52,17 @@ pub async fn fetch_public_elements(
             .await
             .is_err()
             {
-                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                tracing::warn!(
+                    "Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.",
+                    cur_core.s3_endpoint
+                );
                 all_elements = false;
                 break 'elements;
             }
         }
         // if we were able to retrieve all elements, add the core id to the set of successful nodes
         if all_elements {
-            successful_core_ids.insert(cur_core.party_id);
+            successful_core_ids.insert(cur_core.clone());
             // if we only want to download from one core, break here
             if !download_all {
                 break 'cores;
@@ -69,8 +72,8 @@ pub async fn fetch_public_elements(
 
     if successful_core_ids.is_empty() {
         Err(anyhow::anyhow!(
-                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
-            ))
+            "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
+        ))
     } else {
         Ok(successful_core_ids.into_iter().collect())
     }
@@ -99,7 +102,13 @@ pub(crate) async fn fetch_kms_verification_keys(
             std::io::Cursor::new(&content),
             SAFE_SER_SIZE_LIMIT,
         )
-        .unwrap();
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize verification key for party {}: {}",
+                cur_core.party_id,
+                e
+            )
+        })?;
         keys_map.insert(cur_core.party_id, vk);
     }
 
@@ -138,7 +147,13 @@ pub(crate) async fn fetch_kms_signing_keys(
             std::io::Cursor::new(&content),
             SAFE_SER_SIZE_LIMIT,
         )
-        .unwrap();
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize signing key for party {}: {}",
+                cur_core.party_id,
+                e
+            )
+        })?;
         keys_map.insert(cur_core.party_id, signing_key);
     }
 
@@ -194,7 +209,10 @@ async fn generic_fetch_element(
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
+            tracing::info!(
+                "Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}",
+                bytes.len()
+            );
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -209,7 +227,13 @@ async fn generic_fetch_element(
         }
     } else {
         // read from local file system
-        let key_path = Path::new(endpoint).join(folder).join(element_id);
+        // Strip file:// prefix if present
+        let local_path = if let Some(stripped) = endpoint.strip_prefix("file://") {
+            stripped
+        } else {
+            endpoint
+        };
+        let key_path = Path::new(local_path).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow::anyhow!(
                 "Failed to read bytes from file at {:?} with error: {e}",
@@ -217,7 +241,10 @@ async fn generic_fetch_element(
             )
         })?;
         let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
+        tracing::info!(
+            "Successfully read {} bytes for element {element_id} from local path {local_path}/{folder}",
+            res.len()
+        );
         Ok(res)
     }
 }

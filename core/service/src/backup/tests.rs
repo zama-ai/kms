@@ -12,19 +12,19 @@ use crate::{
         encryption::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
-        signatures::{gen_sig_keys, PublicSigKey},
+        signatures::{PublicSigKey, gen_sig_keys},
     },
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{kms::v1::CustodianContext, RequestId};
+use kms_grpc::{RequestId, kms::v1::CustodianContext};
 use proptest::prelude::*;
-use rand::{rngs::OsRng, SeedableRng};
+use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -349,7 +349,7 @@ fn full_flow_malicious_custodian_not_enough() {
     );
 }
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[test]
 fn full_flow_malicious_custodian_init() {
     let mut rng = AesRng::seed_from_u64(1337);

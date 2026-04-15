@@ -1,16 +1,6 @@
 syntax = "proto3";
 package kms.v1;
 
-// Initialization request for bootstrapping the threshold KMS.
-// This request will be removed in favor of NewMpcContextRequest.
-//
-// In the future this endpoint will be combined with resharing.
-message InitRequest {
-    // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
-    RequestId request_id = 1; // this is the epoch ID, keeping the name for backward compatibility reasons
-    RequestId context_id = 2;
-
-}
 
 // Placeholder response, when no content is needed
 message Empty {}
@@ -39,8 +29,13 @@ message StandardKeySetConfig {
   // Computation key type.
   ComputeKeyType compute_key_type = 1;
 
-  // The compression configuration.
-  KeySetCompressionConfig keyset_compression_config = 2;
+  // The secret key configuration.
+  KeyGenSecretKeyConfig secret_key_config = 2;
+
+  // Configuration for generating compressed vs uncompressed keys.
+  // Compressed keys use XOF-seeded compression and are smaller.
+  // (We may rename this to KeyGenPublicKeyConfig.)
+  CompressedKeyConfig compressed_key_config = 3;
 }
 
 enum ComputeKeyType {
@@ -50,14 +45,25 @@ enum ComputeKeyType {
 }
 
 message KeySetAddedInfo {
-  // Must be set if KeySetCompressionConfig::UseExisting is used
-  RequestId compression_keyset_id = 1;
+  // Must be set if KeySetType::DecompressionOnly is used
+  RequestId from_keyset_id_decompression_only = 1;
 
   // Must be set if KeySetType::DecompressionOnly is used
-  RequestId from_keyset_id_decompression_only = 2;
+  RequestId to_keyset_id_decompression_only = 2;
 
-  // Must be set if KeySetType::DecompressionOnly is used
-  RequestId to_keyset_id_decompression_only = 3;
+  // Must be set if KeyGenSecretKeyConfig::UseExisting is used
+  RequestId existing_keyset_id = 3;
+
+  // Can be set if KeyGenSecretKeyConfig::UseExisting is used,
+  // if it's not set then the epoch ID from the KeyGenRequest is used.
+  RequestId existing_epoch_id = 4;
+
+  // If true, use the tag from the existing keyset's PublicKeyMaterial
+  // instead of deriving the tag from the new request ID.
+  //
+  // This option is only used when KeyGenSecretKeyConfig::UseExisting is used.
+  // Otherwise it is ignored.
+  bool use_existing_key_tag = 5;
 }
 
 // The keyset configuration message.
@@ -111,10 +117,23 @@ message PartialKeyGenPreprocRequest {
   PartialKeyGenPreprocParams partial_params = 2;
 }
 
-enum KeySetCompressionConfig {
-  // The default must be represented by 0.
-  Generate = 0;
+enum KeyGenSecretKeyConfig {
+  // The default must be represented by 0, which is to generate all the secret keys.
+  GenerateAll = 0;
+
+  // Use existing secret shares to generate the keyset, the key ID and epoch ID
+  // that points to the shares must be given by KeySetAddedInfo.
   UseExisting = 1;
+}
+
+// Configuration for whether to generate compressed or uncompressed keys.
+// Compressed keys use XOF-seeded compression and are smaller but need
+// decompression before use.
+enum CompressedKeyConfig {
+  // Do not generate compressed keys (default).
+  CompressedNone = 0;
+  // Generate compressed keys for the full keyset.
+  CompressedAll = 1;
 }
 
 // This message is returned if keygen has completed.
@@ -168,8 +187,12 @@ message KeyGenRequest {
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 7;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The epoch ID for the key generation, i.e., the shares produced
+  // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
+
+  // Extra data from the gateway.
+  bytes extra_data = 9;
 }
 
 message KeyDigest {
@@ -247,6 +270,13 @@ message CrsGenRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
+
+  // MPC Epoch ID because we tie all key material to epochs
+  // In particular this is used to store the CRS at the correct location in the private storage
+  RequestId epoch_id = 6;
+
+  // Extra data from the gateway.
+  bytes extra_data = 7;
 }
 
 message CrsGenResult {
@@ -530,9 +560,10 @@ message MpcContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // A software version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
-  // If minor upgrades/downgrades are not permitted then a digest of the binaries to run should also be included.
-  bytes software_version = 3;
+  // Software version information stored in a string using semantic versioning.
+  // The semantic version must contain at least a major version, whereas minor, patch and tags are optional
+  // For example "1.2.3-alpha", "1.2" or "1"
+  string software_version = 3;
 
   // The corruption threshold for this context.
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.
@@ -586,8 +617,8 @@ message NewMpcContextRequest {
   MpcContext new_context = 2;
 }
 
-// Response to destroy the key materials associated with a KMS context.
-// Note that the context information itself is not removed, only the key materials.
+// Request to destroy the MPC context.
+// Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
 }
@@ -728,75 +759,64 @@ message HealthStatusResponse {
 
 }
 
-message InitiateResharingRequest {
-  // The request id of this resharing request (use to derive the session IDs and get the status)
-  RequestId request_id = 1;
-  // The active KMS context (default to DEFAULT_MPC_CONTEXT if empty)
-  // Note: currently unused but reserved for future use.
-  RequestId context_id = 2;
-  // The Key ID of the key to be reshared
-  RequestId key_id = 3;
-  // The parameters of the key to be reshared, must match the parameters of the original key
-  FheParameter key_parameters = 4;
-  // The EIP712 domain (same as for DKG).
-  Eip712DomainMsg domain = 5;
-  // The preprocessing ID that was used for DKG (needed for Metadata).
-  // We trust the caller to give the correct proproc_id.
-  // If the given preproc_id does not match the perproc_id used in the initial DKG,
-  // then the EIP-712 signature verification will fail.
-  // Note: This is a temporary parameter for same-set resharing and will not be required in the future when Context is implemented.
-  RequestId preproc_id = 6;
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
-  // This is the epoch ID for the new set of parties.
-  // Note: currently unused but reserved for future use.
-  RequestId epoch_id = 7;
-
+message KeyInfo {
+  // keyID of the key to be reshared.
+  RequestId key_id = 1;
+  // Preprocessing ID that was used to generate the key initially
+  // required for the EIP struct
+  RequestId preproc_id = 2;
+  // Parameters of the key to be reshard
+  FheParameter key_parameters = 3;
+  // Digest of the key to be reshared
   // Mapping of key type string to digest
   // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  //
   // If there are no key_digests, the digest verification is skipped.
-  repeated KeyDigest key_digests = 8;
-}
-
-message InitiateResharingResponse {
-  // The resharing operation ID
-  RequestId request_id = 1;
-}
-
-message ResharingResultResponse {
-  // The 32 Byte / 256 Bit ID of the resharing request, without `0x` prefix.
-  RequestId request_id = 1;
-
-  // Key ID of the reshared key
-  RequestId key_id = 2;
-  // Preprocessing ID used for keygen the resharing refers to
-  RequestId preprocessing_id = 3;
-
-  // Mapping of key type string to digest
-  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
-  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
   repeated KeyDigest key_digests = 4;
+}
 
-  // EIP-712 signature on the key generation result.
-  // The structure signed has the following fields:
-  // struct KeygenVerification {
-  //     /// @notice The ID of the preprocessing keygen request.
-  //     uint256 prepKeygenId;
-  //     /// @notice The ID of the generated key.
-  //     uint256 keyId;
-  //     /// @notice The generated digests of keys.
-  //     KeyDigest[] keyDigests;
-  // }
-  // enum KeyType {
-  //     SERVER,
-  //     PUBLIC
-  // }
-  // struct KeyDigest {
-  //     /// @notice The type of the generated key.
-  //     KeyType keyType;
-  //     /// @notice The digest of the generated key.
-  //     bytes digest;
-  // }
-  bytes external_signature = 5;
+message CrsInfo {
+  // The 32 Byte / 256 Bit ID of the initial CrsGenRequest
+  RequestId crs_id = 1;
+
+  // The digest of the generated CRS.
+  // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
+  bytes crs_digest = 2;
+}
+
+message PreviousEpochInfo {
+  // The KMS context of the parties that will reshare
+  // the shares of the private key
+  RequestId context_id = 1;
+  // epochId we reshare the shares from.
+  RequestId epoch_id = 2;
+  // Info about all the keys to be reshared (if any)
+  repeated KeyInfo keys_info = 3;
+  // Info about all CRS to be re-signed
+  repeated CrsInfo crs_info = 4;
+}
+
+message NewMpcEpochRequest {
+  // The KMS context of the parties that will receive
+  // the shares of the private key at the end of the reshare execution
+  RequestId context_id = 1;
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // This is the epochId we reshare the shares from.
+  // Note: currently unused but reserved for future use.
+  RequestId epoch_id = 2;
+  // Information about the previous epoch, used to perform resharing.
+  // If not set, no keys will exist for the new epoch. (e.g. during init)
+  PreviousEpochInfo previous_epoch = 3;
+  // The EIP712 domain used for signing the reshared key results.
+  // Should be set when previous_epoch is set (resharing produces signed results).
+  Eip712DomainMsg domain = 4;
+}
+
+message EpochResultResponse {
+  repeated KeyGenResult reshare_responses = 1;
+  repeated CrsGenResult crs_responses = 2;
+}
+
+message DestroyMpcEpochRequest {
+  RequestId epoch_id = 1;
 }

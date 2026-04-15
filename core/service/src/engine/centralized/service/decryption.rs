@@ -1,13 +1,13 @@
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
-    async_user_decrypt, central_public_decrypt, CentralizedKms,
+    CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
+    validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
@@ -20,8 +20,8 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
-    OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use tonic::{Request, Response};
@@ -37,50 +37,38 @@ pub async fn user_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_user_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
-    let mut timer = METRICS
+    let permit = service.rate_limiter.start_user_decrypt().await?;
+    let timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
 
     let inner = request.into_inner();
     let (
         typed_ciphertexts,
         link,
-        client_enc_key,
+        client_enc_key_bytes,
         client_address,
         request_id,
         key_id,
         context_id,
         epoch_id,
         domain,
-    ) = validate_user_decrypt_req(&inner).map_err(|e| {
-        MetricedError::new(
+        extra_data,
+    ) = validate_user_decrypt_req(&inner)?;
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
-            None,
-            e, // Validation error
-            tonic::Code::InvalidArgument,
-        )
-    })?;
-
-    // Use a constant party ID since this is the central KMS
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
-        (TAG_EPOCH_ID, epoch_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
+            Some(request_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+    // Observe we accept any epoch ID
 
     match service
         .crypto_storage
@@ -106,8 +94,7 @@ pub async fn user_decrypt_impl<
         &mut service.user_dec_meta_store.write().await,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -116,8 +103,6 @@ pub async fn user_decrypt_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
-
-    let mut handles = service.thread_handles.write().await;
 
     let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
@@ -128,7 +113,7 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
-    let handle = tokio::spawn(
+    tokio::spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
@@ -153,20 +138,17 @@ pub async fn user_decrypt_impl<
                 &key_id,
                 &request_id
             );
-            // NOTE: extra_data is not used in the current implementation
-            let extra_data = vec![];
             let res = async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
                 &mut rng,
                 &typed_ciphertexts,
                 &link,
-                &client_enc_key,
+                &client_enc_key_bytes,
                 &client_address,
                 server_verf_key,
                 &domain,
-                metric_tags,
-                extra_data.clone(),
+                &extra_data,
             )
             .await;
             let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
@@ -180,7 +162,6 @@ pub async fn user_decrypt_impl<
         .instrument(tracing::Span::current()),
     );
 
-    handles.add(handle);
     Ok(Response::new(Empty {}))
 }
 
@@ -194,15 +175,17 @@ pub async fn get_user_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
-        .map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_RESULT,
-            None,
-            e,
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    let request_id =
+        parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest).map_err(
+            |e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_RESULT,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            },
+        )?;
 
     let (payload, external_signature, extra_data) = retrieve_from_meta_store(
         service.user_dec_meta_store.read().await,
@@ -250,40 +233,29 @@ pub async fn public_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service
-        .rate_limiter
-        .start_pub_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
-    let mut timer = METRICS
+    let permit = service.rate_limiter.start_pub_decrypt().await?;
+    let timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
-    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
-        validate_public_decrypt_req(&inner).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                None,
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
+        validate_public_decrypt_req(&inner)?;
 
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
-        (TAG_EPOCH_ID, epoch_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+    // Observe we accept any epoch ID
 
     let keys_exist = match service
         .crypto_storage
@@ -325,8 +297,7 @@ pub async fn public_decrypt_impl<
         &mut service.pub_dec_meta_store.write().await,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
@@ -373,22 +344,20 @@ pub async fn public_decrypt_impl<
         // run the computation in a separate rayon thread to avoid blocking the tokio runtime
         let (send, recv) = tokio::sync::oneshot::channel();
         rayon::spawn_fifo(move || {
-            let decryptions =
-                central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
+            let decryptions = central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
             let _ = send.send(decryptions);
         });
         let decryptions = recv.await;
 
-        let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
         let res = match decryptions {
             Ok(Ok(pts)) => {
                 // sign the plaintexts and handles for external verification (in fhevm)
                 match compute_external_pt_signature(
                     &sig_key,
-                    ext_handles_bytes,
+                    &ext_handles_bytes,
                     &pts,
-                    extra_data.clone(),
-                    eip712_domain,
+                    &extra_data,
+                    &eip712_domain,
                 ) {
                     Ok(sig) => Ok((request_id, pts, sig, extra_data)),
                     Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
@@ -397,7 +366,7 @@ pub async fn public_decrypt_impl<
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
         };
-        update_req_in_meta_store(
+        let _ = update_req_in_meta_store(
             &mut meta_store.write().await,
             &request_id,
             res,
@@ -423,7 +392,7 @@ pub async fn get_public_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(
+    let request_id = parse_grpc_request_id(
         &request.into_inner(),
         RequestIdParsingErr::PublicDecResponse,
     )
@@ -449,7 +418,7 @@ pub async fn get_public_decryption_result_impl<
             OP_PUBLIC_DECRYPT_RESULT,
             Some(request_id),
             anyhow::anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
-            tonic::Code::NotFound,
+            tonic::Code::Internal,
         ));
     }
 
@@ -508,11 +477,7 @@ pub async fn get_public_decryption_result_impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{
-        kms::v1::TypedCiphertext,
-        rpc_types::{PubDataType, WrappedPublicKeyOwned},
-        RequestId,
-    };
+    use kms_grpc::{RequestId, kms::v1::TypedCiphertext};
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -520,8 +485,8 @@ pub(crate) mod tests {
             central_kms::RealCentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
         },
-        util::key_setup::test_tools::{compute_cipher, EncryptionConfig, TestingPlaintext},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+        util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher},
+        vault::storage::ram::RamStorage,
     };
 
     // This function will also output a public key and load the server key into memory
@@ -538,23 +503,22 @@ pub(crate) mod tests {
         let (kms, verf_key) = setup_test_kms_with_preproc(rng, &preproc_id).await;
 
         // at this point the key is generated
-        test_standard_keygen(&kms, key_id, &preproc_id).await;
+        // We execute in the secure mode, i.e. pretending that the preprocessing is done
+        test_standard_keygen(&kms, key_id, &preproc_id, false).await;
 
-        let wrapped_pk = kms
+        let pk = kms
             .crypto_storage
             .inner
             .read_cloned_pk(key_id)
             .await
             .unwrap();
-        let key: tfhe::ServerKey = {
-            let storage = kms.crypto_storage.inner.get_public_storage();
-            let guard = storage.lock().await;
-            read_versioned_at_request_id(&(*guard), key_id, &PubDataType::ServerKey.to_string())
-                .await
-                .unwrap()
-        };
+        let key = kms
+            .crypto_storage
+            .inner
+            .read_cloned_server_key(key_id)
+            .await
+            .unwrap();
         tfhe::set_server_key(key);
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
 
         (kms, pk, verf_key)
     }

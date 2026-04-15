@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use minijinja::{context, path_loader, Environment};
+use minijinja::{Environment, context, path_loader};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs::File;

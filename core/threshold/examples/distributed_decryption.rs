@@ -8,22 +8,20 @@
 //! This is an example where we setup a testing runtime that runs 4 parties on the same machine.
 //! You can run it with `cargo run -F testing --example distributed_decryption`.
 use aes_prng::AesRng;
+use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
-use tfhe::{set_server_key, FheUint8};
-use threshold_fhe::{
-    algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
-    execution::{
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::{
-            parameters::BC_PARAMS_SNS,
-            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset, KeySet},
-            utils::expanded_encrypt,
-        },
+use tfhe::{FheUint8, set_server_key};
+use threshold_execution::{
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext, threshold_decrypt64},
+    runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
+    tfhe_internals::{
+        parameters::BC_PARAMS_SNS,
+        test_feature::{KeySet, gen_key_set, keygen_all_party_shares_from_keyset},
+        utils::expanded_encrypt,
     },
-    networking::NetworkMode,
 };
+use threshold_types::network::NetworkMode;
 
 #[tokio::main]
 async fn main() {
@@ -41,7 +39,7 @@ async fn main() {
             .unwrap();
 
     // Encrypt a message and extract the raw ciphertexts.
-    let message = rng.gen::<u8>();
+    let message = rng.r#gen::<u8>();
     let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
     let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
     let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);

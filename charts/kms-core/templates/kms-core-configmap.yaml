@@ -119,7 +119,7 @@ data:
     max_en_decode_message_size = 2147483648
     initial_interval_ms = {{ int .Values.kmsCore.thresholdMode.initialIntervalMs }}
     session_update_interval_secs = 60
-    session_cleanup_interval_secs = 3600
+    session_cleanup_interval_secs = 86400
     discard_inactive_sessions_interval = 900
     max_waiting_time_for_message_queue = 60
     max_opened_inactive_sessions_per_party = {{ int .Values.kmsCore.thresholdMode.maxOpenedInactiveSessionsPerParty }}
@@ -147,15 +147,15 @@ data:
            {{- end }}
         {{- else }}
     [threshold.tls.manual]
-          {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
+        {{- if (default dict .Values.kmsCore.thresholdMode.tls.certificate).path }}
     cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
           {{- else }}
-    cert.pem = ${KMS_CA_PEM_{{ .id }}}
+    cert.pem = ${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}
           {{- end }}
-          {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
+          {{- if (default dict .Values.kmsCore.thresholdMode.tls.privateKey).path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
-    key.pem = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | toToml }}
+    key.pem = ${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}
           {{- end }}
         {{- end }}
       {{- end }}
@@ -172,7 +172,7 @@ data:
     port = {{ int .port }}
           {{- end }}
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
-            {{- if $.Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
+            {{- if (default dict $.Values.kmsCore.thresholdMode.tls.ca_certificate).path }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
             {{- else }}
     tls_cert.pem = ${KMS_CA_PEM_{{ .id }}}
@@ -228,7 +228,7 @@ data:
     crsgen = 100
     preproc = 50000
     keygen = 1000
-    reshare = 25
+    new_epoch = 25
 
     [internal_config]
     num_rayon_threads = {{ .Values.kmsCore.thresholdMode.rayonNumThreads }}

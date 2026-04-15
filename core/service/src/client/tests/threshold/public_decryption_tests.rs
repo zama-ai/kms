@@ -11,22 +11,22 @@ use crate::consts::DEFAULT_PARAM;
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
-use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
+use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::RequestId;
 use serial_test::serial;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -225,7 +225,7 @@ pub async fn decryption_threshold(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,
@@ -240,6 +240,7 @@ pub async fn decryption_threshold(
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
+        None,
         key_id,
         None,
         msgs,
@@ -247,6 +248,7 @@ pub async fn decryption_threshold(
         party_ids_to_crash,
         parallelism,
         None,
+        false, // compressed_keys
     )
     .await;
 }
@@ -256,6 +258,7 @@ pub async fn run_decryption_threshold(
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
     key_id: &RequestId,
     context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
@@ -263,12 +266,14 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
+    compressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
         kms_servers,
         kms_clients,
         internal_client,
+        encryption_key_id,
         key_id,
         context_id,
         msgs,
@@ -277,16 +282,20 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
+        compressed_keys,
     )
     .await
 }
 
+/// - `encryption_key_id` is set to `key_id` if not given.
+///   this is the key used to encrypt the ciphertext.
 #[expect(clippy::too_many_arguments)]
 pub async fn run_decryption_threshold_optionally_fail(
     amount_parties: usize,
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    encryption_key_id: Option<&RequestId>,
     key_id: &RequestId,
     context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
@@ -295,7 +304,9 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
+    compressed_keys: bool,
 ) {
+    let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
@@ -304,9 +315,10 @@ pub async fn run_decryption_threshold_optionally_fail(
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             data_root_path,
             msg,
-            key_id,
+            encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
+            compressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {
@@ -337,6 +349,8 @@ pub async fn run_decryption_threshold_optionally_fail(
                     &request_id,
                     context_id,
                     key_id,
+                    None,
+                    &[],
                 )
                 .unwrap()
         })
@@ -429,6 +443,10 @@ pub async fn run_decryption_threshold_optionally_fail(
 
     for req in &reqs {
         let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|resp| {
@@ -439,11 +457,12 @@ pub async fn run_decryption_threshold_optionally_fail(
                 }
             })
             .collect();
+
         // Compute threshold < amount_parties/3
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;
         let received_plaintexts = internal_client
-            .process_decryption_resp(Some(req.clone()), &responses, min_count_agree)
+            .process_decryption_resp(Some(req.clone()), min_count_agree, &responses)
             .unwrap();
 
         // we need 1 plaintext for each ciphertext in the batch

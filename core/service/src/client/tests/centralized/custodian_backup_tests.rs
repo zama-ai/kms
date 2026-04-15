@@ -8,10 +8,12 @@ use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{DEFAULT_EPOCH_ID, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
+use crate::util::key_setup::test_tools::{
+    purge_backup, read_custodian_backup_files, read_custodian_backup_files_with_epoch,
+};
 use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::{read_versioned_at_request_id, StorageType};
+use crate::vault::storage::{StorageType, read_versioned_at_request_id};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS, cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
@@ -21,12 +23,12 @@ use kms_grpc::kms::v1::{
     CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
 };
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
+use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use rand::SeedableRng;
 use serial_test::serial;
 use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_types::role::Role;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -127,10 +129,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss = read_custodian_backup_files(
+    let crss = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         &[None],
     )
@@ -145,10 +148,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
-    let reread_crss = read_custodian_backup_files(
+    let reread_crss = read_custodian_backup_files_with_epoch(
         test_path,
         &req_new_cus,
         &crs_req,
+        *DEFAULT_EPOCH_ID,
         &PrivDataType::CrsInfo.to_string(),
         &[None],
     )
@@ -156,7 +160,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     assert_eq!(reread_crss, crss);
 }
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_decrypt_after_recovery_central() {
@@ -270,7 +274,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[serial]
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;

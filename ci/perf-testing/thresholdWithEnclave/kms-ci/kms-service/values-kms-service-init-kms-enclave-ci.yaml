@@ -1,0 +1,55 @@
+kmsCore:
+  enabled: false
+  envFrom:
+    configmap:
+      name:
+  thresholdMode:
+    enabled: true
+    tls:
+      enabled: true
+    nitroEnclave:
+      enabled: true
+
+kmsCoreClient:
+  enabled: true
+  nameOverride: kms-core-client
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  resources:
+    requests:
+      memory: 24Gi
+      cpu: 4
+    limits:
+      memory: 24Gi
+      cpu: 4
+  nodeSelector:
+    karpenter.sh/nodepool: zws-pool
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: zws-pool
+
+kmsInit:
+  enabled: true
+  nodeSelector:
+    karpenter.sh/nodepool: kms-pool
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-pool
+
+kmsGenKeys:
+  enabled: false
+
+kmsGenCertAndKeys:
+  enabled: false
+
+kmsCoreClientTesting:
+  enabled: false
+
+kubeUtils:
+  image:
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.0

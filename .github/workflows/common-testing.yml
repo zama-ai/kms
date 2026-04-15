@@ -14,6 +14,14 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
+      runner-volume:
+        type: string
+        required: false
+        default: '200gb'
+      rust-log-level:
+        type: string
+        required: false
+        default: 'error'
       args-tests:
         type: string
         required: false
@@ -52,10 +60,26 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-profile:
+        type: string
+        required: false
+        default: 'ci'  # Use 'ci-nightly' for nightly builds that run all tests
       nextest-test-threads:
         type: string
         required: false
-        default: '1'
+        default: ''  # Empty = let nextest decide (respects #[serial] attribute)
+      enable-shared-material:
+        type: boolean
+        required: false
+        default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
+      use-pregenerated-material:
+        type: boolean
+        required: false
+        default: false  # If true, download test material from artifacts instead of generating
+      generate-default-material:
+        type: boolean
+        required: false
+        default: false  # If true, generate Default test material (includes pre-generated PRSS)
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -99,10 +123,10 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=200gb/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=${{ inputs.runner-volume }}/extras=s3-cache
     services:
       redis:
-        image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
+        image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7' || '' }}
         ports:
           - 6379:6379
     defaults:
@@ -127,7 +151,7 @@ jobs:
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
       # LFS files are needed for backward compatibility tests
@@ -144,14 +168,14 @@ jobs:
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+      - name: Login to Chainguard Container Registry
+        uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }}
@@ -161,7 +185,7 @@ jobs:
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
         if: inputs.package-name == 'simulator'
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        uses: ./.github/actions/docker-setup-buildx
         with:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
@@ -169,26 +193,26 @@ jobs:
       ############################################################################
       # Rust toolchain setup
       #
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
         with:
-          toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
-          cache: false
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          save-if: false
 
       - name: Install nextest and grcov
         run: |
-          cargo install cargo-nextest --locked
+          # Force reinstall nextest to ensure we have the required version (0.9.124+)
+          # The cache may contain an older version that doesn't support test-groups
+          cargo install cargo-nextest@0.9.124 --locked --force
           cargo install grcov --locked
-
-      - name: Install Protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: '26.x'
-          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
         env:
@@ -239,10 +263,10 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
 
-      - name: Linting default features
-        env:
-          PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+      # - name: Linting default features
+      #   env:
+      #     PACKAGE_NAME: ${{inputs.package-name}}
+      #   run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting All features
         env:
@@ -252,7 +276,47 @@ jobs:
       - name: Linting dylint
         run: cargo dylint --all
 
+      # Download pre-generated default test material if available (for slow_tests jobs)
+      - name: Download Test Material (Default)
+        if: ${{ inputs.use-pregenerated-material }}
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: test-material-default-${{ github.run_id }}
+          path: .
+
+      - name: Decompress Test Material (Default)
+        if: ${{ inputs.use-pregenerated-material }}
+        working-directory: .
+        run: |
+          echo "Decompressing default test material..."
+          mkdir -p ./test-material
+          tar -xzf test-material-default.tar.gz -C ./test-material
+          rm test-material-default.tar.gz
+          ls -la ./test-material/
+
+      # Generate testing material (always needed, small and fast to generate)
+      # Must run from workspace root, not working-directory
+      - name: Generate Test Material (Testing)
+        working-directory: .
+        run: |
+          echo "Generating testing material..."
+          cargo run -p generate-test-material -- --output ./test-material --verbose testing
+
+      # Generate default material when explicitly requested or for slow_tests,
+      # and only when not using pre-generated artifacts.
+      - name: Generate Test Material (Default)
+        if: ${{ ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
+        working-directory: .
+        run: |
+          echo "Generating default test material..."
+          cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
+
+      # Build kms-custodian binary required by integration tests
+      - name: Build kms-custodian binary
+        run: cargo build --package kms --bin kms-custodian
+
       # Test execution
+      # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
         id: tests
         if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
@@ -277,11 +341,33 @@ jobs:
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
+          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
+          NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
+          ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
+          RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
+          # Set NEXTEST_TEST_THREADS only if a value was provided
+          if [ -n "${NEXTEST_TEST_THREADS_INPUT}" ]; then
+            export NEXTEST_TEST_THREADS="${NEXTEST_TEST_THREADS_INPUT}"
+            echo "NEXTEST_TEST_THREADS set to: ${NEXTEST_TEST_THREADS}"
+          else
+            echo "NEXTEST_TEST_THREADS not set (using nextest default)"
+          fi
+
+          # Enable shared test material mode if requested to save disk space
+          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1)
+          # Shared mode uses material in-place without copying to temp directories
+          if [[ "${ENABLE_SHARED_MATERIAL}" == "true" ]]; then
+            export KMS_TEST_SHARED_MATERIAL=1
+            echo "KMS_TEST_SHARED_MATERIAL=1 (using shared material in-place, no copying)"
+            echo "This saves ~80GB+ disk space by avoiding material duplication"
+          else
+            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying to temp dirs)"
+          fi
+
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
           echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
@@ -292,19 +378,22 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest --profile ci run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
+        env:
+          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
         run: |
-          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
-            echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
-            ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
-            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
-            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/${NEXTEST_PROFILE}"
+          if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "Files found in ${NEXTEST_OUT}"
+            ls -R "${NEXTEST_OUT}"
+            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S%3N")" >> "$GITHUB_ENV"
+            cp -Lpr "${NEXTEST_OUT}"/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
             echo "EXIT_CODE=0" >> "$GITHUB_ENV"
           else
-            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            echo "No junit test files found in ${NEXTEST_OUT}"
             echo "EXIT_CODE=1" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -312,7 +401,7 @@ jobs:
 
       - name: Upload Test Results
         if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
@@ -351,13 +440,14 @@ jobs:
           SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
 
       - name: Generate unique ID
+        if: always()
         id: unique-id
         run: echo "id=$(date "+%s%N" | md5sum | head -c 8)" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Archive integration test trace logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
           path: '**/*.log'

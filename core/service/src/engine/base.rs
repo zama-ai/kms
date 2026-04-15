@@ -7,57 +7,58 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
+use hashing::DomainSep;
+use hashing::HashingWriter;
+use hashing::hash_element;
+use hashing::serialize_hash_element;
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::abi_encode_plaintexts;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
+use kms_grpc::rpc_types::abi_encode_plaintexts;
 use kms_grpc::solidity_types::{
     CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
-use tfhe::integer::compression_keys::DecompressionKey;
+use std::sync::LazyLock;
+use tfhe::FheUint80;
 use tfhe::integer::BooleanBlock;
+use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
-use tfhe::FheUint80;
 use tfhe::{
-    FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
-    FheUint4, FheUint512, FheUint64, FheUint8,
+    FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128, FheUint160,
+    FheUint256, FheUint512, FheUint1024, FheUint2048,
 };
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::Upgrade;
 use tfhe_versionable::Version;
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
-use threshold_fhe::execution::endpoints::decryption::{
-    LowLevelCiphertext, SnsRadixOrBoolCiphertext,
-};
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
-use threshold_fhe::hashing::hash_element;
-use threshold_fhe::hashing::serialize_hash_element;
-use threshold_fhe::hashing::DomainSep;
+use threshold_execution::endpoints::decryption::RadixOrBoolCiphertext;
+use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrBoolCiphertext};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::sync::Mutex;
 use tracing::error;
 
@@ -72,12 +73,9 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
-lazy_static::lazy_static! {
-    pub static ref INSECURE_PREPROCESSING_ID: RequestId =
-        crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
-}
+pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
+    LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersioned {
     V0(KmsFheKeyHandlesV0),
@@ -99,7 +97,6 @@ impl Upgrade<KmsFheKeyHandles> for KmsFheKeyHandlesV0 {
 ///
 /// This structure securely holds sensitive key material used by the KMS,
 /// including the client key, optional decompression key, and public key metadata.
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
@@ -113,12 +110,17 @@ pub struct KmsFheKeyHandles {
     pub public_key_info: KeyGenMetadata,
 }
 
+impl PrivateKeyMaterialMetadata for KmsFheKeyHandles {
+    fn get_metadata(&self) -> &KeyGenMetadata {
+        &self.public_key_info
+    }
+}
+
 impl Named for KmsFheKeyHandles {
     /// Returns the type name for versioning and serialization
     const NAME: &'static str = "KmsFheKeyHandles";
 }
 
-#[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
     /// Computes key handles for public key materials with signatures.
     ///
@@ -129,6 +131,7 @@ impl KmsFheKeyHandles {
     ///
     /// # Security Note
     /// Signatures are computed over versionized keys to ensure consistency.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
@@ -137,6 +140,7 @@ impl KmsFheKeyHandles {
         keyset: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
     ) -> anyhow::Result<Self> {
         let public_key_info = compute_info_standard_keygen(
             sig_key,
@@ -145,6 +149,44 @@ impl KmsFheKeyHandles {
             key_id,
             keyset,
             eip712_domain,
+            extra_data,
+        )?;
+
+        Ok(KmsFheKeyHandles {
+            client_key,
+            decompression_key,
+            public_key_info,
+        })
+    }
+
+    /// Computes key handles for compressed public key materials with signatures.
+    ///
+    /// This is similar to [`Self::new`] but for compressed keys using
+    /// [`CompressedXofKeySet`] instead of [`FhePubKeySet`].
+    ///
+    /// # Important
+    /// - Only use with freshly generated compressed keys
+    /// - Not suitable for existing keys due to versioning constraints
+    /// - Version upgrades will invalidate signatures
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_compressed(
+        sig_key: &PrivateSigKey,
+        client_key: FhePrivateKey,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        compressed_keyset: &CompressedXofKeySet,
+        decompression_key: Option<DecompressionKey>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
+        extra_data: Vec<u8>,
+    ) -> anyhow::Result<Self> {
+        let public_key_info = compute_info_compressed_keygen(
+            sig_key,
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            preproc_id,
+            key_id,
+            compressed_keyset,
+            eip712_domain,
+            extra_data,
         )?;
 
         Ok(KmsFheKeyHandles {
@@ -155,7 +197,6 @@ impl KmsFheKeyHandles {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct KmsFheKeyHandlesV0 {
     /// Client's private key for FHE operations
@@ -200,11 +241,16 @@ pub(crate) fn compute_info_crs(
     crs_id: &RequestId,
     pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
+    _extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
     let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
+    let sol_type = CrsgenVerification::new(
+        crs_id,
+        max_num_bits,
+        crs_digest.clone(), /* TODO: reenable for RFC005 extra_data */
+    );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(CrsGenMetadata::new(
@@ -232,6 +278,7 @@ pub(crate) fn compute_info_standard_keygen(
     key_id: &RequestId,
     keyset: &FhePubKeySet,
     domain: &alloy_sol_types::Eip712Domain,
+    _extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
     let server_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
@@ -244,11 +291,13 @@ pub(crate) fn compute_info_standard_keygen(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new(
+    let sol_type = KeygenVerification::new_standard(
         prep_id,
         key_id,
         server_key_digest.clone(),
         public_key_digest.clone(),
+        // TODO: reenable for RFC005
+        // extra_data,
     );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -270,11 +319,13 @@ pub(crate) fn compute_info_decompression_keygen(
     key_id: &RequestId,
     decompression_key: &DecompressionKey,
     domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
     let key_digest = safe_serialize_hash_element_versioned(domain_separator, decompression_key)?;
 
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
+        extraData: extra_data.into(),
     };
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -282,6 +333,42 @@ pub(crate) fn compute_info_decompression_keygen(
         *key_id,
         *prep_id,
         HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+        external_signature,
+    ))
+}
+
+/// Computes key generation metadata for compressed keygen.
+/// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
+pub(crate) fn compute_info_compressed_keygen(
+    sk: &PrivateSigKey,
+    domain_separator: &DomainSep,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    compressed_keyset: &CompressedXofKeySet,
+    domain: &alloy_sol_types::Eip712Domain,
+    _extra_data: Vec<u8>,
+) -> anyhow::Result<KeyGenMetadata> {
+    let compressed_keyset_digest =
+        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
+
+    tracing::info!(
+        "Computed xof keyset digest: {}",
+        hex::encode(&compressed_keyset_digest),
+    );
+
+    let sol_type = KeygenVerification::new_compressed(
+        prep_id,
+        key_id,
+        compressed_keyset_digest.clone(),
+        // TODO: reenable for RFC005
+        // extra_data,
+    );
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
+
+    Ok(KeyGenMetadata::new(
+        *key_id,
+        *prep_id,
+        HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
         external_signature,
     ))
 }
@@ -332,9 +419,9 @@ macro_rules! deserialize_to_low_level_helper {
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheUint = ct_list.get(0)?.ok_or(anyhow::anyhow!(
-                    "expected at least one ciphertext in the compressed list"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheUint = ct_list.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!("expected at least one ciphertext in the compressed list")
+                })?;
                 let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
                 LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Radix(radix_ct))
             }
@@ -385,9 +472,9 @@ pub fn deserialize_to_low_level(
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheBool = ct_list.get(0)?.ok_or(anyhow::anyhow!(
-                    "expected at least one ciphertext in the compressed list"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheBool = ct_list.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!("expected at least one ciphertext in the compressed list")
+                })?;
                 let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
                 LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Bool(radix_ct))
             }
@@ -505,7 +592,6 @@ pub fn deserialize_to_low_level(
 }
 
 /// Serialize and hash a versioned element using tfhe-rs' `safe_serialize` function.
-#[cfg(feature = "non-wasm")]
 pub fn safe_serialize_hash_element_versioned<T>(
     domain_separator: &DomainSep,
     msg: &T,
@@ -513,20 +599,20 @@ pub fn safe_serialize_hash_element_versioned<T>(
 where
     T: Serialize + tfhe::Versionize + tfhe::named::Named,
 {
-    let mut buf = Vec::new();
-    match tfhe::safe_serialization::safe_serialize(msg, &mut buf, SAFE_SER_SIZE_LIMIT) {
-        Ok(()) => Ok(hash_element(domain_separator, &buf)),
-        Err(e) => anyhow::bail!("Could not encode message due to error: {:?}", e),
-    }
+    let mut writer = HashingWriter::new(domain_separator);
+
+    tfhe::safe_serialization::safe_serialize(msg, &mut writer, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Could not serialize&hash element. Error: {e}"))?;
+    Ok(writer.finalize())
 }
 
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
 pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
-    ext_handles_bytes: Vec<Vec<u8>>,
+    ext_handles_bytes: &[Vec<u8>],
     pts: &[TypedPlaintext],
-    extra_data: Vec<u8>,
-    eip712_domain: Eip712Domain,
+    extra_data: &[u8],
+    eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     tracing::info!(
         "Computing external PT signature for {} plaintexts and {} external handles",
@@ -534,7 +620,7 @@ pub(crate) fn compute_external_pt_signature(
         ext_handles_bytes.len()
     );
     let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
-    compute_eip712_signature(server_sk, &message, &eip712_domain)
+    compute_eip712_signature(server_sk, &message, eip712_domain)
 }
 
 pub struct BaseKmsStruct {
@@ -555,7 +641,9 @@ impl BaseKmsStruct {
     }
 
     pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
-        tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
+        tracing::warn!(
+            "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
+        );
         BaseKmsStruct {
             kms_type,
             sig_key: None,
@@ -722,9 +810,9 @@ pub fn abi_encode_plaintexts_ebytes(ptxts: &[TypedPlaintext]) -> Bytes {
 }
 
 pub fn compute_public_decryption_message(
-    ext_handles_bytes: Vec<Vec<u8>>,
+    ext_handles_bytes: &[Vec<u8>],
     pts: &[TypedPlaintext],
-    extra_data: Vec<u8>,
+    extra_data: &[u8],
 ) -> anyhow::Result<PublicDecryptVerification> {
     // convert external_handles back to U256 to be signed
     let external_handles_bytes32: Vec<_> = ext_handles_bytes
@@ -746,14 +834,14 @@ pub fn compute_public_decryption_message(
     tracing::info!(
         "Computed PublicDecryptVerification for handles {:?} with extra_data \"{}\".",
         external_handles_bytes32,
-        hex::encode(&extra_data)
+        hex::encode(extra_data)
     );
 
     // the solidity structure to sign with EIP-712
     Ok(PublicDecryptVerification {
         ctHandles: external_handles_bytes32.clone(),
         decryptedResult: pt_bytes.clone(),
-        extraData: extra_data.into(),
+        extraData: extra_data.to_vec().into(),
     })
 }
 
@@ -797,7 +885,6 @@ pub enum KeyGenMetadataVersioned {
 }
 
 // Values that need to be stored temporarily as part of an async key generation call.
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersioned)]
 pub enum KeyGenMetadata {
@@ -835,15 +922,24 @@ impl KeyGenMetadata {
             }
         }
     }
+
+    pub fn pub_data_types(&self) -> HashSet<PubDataType> {
+        match self {
+            KeyGenMetadata::Current(key_gen_metadata_inner) => key_gen_metadata_inner
+                .key_digest_map
+                .keys()
+                .cloned()
+                .collect(),
+            KeyGenMetadata::LegacyV0(hash_map) => hash_map.keys().cloned().collect(),
+        }
+    }
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataInnerVersioned {
     V0(CrsGenMetadataInner),
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataInnerVersioned)]
 pub struct CrsGenMetadataInner {
@@ -853,14 +949,12 @@ pub struct CrsGenMetadataInner {
     pub(crate) external_signature: Vec<u8>,
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataVersioned {
     V0(CrsGenSignedPubDataHandleInternalWrapper),
     V1(CrsGenMetadata),
 }
 
-#[cfg(feature = "non-wasm")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersioned)]
 pub enum CrsGenMetadata {
@@ -868,7 +962,6 @@ pub enum CrsGenMetadata {
     LegacyV0(SignedPubDataHandleInternal),
 }
 
-#[cfg(feature = "non-wasm")]
 impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     type Error = std::convert::Infallible;
     fn upgrade(self) -> Result<CrsGenMetadata, Self::Error> {
@@ -876,7 +969,6 @@ impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl CrsGenMetadata {
     pub fn new(
         crs_id: RequestId,
@@ -908,7 +1000,6 @@ impl CrsGenMetadata {
     }
 }
 
-#[cfg(feature = "non-wasm")]
 impl Named for CrsGenMetadata {
     /// Returns the type name for versioning and serialization
     const NAME: &'static str = "CrsGenMetadata";
@@ -917,26 +1008,24 @@ impl Named for CrsGenMetadata {
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
 // an external signature on the batch and any extra data.
-#[cfg(feature = "non-wasm")]
 pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
-#[cfg(feature = "non-wasm")]
 pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{deserialize_to_low_level, TypedPlaintext};
+    use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
         dummy_domain,
         engine::{
             base::{
-                compute_external_signature_preprocessing, compute_info_standard_keygen,
-                compute_public_decryption_message, safe_serialize_hash_element_versioned,
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_signature_preprocessing,
+                compute_info_standard_keygen, compute_public_decryption_message,
+                safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
@@ -947,15 +1036,15 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
     use kms_grpc::{
+        RequestId,
         kms::v1::CiphertextFormat,
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
-        RequestId,
     };
     use rand::{RngCore, SeedableRng};
     use tfhe::{
-        prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
+        FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
-    use threshold_fhe::execution::{
+    use threshold_execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
@@ -1132,12 +1221,12 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
-            None,
+            StandardKeySetConfig::default().secret_key_config,
             &key_id,
             &preproc_id,
             None,
             &dummy_domain(),
+            vec![],
         )
         .unwrap();
 
@@ -1149,22 +1238,26 @@ pub(crate) mod tests {
         safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
         // use the wrong type
-        assert!(deserialize_to_low_level(
-            FheTypes::Bool,
-            CiphertextFormat::SmallExpanded,
-            &ct_buf,
-            None,
-        )
-        .is_err());
+        assert!(
+            deserialize_to_low_level(
+                FheTypes::Bool,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                None,
+            )
+            .is_err()
+        );
 
         // should pass with the correct type
-        assert!(deserialize_to_low_level(
-            FheTypes::Uint32,
-            CiphertextFormat::SmallExpanded,
-            &ct_buf,
-            None,
-        )
-        .is_ok());
+        assert!(
+            deserialize_to_low_level(
+                FheTypes::Uint32,
+                CiphertextFormat::SmallExpanded,
+                &ct_buf,
+                None,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1177,12 +1270,12 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
-            None,
+            StandardKeySetConfig::default().secret_key_config,
             &key_id,
             &preproc_id,
             None,
             &dummy_domain(),
+            vec![],
         )
         .unwrap();
 
@@ -1196,13 +1289,15 @@ pub(crate) mod tests {
             safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::BigExpanded,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::BigExpanded,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
 
             // should pass with the correct format
             deserialize_to_low_level(
@@ -1220,13 +1315,15 @@ pub(crate) mod tests {
             safe_serialize(&large_ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
             // use the wrong format
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::SmallExpanded,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::SmallExpanded,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
 
             // should pass with the correct format
             deserialize_to_low_level(
@@ -1249,12 +1346,12 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
-            None,
+            StandardKeySetConfig::default().secret_key_config,
             &key_id,
             &preproc_id,
             None,
             &dummy_domain(),
+            vec![],
         )
         .unwrap();
 
@@ -1280,13 +1377,15 @@ pub(crate) mod tests {
 
         // setting decompression key to None should fail
         {
-            assert!(deserialize_to_low_level(
-                FheTypes::Uint32,
-                CiphertextFormat::SmallCompressed,
-                &ct_buf,
-                None,
-            )
-            .is_err());
+            assert!(
+                deserialize_to_low_level(
+                    FheTypes::Uint32,
+                    CiphertextFormat::SmallCompressed,
+                    &ct_buf,
+                    None,
+                )
+                .is_err()
+            );
         }
 
         // should pass with the correct decompression key
@@ -1330,16 +1429,19 @@ pub(crate) mod tests {
             &key_id,
             &keyset,
             &domain,
+            vec![],
         )
         .unwrap();
 
         {
             // do the verification correctly
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
 
             assert_eq!(
@@ -1360,11 +1462,13 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
 
             assert_ne!(
@@ -1380,11 +1484,13 @@ pub(crate) mod tests {
         {
             // should fail if we use a wrong prep_id
             let bad_prep_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &bad_prep_id,
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1399,11 +1505,13 @@ pub(crate) mod tests {
         {
             // should fail if we use the wrong key_id
             let bad_key_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &bad_key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1419,11 +1527,13 @@ pub(crate) mod tests {
             // should fail if we use the wrong digest
             let mut bad_server_key_digest = server_key_digest.clone();
             bad_server_key_digest[0] ^= 1;
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 bad_server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1446,14 +1556,17 @@ pub(crate) mod tests {
                 &key_id,
                 &keyset,
                 &domain,
+                vec![],
             )
             .unwrap();
             let bad_signature = meta_data.external_signature();
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
             );
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, bad_signature).unwrap(),
@@ -1472,16 +1585,26 @@ pub(crate) mod tests {
         let max_num_bits = 64;
         let domain = dummy_domain();
 
-        let (crs, meta_data) =
-            gen_centralized_crs(&sk, &params, Some(max_num_bits), &domain, &crs_id, &mut rng)
-                .unwrap();
+        let (crs, meta_data) = gen_centralized_crs(
+            &sk,
+            &params,
+            Some(max_num_bits),
+            &domain,
+            vec![],
+            &crs_id,
+            &mut rng,
+        )
+        .unwrap();
 
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
 
         {
             // do the verification correctly
-            let sol_struct =
-                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                max_num_bits as usize,
+                crs_digest.clone(), /* TODO: reenable for RFC005 vec![] */
+            );
 
             assert_eq!(
                 recover_address_from_ext_signature(
@@ -1496,8 +1619,13 @@ pub(crate) mod tests {
         {
             // should fail if we use a wrong crs_id
             let bad_crs_id = RequestId::new_random(&mut rng);
-            let sol_struct =
-                CrsgenVerification::new(&bad_crs_id, max_num_bits as usize, crs_digest.clone());
+            let sol_struct = CrsgenVerification::new(
+                &bad_crs_id,
+                max_num_bits as usize,
+                crs_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
+            );
 
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1517,8 +1645,11 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct =
-                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                max_num_bits as usize,
+                crs_digest.clone(), /* TODO: reenable for RFC005 vec![] */
+            );
             assert_ne!(
                 recover_address_from_ext_signature(
                     &sol_struct,
@@ -1532,8 +1663,13 @@ pub(crate) mod tests {
         {
             // should fail if we use the wrong max_num_bits
             let wrong_max_num_bits = 16;
-            let sol_struct =
-                CrsgenVerification::new(&crs_id, wrong_max_num_bits as usize, crs_digest.clone());
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                wrong_max_num_bits as usize,
+                crs_digest.clone(),
+                // TODO: reenable for RFC005
+                // vec![],
+            );
 
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1549,7 +1685,11 @@ pub(crate) mod tests {
             // should fail if we use the wrong digest
             let mut wrong_digest = crs_digest.clone();
             wrong_digest[0] ^= 1;
-            let sol_struct = CrsgenVerification::new(&crs_id, max_num_bits as usize, wrong_digest);
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                max_num_bits as usize,
+                wrong_digest, /* TODO: reenable for RFC005 vec![] */
+            );
 
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1569,6 +1709,7 @@ pub(crate) mod tests {
                 &params,
                 Some(max_num_bits),
                 &domain,
+                vec![],
                 &crs_id,
                 &mut rng,
             )
@@ -1576,8 +1717,11 @@ pub(crate) mod tests {
             let crs_digest =
                 safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
 
-            let sol_struct =
-                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                max_num_bits as usize,
+                crs_digest.clone(), /* TODO: reenable for RFC005vec![] */
+            );
 
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1605,13 +1749,13 @@ pub(crate) mod tests {
         let handles = vec![vec![0xAAu8; 32], vec![0xBBu8; 32]];
 
         // Extra data (empty for now)
-        let extra_data: Vec<u8> = vec![];
+        let extra_data: &[u8] = &[];
 
         // Determinism: same inputs -> same hash
-        let m1 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+        let m1 = compute_public_decryption_message(&handles, &pts, extra_data)
             .expect("msg computation should succeed");
         let h1 = m1.eip712_signing_hash(&domain);
-        let m2 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+        let m2 = compute_public_decryption_message(&handles, &pts, extra_data)
             .expect("msg computation should succeed");
         let h2 = m2.eip712_signing_hash(&domain);
         assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
@@ -1620,7 +1764,7 @@ pub(crate) mod tests {
         let mut mutated_handles = handles.clone();
         mutated_handles[1][0] ^= 0x23;
         let m_changed_handle =
-            compute_public_decryption_message(mutated_handles, &pts, extra_data.clone())
+            compute_public_decryption_message(&mutated_handles, &pts, extra_data)
                 .expect("msg computation should succeed");
         let h_changed_handle = m_changed_handle.eip712_signing_hash(&domain);
         assert_ne!(
@@ -1631,9 +1775,8 @@ pub(crate) mod tests {
         // Changing a plaintext value changes the hash
         let mut pts_modified = pts.clone();
         pts_modified[0] = TypedPlaintext::from_u16(69);
-        let m_changed_pt =
-            compute_public_decryption_message(handles.clone(), &pts_modified, extra_data.clone())
-                .expect("msg computation should succeed");
+        let m_changed_pt = compute_public_decryption_message(&handles, &pts_modified, extra_data)
+            .expect("msg computation should succeed");
         let h_changed_pt = m_changed_pt.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_pt,
@@ -1642,7 +1785,7 @@ pub(crate) mod tests {
 
         // Changing extra data changes the hash
         let extra_data2 = vec![1u8, 2, 3, 5, 23];
-        let m_changed_extra = compute_public_decryption_message(handles.clone(), &pts, extra_data2)
+        let m_changed_extra = compute_public_decryption_message(&handles, &pts, &extra_data2)
             .expect("msg computation should succeed");
         let h_changed_extra = m_changed_extra.eip712_signing_hash(&domain);
         assert_ne!(
@@ -1652,7 +1795,7 @@ pub(crate) mod tests {
 
         // Error path: a handle longer than 32 bytes should fail
         let bad_handles = vec![vec![0u8; 33]];
-        let err = compute_public_decryption_message(bad_handles, &pts, vec![]).unwrap_err();
+        let err = compute_public_decryption_message(&bad_handles, &pts, &[]).unwrap_err();
         assert!(
             err.to_string().contains("too long: 33 bytes (max 32"),
             "Error message should mention 'too long: 33 bytes (max 32', got: {err}"

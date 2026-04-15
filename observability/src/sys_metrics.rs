@@ -1,35 +1,56 @@
 use crate::metrics::METRICS;
-use std::{ffi::OsStr, fs, time::Duration};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
+use std::{cmp::max, ffi::OsStr, fs, time::Duration};
+use sysinfo::{
+    MINIMUM_CPU_UPDATE_INTERVAL, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
+};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
-    let specifics = RefreshKind::nothing()
-        .with_cpu(CpuRefreshKind::nothing())
-        .with_memory(MemoryRefreshKind::nothing().with_ram())
-        .with_processes(ProcessRefreshKind::nothing());
-    let mut system = sysinfo::System::new_with_specifics(specifics);
+    let mut system = sysinfo::System::new_with_specifics(RefreshKind::everything());
 
     let num_cpus = system.cpus().len();
-
+    // Set this info once and for all
+    METRICS.record_total_cpus(num_cpus as u64);
     let total_ram = system.total_memory();
+    METRICS.record_total_memory(total_ram);
     let free_ram = system.free_memory();
-    tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
-        num_cpus, total_ram, free_ram);
+    tracing::info!(
+        "Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
+        num_cpus,
+        total_ram,
+        free_ram
+    );
 
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
 
     tokio::spawn(async move {
         let mut last_rx_bytes = 0u64;
         let mut last_tx_bytes = 0u64;
+        // Ensure CPU averate is accurate by sleeping initially as recommended by sysinfo documentation
+        tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
         loop {
+            // Refresh to be able to get accurate reading
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::everything(),
+            );
             // Update CPU metrics
-            system.refresh_specifics(specifics);
             let cpus_load_avg = System::load_average().one / num_cpus as f64;
-
-            tracing::debug!("CPU Load Average within 1 min {cpus_load_avg}");
-
+            tracing::debug!("CPU Load Average over all cores within 1 min {cpus_load_avg}");
             METRICS.record_cpu_load(cpus_load_avg);
+
+            if let Ok(pid) = sysinfo::get_current_pid() {
+                if let Some(process) = system.process(pid) {
+                    METRICS.record_process_memory_usage(process.memory());
+                    // CPU usage is a percentage (0.0 to 100.0) per core
+                    METRICS.record_process_cpu_usage(process.cpu_usage() as f64);
+                }
+            } else {
+                tracing::error!(
+                    "Could not get current PID and hence cannot refresh process CPU usage for accurate reading. This may lead to inaccurate CPU usage metrics."
+                );
+            }
 
             // Update memory metrics
             METRICS.record_memory_usage(system.used_memory());
@@ -65,7 +86,8 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let socat_count = get_socat_file_descriptor_count(&system);
             METRICS.record_socat_file_descriptors(socat_count);
 
-            tokio::time::sleep(refresh_interval).await;
+            // Ensure we sleep at least the time needed to accurately update CPU usage, as recommended by sysinfo documentation
+            tokio::time::sleep(max(refresh_interval, MINIMUM_CPU_UPDATE_INTERVAL)).await;
         }
     });
 
@@ -79,7 +101,9 @@ fn get_file_descriptor_count() -> u64 {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(e) => {
-            tracing::error!("Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}");
+            tracing::error!(
+                "Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}"
+            );
             return 0;
         }
     };
@@ -97,14 +121,18 @@ fn get_task_count(system: &sysinfo::System) -> u64 {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(e) => {
-            tracing::error!("Could not get current PID and hence cannot evaluate amount of tasks. Using 0 by default. Error was: {e}");
+            tracing::error!(
+                "Could not get current PID and hence cannot evaluate amount of tasks. Using 0 by default. Error was: {e}"
+            );
             return 0;
         }
     };
     let process = match system.process(pid) {
         Some(process) => process,
         None => {
-            tracing::error!("Could not get current process info from sysinfo and hence cannot evaluate amount of tasks. Using 0 by default");
+            tracing::error!(
+                "Could not get current process info from sysinfo and hence cannot evaluate amount of tasks. Using 0 by default"
+            );
             return 0;
         }
     };
@@ -112,7 +140,8 @@ fn get_task_count(system: &sysinfo::System) -> u64 {
         Some(tasks) => tasks.len() as u64,
         None => {
             tracing::error!(
-                "System does not appear to be Linux and hence cannot get the amount of tasks. Using 0 by default");
+                "System does not appear to be Linux and hence cannot get the amount of tasks. Using 0 by default"
+            );
             0
         }
     }
@@ -127,7 +156,8 @@ fn get_socat_task_count(system: &sysinfo::System) -> u64 {
             Some(tasks) => tasks.len() as u64,
             None => {
                 tracing::error!(
-                "System does not appear to be Linux and hence cannot get the amount of socat tasks. Using 0 by default");
+                    "System does not appear to be Linux and hence cannot get the amount of socat tasks. Using 0 by default"
+                );
                 0
             }
         };

@@ -9,19 +9,19 @@ use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
-    vault::storage::{read_all_data_versioned, Storage},
+    vault::storage::{Storage, read_all_data_versioned},
 };
 use aes_prng::AesRng;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use kms_grpc::RequestId;
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fmt::Display;
-use tfhe::{named::Named, Unversionize};
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::max_num_messages;
+use tfhe::{Unversionize, named::Named};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::max_num_messages;
 
 /// Creates a new random number generator instance.
 ///
@@ -142,12 +142,12 @@ pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
 /// * `pub_storage` - Storage backend for public data
 /// * `priv_storage` - Storage backend for private data
 /// * `req_id` - The request ID used to compute storage URLs
-/// * `epoch_id` - The epoch ID used to compute storage URLs
-/// * `pub_data_type` - Type of the public data
-/// * `priv_data_type` - Type of the private data
+/// * `epoch_id` - The epoch ID used to compute storage URLs for the private data
+/// * `pub_data_type` - Types of the public data to check
+/// * `priv_data_type` - Types of the private data to check
 ///
 /// # Returns
-/// `Ok(true)` if both public and private data exist, `Ok(false)` if either is missing,
+/// `Ok(true)` all the public and private data exist, `Ok(false)` if anything is missing,
 /// or an error if any check fails.
 ///
 /// # Note
@@ -158,17 +158,22 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     priv_storage: &PrivS,
     req_id: &RequestId,
     epoch_id: &EpochId,
-    pub_data_type: &str,
-    priv_data_type: &str,
+    pub_data_type: &[String],
+    priv_data_type: &[String],
 ) -> anyhow::Result<bool> {
-    // No need to use epoch for public data existence check
-    let pub_exists = data_exists(pub_storage, req_id, pub_data_type).await?;
-
+    let mut pub_exists = true;
+    for pub_type in pub_data_type {
+        // No need to use epoch for public data existence check
+        pub_exists &= data_exists(pub_storage, req_id, pub_type).await?;
+    }
     if !pub_exists {
         return Ok(false);
     }
-
-    data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_data_type).await
+    let mut priv_exists = true;
+    for priv_type in priv_data_type {
+        priv_exists &= data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_type).await?;
+    }
+    Ok(priv_exists)
 }
 
 /// Logs a message indicating that data already exists and generation is being skipped.
@@ -190,11 +195,15 @@ pub fn log_data_exists<T: Display, U: Display, V: Display>(
     match pub_storage_info {
         Some(pub_info) => tracing::info!(
             "{} with ID {} already exist for private storage \"{}\" and public storage \"{}\", skipping generation",
-            data_type, id, storage_info, pub_info
+            data_type,
+            id,
+            storage_info,
+            pub_info
         ),
         None => tracing::info!(
             "{} with ID {} already exist, skipping generation",
-            data_type, id
+            data_type,
+            id
         ),
     }
 }
@@ -279,8 +288,7 @@ pub fn log_storage_success_optional_variant<T: Display, U: Display>(
 /// suboptimal cryptographic parameters.
 pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     // Extract constant to improve readability
-    const DEFAULT_MAX_NUM_BITS: usize =
-        threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
+    const DEFAULT_MAX_NUM_BITS: usize = threshold_execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
     const FALLBACK_BITS: usize = 16;
 
     // Cache the params_basics_handle to avoid calling it twice

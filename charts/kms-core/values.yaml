@@ -15,9 +15,9 @@ kmsCore:
   addressOverride:
   # Override the image of the core:
   image:
-    # For enclave deployment: ghcr.io/zama-ai/kms/core-service-enclave
-    # For non-enclave deployment: ghcr.io/zama-ai/kms/core-service
-    name: ghcr.io/zama-ai/kms/core-service
+    # For enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
+    # For non-enclave deployment: hub.zama.org/ghcr/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service
     tag: latest
     pullPolicy: Always
   # Define the service account name for the core:
@@ -68,18 +68,18 @@ kmsCore:
       # Core TLS certificates and keys can be loaded from file paths or from PEM
       # blocks NB: only PEM blocks are can be used to provide certificates to
       # Nitro enclaves!
-      ca_certificate:
+      # ca_certificate:
         # You have to define either `path` or `pem`
         # Certificate: path to the certificate file
-        path:
+        # path:
         # Certificate: PEM block
-        pem:
+        # pem:
         #   -----BEGIN CERTIFICATE-----
         #   -----END CERTIFICATE-----
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
-      privateKey:
-        path: /my/very/secret/key.pem
+      # privateKey:
+      #   path: /my/very/secret/key.pem
       # If set, the enclave-enabled core will only establish TLS connections
       # with peers that have attested PCR0,1,2 values from this list
       trustedReleases:
@@ -223,7 +223,7 @@ kmsCoreClient:
   enabled: false
   nameOverride:
   image:
-    name: ghcr.io/zama-ai/kms/core-client
+    name: hub.zama.org/ghcr/zama-ai/kms/core-client
     tag: latest
   envFrom:
     configmap:
@@ -272,8 +272,8 @@ kmsGenKeys:
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
-    tag: 0.4.0-safe
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.0
     pullPolicy: Always
 
 runMode: dev
@@ -309,10 +309,10 @@ rustLog: info
 
 podSecurityContext:
   # To set when the image will support non root user
-  #  runAsUser: 1000
-  #  runAsGroup: 1000
-  #  fsGroup: 1000
-  #  runAsNonRoot: true
+  runAsUser: 10002
+  runAsGroup: 10003
+  fsGroup: 10003
+  runAsNonRoot: true
 containerSecurityContext:
   allowPrivilegeEscalation: false
   capabilities:

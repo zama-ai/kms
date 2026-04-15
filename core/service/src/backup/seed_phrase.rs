@@ -8,12 +8,10 @@ use crate::{
 };
 use aes_prng::AesRng;
 use bip39::Mnemonic;
+use hashing::{DomainSep, hash_element};
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::str::FromStr;
-use threshold_fhe::{
-    execution::runtime::party::Role,
-    hashing::{hash_element, DomainSep},
-};
+use threshold_types::role::Role;
 
 pub const DSEP_MNEMONIC_ENC: DomainSep = *b"MNEM_ENC";
 pub const DSEP_MNEMONIC_SIG: DomainSep = *b"MNEM_SIG";
@@ -42,21 +40,14 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     entropy_arr.copy_from_slice(&entropy[..RND_SIZE]);
     let mut enc_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_ENC, &entropy_arr)?;
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut enc_rng);
-    let (dec_key, enc_key) = enc.keygen().map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to generate custodian keys from seed phrase: {}",
-            e.to_string()
-        )
-    })?;
+    let (dec_key, enc_key) = enc
+        .keygen()
+        .map_err(|e| anyhow::anyhow!("Failed to generate custodian keys from seed phrase: {e}"))?;
     let mut sig_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_SIG, &entropy_arr)?;
     let (_verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
 
-    Custodian::new(role, sig_key, enc_key, dec_key).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to create custodian from seed phrase: {}",
-            e.to_string()
-        )
-    })
+    Custodian::new(role, sig_key, enc_key, dec_key)
+        .map_err(|e| anyhow::anyhow!("Failed to create custodian from seed phrase: {e}"))
 }
 
 #[allow(dead_code)]
@@ -80,7 +71,7 @@ mod tests {
     use crate::backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng};
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use threshold_fhe::execution::runtime::party::Role;
+    use threshold_types::role::Role;
 
     #[test]
     fn sunshine() {

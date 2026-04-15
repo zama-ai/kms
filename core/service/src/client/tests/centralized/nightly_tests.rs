@@ -5,7 +5,7 @@ use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::EncryptionConfig;
-use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
+use crate::util::key_setup::test_tools::{TestingPlaintext, purge};
 use kms_grpc::kms::v1::FheParameter;
 use serial_test::serial;
 
@@ -103,7 +103,6 @@ async fn default_user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -140,7 +139,6 @@ async fn default_user_decryption_centralized_precompute_sns(
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
-        false,
         false,
         msg,
         EncryptionConfig {

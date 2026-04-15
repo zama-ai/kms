@@ -25,5 +25,7 @@ pub mod user_decryption_wasm;
 pub(crate) mod tests {
     mod centralized;
     mod common;
+    #[cfg(any(test, feature = "testing"))]
+    mod testing_infra_tests;
     mod threshold;
 }

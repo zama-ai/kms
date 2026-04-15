@@ -7,39 +7,36 @@ cfg_if::cfg_if! {
         use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-        use crate::engine::threshold::service::ThresholdFheKeys;
+        use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
+            calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
-        use crate::vault::storage::{
-            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt,
-        };
+        use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
-        use kms_grpc::rpc_types::WrappedPublicKey;
         use std::sync::Arc;
         use tfhe::Seed;
-        use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-        use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-        use threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set;
-        use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
-        use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
-        use threshold_fhe::session_id::SessionId;
+        use threshold_execution::keyset_config::StandardKeySetConfig;
+        use threshold_execution::tfhe_internals::parameters::DKGParams;
+        use threshold_execution::tfhe_internals::test_feature::gen_key_set;
+        use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use threshold_execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use threshold_types::session_id::SessionId;
     }
 }
 
 use crate::client::client_non_wasm::ClientDataType;
-use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
-    file::FileStorage, read_all_data_versioned, store_text_at_request_id,
-    store_versioned_at_request_id, Storage, StorageReader, StorageType,
+    Storage, StorageReader, StorageType, file::FileStorage, read_all_data_versioned,
+    store_text_at_request_id, store_versioned_at_request_id,
 };
 use itertools::Itertools;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -179,13 +176,81 @@ where
         };
 
     if !temp.is_empty() {
-        // If signing keys already exist, then do nothing
+        // If signing keys already exist, check if VerfAddress/VerfKey need regeneration
         log_data_exists(
             priv_storage.info(),
             None::<String>,
             "",
             "Server signing keys",
         );
+
+        // Even if signing keys exist, VerfAddress and VerfKey might not
+        if let Some(sk) = temp.get(req_id) {
+            let pk = sk.verf_key();
+
+            // Regenerate VerfAddress if missing
+            let verf_address_exists = match pub_storage
+                .data_exists(req_id, &PubDataType::VerfAddress.to_string())
+                .await
+            {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to check VerfAddress existence: {}, will attempt regeneration",
+                        e
+                    );
+                    false
+                }
+            };
+            if !verf_address_exists {
+                let ethereum_address = pk.address();
+                if let Err(store_err) = store_text_at_request_id(
+                    pub_storage,
+                    req_id,
+                    &ethereum_address.to_string(),
+                    &PubDataType::VerfAddress.to_string(),
+                )
+                .await
+                {
+                    tracing::error!("Failed to regenerate VerfAddress: {}", store_err);
+                } else {
+                    tracing::info!(
+                        "Regenerated VerfAddress {} from existing signing key",
+                        ethereum_address
+                    );
+                }
+            }
+
+            // Regenerate VerfKey if missing
+            let verf_key_exists = match pub_storage
+                .data_exists(req_id, &PubDataType::VerfKey.to_string())
+                .await
+            {
+                Ok(exists) => exists,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to check VerfKey existence: {}, will attempt regeneration",
+                        e
+                    );
+                    false
+                }
+            };
+            if !verf_key_exists {
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_storage,
+                    req_id,
+                    &pk,
+                    &PubDataType::VerfKey.to_string(),
+                )
+                .await
+                {
+                    tracing::error!("Failed to regenerate VerfKey: {}", store_err);
+                } else {
+                    tracing::info!("Regenerated VerfKey from existing signing key");
+                }
+            }
+        }
+
         return false;
     }
 
@@ -274,6 +339,7 @@ pub async fn ensure_central_crs_exists<PubS, PrivS>(
     priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     crs_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
@@ -282,12 +348,15 @@ where
 {
     // Check if data already exists in both storages
 
-    match check_data_exists(
+    use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
+
+    match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         crs_id,
-        &PubDataType::CRS.to_string(),
-        &PrivDataType::CrsInfo.to_string(),
+        epoch_id,
+        &[PubDataType::CRS.to_string()],
+        &[PrivDataType::CrsInfo.to_string()],
     )
     .await
     {
@@ -325,6 +394,7 @@ where
         &dkg_params,
         max_num_bits_u32,
         &domain,
+        vec![],
         crs_id,
         &mut rng,
     ) {
@@ -336,9 +406,10 @@ where
     };
 
     // Store private CRS info with proper error handling
-    if let Err(e) = store_versioned_at_request_id(
+    if let Err(e) = store_versioned_at_request_and_epoch_id(
         priv_storage,
         crs_id,
+        epoch_id,
         &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
@@ -394,32 +465,50 @@ where
     PubS: Storage,
     PrivS: StorageExt,
 {
-    // Check if data already exists in both storages
-    match check_data_exists_at_epoch(
-        pub_storage,
+    // Check if PUBLIC data already exists. If so, skip regeneration entirely.
+    //
+    // Server key generation uses the thread-local ShortintEngine CSPRNG
+    // (not the deterministic seed) in tfhe-rs, making it non-deterministic
+    // across calls. If PUB keys exist but PRIV was purged (e.g., for backup
+    // recovery tests), regenerating would create keys with different digests
+    // that don't match the existing PUB data (since store_data doesn't overwrite).
+    // The missing PRIV data will be restored from backup.
+    let pub_types = vec![
+        PubDataType::PublicKey.to_string(),
+        PubDataType::ServerKey.to_string(),
+    ];
+    let pub_complete = {
+        let mut all = true;
+        for t in &pub_types {
+            all &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
+            all &= data_exists(pub_storage, other_key_id, t)
+                .await
+                .unwrap_or(false);
+        }
+        all
+    };
+    if pub_complete {
+        log_data_exists(
+            priv_storage.info(),
+            Some(pub_storage.info()),
+            key_id,
+            "FHE keys",
+        );
+        return false;
+    }
+
+    // PUB data is incomplete — purge any leftover fragments and regenerate everything.
+    for t in &pub_types {
+        let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        let _ = delete_at_request_id(pub_storage, other_key_id, t).await;
+    }
+    let _ = delete_at_request_and_epoch_id(
         priv_storage,
         key_id,
         epoch_id,
-        &PubDataType::PublicKey.to_string(),
         &PrivDataType::FhePrivateKey.to_string(),
     )
-    .await
-    {
-        Ok(true) => {
-            log_data_exists(
-                priv_storage.info(),
-                Some(pub_storage.info()),
-                key_id,
-                "FHE keys",
-            );
-            return false;
-        }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            tracing::warn!("Error checking if FHE keys exist: {}", e);
-            // Continue with generation, assuming data doesn't exist
-        }
-    }
+    .await;
 
     // Get signing key with proper error handling
     let sk = match get_core_signing_key(priv_storage).await {
@@ -440,12 +529,12 @@ where
     let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
-        StandardKeySetConfig::default(),
-        None,
+        StandardKeySetConfig::default().secret_key_config,
         key_id,
         &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
+        vec![],
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -457,12 +546,12 @@ where
     let (fhe_pub_keys_2, key_info_2) = match generate_fhe_keys(
         &sk,
         dkg_params,
-        StandardKeySetConfig::default(),
-        None,
+        StandardKeySetConfig::default().secret_key_config,
         other_key_id,
         &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
+        vec![],
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -522,10 +611,12 @@ where
     // Store public key data with proper error handling
     for (req_id, cur_keys) in pub_fhe_map {
         // Store public key
-        if let Err(e) = store_pk_at_request_id(
+        tracing::info!("Storing public key");
+        if let Err(e) = store_versioned_at_request_id(
             pub_storage,
             &req_id,
-            WrappedPublicKey::Compact(&cur_keys.public_key),
+            &cur_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         {
@@ -614,9 +705,9 @@ where
         panic!("{}", msg);
     }
     let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(parties) => (1..=parties.len())
-            .zip_eq(parties.into_iter())
-            .collect_vec(),
+        ThresholdSigningKeyConfig::AllParties(parties) => {
+            (1..=parties.len()).zip_eq(parties).collect_vec()
+        }
         ThresholdSigningKeyConfig::OneParty(i, subject) => {
             std::iter::once((i, subject)).collect_vec()
         }
@@ -664,10 +755,67 @@ where
                 "",
                 "Threshold server signing keys",
             );
-            // Even if signing keys exist, CA certificates might not
-            if let Some(sk) = temp.get(&SIGNING_KEY_ID) {
+            // Even if signing keys exist, CA certificates and VerfAddress might not
+            if let Some(sk) = temp.get(request_id) {
+                // Regenerate VerfAddress if missing
                 if !pub_storages[i - 1]
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
+                    .data_exists(request_id, &PubDataType::VerfAddress.to_string())
+                    .await?
+                {
+                    let pk = sk.verf_key();
+                    let ethereum_address = pk.address();
+                    if let Err(store_err) = store_text_at_request_id(
+                        &mut pub_storages[i - 1],
+                        request_id,
+                        &ethereum_address.to_string(),
+                        &PubDataType::VerfAddress.to_string(),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to regenerate VerfAddress for party {}: {}",
+                            i,
+                            store_err
+                        );
+                    } else {
+                        tracing::info!(
+                            "Regenerated VerfAddress {} for party {} from existing signing key",
+                            ethereum_address,
+                            i
+                        );
+                    }
+                }
+
+                // Regenerate VerfKey if missing
+                if !pub_storages[i - 1]
+                    .data_exists(request_id, &PubDataType::VerfKey.to_string())
+                    .await?
+                {
+                    let pk = sk.verf_key();
+                    if let Err(store_err) = store_versioned_at_request_id(
+                        &mut pub_storages[i - 1],
+                        request_id,
+                        &pk,
+                        &PubDataType::VerfKey.to_string(),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to regenerate VerfKey for party {}: {}",
+                            i,
+                            store_err
+                        );
+                    } else {
+                        tracing::info!(
+                            "Regenerated VerfKey for party {} from existing signing key",
+                            i
+                        );
+                    }
+                }
+
+                // Regenerate CA certificate if missing
+                if !pub_storages[i - 1]
+                    .data_exists(request_id, &PubDataType::CACert.to_string())
                     .await?
                 {
                     ensure_ca_cert_exists(
@@ -680,7 +828,9 @@ where
                     .await?;
                 }
             } else {
-                tracing::error!("Failed to regenerate CA certificate from existing server signing key for party {i}")
+                tracing::error!(
+                    "Failed to regenerate CA certificate from existing server signing key for party {i}"
+                )
             };
 
             continue;
@@ -784,12 +934,22 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
     tls_wildcard: bool,
 ) -> anyhow::Result<()> {
     // self-sign a CA certificate with the private signing key
-    let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-        subject.as_str(),
-        tls_wildcard,
-        #[allow(deprecated)]
-        sk.sk(),
+    let sk_der = {
+        // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+        #[expect(deprecated)]
+        let ecdsa_sk = sk.sk();
+        ecdsa_sk.to_pkcs8_der()?
+    };
+    let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+        &sk_der.as_bytes().into(),
+        &rcgen::PKCS_ECDSA_P256K1_SHA256,
     )?;
+    let (ca_cert_ki, ca_cert, _ca_params) =
+        threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+            subject.as_str(),
+            tls_wildcard,
+            &ca_keypair,
+        )?;
 
     // Store self-signed CA certificate
     if let Err(store_err) = store_text_at_request_id(
@@ -808,7 +968,7 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
     }
     tracing::info!(
         "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
-        hex::encode(ca_cert_ki),
+        ca_cert_ki,
         req_id,
         pub_storage.info()
     );
@@ -864,37 +1024,38 @@ where
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
 
+    // Check if PUBLIC data already exists for all parties. If so, skip entirely.
+    // See comment in ensure_central_keys_exist for why we only check PUB.
+    let pub_types = vec![
+        PubDataType::PublicKey.to_string(),
+        PubDataType::ServerKey.to_string(),
+    ];
     let mut all_data_exists = true;
-    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists_at_epoch(
-            pub_storage,
-            priv_storage,
-            key_id,
-            epoch_id,
-            &PubDataType::PublicKey.to_string(),
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-        {
-            Ok(true) => {
-                continue; // Data exists for this party, check next
-            }
-            Ok(false) => {
-                all_data_exists = false;
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-                // Continue with generation, assuming data doesn't exist
-                all_data_exists = false;
-                break;
-            }
+    for pub_storage in pub_storages.iter() {
+        for t in &pub_types {
+            all_data_exists &= data_exists(pub_storage, key_id, t).await.unwrap_or(false);
         }
     }
     if all_data_exists {
         tracing::info!("Threshold FHE keys exists, skipping generation");
         return false;
     }
+    // Purge obsolete data
+    for (pub_storage, priv_storage) in pub_storages.iter_mut().zip_eq(priv_storages.iter_mut()) {
+        use crate::vault::storage::delete_at_request_and_epoch_id;
+
+        for t in &pub_types {
+            let _ = delete_at_request_id(pub_storage, key_id, t).await;
+        }
+        let _ = delete_at_request_and_epoch_id(
+            priv_storage,
+            key_id,
+            epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await;
+    }
+
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
@@ -946,6 +1107,7 @@ where
             key_id,
             &keyset.public_keys,
             &domain,
+            vec![],
         ) {
             Ok(result) => result,
             Err(e) => {
@@ -955,17 +1117,21 @@ where
         };
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: Arc::new(key_shares[i - 1].to_owned()),
-            integer_server_key: Arc::new(integer_server_key.clone()),
-            sns_key: sns_key.clone().map(Arc::new),
-            decompression_key: decompression_key.clone().map(Arc::new),
+            public_material: PublicKeyMaterial::Uncompressed {
+                integer_server_key: Arc::new(integer_server_key.clone()),
+                sns_key: sns_key.clone().map(Arc::new),
+                decompression_key: decompression_key.clone().map(Arc::new),
+            },
             meta_data: info,
         };
 
         // Store public key
-        if let Err(store_err) = store_pk_at_request_id(
+        tracing::info!("Storing public key");
+        if let Err(store_err) = store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            WrappedPublicKey::Compact(&keyset.public_keys.public_key),
+            &keyset.public_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         {
@@ -1048,6 +1214,7 @@ pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     crs_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
@@ -1064,12 +1231,15 @@ where
     // PANICS: If storage access fails or if no storage is available
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists(
+        use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
+
+        match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             crs_id,
-            &PubDataType::CRS.to_string(),
-            &PrivDataType::CrsInfo.to_string(),
+            epoch_id,
+            &[PubDataType::CRS.to_string()],
+            &[PrivDataType::CrsInfo.to_string()],
         )
         .await
         {
@@ -1148,16 +1318,17 @@ where
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
 
-        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
+        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain, vec![])
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");
             });
 
         // Store private CRS info with signature - essential for verification chain
         // PANICS: If storage fails - system would be in inconsistent state
-        store_versioned_at_request_id::<PrivS, CrsGenMetadata>(
+        store_versioned_at_request_and_epoch_id::<PrivS, CrsGenMetadata>(
             cur_priv,
             crs_id,
+            epoch_id,
             &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )
@@ -1203,7 +1374,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
-    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+    use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
     use crate::{
         consts::DEFAULT_PARAM, cryptography::signatures::gen_sig_keys, dummy_domain,
@@ -1223,6 +1394,7 @@ mod tests {
                 params,
                 Some(max_num_bits),
                 &eip712_domain,
+                vec![],
                 &req_id,
                 &mut rng,
             )

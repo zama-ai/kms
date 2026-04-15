@@ -1,27 +1,17 @@
-use kms_grpc::kms::v1::CiphertextFormat;
-use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
-use kms_grpc::kms::v1::CustodianRecoveryRequest;
-use kms_grpc::kms::v1::DestroyCustodianContextRequest;
-use kms_grpc::kms::v1::DestroyMpcContextRequest;
-use kms_grpc::kms::v1::Empty;
-use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
-use kms_grpc::kms::v1::NewCustodianContextRequest;
-use kms_grpc::kms::v1::NewMpcContextRequest;
-use kms_grpc::kms::v1::OperatorPublicKey;
-use kms_grpc::kms::v1::RecoveryRequest;
-use kms_grpc::kms::v1::TypedPlaintext;
+use hashing::DomainSep;
 use kms_grpc::ContextId;
+use kms_grpc::kms::v1::*;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
 use tfhe::FheTypes;
-use threshold_fhe::hashing::DomainSep;
 use tonic::Request;
 use tonic::Response;
-use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::engine::base::KeyGenMetadata;
+use crate::engine::utils::MetricedError;
 
 use super::base::KmsFheKeyHandles;
 
@@ -63,24 +53,47 @@ pub trait ContextManager {
     async fn new_mpc_context(
         &self,
         request: Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn destroy_mpc_context(
         &self,
         request: Request<DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn new_custodian_context(
         &self,
         request: Request<NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn destroy_custodian_context(
         &self,
         request: Request<DestroyCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
-    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
+    async fn mpc_context_exists_and_consistent(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<bool>;
+
+    async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool;
+}
+
+#[tonic::async_trait]
+pub trait EpochManager {
+    async fn new_mpc_epoch(
+        &self,
+        request: Request<NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
+
+    async fn destroy_mpc_epoch(
+        &self,
+        request: Request<DestroyMpcEpochRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
+
+    async fn get_epoch_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<EpochResultResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -88,23 +101,29 @@ pub trait BackupOperator {
     async fn get_operator_public_key(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<OperatorPublicKey>, Status>;
+    ) -> Result<Response<OperatorPublicKey>, MetricedError>;
 
     async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
-    ) -> Result<Response<RecoveryRequest>, Status>;
+    ) -> Result<Response<RecoveryRequest>, MetricedError>;
 
     async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
-    async fn restore_from_backup(&self, request: Request<Empty>)
-        -> Result<Response<Empty>, Status>;
+    async fn restore_from_backup(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn get_key_material_availability(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError>;
+}
+
+pub trait PrivateKeyMaterialMetadata {
+    fn get_metadata(&self) -> &KeyGenMetadata;
 }

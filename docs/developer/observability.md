@@ -189,18 +189,71 @@ let result = build_request(payload, request_id, config)
 
 ### Testing
 
-Run tests with different log levels:
+In this repository, test logging is handled by our in-repo `kms-test-tracing`
+crate (workspace path `tools/kms-test-tracing`; distinct from crates.io
+`tracing-test`). It keeps the familiar `#[kms_test_tracing::traced_test]`
+workflow and adds repo-specific controls for console/file logging. In practice,
+use one of these two paths:
+
+- `#[kms_test_tracing::traced_test]` for log assertions (`logs_contain`, `logs_assert`)
+- `#[integration_test]` / `kms_test_tracing::init_logging()` for
+  integration-style stderr output
+
+Filter resolution is "first match wins", per output:
+
+1. Output-specific overrides:
+   - Console: `KMS_TEST_LOG_CONSOLE_FILTER`
+   - File: `KMS_TEST_LOG_FILE_FILTER`
+2. Shared override: `KMS_TEST_LOG_FILTER`
+3. `RUST_LOG`
+4. Mode preset: `KMS_TEST_LOG_MODE` (`verbose` => info preset, otherwise warn preset)
+
+`RUST_LOG` works as usual, but only when no higher-priority `KMS_TEST_LOG_*`
+override is set for that output.
+
+What "repo-specific override" means here:
+
+- `KMS_TEST_LOG_CONSOLE_FILTER`, `KMS_TEST_LOG_FILE_FILTER`, and
+  `KMS_TEST_LOG_FILTER` are workspace-specific test controls.
+- They are intentionally checked before `RUST_LOG`, so CI/local shell defaults
+  do not accidentally change test behavior.
+
+Which one to use:
+
+- Use `KMS_TEST_LOG_CONSOLE_FILTER` to tune only terminal/stderr output.
+- Use `KMS_TEST_LOG_FILE_FILTER` to tune only persisted trace files.
+- Use `KMS_TEST_LOG_FILTER` to apply one shared filter to both outputs.
+- Use `RUST_LOG` only as a fallback when no `KMS_TEST_LOG_*` override is set.
+
+Quick commands:
 
 ```bash
 # Run all tests
 cargo test
 
-# Run with trace logging
-RUST_LOG=trace cargo test
+# Show stderr logs while debugging
+KMS_TEST_LOG_MODE=verbose cargo test my_test -- --nocapture
 
-# Run with JSON logging
-RUST_LOG=info cargo test -- --nocapture
+# Fine-grained console filter (same directive syntax as RUST_LOG)
+KMS_TEST_LOG_CONSOLE_FILTER='info,my_crate::module=debug' cargo test my_test -- --nocapture
+
+# Persist trace logs for CI artifact collection
+TRACE_PERSISTENCE=enabled cargo test my_test
+
+# Control persisted file verbosity and max size
+TRACE_PERSISTENCE=enabled KMS_TEST_LOG_FILE_FILTER='info,my_crate=debug' KMS_TEST_LOG_MAX_BYTES=4194304 cargo test my_test
 ```
+
+`KMS_TEST_LOG_MODE` values:
+
+| Value | Stderr output | Filter preset (when no override set) |
+|---|---|---|
+| `verbose` / `debug` / `trace` | on | info-level (all three are aliases) |
+| `console` | on | warn-level |
+| unset (default) | off | warn-level (file/capture outputs unaffected) |
+
+For actual debug/trace granularity, use `KMS_TEST_LOG_CONSOLE_FILTER` with
+explicit directives instead of relying on mode aliases.
 
 ## Metrics Overview
 

@@ -17,18 +17,18 @@ use crate::cryptography::encryption::{
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
-    check_normalized, internal_sign, HasSigningScheme, PrivateSigKey, PublicSigKey, Signature,
-    SigningSchemeType, SIG_SIZE,
+    HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
+    check_normalized, internal_sign,
 };
 use ::signature::Verifier;
+use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
@@ -453,9 +453,8 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        UnifiedPublicEncKey::MlKem1024(_) => {
+            return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
     let to_sign = [msg.as_ref(), signcrypt_key.receiver_id, &serialized_enc_key].concat();
@@ -485,8 +484,8 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
             hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
         }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            hybrid_ml_kem::enc::<ml_kem::MlKem1024, _>(rng, &to_encrypt, &public_enc_key.0)
+        UnifiedPublicEncKey::MlKem1024(_) => {
+            return Err(CryptographyError::MlKem1024Unsupported);
         }
     }?;
     // LEGACY: approach to serialization
@@ -601,8 +600,8 @@ fn inner_unsigncrypt(
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
         }
-        UnifiedPrivateEncKey::MlKem1024(dec_key) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
+        UnifiedPrivateEncKey::MlKem1024(_) => {
+            return Err(CryptographyError::MlKem1024Unsupported);
         }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
@@ -661,9 +660,8 @@ fn check_format_and_signature(
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
-        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        UnifiedPublicEncKey::MlKem1024(_) => {
+            return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
     let msg_signed = [
@@ -690,17 +688,17 @@ fn check_format_and_signature(
 /// TODO hide behind flag for insecure function?
 pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
-    client_keys: &UnifiedUnsigncryptionKey,
+    dec_key: &UnifiedPrivateEncKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
     // LEGACY should be using safe_deserialization from tfhe-rs
     let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = match &client_keys.decryption_key {
-        UnifiedPrivateEncKey::MlKem512(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &client_keys.0)?
+    let decrypted_plaintext = match dec_key {
+        UnifiedPrivateEncKey::MlKem512(dk) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &dk.0)?
         }
-        UnifiedPrivateEncKey::MlKem1024(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.clone(), &client_keys.0)?
+        UnifiedPrivateEncKey::MlKem1024(_) => {
+            return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
 
@@ -841,20 +839,24 @@ mod tests {
             let mut cipher = correct_cipher.clone();
             cipher.payload[0] ^= 1;
 
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                    .is_err()
+            );
         }
 
         // wrong scheme
         {
             let mut cipher = correct_cipher.clone();
             cipher.pke_type = PkeSchemeType::MlKem1024;
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                    .is_err()
+            );
         }
 
         // use the wrong client signcryption key
@@ -865,10 +867,12 @@ mod tests {
                 &client_signcryption_keys.unsigncryption_key.receiver_id,
                 Some(&client_signcryption_keys.signcrypt_key.signing_key),
             );
-            assert!(wrong_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
-                .is_err());
+            assert!(
+                wrong_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // use the wrong server key
@@ -881,17 +885,21 @@ mod tests {
                 &wrong_verf_key,
                 &client_signcryption_keys.unsigncryption_key.receiver_id,
             );
-            assert!(wrong_keys
-                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
-                .is_err());
+            assert!(
+                wrong_keys
+                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // use bad domain separator
         {
-            assert!(client_signcryption_keys
-                .unsigncryption_key
-                .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
-                .is_err());
+            assert!(
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
+                    .is_err()
+            );
         }
 
         // happy path should still work at the end
@@ -910,10 +918,11 @@ mod tests {
         let res = parse_msg(to_encrypt.to_vec(), &server_verf_key);
         // unwrapping fails
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("unexpected verification key digest"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("unexpected verification key digest")
+        );
     }
 
     #[test]

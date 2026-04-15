@@ -21,14 +21,17 @@ alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
 bc2wrap.workspace = true
 cfg-if.workspace = true
+hashing.workspace = true
 hex.workspace = true
 prost.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive", "rc"] }
+threshold-types.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
 tonic = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -37,22 +40,19 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
 ] }
 tfhe-versionable.workspace = true
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "extension_degree_4",
-] }
 tracing = { workspace = true, features = ["log"] }
 wasm-bindgen.workspace = true
 
 [dev-dependencies]
-tracing-test = { workspace = true}
+kms-test-tracing = { workspace = true }
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["prost", "wasm-bindgen"]
+ignored = ["prost", "tonic-prost", "wasm-bindgen"]
 
 [features]
 default = ["non-wasm"]
-non-wasm = ["dep:tonic"]
+non-wasm = ["dep:tonic", "dep:tonic-prost"]
 insecure = []

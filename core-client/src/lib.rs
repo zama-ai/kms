@@ -7,8 +7,7 @@ mod crsgen;
 mod decrypt;
 mod keygen;
 pub mod mpc_context;
-mod prss_init;
-mod reshare;
+mod mpc_epoch;
 mod s3_operations;
 
 // reexport fetch_public_elements for integration test
@@ -24,11 +23,10 @@ use crate::keygen::{
     do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen, get_keygen_responses,
     get_preproc_keygen_responses,
 };
-use crate::mpc_context::do_new_mpc_context;
-use crate::prss_init::do_prss_init;
-use crate::reshare::do_reshare;
+use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
+use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use core::str;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
@@ -43,19 +41,20 @@ use kms_lib::util::file_handling::{
 };
 use kms_lib::util::key_setup::{
     ensure_client_keys_exist,
-    test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext},
+    test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
 };
-use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
 use kms_lib::vault::Vault;
-use kms_lib::{conf, DecryptionMode};
+use kms_lib::vault::storage::{StorageType, file::FileStorage};
+use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
+use kms_lib::{DecryptionMode, conf};
 use observability::conf::Settings;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
+use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
@@ -103,7 +102,7 @@ pub struct CoreClientConfig {
     pub fhe_params: Option<FheParameter>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug)]
+#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
 pub struct CoreConf {
     /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     #[validate(range(min = 1))]
@@ -228,6 +227,26 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
                 );
             }
         }
+    }
+
+    Ok(())
+}
+
+fn validate_cipher_args(cf: &CipherArguments) -> anyhow::Result<()> {
+    if cf.get_num_requests() == 0 {
+        return Err(anyhow::anyhow!("Number of requests cannot be zero."));
+    }
+
+    if cf.get_batch_size() == 0 {
+        return Err(anyhow::anyhow!("Batch size cannot be zero."));
+    }
+
+    if cf.get_parallel_requests() > cf.get_num_requests() {
+        return Err(anyhow::anyhow!(
+            "Number of parallel requests ({}) cannot be > total number of requests ({}).",
+            cf.get_parallel_requests(),
+            cf.get_num_requests()
+        ));
     }
 
     Ok(())
@@ -437,22 +456,6 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
-/// Initialize the PRSS for a given context and epoch.
-///
-/// This command will be deprecated and be combined with the resharing command.
-#[derive(Debug, Parser, Clone)]
-pub struct PrssInitParameters {
-    /// Optionally specify the context ID to use for the PRSS initialization.
-    /// Defaults to the default epoch if not specified.
-    #[clap(long)]
-    pub context_id: ContextId,
-    /// Optionally specify the epoch ID to use for the PRSS initialization.
-    /// Defaults to the default epoch if not specified.
-    /// The PRSS will be stored under the epoch ID.
-    #[clap(long)]
-    pub epoch_id: EpochId,
-}
-
 #[derive(Debug, Subcommand, Clone)]
 pub enum CipherArguments {
     FromFile(CipherFile),
@@ -473,6 +476,38 @@ impl CipherArguments {
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.num_requests,
         }
     }
+
+    pub fn get_parallel_requests(&self) -> usize {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.parallel_requests,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.parallel_requests,
+        }
+    }
+
+    pub fn get_inter_request_delay_ms(&self) -> Duration {
+        match self {
+            CipherArguments::FromFile(cipher_file) => {
+                tokio::time::Duration::from_millis(cipher_file.inter_request_delay_ms)
+            }
+            CipherArguments::FromArgs(cipher_parameters) => {
+                tokio::time::Duration::from_millis(cipher_parameters.inter_request_delay_ms)
+            }
+        }
+    }
+
+    pub fn get_extra_data(&self) -> Vec<u8> {
+        let hex_str = match self {
+            CipherArguments::FromFile(cipher_file) => &cipher_file.extra_data,
+            CipherArguments::FromArgs(cipher_parameters) => &cipher_parameters.extra_data,
+        };
+        parse_extra_data(hex_str)
+    }
+}
+
+// Helper function to parse the extra data from the CLI arguments, with the same logic for both CipherParameters and CipherFile.
+// Defaults to an empty byte vector if the extra data is not provided or if the hex parsing fails.
+fn parse_extra_data(hex_str: &Option<String>) -> Vec<u8> {
+    parse_hex(hex_str.as_deref().unwrap_or("")).unwrap_or_default()
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -501,7 +536,11 @@ pub struct CipherParameters {
     /// If not specified, the default context will be used.
     #[clap(long)]
     pub context_id: Option<ContextId>,
-    /// Number of copies of the ciphertext to process in a request.
+    /// Optionally specify the epoch ID to use for the decryption.
+    /// If not specified, the default epoch will be used.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Number of copies of the ciphertext to process in a single request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'b', default_value_t = 1)]
@@ -515,6 +554,24 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, short = 'i', default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, short = 'p', default_value_t = 0)]
+    pub parallel_requests: usize,
+    /// Whether the key was generated as a compressed keyset (CompressedXofKeySet).
+    /// When true, fetches CompressedXofKeySet instead of PublicKey/ServerKey.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, default_value_t = false)]
+    pub compressed_keys: bool,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -522,13 +579,23 @@ pub struct CipherFile {
     /// Input file of the ciphertext.
     #[clap(long)]
     pub input_path: PathBuf,
-    /// Number of copies of the ciphertext to process in a request.
+    /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
     /// Numbers of requests to process at once.
     /// Each request uses a copy of the same batch.
     #[clap(long, short = 'n', default_value_t = 1)]
     pub num_requests: usize,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
+    /// Number of requests to be sent in parallel (at most num_requests) before waiting for inter_request_delay_ms.
+    #[clap(long, short = 'p', default_value_t = 0)]
+    pub parallel_requests: usize,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -538,31 +605,29 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
-#[derive(ValueEnum, Debug, Clone, Default)]
-pub enum KeySetType {
-    #[default]
-    Standard,
-    // TODO(#2799)
-    // DecompressionOnly, // we'll support this in the future
-}
-
-impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
-    fn from(value: KeySetType) -> Self {
-        match value {
-            KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
-        }
-    }
-}
-
 #[derive(Args, Debug, Clone, Default)]
 pub struct SharedKeyGenParameters {
-    #[clap(value_enum, long, short = 't')]
-    pub keyset_type: Option<KeySetType>,
-    // TODO(#2799)
-    // #[command(flatten)]
-    // pub keyset_added_info: Option<KeySetAddedInfo>,
+    /// Generate compressed keys using XOF-seeded compression
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
+    /// Existing keyset ID to reuse all secret shares from.
+    /// When set, generates new public keys from existing private key shares
+    /// instead of running full distributed keygen.
+    #[clap(long)]
+    pub existing_keyset_id: Option<RequestId>,
+    /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
+    #[clap(long)]
+    pub existing_epoch_id: Option<EpochId>,
+    /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
+    /// This is only used when generating a key from existing shares.
+    #[clap(long, default_value_t = false)]
+    pub use_existing_key_tag: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -573,6 +638,7 @@ pub struct KeyGenParameters {
     pub shared_args: SharedKeyGenParameters,
 }
 
+/// Parameters for insecure key generation (testing/development only).
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
     #[command(flatten)]
@@ -583,6 +649,25 @@ pub struct InsecureKeyGenParameters {
 pub struct CrsParameters {
     #[clap(long, short = 'm')]
     pub max_num_bits: u32,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Optional extra data (hex-encoded) to include in the request.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
+}
+
+impl Default for CrsParameters {
+    fn default() -> Self {
+        Self {
+            max_num_bits: 2048,
+            epoch_id: None,
+            context_id: None,
+            extra_data: None,
+        }
+    }
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -592,6 +677,7 @@ pub struct NewCustodianContextParameters {
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
 }
+
 #[derive(Debug, Args, Clone)]
 pub struct ContextPath {
     /// Input file of the ciphertext.
@@ -605,6 +691,20 @@ pub enum NewMpcContextParameters {
     /// stored in a file.
     SerializedContextPath(ContextPath),
     ContextToml(ContextPath),
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct DestroyMpcContextParameters {
+    /// The context ID to use for the MPC context to destroy.
+    #[clap(long)]
+    pub context_id: ContextId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct DestroyMpcEpochParameters {
+    /// The epoch ID to use for the MPC epoch to destroy.
+    #[clap(long)]
+    pub epoch_id: EpochId,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -622,6 +722,14 @@ pub struct NewTestingMpcContextFileParameters {
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct KeyGenResultParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+    #[clap(long, default_value_t = false)]
+    pub compressed: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -644,33 +752,73 @@ pub struct RecoveryParameters {
     pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
-#[derive(Debug, Parser, Clone)]
-pub struct ReshareParameters {
-    /// ID of the key to reshare
-    #[clap(long, short = 'k')]
-    pub key_id: RequestId,
+#[derive(Debug, Clone)]
+pub enum DigestKeySet {
+    CompressedKeySet(String),
+    /// The first string is the server key digest, the second string is the public key digest.
+    NonCompressedKeySet(String, String),
+}
 
-    /// ID of the preprocessing used to generate the key
-    #[clap(long, short = 'i')]
+#[derive(Debug, Clone)]
+pub struct PreviousKeyInfo {
+    /// Key id of the key to reshare
+    pub key_id: KeyId,
+
+    /// Preprocessing request id for the key to reshare, this should correspond to the preprocessing used to generate the key specified by `key_id`.
     pub preproc_id: RequestId,
 
-    /// The context ID to do the resharing from.
-    /// If it's not given then the default context is used.
-    #[clap(long)]
-    pub from_context_id: Option<ContextId>,
+    /// The hex-encoded digest(s) of the public part(s) of the key being reshared.
+    /// For compressed keysets, this is a single digest of the compressed keyset.
+    /// For non-compressed keysets, this includes the digest of the server key and the digest of the public key.
+    pub key_digest: DigestKeySet,
+}
 
-    /// The epoch ID to do the resharing from.
-    /// If it's not given then the default epoch is used.
-    #[clap(long)]
-    pub from_epoch_id: Option<EpochId>,
+#[derive(Debug, Clone)]
+pub struct PreviousCrsInfo {
+    /// Id of the CRS to re-sign
+    pub crs_id: RequestId,
 
-    /// The hex-encoded server key digest to use for resharing.
-    #[clap(long)]
-    pub server_key_digest: String,
+    /// The hex-encoded digest of the CRS to re-sign
+    pub digest: String,
+}
 
-    /// The hex-encoded public key digest to use for resharing.
+#[derive(Debug, Parser, Clone)]
+pub struct PreviousEpochParameters {
     #[clap(long)]
-    pub public_key_digest: String,
+    pub context_id: ContextId,
+
+    #[clap(long)]
+    pub epoch_id: EpochId,
+
+    /// Information about the keys to reshare in the new epoch.
+    #[clap(long)]
+    pub previous_keys: Vec<PreviousKeyInfo>,
+
+    /// Information about the CRSes to re-sign in the new epoch.
+    #[clap(long)]
+    pub previous_crs: Vec<PreviousCrsInfo>,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct NewEpochParameters {
+    /// ID of the epoch to be created
+    #[clap(long)]
+    pub new_epoch_id: EpochId,
+
+    /// Context ID for which the new epoch is created
+    #[clap(long)]
+    pub new_context_id: ContextId,
+
+    /// Optional parameters for resharing keys from a previous epoch in the new epoch.
+    /// Format is:
+    ///
+    /// For compressed keyset
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
+    ///
+    /// For non-compressed keyset
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
+    #[clap(long)]
+    pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -683,6 +831,12 @@ pub struct KeyGenPreprocParameters {
     /// Defaults to the default epoch if not specified.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
+    /// Generate compressed keys using XOF-seeded compression
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
+    /// Do preprocessing that's needed to generate a key from existing shares.
+    #[clap(long, default_value_t = false)]
+    pub from_existing_shares: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -705,9 +859,9 @@ pub enum CCCommand {
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
-    KeyGenResult(ResultParameters),
+    KeyGenResult(KeyGenResultParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
-    InsecureKeyGenResult(ResultParameters),
+    InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
     PublicDecrypt(CipherArguments),
@@ -723,10 +877,11 @@ pub enum CCCommand {
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
-    Reshare(ReshareParameters),
+    NewEpoch(NewEpochParameters),
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
-    PrssInit(PrssInitParameters),
+    DestroyMpcContext(DestroyMpcContextParameters),
+    DestroyMpcEpoch(DestroyMpcEpochParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
@@ -737,7 +892,7 @@ pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
     #[validate(length(min = 1))]
-    pub file_conf: Option<String>,
+    pub file_conf: Option<Vec<String>>,
     /// The command to execute
     #[clap(subcommand)]
     pub command: CCCommand,
@@ -786,6 +941,7 @@ pub struct EncryptionResult {
     pub plaintext: TypedPlaintext,
     pub key_id: KeyId,
     pub context_id: Option<ContextId>,
+    pub epoch_id: Option<EpochId>,
 }
 
 impl EncryptionResult {
@@ -795,6 +951,7 @@ impl EncryptionResult {
         plaintext: TypedPlaintext,
         key_id: KeyId,
         context_id: Option<ContextId>,
+        epoch_id: Option<EpochId>,
     ) -> Self {
         Self {
             cipher,
@@ -802,7 +959,266 @@ impl EncryptionResult {
             plaintext,
             key_id,
             context_id,
+            epoch_id,
         }
+    }
+}
+
+impl FromStr for PreviousEpochParameters {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut context_id = None;
+        let mut epoch_id = None;
+        let mut previous_keys = Vec::new();
+        let mut previous_crs = Vec::new();
+
+        let mut string_iterator = s.split(";");
+
+        while let Some(pair) = string_iterator.next() {
+            let (key, value) = pair
+                .split_once(':')
+                .ok_or_else(|| format!("Invalid key:value pair: {}", pair))?;
+
+            match key {
+                "context_id" => {
+                    context_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid context_id: {e}"))?,
+                    )
+                }
+                "epoch_id" => {
+                    epoch_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid epoch_id: {e}. {value}"))?,
+                    )
+                }
+                "previous_keys" => {
+                    let mut values = Vec::new();
+                    let value = value
+                        .strip_prefix('[')
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_keys value must be enclosed in square brackets {}",
+                                value
+                            )
+                        })?
+                        .to_string();
+
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
+                                        "previous_keys value must be enclosed in square brackets {}",
+                                        value
+                                    )
+                                })?
+                                .to_string());
+                    } else {
+                        values.push(value);
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
+                        }
+                    }
+
+                    for key_info_str in values {
+                        previous_keys.push(key_info_str.parse()?);
+                    }
+                }
+                "previous_crs" => {
+                    let mut values = Vec::new();
+                    let value = value
+                        .strip_prefix('[')
+                        .ok_or_else(|| {
+                            format!(
+                                "previous_crs value must be enclosed in square brackets: {}",
+                                value
+                            )
+                        })?
+                        .to_string();
+                    if value.ends_with(']') {
+                        values.push(
+                            value
+                                .strip_suffix(']')
+                                .ok_or_else(|| {
+                                    format!(
+                                    "previous_crs value must be enclosed in square brackets: {}",
+                                    values[0]
+                                )
+                                })?
+                                .to_string(),
+                        );
+                    } else {
+                        values.push(value);
+                        for next_value in string_iterator.by_ref() {
+                            if next_value.ends_with(']') {
+                                values.push(
+                                    next_value
+                                        .to_string()
+                                        .strip_suffix(']')
+                                        .expect("we just checked the suffix is ]")
+                                        .to_string(),
+                                );
+                                break;
+                            }
+                            values.push(next_value.to_string());
+                        }
+                    }
+
+                    for crs_info_str in values {
+                        previous_crs.push(crs_info_str.parse()?);
+                    }
+                }
+                _ => return Err(format!("[PreviousEpochParameters] Unknown field: {}", key)),
+            }
+        }
+
+        Ok(PreviousEpochParameters {
+            context_id: context_id.ok_or("Missing context_id")?,
+            epoch_id: epoch_id.ok_or("Missing epoch_id")?,
+            previous_keys,
+            previous_crs,
+        })
+    }
+}
+
+impl FromStr for PreviousCrsInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (crs_id_str, digest_str) = s.split_once(',').ok_or_else(|| {
+            format!(
+                "Invalid crs info layout expect [crs_id=<id>,digest=<digest>]: {}",
+                s
+            )
+        })?;
+
+        // Parse Id
+        let (key, value) = crs_id_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key=value pair: {}", crs_id_str))?;
+
+        if key != "crs_id" {
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"crs_id\"",
+                key
+            ));
+        }
+        let crs_id = value.parse().map_err(|e| format!("Invalid crs_id: {e}"))?;
+
+        // Parse digest
+        let (key, value) = digest_str
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid key=value pair: {}", digest_str))?;
+        if key != "digest" {
+            return Err(format!(
+                "[PreviousCrsInfo] Unknown field: {}. Expected \"digest\"",
+                key
+            ));
+        }
+        let digest = value.to_string();
+
+        Ok(PreviousCrsInfo { crs_id, digest })
+    }
+}
+
+impl FromStr for PreviousKeyInfo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut key_id = None;
+        let mut preproc_id = None;
+        let mut xof_key_digest = None;
+        let mut server_key_digest = None;
+        let mut public_key_digest = None;
+
+        for pair in s.split(',') {
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid key=value pair: {}", pair))?;
+
+            match key {
+                "key_id" => {
+                    if key_id.is_some() {
+                        return Err("Duplicate key_id field".to_string());
+                    }
+                    key_id = Some(value.parse().map_err(|e| format!("Invalid key_id: {e}"))?);
+                }
+                "preproc_id" => {
+                    if preproc_id.is_some() {
+                        return Err("Duplicate preproc_id field".to_string());
+                    }
+                    preproc_id = Some(
+                        value
+                            .parse()
+                            .map_err(|e| format!("Invalid preproc_id: {e}"))?,
+                    )
+                }
+                "xof_key_digest" => {
+                    if xof_key_digest.is_some() {
+                        return Err("Duplicate xof_key_digest field".to_string());
+                    }
+                    if server_key_digest.is_some() || public_key_digest.is_some() {
+                        return Err("xof_key_digest field is mutually exclusive with server_key_digest and public_key_digest fields".to_string());
+                    }
+                    xof_key_digest = Some(value.to_string());
+                }
+                "server_key_digest" => {
+                    if server_key_digest.is_some() {
+                        return Err("Duplicate server_key_digest field".to_string());
+                    }
+                    if xof_key_digest.is_some() {
+                        return Err("server_key_digest field is mutually exclusive with xof_key_digest field".to_string());
+                    }
+                    server_key_digest = Some(value.to_string());
+                }
+                "public_key_digest" => {
+                    if public_key_digest.is_some() {
+                        return Err("Duplicate public_key_digest field".to_string());
+                    }
+                    if xof_key_digest.is_some() {
+                        return Err("public_key_digest field is mutually exclusive with xof_key_digest field".to_string());
+                    }
+                    public_key_digest = Some(value.to_string());
+                }
+                _ => return Err(format!("[PreviousKeyInfo] Unknown field: {}", key)),
+            }
+        }
+
+        if server_key_digest.is_some() != public_key_digest.is_some() {
+            return Err(
+                "If server_key_digest or public_key_digest is provided, both must be provided   "
+                    .to_owned(),
+            );
+        }
+
+        let key_digest = if let Some(xof_digest) = xof_key_digest {
+            DigestKeySet::CompressedKeySet(xof_digest)
+        } else {
+            DigestKeySet::NonCompressedKeySet(
+                server_key_digest.ok_or("Missing server_key_digest")?,
+                public_key_digest.ok_or("Missing public_key_digest")?,
+            )
+        };
+        Ok(PreviousKeyInfo {
+            key_id: key_id.ok_or("Missing key_id")?,
+            preproc_id: preproc_id.ok_or("Missing preproc_id")?,
+            key_digest,
+        })
     }
 }
 
@@ -820,16 +1236,64 @@ pub async fn fetch_ctxt_from_file(
 
     let key_id = cipher_with_params.params.key_id;
     let context_id = cipher_with_params.params.context_id;
+    let epoch_id = cipher_with_params.params.epoch_id;
     Ok(EncryptionResult::new(
         cipher_with_params.cipher,
         ct_format,
         ptxt,
         key_id,
         context_id,
+        epoch_id,
     ))
 }
 
-/// encrypt a given value and return the ciphertext
+/// Try to fetch keys for the given key ID, auto-detecting whether they are regular or compressed.
+///
+/// If `compressed_keys` is explicitly `true`, fetches `[CompressedXofKeySet]` only.
+/// Otherwise, tries `[PublicKey, ServerKey]` first; on failure, falls back to `[CompressedXofKeySet]`.
+/// Returns the fetched party confs and a boolean indicating whether compressed keys were found.
+async fn fetch_keys_auto_detect(
+    key_id: &str,
+    compressed_keys: bool,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+) -> anyhow::Result<(Vec<CoreConf>, bool)> {
+    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
+
+    if compressed_keys {
+        let confs = fetch_public_elements(
+            key_id,
+            &compressed_key_types,
+            cc_conf,
+            destination_prefix,
+            false,
+        )
+        .await?;
+        return Ok((confs, true));
+    }
+
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
+    match fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await {
+        Ok(confs) => Ok((confs, false)),
+        Err(_) => {
+            tracing::info!(
+                "Regular keys [PublicKey, ServerKey] not found, trying CompressedXofKeySet..."
+            );
+            let confs = fetch_public_elements(
+                key_id,
+                &compressed_key_types,
+                cc_conf,
+                destination_prefix,
+                false,
+            )
+            .await?;
+            Ok((confs, true))
+        }
+    }
+}
+
+/// Encrypt a given value and return the ciphertext
+///
 /// parameters:
 /// - `keys_folder`: the root of the storage of the core client
 /// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
@@ -840,7 +1304,11 @@ pub async fn encrypt(
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
     if to_encrypt.len() != cipher_params.data_type.bits().div_ceil(8) {
-        tracing::warn!("Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.", to_encrypt.len(), cipher_params.data_type);
+        tracing::warn!(
+            "Byte length of value to encrypt ({}) does not match FHE type ({}) and will be padded/truncated.",
+            to_encrypt.len(),
+            cipher_params.data_type
+        );
     }
 
     let ptxt = TypedPlaintext {
@@ -870,6 +1338,7 @@ pub async fn encrypt(
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
         },
+        cipher_params.compressed_keys,
     )
     .await;
 
@@ -888,13 +1357,8 @@ pub async fn encrypt(
         ptxt,
         cipher_params.key_id,
         cipher_params.context_id,
+        cipher_params.epoch_id,
     ))
-}
-
-static INIT_LOG: Once = Once::new();
-
-pub fn init_testing() {
-    INIT_LOG.call_once(setup_logging);
 }
 
 pub fn setup_logging() {
@@ -904,8 +1368,6 @@ pub fn setup_logging() {
     // read the RUST_LOG environment variable to set the logging level, or set to INFO as default
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
-
-    println!("Setting up logging with level: {log_level:?}");
 
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
@@ -931,7 +1393,7 @@ async fn read_kms_addresses_local(
                 path: path.to_path_buf(),
                 prefix: storage_prefix,
             }));
-            let storage = make_storage(store_path, StorageType::PUB, None, None)?;
+            let storage = make_storage(store_path, StorageType::PUB, None)?;
             Vault {
                 storage,
                 keychain: None,
@@ -966,18 +1428,40 @@ pub async fn execute_cmd(
 ) -> Result<Vec<(Option<RequestId>, String)>, Box<dyn std::error::Error + 'static>> {
     let client_timer_start = tokio::time::Instant::now();
 
-    let path_to_config = cmd_config.file_conf.clone().unwrap();
+    let path_to_configs = cmd_config.file_conf.clone().unwrap();
     let command = &cmd_config.command;
     let max_iter = cmd_config.max_iter;
     let expect_all_responses = cmd_config.expect_all_responses;
 
-    tracing::info!("Path to config: {:?}", &path_to_config);
+    tracing::info!("Path to configs: {:?}", &path_to_configs);
     tracing::info!("Starting command: {:?}", command);
-    let cc_conf: CoreClientConfig = Settings::builder()
-        .path(&path_to_config)
+    let mut path_iter = path_to_configs.iter();
+    let mut cc_conf: CoreClientConfig = Settings::builder()
+        .path(path_iter.next().unwrap())
         .env_prefix("CORE_CLIENT")
         .build()
         .init_conf()?;
+
+    let known_addresses = cc_conf
+        .cores
+        .iter()
+        .map(|core| core.address.clone())
+        .collect::<Vec<String>>();
+
+    for path_to_config in path_iter {
+        tracing::info!("Using config file: {:?}", &path_to_config);
+
+        let mut inner_cc_conf: CoreClientConfig = Settings::builder()
+            .path(path_to_config)
+            .env_prefix("CORE_CLIENT")
+            .build()
+            .init_conf()?;
+
+        inner_cc_conf
+            .cores
+            .retain(|core| !known_addresses.contains(&core.address));
+        cc_conf.cores.extend(inner_cc_conf.cores);
+    }
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
@@ -1025,12 +1509,8 @@ pub async fn execute_cmd(
 
         match cc_conf.kms_type {
             KmsType::Centralized => {
-                let address = cc_conf
-                    .cores
-                    .first()
-                    .expect("No core address provided")
-                    .address
-                    .clone();
+                let core = cc_conf.cores.first().expect("No core config provided");
+                let address = core.address.clone();
 
                 tracing::info!("Centralized Core Client - connecting to: {}", address);
 
@@ -1047,14 +1527,14 @@ pub async fn execute_cmd(
                     100
                 )?;
                 // Centralized is always party 1
-                core_endpoints_req.insert(1, core_endpoint_req);
+                core_endpoints_req.insert(core.clone(), core_endpoint_req);
 
                 let core_endpoint_resp = retry!(
                     CoreServiceEndpointClient::connect(url.clone()).await,
                     5,
                     100
                 )?;
-                core_endpoints_resp.insert(1, core_endpoint_resp);
+                core_endpoints_resp.insert(core.clone(), core_endpoint_resp);
 
                 // there's only 1 party, so use index 1
                 pub_storage.insert(
@@ -1099,14 +1579,16 @@ pub async fn execute_cmd(
                         5,
                         100
                     )?;
-                    core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
+                    // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
+                    // WHEN HAVING MULTIPLE CONTEXTS
+                    core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
 
                     let core_endpoint_resp = retry!(
                         CoreServiceEndpointClient::connect(url.clone()).await,
                         5,
                         100
                     )?;
-                    core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
+                    core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
                     pub_storage.insert(
                         cur_core.party_id as u32,
@@ -1140,16 +1622,11 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(addr_vec);
 
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(internal_client.unwrap()));
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -1162,36 +1639,32 @@ pub async fn execute_cmd(
                 plaintext: ptxt,
                 key_id,
                 context_id,
+                epoch_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_public_elements(
+                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        &key_types,
+                        cipher_parameters.compressed_keys,
                         &cc_conf,
                         destination_prefix,
-                        false,
                     )
                     .await?;
                     let storage_prefix = Some(
                         cc_conf
                             .cores
                             .iter()
-                            .find(|c| c.party_id == party_ids[0])
+                            .find(|c| c == &&party_confs[0])
                             .expect("party ID not found in config")
                             .object_folder
                             .as_str(),
                     );
-                    encrypt(
-                        destination_prefix,
-                        storage_prefix,
-                        cipher_parameters.clone(),
-                    )
-                    .await?
+                    let mut cipher_parameters = cipher_parameters.clone();
+                    cipher_parameters.compressed_keys = detected_compressed;
+                    encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
 
@@ -1212,6 +1685,7 @@ pub async fn execute_cmd(
                 ct_batch,
                 key_id,
                 context_id,
+                epoch_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
@@ -1219,10 +1693,14 @@ pub async fn execute_cmd(
                 kms_addrs.to_vec(),
                 max_iter,
                 num_expected_responses,
+                cipher_args.get_inter_request_delay_ms(),
+                cipher_args.get_parallel_requests(),
+                cipher_args.get_extra_data(),
             )
             .await?
         }
         CCCommand::UserDecrypt(cipher_args) => {
+            validate_cipher_args(cipher_args)?;
             let internal_client = Arc::new(RwLock::new(
                 internal_client.expect("UserDecrypt requires a KMS client"),
             ));
@@ -1238,37 +1716,32 @@ pub async fn execute_cmd(
                 plaintext: ptxt,
                 key_id,
                 context_id,
+                epoch_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_public_elements(
+                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        &key_types,
+                        cipher_parameters.compressed_keys,
                         &cc_conf,
                         destination_prefix,
-                        false,
                     )
                     .await?;
                     let storage_prefix = Some(
                         cc_conf
                             .cores
                             .iter()
-                            .find(|c| c.party_id == party_ids[0])
+                            .find(|c| c == &&party_confs[0])
                             .expect("party ID not found in config")
                             .object_folder
                             .as_str(),
                     );
-
-                    encrypt(
-                        destination_prefix,
-                        storage_prefix,
-                        cipher_parameters.clone(),
-                    )
-                    .await?
+                    let mut cipher_parameters = cipher_parameters.clone();
+                    cipher_parameters.compressed_keys = detected_compressed;
+                    encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
 
@@ -1289,12 +1762,16 @@ pub async fn execute_cmd(
                 ct_batch,
                 key_id,
                 context_id,
+                epoch_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                cipher_args.get_inter_request_delay_ms(),
+                cipher_args.get_parallel_requests(),
+                cipher_args.get_extra_data(),
             )
             .await?
         }
@@ -1320,6 +1797,7 @@ pub async fn execute_cmd(
                 false,
                 shared_args,
                 destination_prefix,
+                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1345,12 +1823,18 @@ pub async fn execute_cmd(
                 true,
                 shared_args,
                 destination_prefix,
+                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
             vec![(Some(req_id), "insecure keygen done".to_string())]
         }
-        CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::CrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+            extra_data,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "CRS generation with parameter {}.",
@@ -1369,11 +1853,19 @@ pub async fn execute_cmd(
                 fhe_params,
                 false,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
+                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
         }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+        CCCommand::InsecureCrsGen(CrsParameters {
+            max_num_bits,
+            epoch_id,
+            context_id,
+            extra_data,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure CRS generation with parameter {}.",
@@ -1392,6 +1884,9 @@ pub async fn execute_cmd(
                 fhe_params,
                 true,
                 destination_prefix,
+                *context_id,
+                *epoch_id,
+                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
@@ -1399,10 +1894,13 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
+            compressed,
+            from_existing_shares,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
+            let keyset_config = keygen::build_keyset_config(*compressed, *from_existing_shares);
             let req_id = do_preproc(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1412,6 +1910,7 @@ pub async fn execute_cmd(
                 fhe_params,
                 context_id.as_ref(),
                 epoch_id.as_ref(),
+                keyset_config,
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
@@ -1448,30 +1947,25 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-            let party_ids = fetch_public_elements(
+            let (party_confs, detected_compressed) = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
-                &key_types,
+                cipher_parameters.compressed_keys,
                 &cc_conf,
                 destination_prefix,
-                false,
             )
             .await?;
             let storage_prefix = Some(
                 cc_conf
                     .cores
                     .iter()
-                    .find(|c| c.party_id == party_ids[0])
+                    .find(|c| c == &&party_confs[0])
                     .expect("party ID not found in config")
                     .object_folder
                     .as_str(),
             );
-            encrypt(
-                destination_prefix,
-                storage_prefix,
-                cipher_parameters.clone(),
-            )
-            .await?;
+            let mut cipher_parameters = cipher_parameters.clone();
+            cipher_parameters.compressed_keys = detected_compressed;
+            encrypt(destination_prefix, storage_prefix, cipher_parameters).await?;
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
@@ -1504,8 +1998,10 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -1535,8 +2031,10 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
+                result_parameters.compressed,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
@@ -1588,6 +2086,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -1619,6 +2118,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 req_id,
                 dummy_domain(),
+                vec![],
                 resp_response_vec,
                 cmd_config.download_all,
             )
@@ -1705,37 +2205,30 @@ pub async fn execute_cmd(
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
         }
-        CCCommand::Reshare(ReshareParameters {
-            key_id,
-            preproc_id,
-            from_context_id,
-            from_epoch_id,
-            server_key_digest,
-            public_key_digest,
-        }) => {
-            let request_id = do_reshare(
+        CCCommand::NewEpoch(new_epoch_params) => {
+            let epoch_id = do_new_epoch(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
-                &mut rng,
                 cmd_config,
                 &cc_conf,
                 destination_prefix,
                 &kms_addrs,
                 num_parties,
                 fhe_params,
-                key_id,
-                preproc_id,
-                from_context_id.as_ref(),
-                from_epoch_id.as_ref(),
-                server_key_digest.as_ref(),
-                public_key_digest.as_ref(),
+                new_epoch_params.clone(),
             )
             .await
             .unwrap();
-            vec![
-                (Some(request_id), "Reshare complete".to_string()),
-                (Some(*key_id), "Key ready to be used".to_string()),
-            ]
+
+            let mut res = vec![(Some(epoch_id.into()), "New epoch created".to_string())];
+
+            if let Some(prev_epoch) = &new_epoch_params.previous_epoch_params {
+                res.push((
+                    Some(prev_epoch.epoch_id.into()),
+                    "Previous epoch used for reshare".to_string(),
+                ));
+            }
+            res
         }
         CCCommand::NewMpcContext(context_param) => match context_param {
             NewMpcContextParameters::SerializedContextPath(context_path) => {
@@ -1780,12 +2273,19 @@ pub async fn execute_cmd(
                 ),
             )]
         }
-        CCCommand::PrssInit(PrssInitParameters {
-            context_id,
-            epoch_id,
-        }) => {
-            do_prss_init(&core_endpoints_req, context_id, epoch_id).await?;
-            vec![(Some((*epoch_id).into()), "prss init done".to_string())]
+        CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
+            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
+            vec![(
+                Some((*context_id).into()),
+                "context destruction done".to_string(),
+            )]
+        }
+        CCCommand::DestroyMpcEpoch(DestroyMpcEpochParameters { epoch_id }) => {
+            do_destroy_mpc_epoch(&core_endpoints_req, epoch_id).await?;
+            vec![(
+                Some((*epoch_id).into()),
+                "epoch destruction done".to_string(),
+            )]
         }
     };
 
@@ -1793,7 +2293,9 @@ pub async fn execute_cmd(
 
     let total_duration = client_timer_start.elapsed();
     let command_duration = command_timer_start.elapsed();
-    tracing::info!("Core Client command {command:?} took {total_duration:?} in total (including setup), and {command_duration:?} for the command only.");
+    tracing::info!(
+        "Core Client command {command:?} took {total_duration:?} in total (including setup), and {command_duration:?} for the command only."
+    );
 
     Ok(res)
 }
@@ -1866,11 +2368,13 @@ mod tests {
             .unwrap();
 
         tracing::info!("Core Client Config: {:?}", cc_conf_test);
-        // check that the fhe_params value from the config toml ("Default") is read correctly
-        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Default));
+        // check that the fhe_params value from the config toml ("Test") is read correctly
+        assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Test));
 
-        // now set the env variable that overwrites fhe_params with "Test", which should take precedence if it's set
-        env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
+        // now set the env variable that overwrites fhe_params with "Default", which should take precedence if it's set
+        unsafe {
+            env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+        }
 
         let cc_conf_default: CoreClientConfig = Settings::builder()
             .path(&path_to_config)
@@ -1879,7 +2383,130 @@ mod tests {
             .init_conf()
             .unwrap();
 
-        // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
-        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Test));
+        // check that the fhe_params value from the env var ("Default") is read correctly, even if the toml contains "Test"
+        assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Default));
+    }
+
+    #[test]
+    fn test_parse_previous_key_info() {
+        let id1 = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id2 = "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id3 = "1112030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id4 = "1111030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id5 = "1111130405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id6 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id7 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let id8 = "1111110405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        // Test the FromStr impl of PreviousEpochParameters
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
+        );
+        let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
+
+        assert_eq!(parsed.context_id.to_string(), id1);
+        assert_eq!(parsed.epoch_id.to_string(), id2);
+        assert_eq!(parsed.previous_keys.len(), 2);
+        for key_info in parsed.previous_keys {
+            match key_info.key_digest {
+                DigestKeySet::CompressedKeySet(compressed) => {
+                    assert_eq!(key_info.key_id.to_string(), id5);
+                    assert_eq!(key_info.preproc_id.to_string(), id6);
+                    assert_eq!(compressed, "abc456")
+                }
+                DigestKeySet::NonCompressedKeySet(serverkey, pubkey) => {
+                    assert_eq!(key_info.key_id.to_string(), id3);
+                    assert_eq!(key_info.preproc_id.to_string(), id4);
+                    assert_eq!(serverkey, "abc123");
+                    assert_eq!(pubkey, "def123");
+                }
+            }
+        }
+        assert_eq!(parsed.previous_crs.len(), 2);
+        let crs_info_1 = &parsed.previous_crs[0];
+        assert_eq!(crs_info_1.crs_id.to_string(), id7);
+        assert_eq!(crs_info_1.digest, "abc789");
+
+        let crs_info_2 = &parsed.previous_crs[1];
+        assert_eq!(crs_info_2.crs_id.to_string(), id8);
+        assert_eq!(crs_info_2.digest, "abc000");
+
+        // Missing context_id should fail
+        let input_string = format!(
+            "epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing epoch_id should fail
+        let input_string = format!(
+            "context_id:{id1};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing public key digest for non-compressed key set should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing key_id in previous keys should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing preproc_id in previous keys should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Mixing compressed and non-compressed key sets should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123,xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Missing server key digest for non-compressed key set should fail
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        // Wrong ids test
+        let input_string = format!(
+            "context_id:{wrong_id};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{wrong_id};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={wrong_id},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={wrong_id},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={wrong_id},preproc_id={id6},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={wrong_id},xof_key_digest=abc456]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+
+        let input_string = format!(
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
+        );
+        assert!(PreviousEpochParameters::from_str(&input_string).is_err());
     }
 }

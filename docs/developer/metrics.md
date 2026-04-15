@@ -125,7 +125,7 @@ NOTE: these are not fully implemented yet!
 Track instantaneous values that can increase or decrease:
 - `{prefix}_gauge` - General purpose gauge for recording independent values
   ```rust
-    cpu_load_gauge: TaggedMetric<Gauge<f64>>, 
+    cpu_load_gauge: TaggedMetric<Gauge<f64>>,       // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
@@ -137,6 +137,10 @@ Track instantaneous values that can increase or decrease:
     inactive_session_gauge: TaggedMetric<Gauge<u64>>, // Number of inactive sessions
     meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
+    meta_storage_pub_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of public decryptions in meta storage
+    meta_storage_user_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of user decryptions in meta storage
+    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>,           // CPU load for the current process
+    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Memory usage for the current process
   ```
 
 ## Usage Examples
@@ -239,7 +243,7 @@ fn handle_request(request: Request) -> Result<(), Error> {
 
     metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;
     match validate_data(request) {
-        Ok(()) => {        
+        Ok(()) => {
             process_valid_data(data)
         }
         Err(e) => {
@@ -260,7 +264,7 @@ fn handle_request(request: Request) -> Result<(), Error> {
 
 ### 2. Error Recording
 - Use predefined error type constants from `metrics_names` module
-- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request. 
+- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request.
 
 ### 3. Tag Usage
 - Use tag keys that match parameter names when possible

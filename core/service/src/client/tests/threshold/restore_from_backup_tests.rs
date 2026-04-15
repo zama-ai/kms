@@ -1,3 +1,7 @@
+// DEPRECATED: Isolated equivalent in `restore_from_backup_tests_isolated.rs`
+// - test_insecure_threshold_crs_backup → test_insecure_threshold_crs_backup_isolated
+// TODO: Remove after migration complete.
+
 use crate::{
     client::tests::threshold::{common::threshold_handles, crs_gen_tests::run_crs},
     consts::{
@@ -5,22 +9,23 @@ use crate::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
-    engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
+    engine::base::{INSECURE_PREPROCESSING_ID, derive_request_id},
     util::key_setup::test_tools::{
-        file_backup_vault, purge, purge_backup, purge_priv, purge_pub, EncryptionConfig,
-        TestingPlaintext,
+        EncryptionConfig, TestingPlaintext, file_backup_vault, purge, purge_backup, purge_priv,
+        purge_pub,
     },
     vault::storage::{
-        delete_all_at_request_id, file::FileStorage, StorageReader, StorageReaderExt, StorageType,
+        StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
+        file::FileStorage,
     },
 };
 use kms_grpc::{
+    RequestId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
-    RequestId,
 };
 use serial_test::serial;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::endpoints::decryption::DecryptionMode;
 use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -68,26 +73,30 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys_1 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id_1,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         test_path,
         0,
     )
     .await;
 
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys_2 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id_2,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         test_path,
         0,
@@ -190,13 +199,15 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         test_path,
         0,
@@ -226,14 +237,16 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
             backup_prefix.as_deref(),
         )
         .await;
-        assert!(backup_storage
-            .data_exists_at_epoch(
-                &key_id,
-                &DEFAULT_EPOCH_ID,
-                &PrivDataType::FheKeyInfo.to_string()
-            )
-            .await
-            .unwrap());
+        assert!(
+            backup_storage
+                .data_exists_at_epoch(
+                    &key_id,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string()
+                )
+                .await
+                .unwrap()
+        );
     }
     purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
     purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
@@ -253,6 +266,7 @@ async fn test_insecure_threshold_crs_backup() {
         "test_insecure_threshold_crs_backup_{amount_parties}_{param:?}",
     ))
     .unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     let test_path = None;
     purge(
         test_path,
@@ -272,20 +286,28 @@ async fn test_insecure_threshold_crs_backup() {
         true, // insecure execution
         &req_id,
         Some(16),
+        None,
     )
     .await;
     // Generated crs, delete it from private storage
     for prefix in priv_storage_prefixes {
         let mut priv_storage: FileStorage =
             FileStorage::new(test_path, StorageType::PRIV, prefix.as_deref()).unwrap();
-        delete_all_at_request_id(&mut priv_storage, &req_id)
-            .await
-            .unwrap();
+        delete_at_request_and_epoch_id(
+            &mut priv_storage,
+            &req_id,
+            &epoch_id,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
         // Check that is has been removed
-        assert!(!priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            !priv_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
     }
     // Now try to restore
     let mut resp_tasks = JoinSet::new();
@@ -318,18 +340,22 @@ async fn test_insecure_threshold_crs_backup() {
         let backup_storage: FileStorage =
             FileStorage::new(test_path, StorageType::BACKUP, backup_prefix.as_deref()).unwrap();
         // Check the back up is still there
-        assert!(backup_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            backup_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
         // Check that the file has been restored
         let priv_storage: FileStorage =
             FileStorage::new(test_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         // Check the back up is still there
-        assert!(priv_storage
-            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-            .await
-            .unwrap());
+        assert!(
+            priv_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap()
+        );
     }
     purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
     purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;

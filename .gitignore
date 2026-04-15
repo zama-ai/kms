@@ -1,11 +1,18 @@
+CLAUDE.md
+.claude/
 /target*
-/temp
+**/temp/*
 /keys
 /crs
+/test-material
 /tls
+/backup_vault
+**/proptest-regressions
+/test-material
 .vscode/launch.json
 .DS_Store
 .vscode/
+.claude
 .idea/
 *.eif
 .crates.toml
@@ -29,10 +36,10 @@ kms.sublime-workspace
 **/tests/data
 /core-client/artifacts
 *.tgz
+ci/kube-testing/certs/
 
 # Local values files for Kind testing
 ci/kube-testing/kms/local-values-*.yaml
 
-
-# Ignore DevSpace cache and log folder
-.devspace/
+.mcp.json
+.fastembed*

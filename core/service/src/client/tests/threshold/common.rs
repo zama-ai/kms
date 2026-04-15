@@ -2,33 +2,36 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{
-    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 use crate::util::key_setup::test_tools::setup::{ensure_dir_exist, ensure_testing_material_exists};
 use crate::util::key_setup::{
-    ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist, max_threshold,
-    ThresholdSigningKeyConfig,
+    ThresholdSigningKeyConfig, ensure_client_keys_exist,
+    ensure_threshold_server_signing_keys_exist, max_threshold,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
+use crate::vault::storage::delete_at_request_id;
+use crate::vault::storage::{StorageType, file::FileStorage};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::commons::utils::ZipChecked;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]
 async fn threshold_handles_w_vaults(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -52,9 +55,40 @@ async fn threshold_handles_w_vaults(
         pub_storage.push(
             FileStorage::new(test_data_path, StorageType::PUB, pub_prefix.as_deref()).unwrap(),
         );
-        priv_storage.push(
-            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap(),
-        );
+        let mut cur_priv_storage =
+            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
+        if ensure_default_prss {
+            // Note that migration will move legacy prss (whose ID depends on amount of parties) to the new type, which does not
+            // this means that when mixing tests of different amount of parties using the same storage, we need to redo PRSS
+            // Since migation is only done for the 13/4 configuration this is the only legacy PRSS we need to clear
+            let req_z64 =
+                derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID)).unwrap();
+            let req_z128 =
+                derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))
+                    .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &req_z64,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &req_z128,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .unwrap();
+            delete_at_request_id(
+                &mut cur_priv_storage,
+                &(*DEFAULT_EPOCH_ID).into(),
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+        priv_storage.push(cur_priv_storage);
     }
     if generate_test_material {
         ensure_testing_material_exists(test_data_path).await;
@@ -84,7 +118,7 @@ async fn threshold_handles_w_vaults(
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
+        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
@@ -113,7 +147,7 @@ async fn threshold_handles_w_vaults(
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -141,7 +175,7 @@ pub(crate) async fn threshold_handles(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         true,
         rate_limiter_conf,
         decryption_mode,
@@ -157,7 +191,7 @@ pub(crate) async fn threshold_handles(
 pub(crate) async fn threshold_handles_custodian_backup(
     params: DKGParams,
     amount_parties: usize,
-    run_prss: bool,
+    ensure_default_prss: bool,
     generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
@@ -187,7 +221,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
     threshold_handles_w_vaults(
         params,
         amount_parties,
-        run_prss,
+        ensure_default_prss,
         generate_test_material,
         rate_limiter_conf,
         decryption_mode,
@@ -195,4 +229,206 @@ pub(crate) async fn threshold_handles_custodian_backup(
         test_data_path,
     )
     .await
+}
+
+// =============================================================================
+// ISOLATED TEST HELPERS
+// =============================================================================
+// These helpers are used by isolated tests that use the consolidated testing
+// module (kms_lib::testing). They provide simplified interfaces for common
+// threshold operations without requiring the full test setup infrastructure.
+
+/// Helper to generate threshold key using insecure mode (for isolated tests)
+///
+/// This function sends insecure_key_gen requests to all clients and waits for
+/// key generation to complete. It's designed for use with ThresholdTestEnv.
+///
+/// # Arguments
+/// * `clients` - Map of party ID to gRPC client
+/// * `request_id` - Unique identifier for this key generation request
+/// * `params` - FHE parameters to use for key generation
+///
+/// # Returns
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
+/// * `Err` if any party failed
+#[cfg(feature = "insecure")]
+pub async fn threshold_insecure_key_gen_isolated(
+    clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    request_id: &kms_grpc::RequestId,
+    params: kms_grpc::kms::v1::FheParameter,
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
+    use crate::dummy_domain;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
+    use crate::testing::helpers::domain_to_msg;
+    use kms_grpc::kms::v1::KeyGenRequest;
+    use tokio::task::JoinSet;
+
+    let domain_msg = domain_to_msg(&dummy_domain());
+
+    // Use insecure_key_gen endpoint which bypasses preprocessing validation
+    let mut keygen_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = KeyGenRequest {
+            request_id: Some((*request_id).into()),
+            params: Some(params as i32),
+            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
+            domain: Some(domain_msg.clone()),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        keygen_tasks.spawn(async move {
+            cur_client
+                .insecure_key_gen(tonic::Request::new(keygen_req))
+                .await
+        });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for key generation to complete on all parties and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+                .await;
+        }
+        responses.push((*party_id, result));
+    }
+
+    Ok(responses)
+}
+
+/// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
+///
+/// This function runs the full preprocessing + key generation flow using secure mode.
+/// It's designed for use with ThresholdTestEnv when PRSS is enabled.
+///
+/// # Arguments
+/// * `clients` - Map of party ID to gRPC client
+/// * `preproc_id` - Unique identifier for preprocessing request
+/// * `keygen_id` - Unique identifier for key generation request
+/// * `params` - FHE parameters to use
+///
+/// # Returns
+/// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
+/// * `Err` if any party failed
+#[cfg(feature = "slow_tests")]
+#[allow(clippy::too_many_arguments)]
+pub async fn threshold_key_gen_secure_isolated(
+    clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    preproc_id: &kms_grpc::RequestId,
+    keygen_id: &kms_grpc::RequestId,
+    params: kms_grpc::kms::v1::FheParameter,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
+    keyset_added_info: Option<kms_grpc::kms::v1::KeySetAddedInfo>,
+    context_id: Option<kms_grpc::kms::v1::RequestId>,
+    epoch_id: Option<kms_grpc::kms::v1::RequestId>,
+) -> anyhow::Result<
+    Vec<(
+        u32,
+        Result<tonic::Response<kms_grpc::kms::v1::KeyGenResult>, tonic::Status>,
+    )>,
+> {
+    use crate::dummy_domain;
+    use crate::testing::helpers::domain_to_msg;
+    use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
+    use tokio::task::JoinSet;
+
+    let domain_msg = domain_to_msg(&dummy_domain());
+
+    // Step 1: Run preprocessing
+    let mut preproc_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let preproc_req = KeyGenPreprocRequest {
+            request_id: Some((*preproc_id).into()),
+            params: params as i32,
+            domain: Some(domain_msg.clone()),
+            keyset_config,
+            context_id: context_id.clone(),
+            epoch_id: epoch_id.clone(),
+        };
+        preproc_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(preproc_req))
+                .await
+        });
+    }
+
+    while let Some(res) = preproc_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for preprocessing to complete
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Step 2: Run key generation using the preprocessed material
+    let mut keygen_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = KeyGenRequest {
+            request_id: Some((*keygen_id).into()),
+            params: Some(params as i32),
+            preproc_id: Some((*preproc_id).into()),
+            domain: Some(domain_msg.clone()),
+            keyset_config,
+            keyset_added_info: keyset_added_info.clone(),
+            context_id: context_id.clone(),
+            epoch_id: epoch_id.clone(),
+            extra_data: vec![],
+        };
+        keygen_tasks
+            .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for key generation to complete and collect responses
+    let mut responses = Vec::new();
+    for (party_id, client) in clients.iter() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
+                .await;
+        }
+        responses.push((*party_id, result));
+    }
+
+    Ok(responses)
 }

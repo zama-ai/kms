@@ -12,8 +12,8 @@ use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
 use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
-use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
-use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
+use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::signatures::{PrivateSigKey, internal_sign};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -22,22 +22,22 @@ use crate::util::file_handling::write_element;
 #[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
 use crate::vault::storage::crypto_material::get_core_signing_key;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
+use kms_grpc::RequestId;
 #[cfg(feature = "wasm_tests")]
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-use kms_grpc::RequestId;
 use serial_test::serial;
-use std::collections::{hash_map::Entry, HashMap, HashSet};
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use std::collections::{HashMap, HashSet, hash_map::Entry};
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "wasm_tests")]
-use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+use threshold_types::role::Role;
 use tokio::task::JoinSet;
 
 #[cfg(feature = "slow_tests")]
@@ -57,7 +57,6 @@ async fn test_user_decryption_threshold_nightly(
     user_decryption_threshold(
         TEST_PARAM,
         key_id,
-        false,
         false,
         pt,
         EncryptionConfig {
@@ -95,7 +94,6 @@ async fn test_user_decryption_threshold(
         TEST_PARAM,
         key_id,
         false,
-        false,
         pt,
         EncryptionConfig {
             compression: true,
@@ -125,7 +123,6 @@ async fn test_user_decryption_threshold_malicious(
         TEST_PARAM,
         key_id,
         false,
-        false,
         pt,
         EncryptionConfig {
             compression: true,
@@ -149,7 +146,6 @@ async fn test_user_decryption_threshold_malicious_failure() {
     user_decryption_threshold(
         TEST_PARAM,
         &TEST_THRESHOLD_KEY_ID_4P,
-        false,
         false,
         TestingPlaintext::U32(u32::MAX),
         EncryptionConfig {
@@ -179,7 +175,6 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
     user_decryption_threshold(
         TEST_PARAM,
         &TEST_THRESHOLD_KEY_ID_4P,
-        false,
         false,
         TestingPlaintext::U16(u16::MAX),
         EncryptionConfig {
@@ -216,38 +211,6 @@ async fn test_user_decryption_threshold_precompute_sns(
         TEST_PARAM,
         key_id,
         false,
-        false,
-        TestingPlaintext::U8(42),
-        EncryptionConfig {
-            compression: false,
-            precompute_sns: true,
-        },
-        4,
-        secure,
-        amount_parties,
-        None,
-        None,
-        Some(decryption_mode),
-    )
-    .await;
-}
-
-#[rstest::rstest]
-#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_threshold_precompute_sns_legacy(
-    #[case] secure: bool,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-    #[case] decryption_mode: DecryptionMode,
-) {
-    user_decryption_threshold(
-        TEST_PARAM,
-        key_id,
-        false,
-        true,
         TestingPlaintext::U8(42),
         EncryptionConfig {
             compression: false,
@@ -277,37 +240,6 @@ async fn test_user_decryption_threshold_and_write_transcript(
     user_decryption_threshold(
         TEST_PARAM,
         key_id,
-        true,
-        false,
-        TestingPlaintext::U8(42),
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: false,
-        },
-        1,
-        secure,
-        amount_parties,
-        None,
-        None,
-        None,
-    )
-    .await;
-}
-
-#[cfg(feature = "wasm_tests")]
-#[rstest::rstest]
-#[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_threshold_and_write_transcript_legacy(
-    #[case] secure: bool,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-) {
-    user_decryption_threshold(
-        TEST_PARAM,
-        key_id,
-        true,
         true,
         TestingPlaintext::U8(42),
         EncryptionConfig {
@@ -340,7 +272,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
         DEFAULT_PARAM,
         key_id,
         true,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -373,7 +304,6 @@ async fn default_user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -404,7 +334,6 @@ async fn default_user_decryption_threshold_precompute_sns(
     user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
-        false,
         false,
         msg,
         EncryptionConfig {
@@ -438,7 +367,6 @@ async fn default_user_decryption_threshold_with_crash(
         DEFAULT_PARAM,
         key_id,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -459,14 +387,11 @@ async fn default_user_decryption_threshold_with_crash(
     .await;
 }
 
-/// Note that the `legacy` argument is used to determine whether to use the legacy
-/// user decryption request, created using [Client::user_decryption_request_legacy] or the current one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_threshold(
     dkg_params: DKGParams,
     key_id: &RequestId,
     _write_transcript: bool,
-    legacy: bool,
     msg: TestingPlaintext,
     enc_config: EncryptionConfig,
     parallelism: usize,
@@ -486,6 +411,7 @@ pub(crate) async fn user_decryption_threshold(
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
         enc_config,
+        false, // compressed_keys
     )
     .await;
 
@@ -499,11 +425,6 @@ pub(crate) async fn user_decryption_threshold(
                 ciphertext_format: ct_format.into(),
                 external_handle: j.to_be_bytes().to_vec(),
             }];
-            let encryption_scheme = if legacy {
-                PkeSchemeType::MlKem1024
-            } else {
-                PkeSchemeType::MlKem512
-            };
             let (req, enc_pk, enc_sk) = internal_client
                 .user_decryption_request(
                     &dummy_domain(),
@@ -511,7 +432,8 @@ pub(crate) async fn user_decryption_threshold(
                     &request_id,
                     &key_id.to_string().try_into().unwrap(),
                     None,
-                    encryption_scheme,
+                    None,
+                    &[],
                 )
                 .unwrap();
 
@@ -643,13 +565,7 @@ pub(crate) async fn user_decryption_threshold(
                 agg_resp,
             };
             let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                if legacy {
-                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
-                } else {
-                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
-                }
-            } else if legacy {
-                crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
+                crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
             } else {
                 crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
             };
@@ -714,9 +630,10 @@ async fn process_batch_threshold_user_decryption(
                         .process_user_decryption_resp(
                             &client_req,
                             &domain,
-                            &responses[1..],
                             enc_pk,
                             enc_sk,
+                            None,
+                            &responses[1..],
                         )
                         .unwrap(),
                 )
@@ -727,33 +644,38 @@ async fn process_batch_threshold_user_decryption(
             // modify the responses if there are malicious parties
             // note that we also need to sign the modified payload
             responses.iter_mut().for_each(|resp| {
-                if let Some(payload) = &mut resp.payload {
-                    if let Some(mal_parties) = &malicious_parties {
-                        if mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
-                        {
-                            let orig_party_id = payload.party_id;
-                            // Modify the party ID maliciously
-                            if payload.party_id == 1 {
-                                payload.party_id = amount_parties as u32;
-                            } else {
-                                payload.party_id -= 1;
-                            }
-                            let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
-                            let sig = internal_sign(
-                                &DSEP_USER_DECRYPTION,
-                                &sig_payload_vec,
-                                &server_private_keys[&orig_party_id],
-                            )
-                            .unwrap();
-                            resp.signature = sig.sig.to_vec();
-                        }
+                if let Some(payload) = &mut resp.payload
+                    && let Some(mal_parties) = &malicious_parties
+                    && mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
+                {
+                    let orig_party_id = payload.party_id;
+                    // Modify the party ID maliciously
+                    if payload.party_id == 1 {
+                        payload.party_id = amount_parties as u32;
+                    } else {
+                        payload.party_id -= 1;
                     }
+                    let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
+                    let sig = internal_sign(
+                        &DSEP_USER_DECRYPTION,
+                        &sig_payload_vec,
+                        &server_private_keys[&orig_party_id],
+                    )
+                    .unwrap();
+                    resp.signature = sig.sig.to_vec();
                 }
             });
 
             // test with all responses, some may be malicious
             let final_result = internal_client
-                .process_user_decryption_resp(&client_req, &domain, &responses, enc_pk, enc_sk)
+                .process_user_decryption_resp(
+                    &client_req,
+                    &domain,
+                    enc_pk,
+                    enc_sk,
+                    None,
+                    &responses,
+                )
                 .unwrap();
 
             if let Some(res) = result_from_dropped_response {
@@ -767,7 +689,7 @@ async fn process_batch_threshold_user_decryption(
             let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
                 Some(
                     internal_client
-                        .insecure_process_user_decryption_resp(&responses[1..], enc_pk, enc_sk)
+                        .insecure_process_user_decryption_resp(enc_sk, &responses[1..])
                         .unwrap(),
                 )
             } else {
@@ -776,7 +698,7 @@ async fn process_batch_threshold_user_decryption(
 
             // test with all responses
             let final_result = internal_client
-                .insecure_process_user_decryption_resp(&responses, enc_pk, enc_sk)
+                .insecure_process_user_decryption_resp(enc_sk, &responses)
                 .unwrap();
             if let Some(res) = result_from_dropped_response {
                 assert_eq!(res, final_result)

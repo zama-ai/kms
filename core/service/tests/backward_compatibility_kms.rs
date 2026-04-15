@@ -5,13 +5,9 @@
 //!
 
 mod common;
-use common::{load_and_unversionize, load_and_unversionize_auxiliary};
-
 use aes_prng::AesRng;
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
@@ -19,31 +15,34 @@ use backward_compatibility::{
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{TestedModule, run_all_tests},
 };
+use common::{load_and_unversionize, load_and_unversionize_auxiliary};
 use kms_grpc::{
+    RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
-    RequestId,
 };
 use kms_lib::{
     backup::{
+        BackupCiphertext,
         custodian::{
             Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
             InternalCustodianSetupMessage,
         },
         operator::{
-            BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
-            RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
+            BackupMaterial, DSEP_BACKUP_COMMITMENT, InnerOperatorBackupOutput,
+            InternalRecoveryRequest, Operator, RecoveryValidationMaterial,
         },
-        BackupCiphertext,
     },
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            compute_eip712_signature, gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType,
+            PrivateSigKey, PublicSigKey, SigningSchemeType, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -52,11 +51,11 @@ use kms_lib::{
     },
     engine::{
         base::{
-            safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
-            KeyGenMetadataInner, KmsFheKeyHandles,
+            CrsGenMetadata, KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
+            safe_serialize_hash_element_versioned,
         },
         context::{ContextInfo, NodeInfo, SoftwareVersion},
-        threshold::service::{session::PRSSSetupCombined, ThresholdFheKeys},
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
@@ -65,19 +64,15 @@ use rand::RngCore;
 use rand::SeedableRng;
 use std::{
     collections::{BTreeMap, HashMap},
-    env,
     path::Path,
     sync::Arc,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
-use threshold_fhe::{
-    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    execution::{
-        runtime::party::Role, small_execution::prss::PRSSSetup,
-        tfhe_internals::public_keysets::FhePubKeySet,
-    },
-    networking::tls::ReleasePCRValues,
+use threshold_execution::{
+    small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
 };
+use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::role::Role;
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
@@ -203,11 +198,13 @@ fn test_key_gen_metadata(
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-    let sol_type = KeygenVerification::new(
+    let sol_type = KeygenVerification::new_standard(
         &preprocessing_id,
         &key_id,
         server_key_digest.clone(),
         pub_key_digest.clone(),
+        // TODO: reenable for RFC005
+        // vec![],
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
@@ -273,7 +270,11 @@ fn test_crs_gen_metadata(
     let crs_id: RequestId = RequestId::new_random(&mut rng);
     let digest = [12u8; 32].to_vec();
     let max_num_bits = test.max_num_bits;
-    let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone());
+    let sol_type = CrsgenVerification::new(
+        &crs_id,
+        max_num_bits as usize,
+        digest.clone(), /* TODO: reenable for RFC005 vec![] */
+    );
     let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
         .map_err(|e| {
             test.failure(
@@ -287,7 +288,7 @@ fn test_crs_gen_metadata(
             return Err(test.failure(
                 "Expected current CrsGenMetadata, got legacy".to_string(),
                 format,
-            ))
+            ));
         }
         CrsGenMetadata::Current(_) => {
             // Expected. Test done as match to ensure that it gets updated in case new types get added
@@ -596,7 +597,6 @@ fn test_hybrid_kem_ct(
     }
 }
 
-#[allow(dead_code)]
 fn test_context_info(
     dir: &Path,
     test: &ContextInfoTest,
@@ -611,7 +611,7 @@ fn test_context_info(
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
-        public_storage_prefix: None,
+        public_storage_prefix: Some("PUB".to_string()),
         extra_verification_keys: vec![],
     };
     let software_version = SoftwareVersion {
@@ -645,7 +645,6 @@ fn test_context_info(
     }
 }
 
-#[allow(dead_code)]
 fn test_node_info(
     dir: &Path,
     test: &NodeInfoTest,
@@ -663,7 +662,7 @@ fn test_node_info(
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
-        public_storage_prefix: None,
+        public_storage_prefix: Some(test.public_storage_prefix.to_string()),
         extra_verification_keys: vec![verf_key2],
     };
 
@@ -926,6 +925,7 @@ fn test_kms_fhe_key_handles(
         &fhe_pub_key_set,
         decompression_key,
         &dummy_domain(),
+        vec![],
     )
     .unwrap();
 
@@ -976,9 +976,11 @@ fn test_threshold_fhe_keys(
 
     let new_versionized = ThresholdFheKeys {
         private_keys: Arc::new(private_keys),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: decompression_key.map(Arc::new),
+        public_material: PublicKeyMaterial::Uncompressed {
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        },
         meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
     };
 
@@ -1163,12 +1165,10 @@ impl TestedModule for KMS {
                 test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::ContextInfo(test) => {
-                // TODO (#2850) test_context_info(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_context_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::NodeInfo(test) => {
-                // TODO (#2850) test_node_info(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_node_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
                 test_software_version(test_dir.as_ref(), test, format).into()
@@ -1197,11 +1197,11 @@ impl TestedModule for KMS {
 
 #[test]
 fn test_backward_compatibility_kms() {
-    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_version = SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<KMS>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<KMS>(&base_data_dir, &pkg_version.to_string());
 
     for r in results.iter() {
         if r.is_failure() {

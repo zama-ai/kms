@@ -10,20 +10,24 @@ use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_ECDSA_P256K1_SHA256,
+    PublicKeyData,
 };
 use std::{sync::Arc, time::Duration};
-use threshold_fhe::networking::tls::extract_subject_from_cert;
+use threshold_networking::tls::extract_subject_from_cert;
 use tokio::sync::RwLock;
+#[cfg(feature = "insecure")]
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio_rustls::rustls::{
+    SignatureScheme,
     client::ResolvesClientCert,
     crypto::CryptoProvider,
-    pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, UnixTime},
+    pki_types::{PrivateKeyDer, UnixTime},
     server::{ClientHello, ResolvesServerCert},
     sign::{CertifiedKey, SingleCertAndKey},
-    SignatureScheme,
 };
-use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
+
+use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
 use x509_parser::{parse_x509_certificate, pem::Pem};
 
 pub mod nitro;
@@ -77,7 +81,10 @@ pub trait SecurityModule {
                     &private_vault_root_key_measurements,
                     &mut private_vault_root_key_measurements_bytes,
                 )?;
-                ensure!(private_vault_root_key_measurements_bytes.len() <= 1024, "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue");
+                ensure!(
+                    private_vault_root_key_measurements_bytes.len() <= 1024,
+                    "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue"
+                );
                 Some(private_vault_root_key_measurements_bytes)
             }
             None => {
@@ -184,17 +191,20 @@ pub trait SecurityModule {
                     ca_cert_key_usage.value.key_cert_sign(),
                     "Bad party CA certificate: cannot be used to sign other certificates"
                 );
-
-                #[allow(deprecated)]
-                let sk_der = ca_key.sk().to_pkcs8_der()?;
+                let sk_der = {
+                    // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+                    #[expect(deprecated)]
+                    let ecdsa_key = ca_key.sk();
+                    ecdsa_key.to_pkcs8_der()?
+                };
                 let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-                    &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+                    &sk_der.as_bytes().into(),
                     &PKCS_ECDSA_P256K1_SHA256,
                 )?;
-                let ca_cert_params =
-                    CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into())?;
+                let issuing_ca =
+                    Issuer::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into(), &ca_keypair)?;
 
-                let tls_cert = tls_cp.signed_by(&tls_keypair, &ca_cert_params, &ca_keypair)?;
+                let tls_cert = tls_cp.signed_by(&tls_keypair, &issuing_ca)?;
                 // sanity check
                 EndEntityCert::try_from(tls_cert.der())?.verify_for_usage(
                     &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],
@@ -220,7 +230,7 @@ pub trait SecurityModule {
         let key_der =
             PrivateKeyDer::try_from(tls_keypair.serialize_der()).map_err(|e| anyhow::anyhow!(e))?;
         let crypto_provider = CryptoProvider::get_default()
-            .ok_or(anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
+            .ok_or_else(|| anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
         Ok(Arc::new(CertifiedKey::from_der(
             cert_chain,
             key_der,
@@ -385,9 +395,9 @@ impl AutoRefreshCertResolver {
             .validity
             .time_to_expiration()
             .map(|x| x.unsigned_abs())
-            .ok_or(anyhow::anyhow!(
-                "Ephemeral TLS certificate must have an expiration date"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Ephemeral TLS certificate must have an expiration date")
+            })?;
         Ok((certified_key, expiration))
     }
 }

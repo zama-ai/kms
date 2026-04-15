@@ -1,0 +1,57 @@
+kmsPeers:
+  # Number of replicas managed by each statefulset
+  count: 1
+
+kmsCore:
+  thresholdMode:
+    enabled: false
+  aws:
+    region: eu-west-1
+  publicVault:
+    s3:
+      enabled: true
+      prefix: PUB
+  privateVault:
+    s3:
+      enabled: true
+      prefix: PRIV
+  storage:
+    storageClassName: gp3
+    capacity: 5Gi
+  serviceMonitor:
+    enabled: false
+  resources:
+    requests:
+      memory: 96Gi
+      cpu: 48
+    limits:
+      memory: 96Gi
+      ephemeralStorage: 1Gi
+      grpcTimeout: 360
+      grpcMaxMessageSize: 104857600
+  nodeSelector:
+    karpenter.sh/nodepool: kms-bench-spot-64
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-bench-spot-64
+
+kmsCoreClient:
+  enabled: true
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  resources:
+    requests:
+      memory: 24Gi
+      cpu: 4
+    limits:
+      memory: 24Gi
+      cpu: 4
+  nodeSelector:
+    karpenter.sh/nodepool: zws-pool
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: zws-pool

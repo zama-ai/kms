@@ -4,8 +4,8 @@ use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::*;
 
 /// For user decryption, we only use the Addr variant,
@@ -44,6 +44,12 @@ pub struct Client {
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
     pub(crate) decryption_mode: DecryptionMode,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client").finish()
+    }
 }
 
 impl Client {

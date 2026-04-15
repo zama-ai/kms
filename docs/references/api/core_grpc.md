@@ -167,7 +167,7 @@ This is the enum describing the choice of key switching associated with a key.
 ```proto
 enum StandardKeySetConfig {
   ComputeKeyType compute_key_type = 1;
-  KeySetCompressionConfig keyset_compression_config = 2;
+  KeyGenSecretKeyConfig secret_key_config = 2;
 }
 ```
 
@@ -176,7 +176,7 @@ enum StandardKeySetConfig {
 This is the configuration used for making key switching keys.
 
 - `compute_key_type`: An enum expressing what kind of computation key in use. Currently `CPU` is the only option.
-- `keyset_compression_config`: An enum expressing settings for compression key generation. Can be either `Generate` or `UseExisting`.
+- `secret_key_config`: An enum expressing settings for compression key generation. Can be either `Generate` or `UseExisting`.
 
 </details>
 
@@ -197,7 +197,7 @@ message KeySetAddedInfo {
 
 This is additional configuration info used for making key switching keys.
 
-- `compression_keyset_id`: The `RequestId` of an existing keyset for which we will reuse the existing secret key. This _must_ be set if `KeySetCompressionConfig::UseExisting` is used.
+- `compression_keyset_id`: The `RequestId` of an existing keyset for which we will reuse the existing secret key. This _must_ be set if `KeyGenSecretKeyConfig::UseExisting` is used.
 - `from_keyset_id_decompression_only`: The `RequestId` of the key set to convert _from_ when computing a key switching key. Must be set if `KeySetType::DecompressionOnly` is used
 - `to_keyset_id_decompression_only`: The `RequestId` of the key set to convert _to_ when computing a key switching key. Must be set if `KeySetType::DecompressionOnly` is used
 

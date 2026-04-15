@@ -11,9 +11,14 @@ pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
 // More specific metrics for key generation, only used with counters
 pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
+pub const OP_INSECURE_COMPRESSED_KEYGEN: &str = "insecure_compressed_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
 pub const OP_STANDARD_KEYGEN: &str = "standard_keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
+// the compressed versions of the above
+pub const OP_INSECURE_STANDARD_COMPRESSED_KEYGEN: &str = "insecure_standard_compressed_keygen";
+pub const OP_STANDARD_COMPRESSED_KEYGEN: &str = "standard_compressed_keygen";
+pub const OP_DECOMPRESSION_COMPRESSED_KEYGEN: &str = "decompression_compressed_keygen";
 
 // Public/User decryption Operations
 // Corresponds to a request, a request may contain several ciphertexts
@@ -32,9 +37,6 @@ pub const OP_CRS_GEN_RESULT: &str = "crs_gen_result";
 pub const OP_INSECURE_CRS_GEN_REQUEST: &str = "insecure_crs_gen_request";
 pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
 
-// PRSS init
-pub const OP_INIT: &str = "init";
-
 // Context operations
 pub const OP_NEW_MPC_CONTEXT: &str = "new_mpc_context";
 pub const OP_DESTROY_MPC_CONTEXT: &str = "destroy_mpc_context";
@@ -43,10 +45,12 @@ pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
 pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
 pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
+pub const OP_KEY_MATERIAL_AVAILABILITY: &str = "key_material_availability";
 
-// Resharing
-pub const OP_INITIATE_RESHARING: &str = "initiate_resharing";
-pub const OP_GET_INITIATE_RESHARING_RESULT: &str = "get_initiate_resharing_result";
+// Epoch operations
+pub const OP_NEW_EPOCH: &str = "new_mpc_epoch";
+pub const OP_DESTROY_EPOCH: &str = "destroy_mpc_epoch";
+pub const OP_GET_EPOCH_RESULT: &str = "get_mpc_epoch_result";
 
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";
@@ -54,16 +58,14 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_KEY_ID: &str = "key_id";
-pub const TAG_CRS_ID: &str = "crs_id";
-pub const TAG_CONTEXT_ID: &str = "context_id";
-pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type"; // TODO not used yet
 pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
+// Special tag used for the central party
+pub const CENTRAL_TAG: &str = "central";
 
 // gRPC errors
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
@@ -76,7 +78,7 @@ pub const ERR_NOT_FOUND: &str = "not_found";
 pub const ERR_INTERNAL: &str = "internal_error";
 pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
-// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
+/// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
 pub const ERR_ASYNC: &str = "async_call_error";
 
 // Common operation type values

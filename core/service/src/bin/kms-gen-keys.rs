@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use futures_util::future::OptionFuture;
 use itertools::Itertools;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use kms_lib::vault::storage::StorageExt;
 use kms_lib::{
@@ -16,16 +16,15 @@ use kms_lib::{
     },
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        ensure_central_crs_exists, ensure_central_keys_exist,
+        ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
         ensure_central_server_signing_keys_exist, ensure_threshold_crs_exists,
         ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
-        ThresholdSigningKeyConfig,
     },
     vault::{
+        Vault,
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageType},
-        Vault,
+        storage::{Storage, StorageType, delete_at_request_id, make_storage, s3::build_s3_client},
     },
 };
 use observability::conf::TelemetryConfig;
@@ -209,19 +208,19 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
         if num_parties < 2 {
             anyhow::bail!("the number of parties should be larger or equal to 2");
         }
-        if let Some(id) = signing_key_party_id {
-            if id > num_parties {
-                anyhow::bail!(
-                    "party ID ({}) cannot be greater than num_parties ({})",
-                    id,
-                    num_parties
-                );
-            }
+        if let Some(id) = signing_key_party_id
+            && id > num_parties
+        {
+            anyhow::bail!(
+                "party ID ({}) cannot be greater than num_parties ({})",
+                id,
+                num_parties
+            );
         }
-        if let Some(id) = signing_key_party_id {
-            if id == 0 {
-                anyhow::bail!("party ID cannot be 0",);
-            }
+        if let Some(id) = signing_key_party_id
+            && id == 0
+        {
+            anyhow::bail!("party ID cannot be 0",);
         }
         Ok(Self {
             pub_storages,
@@ -325,7 +324,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })),
             },
             StorageType::PUB,
-            None,
             s3_client.clone(),
         )
         .unwrap();
@@ -346,6 +344,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         awskms_client.clone(),
                         security_module.as_ref().map(Arc::clone),
                         Some(&pub_proxy_storage),
+                        false,
                     )
                 }),
         )
@@ -371,7 +370,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })),
                 },
                 StorageType::PRIV,
-                None,
                 s3_client.clone(),
             )
             .unwrap(),
@@ -513,6 +511,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 args.priv_storage,
                 params,
                 &DEFAULT_CENTRAL_CRS_ID,
+                &epoch_id,
                 args.deterministic,
             )
             .await
@@ -634,6 +633,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
                 args.priv_storages,
                 params,
                 &DEFAULT_THRESHOLD_CRS_ID_4P,
+                &epoch_id,
                 args.deterministic,
             )
             .await

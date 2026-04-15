@@ -3,19 +3,19 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
 };
-use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
+use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
-use kms_grpc::identifiers::EpochId;
 use kms_grpc::RequestId;
-use serde::{de::DeserializeOwned, Serialize};
+use kms_grpc::identifiers::EpochId;
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{Unversionize, Versionize, named::Named};
 
 #[derive(Default, Clone, Debug)]
 pub struct FileStorage {
@@ -103,9 +103,15 @@ impl FileStorage {
     }
 
     async fn item_exists_at_path(&self, path: &Path) -> anyhow::Result<bool> {
-        tokio::fs::try_exists(path)
-            .await
-            .map_err(|_| anyhow_error_and_log(format!("Path {} does not exist", path.display())))
+        match tokio::fs::try_exists(path).await {
+            Ok(exists) => Ok(exists),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(anyhow_error_and_log(format!(
+                "Error checking path {}: {}",
+                path.display(),
+                e
+            ))),
+        }
     }
 
     /// Find all data under a given path.
@@ -247,6 +253,22 @@ impl StorageReaderExt for FileStorage {
     ) -> anyhow::Result<HashSet<RequestId>> {
         all_data_ids_from_all_epochs_impl(self, data_type).await
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        tokio::fs::read(&path).await.map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not read from path {}: {}",
+                path.display(),
+                e
+            ))
+        })
+    }
 }
 
 impl Storage for FileStorage {
@@ -339,6 +361,32 @@ impl StorageExt for FileStorage {
         Ok(())
     }
 
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        self.setup_dirs(&path).await?;
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
+        write_bytes(path.as_path(), bytes).await.map_err(|e| {
+            tracing::warn!("Could not write to path {}: {}", path.display(), e);
+            e
+        })?;
+        Ok(())
+    }
+
     async fn delete_data_at_epoch(
         &mut self,
         data_id: &RequestId,
@@ -349,12 +397,11 @@ impl StorageExt for FileStorage {
         tokio::fs::remove_file(&path).await?;
 
         // Remove the epoch directory if it's now empty
-        if let Some(epoch_dir) = path.parent() {
-            if let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await {
-                if entries.next_entry().await?.is_none() {
-                    let _ = tokio::fs::remove_dir(epoch_dir).await;
-                }
-            }
+        if let Some(epoch_dir) = path.parent()
+            && let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await
+            && entries.next_entry().await?.is_none()
+        {
+            let _ = tokio::fs::remove_dir(epoch_dir).await;
         }
         Ok(())
     }
@@ -384,34 +431,44 @@ pub mod tests {
 
         // urls should be empty
         for data_type in PubDataType::iter() {
-            assert!(storage1
-                .all_data_ids(&data_type.to_string())
-                .await
-                .unwrap()
-                .is_empty());
-            assert!(storage2
-                .all_data_ids(&data_type.to_string())
-                .await
-                .unwrap()
-                .is_empty());
+            assert!(
+                storage1
+                    .all_data_ids(&data_type.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                storage2
+                    .all_data_ids(&data_type.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
         }
 
         let data = TestType { i: 13 };
         let id = derive_request_id("ID").unwrap();
         let wrong_id = derive_request_id("WRONG_ID").unwrap();
         // make sure we can put it in storage1
-        assert!(storage1
-            .store_data(&data, &id, &PubDataType::CRS.to_string())
-            .await
-            .is_ok());
-        assert!(storage1
-            .data_exists(&id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap());
-        assert!(!storage1
-            .data_exists(&wrong_id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap());
+        assert!(
+            storage1
+                .store_data(&data, &id, &PubDataType::CRS.to_string())
+                .await
+                .is_ok()
+        );
+        assert!(
+            storage1
+                .data_exists(&id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !storage1
+                .data_exists(&wrong_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap()
+        );
     }
 
     #[ignore]
@@ -496,7 +553,7 @@ pub mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         // Setup temporary directory and storage
@@ -524,6 +581,50 @@ pub mod tests {
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_store_load_bytes_at_epoch_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_store_load_bytes_at_epoch(&mut storage).await;
+    }
+
+    #[kms_test_tracing::traced_test]
+    #[tokio::test]
+    async fn test_store_bytes_at_epoch_does_not_overwrite_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_store_bytes_at_epoch_does_not_overwrite(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_mixed_epoch_and_non_epoch_data_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_all_epoch_ids_and_data_ids_with_mixed_storage(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_epoch_ids_with_only_non_epoch_data_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_all_epoch_ids_for_data_with_only_non_epoch_data(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_data_ids_with_only_epoch_data_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_all_data_ids_with_only_epoch_data(&mut storage).await;
     }
 
     #[tokio::test]

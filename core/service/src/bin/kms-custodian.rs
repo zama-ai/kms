@@ -1,6 +1,8 @@
 use aes_prng::AesRng;
 use clap::Parser;
+use hashing::{DomainSep, hash_element};
 use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
@@ -13,11 +15,8 @@ use kms_lib::{
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng};
-use std::{env, path::PathBuf};
-use threshold_fhe::{
-    execution::runtime::party::Role,
-    hashing::{hash_element, DomainSep},
-};
+use std::path::PathBuf;
+use threshold_types::role::Role;
 
 const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 
@@ -99,7 +98,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     tracing::info!(
         "Welcome to the KMS Custodian Client v{}",
-        env!("CARGO_PKG_VERSION")
+        SoftwareVersion::current()?
     );
     let args = CustodianCommand::parse();
     match args {
@@ -122,7 +121,9 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         CustodianCommand::Verify(params) => {
             // Logic for recovering keys
-            tracing::info!("Validating custodian keys. Any validation errors will be printed below as warnings.");
+            tracing::info!(
+                "Validating custodian keys. Any validation errors will be printed below as warnings."
+            );
             let mut validation_ok = true;
             let setup_msg: InternalCustodianSetupMessage =
                 safe_read_element_versioned(&params.path).await?;
@@ -130,7 +131,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)
                     .expect("Failed to recover keys");
             if setup_msg.public_verf_key != recovered_keys.verification_key() {
-                tracing::warn!("Verification failed: Public verification key does not match the generated key!");
+                tracing::warn!(
+                    "Verification failed: Public verification key does not match the generated key!"
+                );
                 validation_ok = false;
             }
             if &setup_msg.public_enc_key != recovered_keys.public_enc_key() {

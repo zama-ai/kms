@@ -2,17 +2,16 @@
 //! Configuration file by default is under `config` folder.
 //!
 use super::Party;
-use crate::{
-    execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
-};
 use itertools::Itertools;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
+use threshold_execution::online::preprocessing::redis::RedisConf;
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tokio_rustls::rustls::{
+    RootCertStore,
     client::ClientConfig,
     pki_types::{CertificateDer, PrivateKeyDer},
     version::TLS13,
-    RootCertStore,
 };
 use x509_parser::pem::parse_x509_pem;
 
@@ -346,24 +345,26 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_party_conf_with_env() {
-        env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");
-        env::set_var("DDEC__PROTOCOL__HOST__PORT", "50000");
-        env::set_var("DDEC__PROTOCOL__HOST__ID", "3");
-        env::set_var("DDEC__PROTOCOL__HOST__CHOREOPORT", "60000");
-        env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
-        env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
-        env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
-        env::set_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
-        env::set_var("DDEC__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
+        unsafe {
+            env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");
+            env::set_var("DDEC__PROTOCOL__HOST__PORT", "50000");
+            env::set_var("DDEC__PROTOCOL__HOST__ID", "3");
+            env::set_var("DDEC__PROTOCOL__HOST__CHOREOPORT", "60000");
+            env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
+            env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
+            env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
+            env::set_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
+            env::set_var("DDEC__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
 
-        env::set_var("DDEC__NET_CONF__MESSAGE_LIMIT", "60");
-        env::set_var("DDEC__NET_CONF__MULTIPLIER", "2.2");
-        env::set_var("DDEC__NET_CONF__MAX_INTERVAL", "4");
-        env::set_var("DDEC__NET_CONF__MAX_ELAPSED_TIME", "200");
-        env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT", "20");
-        env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK", "200");
-        env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
-        env::set_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
+            env::set_var("DDEC__NET_CONF__MESSAGE_LIMIT", "60");
+            env::set_var("DDEC__NET_CONF__MULTIPLIER", "2.2");
+            env::set_var("DDEC__NET_CONF__MAX_INTERVAL", "4");
+            env::set_var("DDEC__NET_CONF__MAX_ELAPSED_TIME", "200");
+            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT", "20");
+            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK", "200");
+            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
+            env::set_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
+        }
         let party_conf: PartyConf = Settings::builder()
             .env_prefix("DDEC")
             .build()
@@ -391,23 +392,25 @@ mod tests {
             Some("moby-p3")
         );
 
-        env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
-        env::remove_var("DDEC__PROTOCOL__HOST__PORT");
-        env::remove_var("DDEC__PROTOCOL__HOST__ID");
-        env::remove_var("DDEC__PROTOCOL__HOST__CHOREOPORT");
-        env::remove_var("DDEC__CERTPATHS__CERT");
-        env::remove_var("DDEC__CERTPATHS__KEY");
-        env::remove_var("DDEC__CERTPATHS__CALIST");
-        env::remove_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME");
-        env::remove_var("DDEC__TELEMETRY__TRACING_ENDPOINT");
+        unsafe {
+            env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
+            env::remove_var("DDEC__PROTOCOL__HOST__PORT");
+            env::remove_var("DDEC__PROTOCOL__HOST__ID");
+            env::remove_var("DDEC__PROTOCOL__HOST__CHOREOPORT");
+            env::remove_var("DDEC__CERTPATHS__CERT");
+            env::remove_var("DDEC__CERTPATHS__KEY");
+            env::remove_var("DDEC__CERTPATHS__CALIST");
+            env::remove_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME");
+            env::remove_var("DDEC__TELEMETRY__TRACING_ENDPOINT");
 
-        env::remove_var("DDEC__NET_CONF__MESSAGE_LIMIT");
-        env::remove_var("DDEC__NET_CONF__MULTIPLIER");
-        env::remove_var("DDEC__NET_CONF__MAX_INTERVAL");
-        env::remove_var("DDEC__NET_CONF__MAX_ELAPSED_TIME");
-        env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT");
-        env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
-        env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
-        env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
+            env::remove_var("DDEC__NET_CONF__MESSAGE_LIMIT");
+            env::remove_var("DDEC__NET_CONF__MULTIPLIER");
+            env::remove_var("DDEC__NET_CONF__MAX_INTERVAL");
+            env::remove_var("DDEC__NET_CONF__MAX_ELAPSED_TIME");
+            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT");
+            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
+            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
+            env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
+        }
     }
 }

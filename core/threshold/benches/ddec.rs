@@ -1,26 +1,25 @@
 use aes_prng::AesRng;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use algebra::{
+    galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
+    structure_traits::Ring,
+};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
-use tfhe::{set_server_key, FheUint8};
-use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64},
-        structure_traits::Ring,
+use test_utils::read_element;
+use tfhe::{FheUint8, set_server_key};
+use threshold_execution::{
+    constants::REAL_KEY_PATH,
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext, threshold_decrypt64},
+    runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
+    tests::ensure_real_keys_setup,
+    tfhe_internals::{
+        test_feature::{KeySet, keygen_all_party_shares_from_keyset},
+        utils::expanded_encrypt,
     },
-    execution::{
-        constants::REAL_KEY_PATH,
-        endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::{
-            test_feature::{keygen_all_party_shares_from_keyset, KeySet},
-            utils::expanded_encrypt,
-        },
-    },
-    file_handling::tests::read_element,
-    networking::NetworkMode,
 };
+use threshold_types::network::NetworkMode;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -41,6 +40,7 @@ impl std::fmt::Display for OneShotConfig {
 }
 
 fn ddec_nsmall(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_nsmall");
 
     let params = vec![
@@ -63,7 +63,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -100,6 +100,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 }
 
 fn ddec_bitdec_nsmall(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_bitdec_nsmall");
 
     let params = vec![
@@ -119,7 +120,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -150,6 +151,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
 }
 
 fn ddec_nlarge(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_nlarge");
 
     let params = vec![
@@ -168,7 +170,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
@@ -208,6 +210,7 @@ fn ddec_nlarge(c: &mut Criterion) {
 }
 
 fn ddec_bitdec_nlarge(c: &mut Criterion) {
+    ensure_real_keys_setup();
     let mut group = c.benchmark_group("ddec_bitdec_nlarge");
 
     let params = vec![
@@ -227,7 +230,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     let keyset: KeySet = read_element(REAL_KEY_PATH).unwrap();
     let mut rng = AesRng::from_entropy();
     for config in params {
-        let message = rng.gen::<u64>();
+        let message = rng.r#gen::<u64>();
         let params = keyset.get_cpu_params().unwrap();
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)

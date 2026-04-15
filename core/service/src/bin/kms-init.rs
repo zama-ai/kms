@@ -1,9 +1,10 @@
 use clap::Parser;
-use kms_grpc::kms::v1::{InitRequest, RequestId};
+use kms_grpc::kms::v1::{NewMpcEpochRequest, RequestId};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
+use std::time::Duration;
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)
@@ -36,8 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
 
     for addr in args.addresses {
-        handles.push(tokio::spawn(async {
-            let mut kms_client = CoreServiceEndpointClient::connect(addr).await.unwrap();
+        handles.push(tokio::spawn(async move {
+            let mut kms_client = CoreServiceEndpointClient::connect(addr.clone())
+                .await
+                .unwrap();
 
             // TODO: the init epoch ID is currently fixed to DEFAULT_EPOCH_ID
             // change this once we want to trigger another init for a different context/epoch
@@ -45,11 +48,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 request_id: DEFAULT_EPOCH_ID.to_string(),
             };
 
-            let request = InitRequest {
-                request_id: Some(req_id),
+            let request = NewMpcEpochRequest {
+                epoch_id: Some(req_id.clone()),
                 context_id: None,
+                previous_epoch: None,
+                // WARNING: domain is set to None here, as this CLI currently only supports
+                // initializing the KMS for the first epoch.
+                domain: None,
             };
-            let _ = kms_client.init(request).await.unwrap();
+            let _ = kms_client.new_mpc_epoch(request).await.unwrap();
+
+            // new_mpc_epoch spawns PRSS init as a background task and returns immediately.
+            // We must poll get_epoch_result until the epoch is actually ready.
+            let max_retries = 120;
+            for i in 0..max_retries {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                match kms_client
+                    .get_epoch_result(tonic::Request::new(req_id.clone()))
+                    .await
+                {
+                    Ok(_) => {
+                        tracing::info!("Epoch initialization completed on {addr}");
+                        return;
+                    }
+                    Err(status) if status.code() == tonic::Code::Unavailable => {
+                        if i % 10 == 0 {
+                            tracing::info!(
+                                "Waiting for epoch initialization on {addr}... ({i}/{max_retries})"
+                            );
+                        }
+                    }
+                    Err(status) => {
+                        panic!(
+                            "Epoch initialization failed on {addr}: {} - {}",
+                            status.code(),
+                            status.message()
+                        );
+                    }
+                }
+            }
+            panic!("Epoch initialization timed out on {addr} after {max_retries}s");
         }));
     }
 

@@ -7,22 +7,25 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
-    identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
+    identifiers::EpochId,
+    rpc_types::{KMSType, PrivDataType, PubDataType},
 };
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use tfhe::{
+    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
+    zk::CompactPkeCrs,
+};
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
-        storage::{
-            store_pk_at_request_id, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id, Storage, StorageExt,
-        },
         Vault,
+        storage::{
+            Storage, StorageExt, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
+        },
     },
 };
 
@@ -46,7 +49,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -54,7 +56,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-                pk_cache: Arc::new(RwLock::new(pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -67,14 +68,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_crs_with_meta_store(
         &self,
-        req_id: &RequestId,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
     ) {
         self.inner
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_metric_tag)
+            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
             .await
     }
 
@@ -164,11 +166,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         };
 
         let f2 = async {
+            tracing::info!("Storing public key");
             let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_pk_at_request_id(
+            let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
                 key_id,
-                WrappedPublicKey::Compact(&fhe_key_set.public_key),
+                &fhe_key_set.public_key,
+                &PubDataType::PublicKey.to_string(),
             )
             .await;
             if let Err(e) = &result {
@@ -203,20 +207,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 })
                 .is_ok()
         {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
-            {
-                let mut guarded_pk_cache = self.inner.pk_cache.write().await;
-                let previous = guarded_pk_cache.insert(
-                    *key_id,
-                    WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
-                );
-                if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
-                } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
-                }
-            }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
@@ -240,6 +230,33 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
                 .await;
         }
+    }
+
+    /// Write the compressed key materials (result of a compressed keygen) to storage and cache
+    /// for the centralized KMS.
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
+    ///
+    /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
+    /// Instead of storing separate public_key and server_key, we store the compressed keyset.
+    pub async fn write_centralized_compressed_keys_with_meta_store(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        key_info: KmsFheKeyHandles,
+        compressed_keyset: &CompressedXofKeySet,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) {
+        self.inner
+            .write_compressed_keys_with_dkg_meta_store(
+                key_id,
+                epoch_id,
+                key_info,
+                PrivDataType::FhePrivateKey,
+                compressed_keyset,
+                meta_store,
+                Arc::clone(&self.fhe_keys),
+            )
+            .await
     }
 
     /// Read the key materials for decryption in the centralized case.

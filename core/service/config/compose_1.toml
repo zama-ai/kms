@@ -13,8 +13,6 @@ region = "us-east-1"
 s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault]
-storage_cache_size = 1000
-
 [public_vault.storage.s3]
 bucket = "kms"
 prefix = "PUB-p1"
@@ -85,10 +83,10 @@ network_timeout_bk = 300
 network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
 session_update_interval_secs = 60
-session_cleanup_interval_secs = 3600
-discard_inactive_sessions_interval = 900
+session_cleanup_interval_secs = 86400 # 1 day
+discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocessing time ~44 min for Default params)
 max_waiting_time_for_message_queue = 60
-max_opened_inactive_sessions_per_party = 100
+max_opened_inactive_sessions_per_party = 2000
 
 
 # [threshold.preproc_redis]
@@ -97,7 +95,7 @@ max_opened_inactive_sessions_per_party = 100
 
 [telemetry]
 tracing_service_name = "kms-threshold-1"
-# tracing_endpoint = "http://otelcol:4317"
+tracing_endpoint = "http://jaeger:4317"
 tracing_otlp_timeout_ms = 10000
 metrics_bind_address = "0.0.0.0:9646"
 enable_sys_metrics = true
@@ -115,4 +113,4 @@ user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000
-reshare = 1
+new_epoch = 1

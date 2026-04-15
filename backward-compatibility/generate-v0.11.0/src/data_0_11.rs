@@ -29,7 +29,7 @@ use threshold_fhe_0_11_0::{
 use kms_0_11_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11_0::{
     kms::v1::TypedPlaintext,
-    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PubDataType, SignedPubDataHandleInternal},
 };
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
@@ -60,7 +60,7 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
+    PubDataTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
     ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
     KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
@@ -223,10 +223,6 @@ const SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST: SignedPubDataHandleInternalTest =
         signature: [1, 2, 3],
         external_signature: [4, 5, 6],
     };
-
-const PUBLIC_KEY_TYPE: PublicKeyTypeTest = PublicKeyTypeTest {
-    test_filename: Cow::Borrowed("public_key_type"),
-};
 
 const PUB_DATA_TYPE: PubDataTypeTest = PubDataTypeTest {
     test_filename: Cow::Borrowed("pub_data_type"),
@@ -727,13 +723,6 @@ impl KmsGrpcV0_11 {
         TestMetadataKmsGrpc::SignedPubDataHandleInternal(SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST)
     }
 
-    fn gen_public_key_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
-        let public_key_type = PublicKeyType::Compact;
-        store_versioned_test!(&public_key_type, dir, &PUBLIC_KEY_TYPE.test_filename);
-
-        TestMetadataKmsGrpc::PublicKeyType(PUBLIC_KEY_TYPE)
-    }
-
     fn gen_pub_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
         let pub_data_type = PubDataType::DecompressionKey;
         store_versioned_test!(&pub_data_type, dir, &PUB_DATA_TYPE.test_filename);
@@ -790,7 +779,6 @@ impl KMSCoreVersion for V0_11 {
 
         vec![
             KmsGrpcV0_11::gen_signed_pub_data_handle_internal(&dir),
-            KmsGrpcV0_11::gen_public_key_type(&dir),
             KmsGrpcV0_11::gen_pub_data_type(&dir),
         ]
     }

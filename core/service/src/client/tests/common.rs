@@ -3,22 +3,118 @@ use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::{TypedCiphertext, TypedPlaintext};
+use kms_grpc::kms::v1::{
+    CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
-use kms_grpc::RequestId;
 use std::collections::HashMap;
+use std::path::Path;
 use tfhe::FheTypes;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
 
+/// Returns standard keygen config (no compression, no decompression)
+pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (None, None)
+}
+
+/// Returns compressed keygen config with `CompressedKeyConfig::CompressedAll`
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: 0,
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
+        }),
+        None,
+    )
+}
+
+/// Returns compressed keygen config that reuses existing secret key shares
+#[cfg(feature = "slow_tests")]
+pub(crate) fn compressed_from_existing_keygen_config(
+    existing_keyset_id: &RequestId,
+    existing_epoch_id: &kms_grpc::identifiers::EpochId,
+    use_existing_key_tag: bool,
+) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting.into(),
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
+        }),
+        Some(KeySetAddedInfo {
+            from_keyset_id_decompression_only: None,
+            to_keyset_id_decompression_only: None,
+            existing_keyset_id: Some((*existing_keyset_id).into()),
+            existing_epoch_id: Some((*existing_epoch_id).into()),
+            use_existing_key_tag,
+        }),
+    )
+}
+
+/// Returns decompression-only keygen config
+#[cfg(feature = "slow_tests")]
+pub(crate) fn decompression_keygen_config(
+    from_keyset_id: &RequestId,
+    to_keyset_id: &RequestId,
+) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::DecompressionOnly.into(),
+            standard_keyset_config: None,
+        }),
+        Some(KeySetAddedInfo {
+            from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
+            to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
+            existing_keyset_id: None,
+            existing_epoch_id: None,
+            use_existing_key_tag: false,
+        }),
+    )
+}
+
+/// Trait for accessing keyset config properties on `Option<KeySetConfig>`
+pub(crate) trait OptKeySetConfigAccessor {
+    fn is_compressed(&self) -> bool;
+    fn is_decompression_only(&self) -> bool;
+}
+
+impl OptKeySetConfigAccessor for Option<KeySetConfig> {
+    fn is_compressed(&self) -> bool {
+        self.as_ref().is_some_and(|c| {
+            c.standard_keyset_config.as_ref().is_some_and(|sc| {
+                sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32
+            })
+        })
+    }
+
+    fn is_decompression_only(&self) -> bool {
+        self.as_ref()
+            .is_some_and(|c| c.keyset_type == KeySetType::DecompressionOnly as i32)
+    }
+}
+
+/// Send decryption requests to KMS clients
+///
+/// # Arguments
+/// * `pub_path` - Optional path to isolated test material directory
 pub(crate) async fn send_dec_reqs(
     amount_cts: usize,
     key_id: &RequestId,
@@ -26,6 +122,7 @@ pub(crate) async fn send_dec_reqs(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
     storage_prefixes: &[Option<String>],
+    pub_path: Option<&Path>,
 ) -> (
     JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
     RequestId,
@@ -35,7 +132,7 @@ pub(crate) async fn send_dec_reqs(
     for i in 0..amount_cts {
         let msg = TestingPlaintext::U32(i as u32);
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-            None,
+            pub_path,
             msg,
             key_id,
             storage_prefix,
@@ -43,6 +140,7 @@ pub(crate) async fn send_dec_reqs(
                 compression: true,
                 precompute_sns: false,
             },
+            false, // compressed_keys
         )
         .await;
         let ctt = TypedCiphertext {
@@ -63,6 +161,8 @@ pub(crate) async fn send_dec_reqs(
             &request_id,
             context_id,
             key_id,
+            None,
+            &[],
         )
         .unwrap();
     let mut join_set = JoinSet::new();

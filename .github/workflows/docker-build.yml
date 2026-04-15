@@ -2,29 +2,8 @@ name: docker-build
 
 on:
   #=======================================================
-  schedule:
-    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
-  #=======================================================
   release:
     types: [published]
-  #=======================================================
-  workflow_dispatch:
-    inputs:
-      testing:
-        description: 'Launch performance testing'
-        default: false
-        required: true
-        type: boolean
-      deployment_type:
-        description: 'Deployment type'
-        required: true
-        default: 'threshold'
-        type: choice
-        options:
-          - 'threshold'
-          - 'thresholdWithEnclave'
-          - 'centralized'
-          - 'centralizedWithEnclave'
   #=======================================================
   workflow_call:
     secrets:
@@ -62,23 +41,6 @@ on:
 permissions: {}
 
 jobs:
-  # start-amd64-runner:
-  #   name: docker-build/start-amd64-runner
-  #   runs-on: ubuntu-latest
-  #   outputs:
-  #     label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
-  #   steps:
-  #     - name: Start EC2 runner AMD64
-  #       id: start-ec2-runner-amd64
-  #       uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-  #       with:
-  #         mode: start
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         backend: aws
-  #         profile: docker-big-instance
-
   ############################################################################
   # Builds Docker image for base Rust Golden Image
   #
@@ -86,7 +48,7 @@ jobs:
     name: docker-build/golden-image (bpr)
     # needs:
     #   - start-amd64-runner
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -104,6 +66,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -119,7 +82,7 @@ jobs:
     needs:
       # - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -137,6 +100,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -152,7 +116,7 @@ jobs:
     needs:
       # - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -170,6 +134,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -204,59 +169,4 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
-
   ############################################################################
-  # Launch performance testing with enclave nightly or manual dispatch
-  ############################################################################
-  performance-testing:
-    name: docker-build/performance-testing
-    needs:
-      - core-client
-      - core-service
-      - enclave
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || inputs.testing
-    steps:
-      - name: Launch performance testing
-        env:
-          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-          KMS_CORE_IMAGE_TAG: ${{ needs.core-service.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.core-client.outputs.image_tag }}
-          BRANCH_NAME: ${{ github.ref }}
-        run: |
-          gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            repos/zama-ai/kms-testing/dispatches \
-            -f 'event_type=performance-testing' \
-            -F "client_payload[tls]=true" \
-            -F "client_payload[kms_branch]=${BRANCH_NAME}" \
-            -F "client_payload[kms_chart_version]=repository" \
-            -F "client_payload[deployment_type]=${DEPLOYMENT_TYPE}" \
-            -F "client_payload[kms_core_image_tag]=${KMS_CORE_IMAGE_TAG}" \
-            -F "client_payload[kms_core_client_image_tag]=${KMS_CORE_CLIENT_IMAGE_TAG}"
-
-  ############################################################################
-  # Stop EC2 runner
-  ############################################################################
-  # stop-runners-amd64:
-  #   name: docker-build/stop-runners-amd64
-  #   needs:
-  #     - start-amd64-runner
-  #     - golden-image
-  #     - core-client
-  #     - core-service
-  #     - enclave
-  #   runs-on: ubuntu-latest
-  #   if: always()
-  #   steps:
-  #     - name: Stop AMD64 runner
-  #       uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-  #       with:
-  #         mode: stop
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         label: ${{ needs.start-amd64-runner.outputs.label }}

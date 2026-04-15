@@ -11,15 +11,15 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY ./backward-compatibility/ /app/kms/backward-compatibility
-COPY ./bc2wrap /app/kms/bc2wrap
-COPY ./core /app/kms/core
-COPY ./core-client /app/kms/core-client
-COPY ./observability /app/kms/observability
-COPY ./tools /app/kms/tools
-COPY ./docker /app/kms/docker
-COPY ./Cargo.lock /app/kms/Cargo.lock
-COPY ./Cargo.toml /app/kms/Cargo.toml
+# Copy only what is needed to build kms binaries
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY backward-compatibility ./backward-compatibility
+COPY bc2wrap ./bc2wrap
+COPY core ./core
+COPY core-client ./core-client
+COPY observability ./observability
+COPY tools ./tools
+COPY docker ./docker
 
 RUN mkdir -p /app/kms/core/service/bin
 
@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     ./core/service/bin
 
 
-ARG YQ_VERSION=v4.50.1
+ARG YQ_VERSION=v4.52.4
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
@@ -141,7 +141,7 @@ CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]
 # Build the grpc-health-probe binary for development
 FROM cgr.dev/zama.ai/golang:1.25 AS go-builder
 
-ARG GRPC_HEALTH_PROBE_VERSION=v0.4.42
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.46
 
 RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
     cd grpc-health-probe && \

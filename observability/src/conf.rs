@@ -2,6 +2,7 @@ use config::{Config, ConfigError, File};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::Duration;
 use strum_macros::{AsRefStr, Display, EnumString};
 use tracing::{debug, warn};
@@ -18,11 +19,10 @@ const TRACER_DEFAULT_RETRY_INITIAL_DELAY_MS: u64 = 100;
 const TRACER_DEFAULT_RETRY_MAX_DELAY_MS: u64 = 1000;
 const SYS_METRIC_REFRESH_INTERVAL_MS: u64 = 5000;
 
-lazy_static::lazy_static! {
-    pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
-    static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(TRACER_DEFAULT_SCHEDULED_DELAY_MS);
-}
+pub(crate) static ENVIRONMENT: LazyLock<ExecutionEnvironment> = LazyLock::new(mode);
 
+/// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
+/// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Debug, Deserialize, Serialize, Validate, Clone, TypedBuilder, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[serde(rename = "telemetry")]
@@ -102,13 +102,13 @@ impl TelemetryConfig {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         debug!("Validating telemetry config: {:?}", self);
-        if let Some(endpoint) = &self.tracing_endpoint {
-            if endpoint.is_empty() {
-                warn!("Empty tracing endpoint provided");
-                return Err(ConfigError::Message(
-                    "tracing endpoint cannot be empty".to_string(),
-                ));
-            }
+        if let Some(endpoint) = &self.tracing_endpoint
+            && endpoint.is_empty()
+        {
+            warn!("Empty tracing endpoint provided");
+            return Err(ConfigError::Message(
+                "tracing endpoint cannot be empty".to_string(),
+            ));
         }
         Ok(())
     }

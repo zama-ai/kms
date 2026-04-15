@@ -8,11 +8,11 @@ use crate::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::{kms::v1::FheParameter, RequestId};
+use kms_grpc::{RequestId, kms::v1::FheParameter};
 use serial_test::serial;
 use tonic::transport::Channel;
 
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_new_custodian_context_central() {

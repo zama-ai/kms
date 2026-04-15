@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_handles;
-use crate::client::tests::common::{assert_plaintext, TIME_TO_SLEEP_MS};
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, assert_plaintext};
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 #[cfg(feature = "slow_tests")]
@@ -10,15 +10,15 @@ use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
+    EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::RequestId;
 use serial_test::serial;
 use std::path::Path;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -168,7 +168,8 @@ pub(crate) async fn run_decryption_centralized(
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(test_path, msg, key_id, None, encryption_config).await;
+            compute_cipher_from_stored_key(test_path, msg, key_id, None, encryption_config, false)
+                .await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
@@ -188,6 +189,8 @@ pub(crate) async fn run_decryption_centralized(
                     &request_id,
                     context_id,
                     key_id,
+                    None,
+                    &[],
                 )
                 .unwrap()
         })
@@ -263,6 +266,10 @@ pub(crate) async fn run_decryption_centralized(
     // go through all requests and check the corresponding responses
     for req in &reqs {
         let req_id = req.request_id.as_ref().unwrap();
+
+        // make sure domain exists since it needs to be used for external signature verification
+        assert!(req.domain.is_some());
+
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|resp| {
@@ -278,7 +285,7 @@ pub(crate) async fn run_decryption_centralized(
         assert_eq!(responses.len(), 1);
 
         let received_plaintexts = internal_client
-            .process_decryption_resp(Some(req.clone()), &responses, 1)
+            .process_decryption_resp(Some(req.clone()), 1, &responses)
             .unwrap();
 
         // we need 1 plaintext for each ciphertext in the batch

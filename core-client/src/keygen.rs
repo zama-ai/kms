@@ -1,19 +1,19 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
-    dummy_domain, CmdConfig, CoreClientConfig, PartialKeyGenPreprocParameters,
-    SharedKeyGenParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{PubDataType, protobuf_to_alloy_domain};
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
+use kms_lib::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
@@ -23,10 +23,38 @@ use tfhe::{CompactPublicKey, ServerKey};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+/// Build a `KeySetConfig` from compressed and keyset_type parameters.
+/// Returns `None` when both `compressed` is false and `keyset_type` is `None`.
+pub(crate) fn build_keyset_config(
+    compressed: bool,
+    use_existing: bool,
+) -> Option<kms_grpc::kms::v1::KeySetConfig> {
+    if compressed || use_existing {
+        Some(kms_grpc::kms::v1::KeySetConfig {
+            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0, // CPU
+                secret_key_config: if use_existing {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
+                } else {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll as i32
+                },
+                compressed_key_config: if compressed {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
+                } else {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
+                },
+            }),
+        })
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_keygen(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -37,6 +65,7 @@ pub(crate) async fn do_keygen(
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -47,15 +76,18 @@ pub(crate) async fn do_keygen(
         cc_conf.num_majority
     };
 
-    //NOTE: If we do not use dummy_domain here, then
-    //this needs changing too in the KeyGenResult command.
-    let keyset_config =
+    // NOTE: If we do not use dummy_domain here, then
+    // this needs changing too in the KeyGenResult command.
+    let use_existing = shared_config.existing_keyset_id.is_some();
+    let keyset_config = build_keyset_config(shared_config.compressed, use_existing);
+    let keyset_added_info =
         shared_config
-            .keyset_type
-            .clone()
-            .map(|x| kms_grpc::kms::v1::KeySetConfig {
-                keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
-                standard_keyset_config: None,
+            .existing_keyset_id
+            .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
+                existing_keyset_id: Some(id.into()),
+                existing_epoch_id: shared_config.existing_epoch_id.map(Into::into),
+                use_existing_key_tag: shared_config.use_existing_key_tag,
+                ..Default::default()
             });
     let dkg_req = internal_client.key_gen_request(
         &req_id,
@@ -64,7 +96,7 @@ pub(crate) async fn do_keygen(
         shared_config.epoch_id.as_ref(),
         Some(param),
         keyset_config,
-        None,
+        keyset_added_info,
         dummy_domain(),
     )?;
 
@@ -95,9 +127,24 @@ pub(crate) async fn do_keygen(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Keygen request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Keygen request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only {}/{} keygen requests succeeded, need at least {}",
+            req_response_vec.len(),
+            num_parties,
+            num_expected_responses
+        );
+    }
 
     // get all responses
     let resp_response_vec = get_keygen_responses(
@@ -116,8 +163,10 @@ pub(crate) async fn do_keygen(
         destination_prefix,
         req_id,
         domain,
+        extra_data,
         resp_response_vec,
         cmd_conf.download_all,
+        shared_config.compressed,
     )
     .await?;
 
@@ -132,24 +181,27 @@ pub(crate) async fn fetch_and_check_keygen(
     destination_prefix: &Path,
     request_id: RequestId,
     domain: Eip712Domain,
+    extra_data: Vec<u8>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
+    compressed: bool,
 ) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
+    if responses.len() < num_expected_responses {
+        anyhow::bail!(
+            "Expected at least {} keygen responses, but got only {}",
+            num_expected_responses,
+            responses.len()
+        );
+    }
 
     // Download the generated keys.
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    let key_types = if compressed {
+        vec![PubDataType::CompressedXofKeySet]
+    } else {
+        vec![PubDataType::PublicKey, PubDataType::ServerKey]
+    };
 
-    let party_ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &request_id.to_string(),
         &key_types,
         cc_conf,
@@ -157,53 +209,106 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = *party_ids.first().unwrap() as usize;
+    let first_party_id = party_confs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no party configs returned from fetch_public_elements"))?
+        .party_id as usize;
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    let public_key =
-        load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix).await;
-    let server_key: ServerKey = load_material_from_pub_storage(
-        Some(destination_prefix),
-        &request_id,
-        PubDataType::ServerKey,
-        pub_storage_prefix,
-    )
-    .await;
+    if compressed {
+        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
+            load_material_from_pub_storage(
+                Some(destination_prefix),
+                &request_id,
+                PubDataType::CompressedXofKeySet,
+                pub_storage_prefix,
+            )
+            .await;
 
-    for response in responses {
-        let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
+        for response in responses {
+            let resp_req_id: RequestId = response.request_id.try_into()?;
+            tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
 
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
-        );
+            if request_id != resp_req_id {
+                anyhow::bail!(
+                    "Request ID of keygen response ({}) does not match the request ({})",
+                    resp_req_id,
+                    request_id
+                );
+            }
 
-        let external_signature = response.external_signature;
-        let prep_id = response.preprocessing_id.ok_or(anyhow::anyhow!(
-            "No preprocessing ID in keygen response, cannot verify external signature"
-        ))?;
-        check_standard_keyset_ext_signature(
-            &public_key,
-            &server_key,
-            &prep_id.try_into()?,
+            let external_signature = response.external_signature;
+            let prep_id = response.preprocessing_id.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No preprocessing ID in keygen response, cannot verify external signature"
+                )
+            })?;
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                &prep_id.try_into()?,
+                &request_id,
+                &external_signature,
+                &domain,
+                extra_data.clone(),
+                kms_addrs,
+            )
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+
+            tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+        }
+    } else {
+        let public_key =
+            load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix)
+                .await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            Some(destination_prefix),
             &request_id,
-            &external_signature,
-            &domain,
-            kms_addrs,
+            PubDataType::ServerKey,
+            pub_storage_prefix,
         )
-        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+        .await;
 
-        tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+        for response in responses {
+            let resp_req_id: RequestId = response.request_id.try_into()?;
+            tracing::info!("Received KeyGenResult with request ID {}", resp_req_id);
+
+            if request_id != resp_req_id {
+                anyhow::bail!(
+                    "Request ID of keygen response ({}) does not match the request ({})",
+                    resp_req_id,
+                    request_id
+                );
+            }
+
+            let external_signature = response.external_signature;
+            let prep_id = response.preprocessing_id.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No preprocessing ID in keygen response, cannot verify external signature"
+                )
+            })?;
+            check_standard_keyset_ext_signature(
+                &public_key,
+                &server_key,
+                &prep_id.try_into()?,
+                &request_id,
+                &external_signature,
+                &domain,
+                extra_data.clone(),
+                kms_addrs,
+            )
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
+
+            tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+        }
     }
     Ok(())
 }
 
 pub(crate) async fn get_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -212,9 +317,9 @@ pub(crate) async fn get_keygen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -241,7 +346,12 @@ pub(crate) async fn get_keygen_responses(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                assert!(ctr < max_iter, "timeout while waiting for keygen after {max_iter} retries (insecure: {insecure})");
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for keygen from party {:?} after {max_iter} retries (insecure: {insecure})",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -258,20 +368,40 @@ pub(crate) async fn get_keygen_responses(
                     response
                 );
             }
-            (core_id, request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("keygen response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return keygen result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Keygen response task panicked: {e}");
+            }
+        }
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} keygen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
+    }
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
@@ -280,6 +410,7 @@ pub(crate) async fn get_keygen_responses(
 }
 
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
@@ -287,12 +418,28 @@ pub(crate) fn check_standard_keyset_ext_signature(
     key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
+    _extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
+    tracing::info!(
+        "Checking external signature for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",
+        key_id,
+        prep_id,
+        hex::encode(&server_key_digest),
+        hex::encode(&public_key_digest)
+    );
+
+    let sol_type = KeygenVerification::new_standard(
+        prep_id,
+        key_id,
+        server_key_digest,
+        public_key_digest,
+        // TODO: reenable for RFC005
+        // extra_data,
+    );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -305,16 +452,54 @@ pub(crate) fn check_standard_keyset_ext_signature(
     }
 }
 
+/// Check external signature for compressed keyset
+pub(crate) fn check_compressed_keyset_ext_signature(
+    compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    _extra_data: Vec<u8>,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let keyset_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+
+    tracing::info!(
+        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={}",
+        key_id,
+        prep_id,
+        hex::encode(&keyset_digest)
+    );
+
+    let sol_type = KeygenVerification::new_compressed(
+        prep_id,
+        key_id,
+        keyset_digest, /* TODO: reenable for RFC005 extra_data */
+    );
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
+
+    // check that the address is in the list of known KMS addresses
+    if kms_addrs.contains(&addr) {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "External signature verification failed for compressed keygen"
+        ))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_preproc(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
     fhe_params: FheParameter,
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
+    keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -327,9 +512,9 @@ pub(crate) async fn do_preproc(
         Some(fhe_params),
         context_id,
         epoch_id,
-        None,
+        keyset_config,
         &domain,
-    )?; //TODO keyset config
+    )?;
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -346,9 +531,23 @@ pub(crate) async fn do_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Preproc request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Preproc request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_parties {
+        anyhow::bail!(
+            "Only {}/{} preproc requests succeeded",
+            req_response_vec.len(),
+            num_parties,
+        );
+    }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
@@ -361,7 +560,7 @@ pub(crate) async fn do_preproc(
 
 pub(crate) async fn do_partial_preproc(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -402,9 +601,23 @@ pub(crate) async fn do_partial_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        match inner {
+            Ok(Ok(resp)) => req_response_vec.push(resp.into_inner()),
+            Ok(Err(e)) => {
+                tracing::warn!("Partial preproc request to a core failed: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Partial preproc request task panicked: {e}");
+            }
+        }
     }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+    if req_response_vec.len() < num_parties {
+        anyhow::bail!(
+            "Only {}/{} partial preproc requests succeeded",
+            req_response_vec.len(),
+            num_parties,
+        );
+    }
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
@@ -415,15 +628,15 @@ pub(crate) async fn do_partial_preproc(
 }
 
 pub(crate) async fn get_preproc_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter() {
+    for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -431,6 +644,10 @@ pub(crate) async fn get_preproc_keygen_responses(
             ))
             .await;
 
+            tracing::info!(
+                "Polling preproc result for request {} from party {}",
+                request_id, core_conf.party_id
+            );
             let mut response = client
                 .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                 .await;
@@ -443,31 +660,53 @@ pub(crate) async fn get_preproc_keygen_responses(
                 ))
                 .await;
                 // do at most max_iter retries
-                assert!(
-                    ctr < max_iter,
-                    "timeout while waiting for preprocessing after {max_iter} retries."
-                );
+                if ctr >= max_iter {
+                    anyhow::bail!(
+                        "timeout while waiting for preprocessing from party {:?} after {max_iter} retries.",
+                        core_conf.party_id
+                    );
+                }
                 ctr += 1;
+                tracing::info!(
+                    "Preproc result not ready yet for request {} from party {} (retry {}/{})",
+                    request_id, core_conf.party_id, ctr, max_iter
+                );
                 response = client
                     .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
                     .await;
             }
 
-            (core_id, request_id, response.unwrap().into_inner())
+            let resp = response.map_err(|e| {
+                anyhow::anyhow!("preprocessing response from party {:?} failed: {e}", core_conf.party_id)
+            })?;
+            Ok((core_conf, request_id, resp.into_inner()))
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, resp_request_id, resp_res) = resp?;
-        assert_eq!(request_id, resp_request_id);
-        // any failures that happen will panic here
-        resp_response_vec.push((core_id, resp_res));
+        match resp {
+            Ok(Ok((core_conf, _request_id, inner))) => {
+                resp_response_vec.push((core_conf, inner));
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("A core failed to return preprocessing result: {e}");
+            }
+            Err(e) => {
+                tracing::warn!("Preprocessing response task panicked: {e}");
+            }
+        }
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    if resp_response_vec.len() < core_endpoints.len() {
+        anyhow::bail!(
+            "Only got {}/{} preprocessing responses",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+        );
+    }
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)
         .collect();
-    assert_eq!(resp_response_vec.len(), core_endpoints.len());
     Ok(resp_response_vec)
 }

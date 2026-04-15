@@ -1,23 +1,26 @@
-use std::collections::HashMap;
-
+#[cfg(feature = "testing")]
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::{
-    identifiers::ContextId, kms::v1::NewMpcContextRequest,
+    identifiers::ContextId,
+    kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 #[cfg(feature = "testing")]
 use kms_lib::{
-    conf::{init_conf, CoreConfig},
+    conf::{CoreConfig, init_conf},
     engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
+use std::collections::HashMap;
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+use crate::CoreConf;
 #[cfg(feature = "testing")]
 use crate::{
-    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
     CoreClientConfig,
+    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
 };
 
 #[cfg(feature = "testing")]
@@ -38,12 +41,24 @@ pub async fn create_test_context_info_from_core_config(
             .config_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Core config path not set for core {}", c.party_id))?;
-        let core_config: CoreConfig = init_conf(config_path.to_str().unwrap()).unwrap();
+        let core_config: CoreConfig = init_conf(
+            config_path
+                .to_str()
+                .expect("Config path to be a valid UTF-8"),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to init config due to error: {e}"))
+        .unwrap();
 
         // For testing, we only support the mocked trusted release mode
         // this requires the "mock_enclave = true" attribute in the kms-server config toml files.
-        let threshold_config = core_config.threshold.clone().unwrap();
-        match threshold_config.tls.unwrap() {
+        let threshold_config = core_config
+            .threshold
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Threshold config not set for core {}", c.party_id))?;
+        match threshold_config
+            .tls
+            .ok_or_else(|| anyhow::anyhow!("TLS config not set for core {}", c.party_id))?
+        {
             kms_lib::conf::threshold::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
@@ -63,20 +78,30 @@ pub async fn create_test_context_info_from_core_config(
         }
 
         // this assumes that the peer list is ordered by party ID
-        let peer = &threshold_config.peers.unwrap()[c.party_id - 1];
+        let peers = threshold_config
+            .peers
+            .ok_or_else(|| anyhow::anyhow!("Peers not set for core {}", c.party_id))?;
+        let peer = peers.get(c.party_id - 1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Peer index {} out of bounds (peers len: {}) for core {}",
+                c.party_id - 1,
+                peers.len(),
+                c.party_id
+            )
+        })?;
         let (role, identity) = peer.into_role_identity();
-        if let Some(initial_id) = threshold_config.my_id {
-            if role.one_based() != initial_id {
-                // this might be a misconfiguration, but useful for testing
-                // because threshold_config.my_id may be used as a storage prefix that
-                // must be different from the party ID in the peerlist to avoid collision
-                tracing::warn!(
-                    "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
-                    c.party_id,
-                    role.one_based(),
-                    initial_id
-                );
-            }
+        if let Some(initial_id) = threshold_config.my_id
+            && role.one_based() != initial_id
+        {
+            // this might be a misconfiguration, but useful for testing
+            // because threshold_config.my_id may be used as a storage prefix that
+            // must be different from the party ID in the peerlist to avoid collision
+            tracing::warn!(
+                "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
+                c.party_id,
+                role.one_based(),
+                initial_id
+            );
         }
 
         let verification_key = verification_keys.get(&role.one_based()).ok_or_else(|| {
@@ -88,14 +113,24 @@ pub async fn create_test_context_info_from_core_config(
         let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
         })?;
+        let sk_der = {
+            // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
+            #[expect(deprecated)]
+            let ecdsa_sk = sk.sk();
+            ecdsa_sk.to_pkcs8_der()?
+        };
+        let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+            &sk_der.as_bytes().into(),
+            &rcgen::PKCS_ECDSA_P256K1_SHA256,
+        )?;
 
         let mpc_identity = identity.mpc_identity();
-        let (_ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-            mpc_identity.as_ref(),
-            true,
-            #[allow(deprecated)]
-            sk.sk(),
-        )?;
+        let (_ca_cert_ki, ca_cert, _ca_cert_params) =
+            threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+                mpc_identity.as_ref(),
+                true,
+                &ca_keypair,
+            )?;
 
         // build the s3 endpoint URL
         let (s3_endpoint, prefix) =
@@ -113,10 +148,9 @@ pub async fn create_test_context_info_from_core_config(
                         }
                     };
 
-                    let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or(anyhow::anyhow!(
-                        "No public S3 endpoint found for core {}",
-                        c.party_id
-                    ))?;
+                    let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("No public S3 endpoint found for core {}", c.party_id)
+                    })?;
 
                     // we try to detect whether the s3 endpoint is a custom one or a standard AWS one
                     let s3_endpoint = if s3_endpoint.as_str().contains("dev-s3-mock:9000") {
@@ -188,7 +222,7 @@ pub async fn create_test_context_info_from_core_config(
     let new_context = ContextInfo {
         mpc_nodes,
         context_id,
-        software_version: SoftwareVersion::current(),
+        software_version: SoftwareVersion::current()?,
         threshold: *threshold as u32,
         pcr_values: first_pcr_values.to_vec(),
     };
@@ -196,7 +230,7 @@ pub async fn create_test_context_info_from_core_config(
 }
 
 pub(crate) async fn do_new_mpc_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_path: &std::path::Path,
 ) -> anyhow::Result<ContextId> {
     // note that we use the BufReader from std instead of tokio
@@ -215,7 +249,11 @@ pub(crate) async fn do_new_mpc_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
-                    new_context: Some(new_context_cloned.try_into().unwrap()),
+                    new_context: Some(new_context_cloned.try_into().map_err(|e| {
+                        tonic::Status::internal(format!(
+                            "Failed to convert context info to proto: {e}"
+                        ))
+                    })?),
                 }))
                 .await
         });
@@ -225,4 +263,27 @@ pub(crate) async fn do_new_mpc_context(
     }
 
     Ok(context_id)
+}
+
+pub(crate) async fn do_destroy_mpc_context(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    context_id: &ContextId,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (_party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+        let context_cloned = (*context_id).into();
+        req_tasks.spawn(async move {
+            cur_client
+                .destroy_mpc_context(DestroyMpcContextRequest {
+                    context_id: Some(context_cloned),
+                })
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
 }

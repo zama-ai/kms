@@ -1,15 +1,15 @@
 use super::{Storage, StorageReader};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt};
+use crate::vault::storage::{StorageExt, all_data_ids_from_all_epochs_impl};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
 use anyhow::anyhow;
-use kms_grpc::{identifiers::EpochId, RequestId};
-use serde::{de::DeserializeOwned, Serialize};
+use kms_grpc::{RequestId, identifiers::EpochId};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use tfhe::{
+    Unversionize, Versionize,
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
-    Unversionize, Versionize,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,10 +47,10 @@ impl StorageReader for RamStorage {
             Some(raw_data) => raw_data,
             None => {
                 return Err(anyhow!(
-                    "Could not find data at ({}, {})",
+                    "Could not find data at (data_type: {}, data_id: {})",
                     data_type,
                     data_id
-                ))
+                ));
             }
         };
         let mut buf = std::io::Cursor::new(raw_data);
@@ -68,7 +68,7 @@ impl StorageReader for RamStorage {
                     "Could not decode data at ({}, {})",
                     data_id,
                     data_type
-                ))
+                ));
             }
         };
         Ok(raw_data.clone())
@@ -104,11 +104,11 @@ impl StorageReaderExt for RamStorage {
             Some(raw_data) => raw_data,
             None => {
                 return Err(anyhow!(
-                    "Could not find data at ({}, {}, {})",
+                    "Could not find data at (data_type: {}, data_id: {}, epoch_id: {})",
                     data_type,
                     data_id,
                     epoch_id
-                ))
+                ));
             }
         };
         let mut buf = std::io::Cursor::new(raw_data);
@@ -118,10 +118,10 @@ impl StorageReaderExt for RamStorage {
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
         let mut res = HashSet::new();
         for ((_cur_data_id, cur_epoch_id), cur_data_type) in self.internal_storage.keys() {
-            if let Some(epoch_id) = cur_epoch_id {
-                if cur_data_type == data_type {
-                    res.insert(*epoch_id);
-                }
+            if let Some(epoch_id) = cur_epoch_id
+                && cur_data_type == data_type
+            {
+                res.insert(*epoch_id);
             }
         }
         Ok(res)
@@ -157,6 +157,29 @@ impl StorageReaderExt for RamStorage {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         all_data_ids_from_all_epochs_impl(self, data_type).await
+    }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let raw_data = match self
+            .internal_storage
+            .get(&((*data_id, Some(*epoch_id)), data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not find data at (data_type: {}, data_id: {}, epoch_id: {})",
+                    data_id,
+                    epoch_id,
+                    data_type
+                ));
+            }
+        };
+        Ok(raw_data.clone())
     }
 }
 
@@ -240,6 +263,32 @@ impl StorageExt for RamStorage {
         println!(
             "Stored data at epoch: ({}, {}, {})",
             data_id, epoch_id, data_type
+        );
+        Ok(())
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The data {}-{} at epoch {} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type,
+                epoch_id
+            );
+            return Ok(());
+        }
+        self.internal_storage.insert(
+            ((*data_id, Some(*epoch_id)), data_type.to_string()),
+            bytes.to_vec(),
         );
         Ok(())
     }
@@ -359,13 +408,47 @@ pub mod tests {
         test_all_data_ids_from_all_epochs(&mut storage).await;
     }
 
+    #[tokio::test]
+    async fn test_store_load_bytes_at_epoch_ram() {
+        let mut storage = RamStorage::new();
+        test_store_load_bytes_at_epoch(&mut storage).await;
+    }
+
     /// Test that files don't get silently overwritten
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_ram() {
         let mut storage = RamStorage::new();
         test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_mixed_epoch_and_non_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_epoch_ids_and_data_ids_with_mixed_storage(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_epoch_ids_with_only_non_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_epoch_ids_for_data_with_only_non_epoch_data(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_data_ids_with_only_epoch_data_ram() {
+        let mut storage = RamStorage::new();
+        test_all_data_ids_with_only_epoch_data(&mut storage).await;
+    }
+
+    #[kms_test_tracing::traced_test]
+    #[tokio::test]
+    async fn test_overwrite_logic_ram_on_epoch() {
+        let mut storage = RamStorage::new();
+        test_store_bytes_at_epoch_does_not_overwrite(&mut storage).await;
         assert!(logs_contain(
             "already exists. Keeping the data without overwriting"
         ));

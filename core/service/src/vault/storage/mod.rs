@@ -8,18 +8,15 @@ use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use enum_dispatch::enum_dispatch;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
-    rpc_types::{
-        PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
-    },
     RequestId,
+    identifiers::{ContextId, EpochId},
+    rpc_types::{PrivDataType, PubDataType},
 };
-use ordermap::OrderMap;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
-use tfhe::{named::Named, Unversionize, Versionize};
+use tfhe::{Unversionize, Versionize, named::Named};
 use tracing;
 
 pub mod crypto_material;
@@ -54,7 +51,10 @@ pub trait StorageReader {
     /// before deserializing, to avoid issues with version upgrades changing the serialized form.
     async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 
-    /// Return all URLs stored of a specific data type
+    /// Return all URLs stored of a specific data type.
+    ///
+    /// This function does not consider data types that are stored under different epochs,
+    /// use [StorageReaderExt::all_data_ids_at_epoch] instead.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
     /// Output some information on the storage instance.
@@ -87,10 +87,13 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
     } else {
         // when both are non empty, then we have some inconsistency
         // there is no correct set to return and returning the union is also problematic
-        let msg = format!("inconsistent storage, ids_from_non_epoch_storage.len()={}, ids_from_epoch_storage.len()={}",
-                ids_from_non_epoch_storage.len(),ids_from_epoch_storage.len());
-        tracing::error!(msg);
-        Err(anyhow::anyhow!(msg))
+        tracing::warn!(
+            "inconsistent storage, ids_from_non_epoch_storage.len()={}, ids_from_epoch_storage.len()={} for data_type={}. They may be because of a recent migration. Only epoched data is used",
+            ids_from_non_epoch_storage.len(),
+            ids_from_epoch_storage.len(),
+            data_type
+        );
+        Ok(ids_from_epoch_storage)
     }
 }
 
@@ -138,6 +141,14 @@ pub trait StorageReaderExt: StorageReader {
         &self,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>>;
+
+    /// Load raw bytes from storage at the given epoch without deserializing.
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Trait for KMS storage reading and writing.
@@ -186,6 +197,15 @@ pub trait StorageExt: StorageReaderExt + Storage {
     async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Store raw bytes at the specified epoch without versioning or serialization.
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
@@ -291,7 +311,7 @@ pub async fn read_text_at_request_id<S: StorageReader>(
     .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
 }
 
-/// Delete ALL data under a given `request_id`.
+/// Delete ALL data under a given `request_id`, but ignore anything that might be under epochs (e.g., FHE keys, PRSS setups and CRS info).
 /// Observe that this method does not produce any error regardless of any whether data is deleted or not.
 pub async fn delete_all_at_request_id<S: Storage>(
     storage: &mut S,
@@ -299,7 +319,7 @@ pub async fn delete_all_at_request_id<S: Storage>(
 ) -> anyhow::Result<()> {
     for cur_type in PrivDataType::iter() {
         match cur_type {
-            PrivDataType::FhePrivateKey | PrivDataType::FheKeyInfo => {
+            PrivDataType::FhePrivateKey | PrivDataType::FheKeyInfo | PrivDataType::CrsInfo => {
                 // These types might have epoch-specific data
                 continue;
             }
@@ -381,12 +401,14 @@ pub async fn delete_pk_at_request_id<S: Storage>(
     request_id: &RequestId,
 ) -> anyhow::Result<()> {
     delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await?;
-    delete_at_request_id(
+    // Best-effort delete of legacy PublicKeyMetadata (ignore errors if not found)
+    #[allow(deprecated)]
+    let _ = delete_at_request_id(
         storage,
         request_id,
         &PubDataType::PublicKeyMetadata.to_string(),
     )
-    .await?;
+    .await;
     Ok(())
 }
 
@@ -423,55 +445,6 @@ where
     storage
         .read_data_at_epoch(request_id, epoch_id, data_type)
         .await
-}
-
-/// This function will perform verionize on the type.
-pub async fn store_pk_at_request_id<S: Storage>(
-    storage: &mut S,
-    request_id: &RequestId,
-    pk: WrappedPublicKey<'_>,
-) -> anyhow::Result<()> {
-    tracing::info!("Storing public key");
-    match pk {
-        WrappedPublicKey::Compact(inner_pk) => {
-            store_versioned_at_request_id(
-                storage,
-                request_id,
-                inner_pk,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
-            store_versioned_at_request_id(
-                storage,
-                request_id,
-                &PublicKeyType::Compact,
-                &PubDataType::PublicKeyMetadata.to_string(),
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
-
-pub async fn read_pk_at_request_id<S: StorageReader>(
-    storage: &S,
-    request_id: &RequestId,
-) -> anyhow::Result<WrappedPublicKeyOwned> {
-    let pk_type: PublicKeyType = read_versioned_at_request_id(
-        storage,
-        request_id,
-        &PubDataType::PublicKeyMetadata.to_string(),
-    )
-    .await?;
-
-    let out = match pk_type {
-        PublicKeyType::Compact => WrappedPublicKeyOwned::Compact(
-            read_versioned_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string())
-                .await?,
-        ),
-    };
-
-    Ok(out)
 }
 
 /// Simple wrapper around [store_versioned_at_request_id]
@@ -541,15 +514,12 @@ pub async fn read_all_data_from_all_epochs_versioned<
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<(RequestId, EpochId), T>> {
-    // first read all the PRSS data
-    let epochs = storage
-        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
-        .await?;
+    // first read all the epochs
+    let epochs = storage.all_epoch_ids_for_data(data_type).await?;
 
     // then we know all the epochs, and we can read the data stored under each epoch
     let mut res = HashMap::new();
-    for epoch in epochs {
-        let epoch_id: EpochId = epoch.into();
+    for epoch_id in epochs {
         let id_set = storage.all_data_ids_at_epoch(&epoch_id, data_type).await?;
         for data_id in id_set.iter() {
             if !data_id.is_valid() {
@@ -623,7 +593,6 @@ pub enum StorageProxy {
 pub fn make_storage(
     storage_conf: Option<StorageConf>,
     storage_type: StorageType,
-    storage_cache: Option<StorageCache>,
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
     let storage = match storage_conf {
@@ -635,7 +604,6 @@ pub fn make_storage(
                     bucket,
                     storage_type,
                     prefix.as_deref(),
-                    storage_cache,
                 )?)
             }
             StorageConf::File(FileStorage { path, prefix }) => StorageProxy::from(
@@ -646,46 +614,6 @@ pub fn make_storage(
         None => StorageProxy::from(file::FileStorage::new(None, storage_type, None)?),
     };
     Ok(storage)
-}
-
-#[derive(Debug, Clone)]
-pub struct StorageCache {
-    cache: OrderMap<(String, String), Vec<u8>>,
-    max_cache_size: usize,
-}
-
-impl StorageCache {
-    pub fn new(max_cache_size: usize) -> anyhow::Result<Self> {
-        if max_cache_size != 0 {
-            Ok(Self {
-                cache: OrderMap::new(),
-                max_cache_size,
-            })
-        } else {
-            anyhow::bail!("storage cache size should not be zero");
-        }
-    }
-
-    pub(crate) fn insert(&mut self, key: &str, subkey: &str, data: &[u8]) -> Option<Vec<u8>> {
-        let out = self
-            .cache
-            .insert((key.to_string(), subkey.to_string()), data.to_vec());
-
-        if self.cache.len() > self.max_cache_size {
-            _ = self.cache.remove_index(0);
-        }
-
-        out
-    }
-
-    pub(crate) fn get(&self, key: &str, subkey: &str) -> Option<&Vec<u8>> {
-        // do we have to use to_string()?
-        self.cache.get(&(key.to_string(), subkey.to_string()))
-    }
-
-    pub(crate) fn remove(&mut self, key: &str, subkey: &str) -> Option<Vec<u8>> {
-        self.cache.remove(&(key.to_string(), subkey.to_string()))
-    }
 }
 
 #[cfg(test)]
@@ -730,9 +658,11 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!(data, retrieved_store);
-        assert!(delete_at_request_id(storage, &req_id, data_type)
-            .await
-            .is_ok());
+        assert!(
+            delete_at_request_id(storage, &req_id, data_type)
+                .await
+                .is_ok()
+        );
         let reretrieved_store: anyhow::Result<TestType> =
             read_versioned_at_request_id(storage, &req_id, data_type).await;
         assert!(reretrieved_store.is_err());
@@ -795,6 +725,24 @@ pub mod tests {
         assert_eq!(epochs.len(), 2);
         assert!(epochs.contains(&epoch1));
         assert!(epochs.contains(&epoch2));
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id3, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id4, &epoch2, &data_type)
+            .await
+            .unwrap();
     }
 
     pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {
@@ -901,6 +849,9 @@ pub mod tests {
         // Read back and verify it is still the original bytes
         let loaded = storage.load_bytes(&data_id, &data_type).await.unwrap();
         assert_eq!(loaded, original_bytes, "Bytes should not be overwritten");
+
+        // Clean up
+        storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
     pub(crate) async fn test_store_data_does_not_overwrite_existing_data<S: Storage>(
@@ -926,8 +877,12 @@ pub mod tests {
         // Read back and verify it is still the original data
         let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
         assert_eq!(loaded.i, original_data.i, "Data should not be overwritten");
+
+        // Clean up
+        storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
+    #[kms_test_tracing::traced_test]
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
         let mut rng = AesRng::seed_from_u64(98765);
         let epoch1 = EpochId::new_random(&mut rng);
@@ -997,18 +952,19 @@ pub mod tests {
         assert!(ids.contains(&id4));
         assert!(ids.contains(&id5));
 
-        // Case 3: Data in both epoch and non-epoch storage (should error)
+        // Case 3: Data in both epoch and non-epoch storage (should produce warning and only return epoched data)
         storage
             .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
             .await
             .unwrap();
 
-        let result = storage.all_data_ids_from_all_epochs(&data_type).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("inconsistent storage"));
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&id1));
+        assert!(logs_contain("inconsistent storage"));
 
         // Clean up
         storage
@@ -1019,33 +975,355 @@ pub mod tests {
         storage.delete_data(&id5, &data_type).await.unwrap();
     }
 
-    #[test]
-    fn ordered_map() {
-        let mut om = StorageCache::new(2).unwrap();
-        let bucket = "abc".to_string();
-        let key = "efg".to_string();
-        let data = vec![1, 2, 3];
-        om.insert(&bucket, &key, &data);
-        assert_eq!(om.cache.len(), 1);
-        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
+    pub async fn test_store_load_bytes_at_epoch<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(54321);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
 
-        // insert the same thing preserves the length
-        om.insert(&bucket, &key, &data);
-        assert_eq!(om.cache.len(), 1);
+        let bytes1 = vec![1, 2, 3, 4, 5];
+        let bytes2 = vec![10, 20, 30];
+        let bytes3 = vec![100, 200];
 
-        // insert a new item
-        let key2 = "key2".to_string();
-        om.insert(&bucket, &key2, &data);
-        assert_eq!(om.cache.len(), 2);
-        assert_eq!(*om.get(&bucket, &key).as_ref().unwrap(), &data);
-        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
+        let id1 = derive_request_id("BYTES_EPOCH_1").unwrap();
+        let id2 = derive_request_id("BYTES_EPOCH_2").unwrap();
 
-        // insert a third item causes the first item to be lost
-        let key3 = "key3".to_string();
-        om.insert(&bucket, &key3, &data);
-        assert_eq!(om.cache.len(), 2);
-        assert_eq!(om.get(&bucket, &key), None);
-        assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
-        assert_eq!(*om.get(&bucket, &key3).as_ref().unwrap(), &data);
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Store bytes at different epochs
+        storage
+            .store_bytes_at_epoch(&bytes1, &id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&bytes2, &id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&bytes3, &id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+
+        // Load bytes and verify
+        let loaded1 = storage
+            .load_bytes_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded1, bytes1);
+
+        let loaded2 = storage
+            .load_bytes_at_epoch(&id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded2, bytes2);
+
+        let loaded3 = storage
+            .load_bytes_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded3, bytes3);
+
+        // Verify loading non-existent data fails
+        let result = storage.load_bytes_at_epoch(&id2, &epoch2, &data_type).await;
+        assert!(result.is_err());
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+    }
+
+    pub async fn test_store_bytes_at_epoch_does_not_overwrite<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(11111);
+        let epoch = EpochId::new_random(&mut rng);
+
+        let original_bytes = vec![1, 2, 3, 4, 5];
+        let new_bytes = vec![9, 8, 7, 6, 5];
+
+        let data_id = derive_request_id("BYTES_EPOCH_OVERWRITE").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Store original bytes
+        storage
+            .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+
+        // Attempt to overwrite with different bytes
+        storage
+            .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+
+        // Verify original bytes are preserved
+        let loaded = storage
+            .load_bytes_at_epoch(&data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded, original_bytes,
+            "Bytes at epoch should not be overwritten"
+        );
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+    }
+
+    /// Test that `all_epoch_ids_for_data` and `all_data_ids` correctly distinguish
+    /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
+    /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
+    /// `key_id` is used in both locations.
+    #[kms_test_tracing::traced_test]
+    pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
+        storage: &mut S,
+    ) {
+        let mut rng = AesRng::seed_from_u64(77777);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Use the SAME key_id for both epoched and non-epoched data
+        let shared_key_id = derive_request_id("SHARED_KEY").unwrap();
+        let epoch_only_key_id = derive_request_id("EPOCH_ONLY_KEY").unwrap();
+        let non_epoch_only_key_id = derive_request_id("NON_EPOCH_ONLY_KEY").unwrap();
+
+        let data_a = TestType { i: 10 };
+        let data_b = TestType { i: 20 };
+        let data_c = TestType { i: 30 };
+        let data_d = TestType { i: 40 };
+        let data_e = TestType { i: 50 };
+
+        // --- Setup: store data at both epoch and non-epoch paths ---
+
+        // Store shared_key_id under epoch1 (epoched)
+        storage
+            .store_data_at_epoch(&data_a, &shared_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        // Store shared_key_id under epoch2 (epoched)
+        storage
+            .store_data_at_epoch(&data_b, &shared_key_id, &epoch2, &data_type)
+            .await
+            .unwrap();
+        // Store epoch_only_key_id under epoch1 (epoched only)
+        storage
+            .store_data_at_epoch(&data_c, &epoch_only_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        // Store shared_key_id without an epoch (non-epoched)
+        storage
+            .store_data(&data_d, &shared_key_id, &data_type)
+            .await
+            .unwrap();
+        // Store non_epoch_only_key_id without an epoch (non-epoched only)
+        storage
+            .store_data(&data_e, &non_epoch_only_key_id, &data_type)
+            .await
+            .unwrap();
+
+        // --- Test all_epoch_ids_for_data ---
+        // Should return only epoch1 and epoch2, NOT be confused by
+        // the non-epoched shared_key_id or non_epoch_only_key_id
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert_eq!(
+            epoch_ids.len(),
+            2,
+            "Expected exactly 2 epoch IDs, got {:?}",
+            epoch_ids
+        );
+        assert!(epoch_ids.contains(&epoch1));
+        assert!(epoch_ids.contains(&epoch2));
+
+        // --- Test all_data_ids (non-epoch) ---
+        // Should return only shared_key_id and non_epoch_only_key_id,
+        // NOT epoch_only_key_id or any epoch IDs
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert_eq!(
+            data_ids.len(),
+            2,
+            "Expected exactly 2 non-epoch data IDs, got {:?}",
+            data_ids
+        );
+        assert!(data_ids.contains(&shared_key_id));
+        assert!(data_ids.contains(&non_epoch_only_key_id));
+
+        // --- Test all_data_ids_at_epoch ---
+        // epoch1 should have shared_key_id and epoch_only_key_id
+        let epoch1_data_ids = storage
+            .all_data_ids_at_epoch(&epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            epoch1_data_ids.len(),
+            2,
+            "Expected 2 data IDs at epoch1, got {:?}",
+            epoch1_data_ids
+        );
+        assert!(epoch1_data_ids.contains(&shared_key_id));
+        assert!(epoch1_data_ids.contains(&epoch_only_key_id));
+
+        // epoch2 should have only shared_key_id
+        let epoch2_data_ids = storage
+            .all_data_ids_at_epoch(&epoch2, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            epoch2_data_ids.len(),
+            1,
+            "Expected 1 data ID at epoch2, got {:?}",
+            epoch2_data_ids
+        );
+        assert!(epoch2_data_ids.contains(&shared_key_id));
+
+        // --- Verify that all_data_ids_from_all_epochs detects the inconsistency ---
+        // Since we have data in both epoch and non-epoch storage, this should produce a warning return the epoched data
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids, epoch1_data_ids);
+        assert!(logs_contain("inconsistent storage"));
+
+        // --- Clean up ---
+        storage
+            .delete_data_at_epoch(&shared_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&shared_key_id, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&epoch_only_key_id, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data(&shared_key_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data(&non_epoch_only_key_id, &data_type)
+            .await
+            .unwrap();
+
+        // Verify cleanup: no epoch IDs remain
+        let epoch_ids_after = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert!(
+            epoch_ids_after.is_empty(),
+            "Expected no epoch IDs after cleanup"
+        );
+        // Verify cleanup: no non-epoch data IDs remain
+        let data_ids_after = storage.all_data_ids(&data_type).await.unwrap();
+        assert!(
+            data_ids_after.is_empty(),
+            "Expected no data IDs after cleanup"
+        );
+    }
+
+    /// Test `all_epoch_ids_for_data` when only non-epoched data exists.
+    /// No epoch IDs should be returned, even though data exists under the data_type.
+    pub async fn test_all_epoch_ids_for_data_with_only_non_epoch_data<S: StorageExt>(
+        storage: &mut S,
+    ) {
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let key_id1 = derive_request_id("NON_EPOCH_1").unwrap();
+        let key_id2 = derive_request_id("NON_EPOCH_2").unwrap();
+        let data1 = TestType { i: 60 };
+        let data2 = TestType { i: 70 };
+
+        // Store non-epoched data only
+        storage
+            .store_data(&data1, &key_id1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data(&data2, &key_id2, &data_type)
+            .await
+            .unwrap();
+
+        // all_epoch_ids_for_data should return empty set
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert!(
+            epoch_ids.is_empty(),
+            "Expected no epoch IDs when only non-epoch data exists, got {:?}",
+            epoch_ids
+        );
+
+        // all_data_ids should return both key IDs
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert_eq!(data_ids.len(), 2);
+        assert!(data_ids.contains(&key_id1));
+        assert!(data_ids.contains(&key_id2));
+
+        // Clean up
+        storage.delete_data(&key_id1, &data_type).await.unwrap();
+        storage.delete_data(&key_id2, &data_type).await.unwrap();
+    }
+
+    /// Test `all_data_ids` when only epoched data exists.
+    /// No non-epoch data IDs should be returned.
+    pub async fn test_all_data_ids_with_only_epoch_data<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(88888);
+        let epoch1 = EpochId::new_random(&mut rng);
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let key_id1 = derive_request_id("EPOCH_DATA_1").unwrap();
+        let key_id2 = derive_request_id("EPOCH_DATA_2").unwrap();
+        let data1 = TestType { i: 80 };
+        let data2 = TestType { i: 90 };
+
+        // Store only epoched data
+        storage
+            .store_data_at_epoch(&data1, &key_id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data2, &key_id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+
+        // all_data_ids (non-epoch) should return empty set
+        let data_ids = storage.all_data_ids(&data_type).await.unwrap();
+        assert!(
+            data_ids.is_empty(),
+            "Expected no non-epoch data IDs when only epoch data exists, got {:?}",
+            data_ids
+        );
+
+        // all_epoch_ids_for_data should return epoch1
+        let epoch_ids = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert_eq!(epoch_ids.len(), 1);
+        assert!(epoch_ids.contains(&epoch1));
+
+        // all_data_ids_at_epoch should return both key IDs
+        let epoch1_ids = storage
+            .all_data_ids_at_epoch(&epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(epoch1_ids.len(), 2);
+        assert!(epoch1_ids.contains(&key_id1));
+        assert!(epoch1_ids.contains(&key_id2));
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&key_id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&key_id2, &epoch1, &data_type)
+            .await
+            .unwrap();
     }
 }

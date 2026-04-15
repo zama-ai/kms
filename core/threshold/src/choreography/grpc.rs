@@ -1,25 +1,17 @@
 //! gRPC-based choreography.
 
-pub mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_choreography");
-}
-
-use self::gen::choreography_server::{Choreography, ChoreographyServer};
-use self::gen::{
-    CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
-    PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse, ReshareRequest,
-    ReshareResponse, StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest,
-    ThresholdDecryptResponse, ThresholdDecryptResultRequest, ThresholdDecryptResultResponse,
-    ThresholdKeyGenRequest, ThresholdKeyGenResponse, ThresholdKeyGenResultRequest,
-    ThresholdKeyGenResultResponse,
+use threshold_networking::choreography_gen::choreography_server::{
+    Choreography, ChoreographyServer,
+};
+use threshold_networking::choreography_gen::{
+    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
+    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
+    PrssInitRequest, PrssInitResponse, ReshareRequest, ReshareResponse, StatusCheckRequest,
+    StatusCheckResponse, ThresholdDecryptRequest, ThresholdDecryptResponse,
+    ThresholdDecryptResultRequest, ThresholdDecryptResultResponse, ThresholdKeyGenRequest,
+    ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
 
-use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{
-    Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome,
-};
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
@@ -27,64 +19,18 @@ use crate::choreography::requests::{
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
-use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
-use crate::execution::endpoints::decryption::{
-    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
-    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
-    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
-    SnsRadixOrBoolCiphertext,
-};
-use crate::execution::endpoints::decryption::{
-    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
-};
-use crate::execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
-use crate::execution::endpoints::reshare_sk::{
-    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
-};
-use crate::execution::keyset_config::KeySetConfig;
-use crate::execution::large_execution::offline::SecureLargePreprocessing;
-use crate::execution::online::gen_bits::SecureBitGenEven;
-use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
-use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
-use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
-use crate::execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
-use crate::execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
-use crate::execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
-use crate::execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
-use crate::execution::online::preprocessing::{
-    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
-    PreprocessorFactory,
-};
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::sessions::base_session::ToBaseSession;
-use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::sessions::large_session::LargeSession;
-use crate::execution::runtime::sessions::session_parameters::{
-    GenericParameterHandles, SessionParameters,
-};
-use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
-use crate::execution::small_execution::prf::PRSSConversions;
-use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
-use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
-use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
-use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
-use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
-use crate::networking::{
-    constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager, value::BroadcastValue,
-    NetworkMode,
-};
-use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
+use algebra::base_ring::{Z64, Z128};
+use algebra::galois_rings::common::ResiduePoly;
+use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
+use error_utils::anyhow_error_and_log;
 use futures_util::{
-    future::{join_all, try_join_all},
     TryFutureExt,
+    future::{join_all, try_join_all},
 };
-use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -94,11 +40,65 @@ use std::sync::{Arc, Mutex};
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
+use tfhe::xof_key_set::CompressedXofKeySet;
+use threshold_execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+use threshold_execution::endpoints::decryption::{
+    BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession, RadixOrBoolCiphertext,
+    SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
+    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
+    task_decryption_bitdec_par,
+};
+use threshold_execution::endpoints::decryption::{
+    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+};
+use threshold_execution::endpoints::keygen::{
+    OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen,
+};
+use threshold_execution::endpoints::reshare_sk::{
+    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+};
+use threshold_execution::keyset_config::KeySetConfig;
+use threshold_execution::large_execution::offline::SecureLargePreprocessing;
+use threshold_execution::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
+use threshold_execution::network_value::BroadcastValue;
+use threshold_execution::online::gen_bits::SecureBitGenEven;
+use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
+use threshold_execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use threshold_execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
+use threshold_execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
+use threshold_execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
+use threshold_execution::online::preprocessing::{
+    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
+    PreprocessorFactory,
+};
+use threshold_execution::runtime::sessions::base_session::ToBaseSession;
+use threshold_execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use threshold_execution::runtime::sessions::large_session::LargeSession;
+use threshold_execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
+use threshold_execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+use threshold_execution::small_execution::prf::PRSSConversions;
+use threshold_execution::small_execution::prss::PRSSInit;
+use threshold_execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
+use threshold_execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
+use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
+use threshold_networking::{constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager};
+use threshold_types::role::Role;
+use threshold_types::session_id::SessionId;
+use threshold_types::{
+    network::NetworkMode,
+    party::{Identity, RoleAssignment},
+};
 use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},
 };
-use tracing::{instrument, Instrument};
+use tracing::{Instrument, instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
 pub enum SupportedRing {
@@ -169,15 +169,33 @@ type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
 >;
 
 struct KeyBucket<const EXTENSION_DEGREE: usize> {
-    pub_keyset: Arc<FhePubKeySet>,
+    pub_keyset: Arc<Option<CompressedXofKeySet>>,
+    pub_keyset_decompressed: Arc<FhePubKeySet>,
     priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
     params: DKGParams,
 }
 
 impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+    pub fn new_compressed(
+        keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
+        params: DKGParams,
+    ) -> Self {
+        let (public_key, server_key) = keys.0.clone().decompress().unwrap().into_raw_parts();
+        Self {
+            pub_keyset: Arc::new(Some(keys.0)),
+            pub_keyset_decompressed: Arc::new(FhePubKeySet {
+                public_key,
+                server_key,
+            }),
+            priv_keyset: Arc::new(keys.1),
+            params,
+        }
+    }
+
     pub fn new(keys: (FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>), params: DKGParams) -> Self {
         Self {
-            pub_keyset: Arc::new(keys.0),
+            pub_keyset: Arc::new(None),
+            pub_keyset_decompressed: Arc::new(keys.0),
             priv_keyset: Arc::new(keys.1),
             params,
         }
@@ -296,12 +314,12 @@ where
 }
 
 impl<
-        const EXTENSION_DEGREE: usize,
-        PRSSInitStrategy: Default + 'static,
-        SmallOfflineStrategy: Default + 'static,
-        LargeOfflineStrategyZ64: Default + 'static,
-        LargeOfflineStrategyZ128: Default + 'static,
-    >
+    const EXTENSION_DEGREE: usize,
+    PRSSInitStrategy: Default + 'static,
+    SmallOfflineStrategy: Default + 'static,
+    LargeOfflineStrategyZ64: Default + 'static,
+    LargeOfflineStrategyZ128: Default + 'static,
+>
     GrpcChoreography<
         EXTENSION_DEGREE,
         PRSSInitStrategy,
@@ -313,17 +331,13 @@ where
     // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-
     PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
-
     PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
-
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
@@ -426,6 +440,7 @@ where
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    #[allow(clippy::result_large_err)]
     async fn create_base_session(
         &self,
         request_sid: SessionId,
@@ -447,10 +462,10 @@ where
             .pop()
             .map_or_else(
                 || {
-                    Err(tonic::Status::new(
+                    Err(Box::new(tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to create session for {request_sid:?}"),
-                    ))
+                    )))
                 },
                 Ok,
             )?)
@@ -517,12 +532,12 @@ where
 
 #[async_trait]
 impl<
-        const EXTENSION_DEGREE: usize,
-        PRSSInitStrategy: Default + 'static,
-        SmallOfflineStrategy: Default + 'static,
-        LargeOfflineStrategyZ64: Default + 'static,
-        LargeOfflineStrategyZ128: Default + 'static,
-    > Choreography
+    const EXTENSION_DEGREE: usize,
+    PRSSInitStrategy: Default + 'static,
+    SmallOfflineStrategy: Default + 'static,
+    LargeOfflineStrategyZ64: Default + 'static,
+    LargeOfflineStrategyZ128: Default + 'static,
+> Choreography
     for GrpcChoreography<
         EXTENSION_DEGREE,
         PRSSInitStrategy,
@@ -534,17 +549,13 @@ where
     // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-
     PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
-
     PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
         PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
-
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
@@ -971,20 +982,27 @@ where
                     self.data
                         .dkg_preproc_store_regular
                         .insert(id, (params, preproc));
-                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                    return Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!(
+                            "The preprocessing stored under id {id} does not match the parameters request for key gen."
+                        ),
+                    ));
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
                         tag,
-                        None,
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -994,21 +1012,21 @@ where
             }
             (DKGParams::WithoutSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
-                        &mut base_session,
-                        &mut preproc,
-                        dkg_params,
-                        tag,
-                        None,
-                    )
-                    .await
-                    .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    let keys =
+                        SecureOnlineDistributedKeyGen::<Z128, EXTENSION_DEGREE>::compressed_keygen(
+                            &mut base_session,
+                            &mut preproc,
+                            dkg_params,
+                            tag,
+                        )
+                        .await
+                        .unwrap();
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1028,20 +1046,27 @@ where
                     self.data
                         .dkg_preproc_store_sns
                         .insert(id, (params, preproc));
-                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                    return Err(tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!(
+                            "The preprocessing stored under id {id} does not match the parameters request for key gen."
+                        ),
+                    ));
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
                         tag,
-                        None,
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1051,21 +1076,21 @@ where
             }
             (DKGParams::WithSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
-                        &mut base_session,
-                        &mut preproc,
-                        dkg_params,
-                        tag,
-                        None,
-                    )
-                    .await
-                    .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    let keys =
+                        SecureOnlineDistributedKeyGen::<Z128, EXTENSION_DEGREE>::compressed_keygen(
+                            &mut base_session,
+                            &mut preproc,
+                            dkg_params,
+                            tag,
+                        )
+                        .await
+                        .unwrap();
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1118,7 +1143,7 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
-                    0,
+                    0, // Dummy value, not used in local keygen
                     role_assignment,
                     NetworkMode::Sync,
                     request.seed,
@@ -1155,12 +1180,21 @@ where
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
                 return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bc2wrap::serialize(&keys.pub_keyset).map_err(|e| {
-                        tonic::Status::new(
+                    pub_keyset: keys
+                        .pub_keyset
+                        .as_ref()
+                        .as_ref()
+                        .map(bc2wrap::serialize)
+                        .ok_or(tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to serialize pubkey: {e:?}"),
-                        )
-                    })?,
+                            "Failed to retrieve compressed pubkey",
+                        ))?
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("Failed to serialize pubkey: {e:?}"),
+                            )
+                        })?,
                 }));
             } else {
                 return Err(tonic::Status::new(
@@ -1582,14 +1616,14 @@ where
             let prss_setup = self.data.prss_setup.clone();
             let sns_key = Arc::new(
                 key_ref
-                    .pub_keyset
+                    .pub_keyset_decompressed
                     .server_key
                     .noise_squashing_key()
                     .expect("Failed to get noise squashing key"),
             );
-            let server_key = Arc::new(key_ref.pub_keyset.server_key.as_ref());
-            let ks =
-                get_key_switching_key(key_ref.pub_keyset.server_key.as_ref()).map_err(|_| {
+            let server_key = Arc::new(key_ref.pub_keyset_decompressed.server_key.as_ref());
+            let ks = get_key_switching_key(key_ref.pub_keyset_decompressed.server_key.as_ref())
+                .map_err(|_| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         "Failed to retrieve ksk from server key",
@@ -2042,13 +2076,14 @@ where
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
-                    let ks = get_key_switching_key(key_ref.pub_keyset.server_key.as_ref())
-                        .map_err(|_| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                "Failed to retrieve ksk from server key",
-                            )
-                        })?;
+                    let ks =
+                        get_key_switching_key(key_ref.pub_keyset_decompressed.server_key.as_ref())
+                            .map_err(|_| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve ksk from server key",
+                                )
+                            })?;
                     let my_future = || async move {
                         let mut tasks = JoinSet::new();
                         for (block_idx, (ctxts_blocks, (mut session, mut inner_preprocessings))) in
@@ -2124,12 +2159,17 @@ where
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
                     if key_ref
-                        .pub_keyset
+                        .pub_keyset_decompressed
                         .server_key
                         .noise_squashing_key()
                         .is_none()
                     {
-                        return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
+                        return Err(tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!(
+                                "Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}"
+                            ),
+                        ));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
                         self.data.ddec_preproc_store_nf.remove(&preproc_sid).ok_or_else(|| {
@@ -2153,9 +2193,12 @@ where
                             .collect_vec()
                     };
                     let my_future = || async move {
-                        let server_key = key_ref.pub_keyset.server_key.as_ref();
+                        let server_key = key_ref.pub_keyset_decompressed.server_key.as_ref();
                         let mut res = Vec::new();
-                        let sns_key = key_ref.pub_keyset.server_key.noise_squashing_key();
+                        let sns_key = key_ref
+                            .pub_keyset_decompressed
+                            .server_key
+                            .noise_squashing_key();
                         for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
@@ -2513,6 +2556,7 @@ where
             //however since this is a clone it doesn't do much...
             //Wondering whether it really should be reshare's role to zeroize stuff ?
             let public_key_set = key_ref.pub_keyset.clone();
+            let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
 
@@ -2610,6 +2654,7 @@ where
                 reshare_params.new_key_sid,
                 Arc::new(KeyBucket {
                     pub_keyset: public_key_set,
+                    pub_keyset_decompressed: public_key_set_decompressed,
                     priv_keyset: Arc::new(new_private_key_set),
                     params,
                 }),
@@ -2642,9 +2687,7 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
-    sessions: Vec<B>,
-) {
+pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
@@ -2692,7 +2735,7 @@ pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHan
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
+pub async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
     fill_network_memory_info_multiple_sessions(vec![session]).await;
 }
 
@@ -2703,13 +2746,13 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: algebra::structure_traits::Ring,
 {
+    use threshold_execution::tfhe_internals::test_feature::insecure_initialize_key_material;
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params, tag)
-        .await
+    insecure_initialize_key_material(session, params, tag).await
 }
 
 #[cfg(not(feature = "testing"))]
@@ -2718,7 +2761,9 @@ async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     _params: DKGParams,
     _tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
-    panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
+    panic!(
+        "Require the testing feature on the moby cluster to perform a local intialization of the keys"
+    )
 }
 
 /// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid

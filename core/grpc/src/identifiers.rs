@@ -10,17 +10,14 @@
 use crate::kms::v1;
 use alloy_primitives::hex;
 use anyhow::{Error, Result};
+use hashing::unsafe_hash_list_w_size;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Display;
 use std::str::FromStr;
-use tfhe::{Unversionize, Versionize};
-use tfhe_versionable::{NotVersioned, VersionizeOwned};
-use threshold_fhe::{
-    hashing::unsafe_hash_list_w_size,
-    session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES},
-};
+use tfhe_versionable::{NotVersioned, Unversionize, Versionize, VersionizeOwned};
+use threshold_types::session_id::{DSEP_SESSION_ID, SESSION_ID_BYTES, SessionId};
 use tracing;
 
 /// Standard length for identifiers in bytes
@@ -248,7 +245,7 @@ macro_rules! impl_identifiers {
 
                     fn from_str(s: &str) -> Result<Self, Self::Err> {
                         // Trim whitespace and remove 0x prefix if present
-                        let s = s.trim().strip_prefix("0x").unwrap_or(s.trim());
+                        let s = s.trim().strip_prefix("0x").unwrap_or_else(|| s.trim());
 
                         // Decode hex string
                         let bytes = match hex::decode(s) {

@@ -1,3 +1,6 @@
+//! This module will be deprecated and replaced
+//! by ./core/service/src/testing/utils.rs
+
 use crate::backup::BackupCiphertext;
 use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
@@ -5,14 +8,13 @@ use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, delete_at_request_and_epoch_id, make_storage,
-    read_versioned_at_request_id, StorageReader, StorageReaderExt,
+    StorageReader, StorageReaderExt, StorageType, delete_all_at_request_id,
+    delete_at_request_and_epoch_id, make_storage, read_versioned_at_request_id,
 };
-use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKeyOwned};
-use kms_grpc::RequestId;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::{EpochId, RequestId};
 use serde::de::DeserializeOwned;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
@@ -21,11 +23,11 @@ use tfhe::prelude::SquashNoise;
 use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{
-    FheBool, FheTypes, FheUint128, FheUint16, FheUint160, FheUint256, FheUint32, FheUint64,
-    FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
-    Unversionize, Versionize,
+    FheBool, FheTypes, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128, FheUint160,
+    FheUint256, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible,
+    ServerKey, Unversionize, Versionize,
 };
-use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+use threshold_execution::tfhe_internals::utils::expanded_encrypt;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -100,13 +102,11 @@ impl EncryptionConfig {
 pub fn compute_cipher(
     msg: TestingPlaintext,
     pk: &FhePublicKey,
-    server_key: Option<&ServerKey>,
+    server_key: Option<ServerKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     if let Some(s) = server_key {
-        // TODO is there a way to do this without cloning?
-        // wait until context is ready and use that instead
-        tfhe::set_server_key(s.clone());
+        tfhe::set_server_key(s);
     }
 
     let fhe_type = msg.into();
@@ -324,11 +324,9 @@ pub async fn load_pk_from_pub_storage(
     )
     .await;
     tracing::info!("loading pk from storage root dir: {:?}", storage.root_dir());
-    let wrapped_pk = read_pk_at_request_id(&storage, key_id)
+    read_versioned_at_request_id(&storage, key_id, &PubDataType::PublicKey.to_string())
         .await
-        .expect("load_pk_from_pub_storage failed");
-    let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-    pk
+        .expect("load_pk_from_pub_storage failed")
 }
 
 /// This function should be used for testing only and it can panic.
@@ -338,17 +336,34 @@ pub async fn compute_cipher_from_stored_key(
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
+    compressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
-    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-    let server_key: ServerKey =
-        load_material_from_pub_storage(pub_path, key_id, PubDataType::ServerKey, storage_prefix)
-            .await;
+    let (pk, server_key) = if compressed_keys {
+        // Load compressed keys and decompress them
+        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::CompressedXofKeySet,
+            storage_prefix,
+        )
+        .await;
+        xof_keyset.decompress().unwrap().into_raw_parts()
+    } else {
+        let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::ServerKey,
+            storage_prefix,
+        )
+        .await;
+        (pk, server_key)
+    };
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn_fifo(move || {
-        let _ = send.send(compute_cipher(msg, &pk, Some(&server_key), enc_config));
+        let _ = send.send(compute_cipher(msg, &pk, Some(server_key), enc_config));
     });
     recv.await.unwrap()
 }
@@ -378,7 +393,8 @@ pub async fn purge(
             .unwrap();
 
         // Also delete epoch-specific data types that delete_all_at_request_id skips
-        for data_type in [PrivDataType::FhePrivateKey, PrivDataType::FheKeyInfo] {
+        use PrivDataType::*;
+        for data_type in [FhePrivateKey, FheKeyInfo, CrsInfo] {
             let data_type_str = data_type.to_string();
             if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
                 for epoch_id in epoch_ids {
@@ -421,8 +437,6 @@ pub async fn purge_pub(pub_path: Option<&Path>, storage_prefixes: &[Option<Strin
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
-/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
-/// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
     for storage_prefix in storage_prefixes.iter() {
         let storage =
@@ -479,12 +493,12 @@ pub async fn file_backup_vault(
     let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
     let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
 
-    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None, None).unwrap();
+    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None).unwrap();
     let backup_proxy_storage =
-        make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
+        make_storage(backup_storage_conf, StorageType::BACKUP, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
-            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)
                 .await
                 .unwrap(),
         ),
@@ -504,43 +518,62 @@ pub async fn read_custodian_backup_files(
     data_type: &str,
     storage_prefixes: &[Option<String>],
 ) -> Vec<BackupCiphertext> {
+    read_custodian_backup_files_impl(
+        test_path,
+        backup_id,
+        file_req,
+        None,
+        data_type,
+        storage_prefixes,
+    )
+    .await
+}
+
+pub async fn read_custodian_backup_files_with_epoch(
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    epoch_id: EpochId,
+    data_type: &str,
+    storage_prefixes: &[Option<String>],
+) -> Vec<BackupCiphertext> {
+    read_custodian_backup_files_impl(
+        test_path,
+        backup_id,
+        file_req,
+        Some(epoch_id),
+        data_type,
+        storage_prefixes,
+    )
+    .await
+}
+
+async fn read_custodian_backup_files_impl(
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    epoch_id: Option<EpochId>,
+    data_type: &str,
+    storage_prefixes: &[Option<String>],
+) -> Vec<BackupCiphertext> {
     let mut files = Vec::new();
     for storage_prefix in storage_prefixes.iter() {
         let storage =
             FileStorage::new(test_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
-        let coerced_path = storage
-            .root_dir()
-            .join(
-                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
-                    .to_string(),
-            )
-            .join(file_req.to_string());
+        let mut coerced_path = storage.root_dir().join(
+            VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                .to_string(),
+        );
+        if let Some(epoch_id) = epoch_id {
+            coerced_path = coerced_path.join(epoch_id.to_string());
+        }
+        coerced_path = coerced_path.join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
             files.push(file);
         }
     }
     files
-}
-
-/// Remove all the data needed to perform custodian backups.
-/// This then allows your to prevent the automatic backup being done at boot
-/// when the system is configured with custodian backups.
-/// TODO currently not used anywhere
-pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Option<String>]) {
-    for storage_prefix in storage_prefixes {
-        // Next purge recovery info
-        let storage = FileStorage::new(
-            path,
-            StorageType::PUB,
-            storage_prefix.as_ref().map(|x| x.as_str()),
-        )
-        .unwrap();
-        let base_dir = storage.root_dir();
-        let _ =
-            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
-                .await;
-    }
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -552,14 +585,14 @@ pub(crate) mod setup {
     #[cfg(feature = "slow_tests")]
     use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
     use crate::util::key_setup::{
-        ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
-        ThresholdSigningKeyConfig,
+        ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
+        ensure_client_keys_exist,
     };
     use crate::{
         consts::{
             KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
-            TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
+            TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -568,12 +601,12 @@ pub(crate) mod setup {
             ensure_threshold_crs_exists, ensure_threshold_keys_exist,
             ensure_threshold_server_signing_keys_exist,
         },
-        vault::storage::{file::FileStorage, StorageType},
+        vault::storage::{StorageType, file::FileStorage},
     };
-    use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
+    use kms_grpc::identifiers::EpochId;
     use std::path::Path;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist(path: Option<&Path>) {
         match path {
@@ -647,9 +680,9 @@ pub(crate) mod setup {
     async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
-            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
-            DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
+            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P,
+            DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
+            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist(None).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -729,6 +762,7 @@ pub(crate) mod setup {
             &mut central_priv_storage,
             params.to_owned(),
             crs_id,
+            epoch_id,
             true,
         )
         .await;
@@ -785,6 +819,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             params.to_owned(),
             crs_id,
+            epoch_id,
             true,
         )
         .await;
@@ -794,69 +829,4 @@ pub(crate) mod setup {
     pub(crate) async fn ensure_default_material_exists() {
         default_material().await;
     }
-}
-
-// NOTE: this test stays out of the setup module
-// because we don't want it to have the "testing" feature
-#[tokio::test]
-async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
-    use kms_grpc::rpc_types::PrivDataType;
-
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_prefix = Some(temp_dir.path());
-    let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
-    let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
-
-    // Check no keys exist
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    // Create keys to be deleted
-    assert!(
-        crate::util::key_setup::ensure_central_server_signing_keys_exist(
-            &mut central_pub_storage,
-            &mut central_priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-    );
-    // Validate the keys were made
-    let pub_ids = central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(pub_ids.len(), 1);
-    let priv_ids = central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(priv_ids.len(), 1);
-    purge(
-        test_prefix,
-        test_prefix,
-        &pub_ids.into_iter().next().unwrap(),
-        &[None],
-        &[None],
-    )
-    .await;
-    // Check the keys were deleted
-    assert!(central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(central_priv_storage
-        .all_data_ids(&PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap()
-        .is_empty());
 }

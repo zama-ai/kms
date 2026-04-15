@@ -1,52 +1,51 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
+use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::optional_protobuf_to_alloy_domain,
-    RequestId,
 };
 use observability::{
-    metrics,
-    metrics_names::{ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID},
-};
-use threshold_fhe::{
-    algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
-    execution::{
-        keyset_config as ddec_keyset_config,
-        online::preprocessing::{
-            orchestration::{
-                dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
-            },
-            PreprocessorFactory,
-        },
-        runtime::{party::Identity, sessions::small_session::SmallSession},
-        tfhe_internals::parameters::DKGParams,
+    metrics::{self, DurationGuard, METRICS},
+    metrics_names::{
+        ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
     },
 };
+use threshold_execution::{
+    keyset_config as ddec_keyset_config,
+    online::preprocessing::{
+        PreprocessorFactory,
+        orchestration::{
+            dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
+        },
+    },
+    runtime::sessions::small_session::SmallSession,
+    tfhe_internals::parameters::DKGParams,
+};
+use threshold_types::party::Identity;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
+    consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
-        keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
-        utils::MetricedError,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        base::{BaseKmsStruct, compute_external_signature_preprocessing},
+        threshold::{
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+            traits::KeyGenPreprocessor,
         },
+        utils::MetricedError,
+        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
-    ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_mapping, MetaStore},
+        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout},
         rate_limiter::RateLimiter,
     },
 };
@@ -76,30 +75,16 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
-        context_id: Option<ContextId>,
-        epoch_id: Option<EpochId>,
+        context_id: ContextId,
+        epoch_id: EpochId,
         domain: &alloy_sol_types::Eip712Domain,
+        timer: DurationGuard<'static>,
         permit: OwnedSemaphorePermit,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal/issues/2758)
-        // remove the default context when all of context is ready
-        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let epoch_id = epoch_id.unwrap_or(*DEFAULT_EPOCH_ID);
-        let my_role = self.session_maker.my_role(&context_id).await?;
         let my_identity = self.session_maker.my_identity(&context_id).await?;
-
-        // Prepare the timer before giving it to the tokio task
-        // that runs the computation
-        let timer = metrics::METRICS
-            .time_operation(OP_KEYGEN_PREPROC_REQUEST)
-            .tag(TAG_PARTY_ID, my_role.to_string());
-        {
-            let mut guarded_meta_store = self.preproc_buckets.write().await;
-            guarded_meta_store.insert(&request_id)?;
-        }
 
         // Derive a sequence of sessionId from request_id
         let sids = (0..self.num_sessions_preproc)
@@ -132,8 +117,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {
-                //Start the metric timer, it will end on drop
-                let _timer = timer.start();
+                // Keep timer in the async task, will drop at the end of the task
+                let _timer = timer;
                  tokio::select! {
                     res = Self::preprocessing_background(
                         sk,
@@ -156,7 +141,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                                 MetricedError::handle_unreturnable_error(
                                     OP_KEYGEN_PREPROC_REQUEST,
                                     Some(request_id),
-                                    format!("Preprocessing background task failed for request ID {}", &request_id),
+                                    "Preprocessing background task failed".to_string(),
                                 );
                             }
                         }
@@ -195,6 +180,24 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
     ) -> Result<(), ()> {
         // dropped at the end of the function
         let _permit = permit;
+        let preprocessing_started_at = Instant::now();
+
+        #[cfg(feature = "insecure")]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (partial_preproc: {}, percentage_offline: {:?}, store_dummy_preprocessing: {:?})",
+            req_id,
+            own_identity,
+            partial_params.is_some(),
+            partial_params.map(|p| p.percentage_offline),
+            partial_params.map(|p| p.store_dummy_preprocessing),
+        );
+
+        #[cfg(not(feature = "insecure"))]
+        tracing::info!(
+            "Preproc background task started for request {} on P[{:?}] (full preprocessing)",
+            req_id,
+            own_identity,
+        );
 
         // Create the orchestrator
         // !! If insecure we allow generating partial preprocessing !!
@@ -236,6 +239,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     .await
                 {
                     Ok((sessions, preproc_handle)) => {
+                        tracing::info!(
+                            "Preproc orchestration phase finished for request {} on P[{:?}] (elapsed: {:.1}s). Finalizing result...",
+                            req_id,
+                            own_identity,
+                            preprocessing_started_at.elapsed().as_secs_f64(),
+                        );
                         Ok((sessions, Arc::new(Mutex::new(preproc_handle))))
                     }
                     Err(error) => {
@@ -252,15 +261,21 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         #[cfg(feature = "insecure")]
         let handle_update = {
-            use threshold_fhe::execution::online::preprocessing::{
-                dummy::DummyPreprocessing, DKGPreprocessing,
+            use threshold_execution::online::preprocessing::{
+                DKGPreprocessing, dummy::DummyPreprocessing,
             };
 
             match (handle_update, partial_params) {
                 (Err(e), _) => Err(e),
                 (Ok((sessions, handle)), Some(partial_params)) => {
                     if partial_params.store_dummy_preprocessing {
-                        let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] storing DummyPreprocessing (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
+                        let preproc = Box::new(DummyPreprocessing::new(
                             0,
                             sessions.first().ok_or_else(|| {
                                 tracing::error!(
@@ -271,6 +286,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
                         Ok((sessions, Arc::new(Mutex::new(preproc))))
                     } else {
+                        tracing::debug!(
+                            "Preproc request {} on P[{:?}] keeping real preprocessing handle (partial={}%)",
+                            req_id,
+                            own_identity,
+                            partial_params.percentage_offline,
+                        );
                         Ok((sessions, handle))
                     }
                 }
@@ -278,6 +299,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             }
         };
 
+        tracing::debug!(
+            "Preproc request {} on P[{:?}] computing external signature",
+            req_id,
+            own_identity,
+        );
         let external_signature = match compute_external_signature_preprocessing(&sk, req_id, domain)
         {
             Ok(sig) => sig,
@@ -303,15 +329,28 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         // Log completion status
         match (handle_update, meta_store_write) {
-            (Ok(_), Ok(_)) => tracing::info!("Preproc Finished Successfully P[{:?}]", own_identity),
+            (Ok(_), Ok(_)) => tracing::info!(
+                "Preproc Finished Successfully P[{:?}] for request {} (total elapsed: {:.1}s)",
+                own_identity,
+                req_id,
+                preprocessing_started_at.elapsed().as_secs_f64(),
+            ),
             (Err(e), _) => {
-                tracing::error!("Preproc Failed P[{:?}] with error: {}", own_identity, e);
+                tracing::error!(
+                    "Preproc Failed P[{:?}] for request {} after {:.1}s with error: {}",
+                    own_identity,
+                    req_id,
+                    preprocessing_started_at.elapsed().as_secs_f64(),
+                    e
+                );
                 return Err(());
             }
             (_, Err(e)) => {
-                tracing::info!(
-                    "Preproc Failed due to meta store issue P[{:?}] with error: {}",
+                tracing::error!(
+                    "Preproc Failed due to meta store issue P[{:?}] for request {} after {:.1}s with error: {}",
                     own_identity,
+                    req_id,
+                    preprocessing_started_at.elapsed().as_secs_f64(),
                     e
                 );
                 return Err(());
@@ -326,66 +365,43 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
-    ) -> Result<Response<Empty>, Status> {
-        let request_id = parse_optional_proto_request_id(
-            &request.request_id,
-            RequestIdParsingErr::PreprocRequest,
-        )?;
-        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref()).map_err(|e| {
-            MetricedError::new(
-                OP_KEYGEN_PREPROC_REQUEST,
-                Some(request_id),
-                e,
-                tonic::Code::InvalidArgument,
-            )
-        })?;
-
-        //Retrieve the DKG parameters
-        let dkg_params = retrieve_parameters(Some(request.params))?;
-
-        //Ensure there's no entry in preproc buckets for that request_id
-        if self.preproc_buckets.read().await.exists(&request_id) {
-            return Err(tonic::Status::already_exists(format!(
-                "Preprocessing for request ID {request_id} already exists"
-            )));
-        }
-
-        let keyset_config = preproc_proto_to_keyset_config(&request.keyset_config)?;
-
-        // If the entry did not exist before, start the preproc
-        // NOTE: We currently consider an existing entry is NOT an error
-        //
-        // We don't increment the error counter here but rather in launch_dkg_preproc
-        let ctx_id = request
-            .context_id
-            .map(|x| x.try_into())
-            .transpose()
-            .map_err(|e: kms_grpc::IdentifierError| {
-                tonic::Status::new(tonic::Code::Internal, e.to_string())
-            })?;
-
-        let epoch_id = request.epoch_id.map(|x| x.try_into()).transpose().map_err(
-            |e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()),
-        )?;
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
+    ) -> Result<Response<Empty>, MetricedError> {
         let permit = self.rate_limiter.start_preproc().await?;
+        let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
+
+        let (request_id, context_id, epoch_id, dkg_params, keyset_config, eip712_domain) =
+            validate_preproc_request(request)?;
+        let my_role = validate_context_and_epoch(
+            OP_KEYGEN_PREPROC_REQUEST,
+            &self.session_maker,
+            Some(request_id),
+            &context_id,
+            &epoch_id,
+        )
+        .await?;
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
+        timer.tags(metric_tags);
+
+        // Add preprocessing to metastore and fail in case it is already present
+        add_req_to_meta_store(
+            &mut self.preproc_buckets.write().await,
+            &request_id,
+            OP_KEYGEN_PREPROC_REQUEST,
+        )?;
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
-        ok_or_tonic_abort(
-            self.launch_dkg_preproc(
+
+        self.launch_dkg_preproc(
                 dkg_params,
                 keyset_config,
                 request_id,
-                ctx_id,
+                context_id,
                 epoch_id,
-                &domain,
+                &eip712_domain,
+                timer,
                 permit,
             #[cfg(feature = "insecure")] partial_params
-        ).await,
-            format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+        ).await.map_err(|e| MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, Some(request_id), anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), tonic::Code::Internal))?;
         Ok(Response::new(Empty {}))
     }
 }
@@ -397,7 +413,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         self.inner_key_gen_preproc(
             request.into_inner(),
             #[cfg(feature = "insecure")]
@@ -410,10 +426,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     async fn partial_key_gen_preproc(
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         let inner = request.into_inner();
         let base_request = inner.base_request.ok_or_else(|| {
-            tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request")
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                None,
+                anyhow::anyhow!("Missing preproc base_request"),
+                tonic::Code::InvalidArgument,
+            )
         })?;
         self.inner_key_gen_preproc(base_request, inner.partial_params)
             .await
@@ -422,23 +443,45 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, Status> {
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)?;
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_KEYGEN_PREPROC_RESULT,
+                        None,
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                })?;
 
-        let status = {
-            let guarded_meta_store = self.preproc_buckets.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
+        tracing::info!(
+            "Polling preproc result for request {} (waiting up to {}s)",
+            request_id,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        );
 
-        // if we got the result it means the preprocessing is done
-        let preproc_data = handle_res_mapping(status, &request_id, "Preprocessing").await?;
+        let preproc_data = retrieve_from_meta_store_with_timeout(
+            self.preproc_buckets.read().await,
+            &request_id,
+            OP_KEYGEN_PREPROC_RESULT,
+            DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
+        )
+        .await?;
+
+        tracing::info!("Preproc result ready for request {}", request_id);
 
         if preproc_data.preprocessing_id != request_id {
-            return Err(Status::internal(format!(
-                "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
-                request_id, preproc_data.preprocessing_id
-            )));
+            return Err(MetricedError::new(
+                OP_KEYGEN_PREPROC_RESULT,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Internal error: preprocessing ID mismatch for request ID, expecting {}, got {}",
+                    request_id,
+                    preproc_data.preprocessing_id
+                ),
+                tonic::Code::Internal,
+            ));
         }
 
         Ok(Response::new(KeyGenPreprocResult {
@@ -447,7 +490,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         }))
     }
 
-    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, Status> {
+    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
         let guarded_meta_store = self.preproc_buckets.read().await;
         let request_ids = guarded_meta_store.get_all_request_ids();
         Ok(request_ids.into_iter().map(|id| id.to_string()).collect())
@@ -457,21 +500,21 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{alloy_to_protobuf_domain, KMSType},
+        rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::{
-            online::preprocessing::create_memory_factory, small_execution::prss::PRSSSetup,
-        },
+    use threshold_execution::{
         malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
             DummyProducerFactory, FailingProducerFactory,
         },
+        online::preprocessing::create_memory_factory,
+        small_execution::prss::PRSSSetup,
     };
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
@@ -686,18 +729,43 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let req_id = RequestId::new_random(&mut rng);
+        {
+            let mut rng = AesRng::seed_from_u64(22);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+            let req_id = RequestId::new_random(&mut rng);
 
-        // no need to wait because [get_result] is semi-blocking
-        assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+            // no need to wait because [get_result] is semi-blocking
+            assert_eq!(
+                prep.get_result(tonic::Request::new(req_id.into()))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+        // `NotFound` - If the PRSS/epoch does not exist
+        {
+            let mut rng = AesRng::seed_from_u64(23);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain),
+                epoch_id: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
     }
 
     #[tokio::test]
@@ -726,31 +794,6 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::AlreadyExists
-        );
-    }
-
-    #[tokio::test]
-    async fn aborted() {
-        // Starting a preprocessing request that will be aborted if there's no PRSS
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
         );
     }
 

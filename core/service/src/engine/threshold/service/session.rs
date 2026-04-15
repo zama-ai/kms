@@ -1,43 +1,47 @@
 // === Standard Library ===
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
 };
 
-use aes_prng::AesRng;
+use crate::{
+    engine::{context::ContextInfo, utils::MetricedError},
+    vault::storage::{Storage, StorageExt, crypto_material::CryptoMaterialStorage},
+};
+
 // === External Crates ===
-use kms_grpc::identifiers::{ContextId, EpochId};
+use aes_prng::AesRng;
+use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+use kms_grpc::{
+    RequestId,
+    identifiers::{ContextId, EpochId},
+};
+use threshold_execution::{
+    runtime::sessions::{
+        base_session::{BaseSession, TwoSetsBaseSession},
+        session_parameters::{
+            GenericParameterHandles, SessionParameters, TwoSetsSessionParameters,
+        },
+        small_session::SmallSession,
+    },
+    small_execution::prss::{DerivePRSSState, PRSSSetup},
+};
+use threshold_networking::{
+    grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
+};
+use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
+
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::{
-    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-    execution::{
-        runtime::{
-            party::{
-                DualRole, Identity, MpcIdentity, Role, RoleAssignment, TwoSetsRole,
-                TwoSetsThreshold,
-            },
-            sessions::{
-                base_session::{BaseSession, TwoSetsBaseSession},
-                session_parameters::{
-                    GenericParameterHandles, SessionParameters, TwoSetsSessionParameters,
-                },
-                small_session::SmallSession,
-            },
-        },
-        small_execution::prss::{DerivePRSSState, PRSSSetup},
-    },
-    networking::{
-        grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
-        NetworkMode,
-    },
-    session_id::SessionId,
+use threshold_types::session_id::SessionId;
+use threshold_types::{
+    network::NetworkMode,
+    party::{Identity, MpcIdentity, RoleAssignment},
 };
 use tokio::sync::{Mutex, RwLock};
-
-use crate::engine::context::ContextInfo;
+use tonic::Code;
 
 struct Context {
     // I may not belong to all the contexts I am aware of
@@ -82,7 +86,33 @@ pub(crate) struct SessionMaker {
 }
 
 impl SessionMaker {
-    pub(crate) fn new(
+    pub(crate) async fn new_initialized<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    >(
+        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
+        verifier: Option<Arc<AttestedVerifier>>,
+        rng: AesRng,
+    ) -> anyhow::Result<Self> {
+        let session_maker = Self::new_uninitialized(networking_manager, verifier, rng);
+        let all_prss = crypto_storage.read_all_prss_info().await?;
+        if all_prss.is_empty() {
+            tracing::warn!(
+                "No PRSS Setup found in storage. You may need to call the init end-point later before you can use the KMS server"
+            );
+        }
+        for (epoch_id, prss) in all_prss {
+            session_maker.add_epoch(epoch_id.into(), prss).await;
+            tracing::info!(
+                "Loaded PRSS Setup from storage for request ID {}.",
+                epoch_id
+            );
+        }
+        Ok(session_maker)
+    }
+
+    pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
@@ -298,9 +328,9 @@ impl SessionMaker {
                 let context_id_as_session_id = info.context_id().derive_session_id()?;
                 let release_pcrs = if info.pcr_values.is_empty() {
                     tracing::warn!(
-                    "No PCR values provided for context {}, attested TLS verification may be weakened",
-                    info.context_id()
-                );
+                        "No PCR values provided for context {}, attested TLS verification may be weakened",
+                        info.context_id()
+                    );
                     None
                 } else {
                     Some(info.pcr_values.iter().cloned().collect())
@@ -323,6 +353,11 @@ impl SessionMaker {
     pub(crate) async fn add_epoch(&self, epoch_id: EpochId, prss: PRSSSetupCombined) {
         let mut epoch_map = self.epoch_map.write().await;
         epoch_map.insert(epoch_id, prss);
+    }
+
+    pub(crate) async fn remove_epoch(&self, epoch_id: &EpochId) {
+        let mut epoch_map = self.epoch_map.write().await;
+        epoch_map.remove(epoch_id);
     }
 
     pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
@@ -474,7 +509,7 @@ impl SessionMaker {
         Ok(session)
     }
 
-    pub(crate) async fn make_two_sets_session(
+    pub async fn make_two_sets_session(
         &self,
         session_id: SessionId,
         context_id_set1: ContextId,
@@ -504,9 +539,8 @@ impl SessionMaker {
         session_id: SessionId,
         context_id: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<
-        threshold_fhe::execution::runtime::sessions::base_session::SingleSetNetworkingImpl,
-    > {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::SingleSetNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
 
         let (role_assignment, my_role) = {
@@ -545,21 +579,20 @@ impl SessionMaker {
         context_id_set1: ContextId,
         context_id_set2: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<
-        threshold_fhe::execution::runtime::sessions::base_session::TwoSetsNetworkingImpl,
-    > {
+    ) -> anyhow::Result<threshold_execution::runtime::sessions::base_session::TwoSetsNetworkingImpl>
+    {
         let nm = self.networking_manager.read().await;
         let networking = nm
             .make_network_session(session_id, &role_assignment, my_role, network_mode)
             .await?;
         tracing::debug!(
             "Getting networking for session_id={}, context_id_1={:?}, context_id_2={:?}, my_role={:?}, network_mode={:?}",
-                session_id,
-                context_id_set1,
-                context_id_set2,
-                my_role,
-                network_mode
-            );
+            session_id,
+            context_id_set1,
+            context_id_set2,
+            my_role,
+            network_mode
+        );
         Ok(networking)
     }
 
@@ -586,10 +619,19 @@ impl SessionMaker {
         let role_assignment_s2 = context_info_s2.role_assignment.clone().inner;
 
         let my_role_both_sets = match (context_info_s1.my_role, context_info_s2.my_role) {
-            (None, None) => return Err(anyhow::anyhow!("Trying to get parameters for a two sets session, but I am not part of any of the two context {} ,{}",context_id_set1,context_id_set2)),
+            (None, None) => {
+                return Err(anyhow::anyhow!(
+                    "Trying to get parameters for a two sets session, but I am not part of any of the two context {} ,{}",
+                    context_id_set1,
+                    context_id_set2
+                ));
+            }
             (None, Some(role)) => TwoSetsRole::Set2(role),
             (Some(role), None) => TwoSetsRole::Set1(role),
-            (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole{ role_set_1, role_set_2 }),
+            (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole {
+                role_set_1,
+                role_set_2,
+            }),
         };
 
         // Go over role_assignment_s1 and role_assignment_s2, if one of the value is common to both return
@@ -672,6 +714,7 @@ impl SessionMaker {
         Ok(context_info.threshold)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn num_parties(&self, context_id: &ContextId) -> anyhow::Result<usize> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
@@ -691,6 +734,15 @@ pub(crate) struct ImmutableSessionMaker {
 }
 
 impl ImmutableSessionMaker {
+    #[allow(dead_code)]
+    pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
+        self.inner.context_exists(context_id).await
+    }
+
+    pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
+        self.inner.epoch_exists(epoch_id).await
+    }
+
     pub(crate) async fn make_base_session(
         &self,
         session_id: SessionId,
@@ -746,7 +798,6 @@ impl ImmutableSessionMaker {
             .await
     }
 
-    #[expect(unused)]
     pub(crate) async fn make_two_sets_session(
         &self,
         session_id: SessionId,
@@ -796,4 +847,29 @@ impl ImmutableSessionMaker {
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         self.inner.get_healthcheck_session_all_contexts().await
     }
+}
+
+/// Validates that a context and epoch ID exists and returns the role of the current server in this context.
+pub(crate) async fn validate_context_and_epoch(
+    op_tag: &'static str,
+    session_maker: &ImmutableSessionMaker,
+    req_id: Option<RequestId>,
+    context_id: &ContextId,
+    epoch_id: &EpochId,
+) -> Result<Role, MetricedError> {
+    // Find the role of the current server and validate the context exists
+    let my_role = session_maker
+        .my_role(context_id)
+        .await
+        .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
+
+    if !session_maker.epoch_exists(epoch_id).await {
+        return Err(MetricedError::new(
+            op_tag,
+            req_id,
+            anyhow::anyhow!("Epoch {epoch_id} not found"),
+            Code::NotFound,
+        ));
+    }
+    Ok(my_role)
 }

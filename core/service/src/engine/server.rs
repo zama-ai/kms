@@ -11,8 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tonic::transport::{server::TcpIncoming, Server};
+use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::server::HealthReporter;
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
 use tower_http::trace::TraceLayer;
 use tracing::Span;
@@ -84,9 +85,10 @@ pub async fn run_server<
     kms_service: Arc<S>,
     meta_store_status_service: Arc<M>,
     health_service: HealthServer<impl Health>,
+    health_reporter: HealthReporter,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
-    use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
+    use crate::consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS;
 
     let socket_addr = listener.local_addr()?;
 
@@ -119,9 +121,10 @@ pub async fn run_server<
         .http2_adaptive_window(Some(true))
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
-        // as we mean to do it.
+        // as we mean to do it. Use the preprocessing wait window (the largest) so the server
+        // does not time out before a slow preprocessing result is returned.
         .timeout(tokio::time::Duration::from_secs(
-            config.timeout_secs + DURATION_WAITING_ON_RESULT_SECONDS,
+            config.timeout_secs + DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
         ))
         .add_service(health_service)
         .add_service(
@@ -165,6 +168,10 @@ pub async fn run_server<
             }
         }
     });
+
+    health_reporter
+        .set_serving::<CoreServiceEndpointServer<S>>()
+        .await;
 
     // Run the server with graceful shutdown
     match graceful.await {

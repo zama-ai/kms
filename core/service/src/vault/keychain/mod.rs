@@ -2,7 +2,7 @@ use crate::{
     anyhow_error_and_log,
     backup::BackupCiphertext,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
-    cryptography::attestation::SecurityModuleProxy,
+    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
     vault::storage::StorageReader,
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
@@ -11,12 +11,12 @@ use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use iam_rs::IAMPolicy;
 use rand::SeedableRng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
-use tfhe::{named::Named, Unversionize};
+use tfhe::{Unversionize, named::Named};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::networking::tls::ReleasePCRValues;
+use threshold_networking::tls::ReleasePCRValues;
 
 pub mod awskms;
 pub mod secretsharing;
@@ -68,6 +68,16 @@ pub enum KeychainProxy {
     SecretSharing(secretsharing::SecretShareKeychain<AesRng>),
 }
 
+impl KeychainProxy {
+    /// Validate recovery material loaded from public storage, if this is a SecretSharing keychain.
+    pub fn validate_recovery_material(&self, verf_key: &PublicSigKey) -> anyhow::Result<()> {
+        if let KeychainProxy::SecretSharing(ssk) = self {
+            ssk.validate_recovery_material(verf_key)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
@@ -93,7 +103,7 @@ pub enum RootKeyMeasurements {
         key_origin: String,
         // We expect the parties to use key policies that restrict the use of
         // root keys to enclaves that can attest to expected PCR values.
-        key_policy: IAMPolicy,
+        key_policy: Option<IAMPolicy>,
     },
     // Currently, we don't have any machine-verifiable key policies for the
     // custodian secret sharing backup scheme.
@@ -115,7 +125,10 @@ pub fn verify_root_key_measurements(
         RootKeyMeasurements::AwsKms {
             key_origin,
             key_policy,
-        } => Ok(key_origin == "AWS_KMS" && key_policy == awskms::make_root_key_policy(pcr_values)),
+        } => {
+            Ok(key_origin == "AWS_KMS"
+                && key_policy == Some(awskms::make_root_key_policy(pcr_values)))
+        }
         RootKeyMeasurements::SecretSharing {} => Ok(true),
     }
 }
@@ -125,6 +138,7 @@ pub async fn make_keychain_proxy(
     awskms_client: Option<AWSKMSClient>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     pub_storage: Option<&impl StorageReader>,
+    attest_key_policy: bool,
 ) -> anyhow::Result<KeychainProxy> {
     let rng = AesRng::from_entropy();
     let keychain = match keychain_conf {
@@ -139,13 +153,15 @@ pub async fn make_keychain_proxy(
                     rng,
                     awskms_client.clone(),
                     security_module,
-                    awskms::Symm::new(awskms_client, root_key_id.clone()).await?,
+                    awskms::Symm::new(awskms_client, root_key_id.clone(), attest_key_policy)
+                        .await?,
                 )?),
                 AwsKmsKeySpec::Asymm => KeychainProxy::from(awskms::AWSKMSKeychain::new(
                     rng,
                     awskms_client.clone(),
                     security_module,
-                    awskms::Asymm::new(awskms_client, root_key_id.clone()).await?,
+                    awskms::Asymm::new(awskms_client, root_key_id.clone(), attest_key_policy)
+                        .await?,
                 )?),
             }
         }
@@ -197,11 +213,12 @@ pub fn decrypt_under_data_key(
 #[cfg(test)]
 pub mod tests {
     use super::{
+        RootKeyMeasurements,
         awskms::{canonicalize_iam_policy, make_root_key_policy},
-        verify_root_key_measurements, RootKeyMeasurements,
+        verify_root_key_measurements,
     };
     use iam_rs::{IAMPolicy, IAMVersion};
-    use threshold_fhe::networking::tls::ReleasePCRValues;
+    use threshold_networking::tls::ReleasePCRValues;
 
     #[test]
     fn test_verify_root_key_measurements() {
@@ -213,7 +230,7 @@ pub mod tests {
         let good_key_policy = make_root_key_policy(good_pcr_values.clone());
         let good_key_measurements = RootKeyMeasurements::AwsKms {
             key_origin: "AWS_KMS".to_string(),
-            key_policy: good_key_policy,
+            key_policy: Some(good_key_policy),
         };
         let mut good_key_measurements_bytes = Vec::with_capacity(1024);
         ciborium::into_writer(&good_key_measurements, &mut good_key_measurements_bytes).unwrap();
@@ -231,7 +248,7 @@ pub mod tests {
         canonicalize_iam_policy(&mut empty_key_policy);
         let careless_key_measurements = RootKeyMeasurements::AwsKms {
             key_origin: "AWS_KMS".to_string(),
-            key_policy: empty_key_policy,
+            key_policy: Some(empty_key_policy),
         };
         let mut careless_key_measurements_bytes = Vec::with_capacity(1024);
         ciborium::into_writer(
@@ -253,7 +270,7 @@ pub mod tests {
         let bad_key_policy = make_root_key_policy(bad_pcr_values.clone());
         let bad_key_measurements = RootKeyMeasurements::AwsKms {
             key_origin: "AWS_KMS".to_string(),
-            key_policy: bad_key_policy,
+            key_policy: Some(bad_key_policy),
         };
         let mut bad_key_measurements_bytes = Vec::with_capacity(1024);
         ciborium::into_writer(&bad_key_measurements, &mut bad_key_measurements_bytes).unwrap();

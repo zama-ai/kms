@@ -9,8 +9,6 @@ pub mod util {
     pub mod file_handling;
     pub mod key_setup;
     pub mod meta_store;
-    #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    pub mod random_free_port;
     pub mod rate_limiter;
     pub mod retry;
 }
@@ -22,13 +20,21 @@ pub mod cryptography;
 pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
+/// Consolidated testing infrastructure
+///
+/// This module provides a unified API for writing isolated tests.
+/// Import the prelude in your test files:
+///
+/// ```
+/// use kms_lib::testing::prelude::*;
+/// ```
+#[cfg(all(feature = "non-wasm", any(test, feature = "testing")))]
+pub mod testing;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
 
 #[cfg(feature = "non-wasm")]
-pub use kms_grpc::utils::tonic_result::{
-    box_tonic_err, ok_or_tonic_abort, some_or_tonic_abort, BoxedStatus, TonicResult,
-};
+pub use kms_grpc::utils::tonic_result::BoxedStatus;
 
 /// Truncate s to a maximum of 128 chars.
 pub(crate) fn top_n_chars(mut s: String) -> String {
@@ -47,7 +53,7 @@ pub fn some_or_err<T>(input: Option<T>, error: String) -> anyhow::Result<T> {
 
 // NOTE: the below is copied from core/threshold
 // since the calling tracing from another crate
-// does not generate correct logs in tracing_test::traced_test
+// does not generate correct logs in kms_test_tracing::traced_test
 #[track_caller]
 pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::error!("Error in {}: {}", Location::caller(), msg);
@@ -78,4 +84,4 @@ pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 }
 
 // re-export DecryptionMode
-pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+pub use threshold_execution::endpoints::decryption::DecryptionMode;

@@ -1,0 +1,8 @@
+externalSecretRegistry:
+  enabled: true
+  targetSecretName: "registry-credentials"
+  dockerCredentialsReference:
+    awsSecretName: "common/hub-zama-org-registry-credentials"
+    urlProperty: url
+    usernameProperty: username
+    passwordProperty: password

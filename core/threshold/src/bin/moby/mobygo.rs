@@ -7,26 +7,24 @@ use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use rand::{distributions::Uniform, random, Rng};
+use rand::{Rng, distributions::Uniform, random};
 use tfhe::{
-    integer::BooleanBlock, set_server_key, CompactPublicKey, FheBool, FheUint128, FheUint16,
-    FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
+    CompactPublicKey, FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128,
+    FheUint160, FheUint256, FheUint2048, integer::BooleanBlock, set_server_key,
+};
+use threshold_execution::{
+    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
+    tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
 };
 use threshold_fhe::{
     choreography::{
-        choreographer::ChoreoRuntime,
+        choreographer::{ChoreoRuntime, KeySetMaybeCompressed},
         grpc::SupportedRing,
         requests::{SessionType, TfheType, ThroughtputParams},
     },
     conf::choreo::ChoreoConf,
-    execution::{
-        endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
-        tfhe_internals::{
-            parameters::DkgParamsAvailable, public_keysets::FhePubKeySet, utils::expanded_encrypt,
-        },
-    },
-    session_id::SessionId,
 };
+use threshold_types::session_id::SessionId;
 use tokio::time;
 
 #[derive(Args, Debug)]
@@ -249,6 +247,10 @@ struct ThresholdDecryptResultArgs {
     /// (Output of the threshold-decrypt command)
     #[clap(long = "sid")]
     session_id_decrypt: u128,
+
+    /// Optional argument to check the received value against expected plaintexts.
+    #[clap(long = "expected-values")]
+    expected_values: Option<Vec<u64>>,
 }
 
 #[derive(Args, Debug)]
@@ -364,7 +366,7 @@ async fn crs_gen_command(
     choreo_conf: ChoreoConf,
     params: CrsGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_crs_gen(
@@ -405,7 +407,7 @@ async fn prss_init_command(
     choreo_conf: ChoreoConf,
     params: PrssInitArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     runtime
         .inititate_prss_init(
@@ -427,7 +429,7 @@ async fn preproc_keygen_command(
     choreo_conf: ChoreoConf,
     params: PreprocKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_preproc_keygen(
@@ -442,7 +444,9 @@ async fn preproc_keygen_command(
         )
         .await?;
 
-    println!("Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}");
+    println!(
+        "Preprocessing for Distributed Key Generation started.\n  The correlated randomness will be stored under session ID: {session_id}"
+    );
 
     Ok(())
 }
@@ -452,7 +456,7 @@ async fn threshold_keygen_command(
     choreo_conf: ChoreoConf,
     params: ThresholdKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_threshold_keygen(
@@ -467,7 +471,9 @@ async fn threshold_keygen_command(
         )
         .await?;
 
-    println!("Threshold Key Generation started. The new key will be stored under session ID:  {session_id}");
+    println!(
+        "Threshold Key Generation started. The new key will be stored under session ID:  {session_id}"
+    );
 
     Ok(())
 }
@@ -486,6 +492,16 @@ async fn threshold_keygen_result_command(
         )
         .await?;
 
+    match &keys {
+        KeySetMaybeCompressed::Compressed(_) => {
+            println!("Storing a compressed keys, can be used for KATs.")
+        }
+
+        KeySetMaybeCompressed::Uncompressed(_) => println!(
+            "Storing an uncompressed key, can not be used for KATs, because FFT is not iso on different CPUs."
+        ),
+    }
+
     let serialized_pk = bc2wrap::serialize(&(params.session_id, keys))?;
     std::fs::write(format!("{}/pk.bin", params.storage_path), serialized_pk)?;
     println!("Key stored in {}/pk.bin", params.storage_path);
@@ -498,8 +514,9 @@ async fn preproc_decrypt_command(
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let session_id = params.session_id.unwrap_or(random());
+    let (key_sid, _): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+    let session_id = params.session_id.unwrap_or_else(random);
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
     let session_id = runtime
@@ -514,7 +531,9 @@ async fn preproc_decrypt_command(
             choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
-    println!("Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}");
+    println!(
+        "Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}"
+    );
     Ok(())
 }
 
@@ -599,10 +618,19 @@ fn encrypt_messages(
 
 async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (_key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let compact_key = pk.public_key;
+    let (_key_sid, pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
-    set_server_key(pk.server_key);
+    let (compact_key, server_key) = match pk {
+        KeySetMaybeCompressed::Compressed(comp_pk) => {
+            comp_pk.decompress().unwrap().into_raw_parts()
+        }
+        KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
+            (uncomp_pk.public_key, uncomp_pk.server_key)
+        }
+    };
+
+    set_server_key(server_key);
     let ctxt = encrypt_messages(vec![params.value], params.tfhe_type.clone(), &compact_key)
         .pop()
         .unwrap();
@@ -625,13 +653,14 @@ async fn threshold_decrypt_from_file_command(
     params: ThresholdDecryptFromFileArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
+    let (key_sid, _pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
     let ctxt_serialized = tokio::fs::read(params.input_file).await?;
     let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
         bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
 
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
         .initiate_threshold_decrypt(
             SessionId::from(session_id),
@@ -664,12 +693,21 @@ async fn threshold_decrypt_command(
     let tfhe_type = params.tfhe_type;
     let num_messages = params.num_ctxts;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let compact_key = pk.public_key;
+    let (key_sid, pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+
+    let (compact_key, server_key) = match pk {
+        KeySetMaybeCompressed::Compressed(comp_pk) => {
+            comp_pk.decompress().unwrap().into_raw_parts()
+        }
+        KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
+            (uncomp_pk.public_key, uncomp_pk.server_key)
+        }
+    };
 
     //Required to be able to expand the CompactCiphertextList if the encryption and compute keys
     //are different (i.e. need access to PKSK)
-    set_server_key(pk.server_key);
+    set_server_key(server_key);
     let max_value = if tfhe_type.get_num_bits_rep() >= 64 {
         u64::MAX
     } else {
@@ -684,7 +722,7 @@ async fn threshold_decrypt_command(
 
     println!("Encrypted the following message : {messages:?}");
 
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let throughput = if let Some(num_copies) = params.throughput_copies {
         let num_sessions = params.throughput_sessions.unwrap_or(1);
         Some(ThroughtputParams {
@@ -730,10 +768,29 @@ async fn threshold_decrypt_result_command(
         )
         .await?;
 
-    println!(
-        "Retrieved plaintexts for session ID {}: \n\t {:?}",
-        params.session_id_decrypt, ptxts
-    );
+    if let Some(expected_values) = params.expected_values {
+        if ptxts.len() == expected_values.len()
+            && ptxts
+                .iter()
+                .zip(expected_values.iter())
+                .all(|(ptxt, expected)| ptxt.0 == *expected)
+        {
+            println!(
+                "✅ Plaintext for session ID {} matches expected value",
+                params.session_id_decrypt
+            );
+        } else {
+            println!(
+                "❌ Plaintext for session ID {} does NOT match expected value: {:?} (got {:?})",
+                params.session_id_decrypt, expected_values, ptxts
+            );
+        }
+    } else {
+        println!(
+            "Retrieved plaintexts for session ID {}: \n\t {:?}",
+            params.session_id_decrypt, ptxts
+        );
+    }
     Ok(())
 }
 
@@ -742,7 +799,7 @@ async fn reshare_command(
     choreo_conf: ChoreoConf,
     params: ReshareArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let new_key_id = SessionId::from(params.new_key_sid.unwrap_or(random()));
+    let new_key_id = SessionId::from(params.new_key_sid.unwrap_or_else(random));
     let new_sid = runtime
         .initiate_reshare(
             choreo_conf.threshold_topology.threshold,

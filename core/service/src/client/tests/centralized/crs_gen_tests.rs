@@ -1,27 +1,27 @@
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     consts::TEST_PARAM,
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
-    engine::base::{derive_request_id, DSEP_PUBDATA_CRS},
+    engine::base::{DSEP_PUBDATA_CRS, derive_request_id},
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
     vault::storage::StorageReader,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
+    RequestId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PubDataType,
-    RequestId,
 };
 use serial_test::serial;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::tfhe_internals::parameters::DKGParams;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -74,7 +74,7 @@ async fn crs_gen_centralized_manual(
     };
     let domain = dummy_domain();
     let ceremony_req = internal_client
-        .crs_gen_request(request_id, max_num_bits, params, &domain)
+        .crs_gen_request(request_id, None, None, max_num_bits, params, &domain)
         .unwrap();
 
     let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -125,6 +125,8 @@ async fn crs_gen_centralized_manual(
                 crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
                 maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
                 crsDigest: actual_digest.to_vec().into(),
+                // TODO: reenable for RFC005
+                // extraData: vec![].into(),
             },
             &domain,
             &resp.external_signature,
@@ -149,7 +151,7 @@ pub async fn crs_gen_centralized(
         crsgen: 100,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
@@ -178,7 +180,7 @@ pub(crate) async fn run_crs_centralized(
     let max_num_bits = Some(2048);
     let domain = dummy_domain();
     let gen_req = internal_client
-        .crs_gen_request(crs_req_id, max_num_bits, Some(params), &domain)
+        .crs_gen_request(crs_req_id, None, None, max_num_bits, Some(params), &domain)
         .unwrap();
 
     tracing::debug!("making crs request, insecure? {insecure}");
@@ -217,7 +219,7 @@ pub(crate) async fn run_crs_centralized(
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
-        .process_get_crs_resp(&inner_resp, &domain, &pub_storage)
+        .process_get_crs_resp(&inner_resp, &domain, vec![], &pub_storage)
         .await
         .unwrap()
         .unwrap();

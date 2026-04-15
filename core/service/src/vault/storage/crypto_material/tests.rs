@@ -1,16 +1,17 @@
 use crate::{
+    consts::DEFAULT_EPOCH_ID,
     cryptography::signatures::gen_sig_keys,
     dummy_domain,
-    engine::base::{derive_request_id, KeyGenMetadata},
+    engine::base::{KeyGenMetadata, derive_request_id},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::WrappedPublicKey, EpochId, RequestId};
+use kms_grpc::{EpochId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
-use threshold_fhe::execution::tfhe_internals::{
+use tfhe::{CompactPublicKey, ConfigBuilder, ServerKey, shortint::ClassicPBSParameters};
+use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
     test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
@@ -20,8 +21,9 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     consts::TEST_PARAM,
     engine::{
-        base::KmsFheKeyHandles, centralized::central_kms::async_generate_crs,
-        threshold::service::ThresholdFheKeys,
+        base::KmsFheKeyHandles,
+        centralized::central_kms::async_generate_crs,
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
     vault::storage::{
@@ -29,7 +31,7 @@ use crate::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
         ram::{FailingRamStorage, RamStorage},
-        store_pk_at_request_id,
+        store_versioned_at_request_id,
     },
 };
 
@@ -39,7 +41,7 @@ fn dummy_info() -> KeyGenMetadata {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
@@ -48,17 +50,18 @@ async fn write_crs() {
         public_storage: pub_storage.clone(),
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
         backup_vault: None,
-        pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let mut rng = AesRng::seed_from_u64(100);
     let crs_id = RequestId::new_random(&mut rng);
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, &crs_id, rng)
-        .await
-        .unwrap();
+    let (pp, crs_info) =
+        async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, vec![], &crs_id, rng)
+            .await
+            .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
+    let default_epoch_id = *DEFAULT_EPOCH_ID;
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
@@ -66,6 +69,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -82,6 +86,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -93,6 +98,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &req_id,
+            &default_epoch_id,
             pp.clone(),
             crs_info.clone(),
             meta_store.clone(),
@@ -109,6 +115,7 @@ async fn write_crs() {
     crypto_storage
         .write_crs_with_meta_store(
             &new_req_id,
+            &default_epoch_id,
             pp,
             crs_info,
             meta_store.clone(),
@@ -135,11 +142,9 @@ async fn read_public_key() {
         RamStorage::new(),
         None,
         HashMap::new(),
-        HashMap::new(),
     );
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
-    let pk_cache = crypto_storage.inner.pk_cache.clone();
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM
         .get_params_basics_handle()
@@ -152,28 +157,28 @@ async fn read_public_key() {
     {
         let pub_storage = pub_storage.clone();
         let mut s = pub_storage.lock().await;
-        store_pk_at_request_id(&mut (*s), &req_id, WrappedPublicKey::Compact(&public_key))
-            .await
-            .unwrap();
+        store_versioned_at_request_id(
+            &mut (*s),
+            &req_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
     }
 
     // reading the public key without cache should succeed
     let _pk = crypto_storage.inner.read_cloned_pk(&req_id).await.unwrap();
-
-    // check that there's an item in the cache
-    let guard = pk_cache.read().await;
-    assert!(guard.contains_key(&req_id));
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_central_keys() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
-        HashMap::new(),
         HashMap::new(),
     );
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -276,7 +281,7 @@ async fn write_central_keys() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_empty_update() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
@@ -293,7 +298,7 @@ async fn write_threshold_empty_update() {
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "Failed to ensure existance of threshold key material for {req_id}."
+        "Failed to ensure existence of threshold key material for {req_id}."
     )));
     // write to an empty meta store should fail
     crypto_storage
@@ -302,7 +307,6 @@ async fn write_threshold_empty_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -321,7 +325,6 @@ async fn write_threshold_empty_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -334,7 +337,7 @@ async fn write_threshold_empty_update() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_meta_update() {
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
@@ -355,7 +358,6 @@ async fn write_threshold_keys_meta_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -383,7 +385,6 @@ async fn write_threshold_keys_meta_update() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -391,7 +392,7 @@ async fn write_threshold_keys_meta_update() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn write_threshold_keys_failed_storage() {
     let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
@@ -413,7 +414,6 @@ async fn write_threshold_keys_failed_storage() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -446,7 +446,6 @@ async fn write_threshold_keys_failed_storage() {
             &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -462,7 +461,7 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn read_guarded_threshold_fhe_keys_not_found() {
     let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
     let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
@@ -475,7 +474,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         RamStorage::new(),
         None,
         HashMap::new(),
-        HashMap::new(),
     );
 
     // Try to read a non-existent key - should return an error
@@ -486,7 +484,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     let expected_msg = format!(
-        "Could not find data at (FheKeyInfo, {}, {})",
+        "Could not find data at (data_type: FheKeyInfo, data_id: {}, epoch_id: {})",
         req_id, epoch_id
     );
     assert!(
@@ -497,7 +495,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
+#[kms_test_tracing::traced_test]
 async fn read_guarded_crypto_material_from_cache_not_found() {
     let key_id = derive_request_id("read_guarded_crypto_material_from_cache_not_found").unwrap();
     let epoch_id: EpochId =
@@ -542,7 +540,6 @@ fn setup_threshold_store(
         RamStorage::new(),
         None,
         HashMap::new(),
-        HashMap::new(),
     );
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM
@@ -561,9 +558,11 @@ fn setup_threshold_store(
 
     let threshold_fhe_keys = ThresholdFheKeys {
         private_keys: Arc::new(key_shares[0].to_owned()),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: None,
+        public_material: PublicKeyMaterial::Uncompressed {
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: None,
+        },
         meta_data: dummy_info(),
     };
     (crypto_storage, threshold_fhe_keys, fhe_key_set)

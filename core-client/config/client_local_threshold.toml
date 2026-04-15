@@ -15,8 +15,8 @@ num_reconstruct = 3
 # Only relevant for threshold.
 decryption_mode = "NoiseFloodSmall"
 
-# fhe_params = "Test" # Small, insecure parameters for testing
-fhe_params = "Default" # Large, secure parameters
+fhe_params = "Test" # Small, insecure parameters for testing
+# fhe_params = "Default" # Large, secure parameters
 
 # List of connection info to each of the cores
 [[cores]]

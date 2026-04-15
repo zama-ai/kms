@@ -128,84 +128,87 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
             println!("  [OK] Valid {} config", type_str);
             println!("  [OK] Storage: {}", storage_type);
 
-            if type_str == "threshold" {
-                if let Some(threshold_conf) = &config_type.threshold {
-                    // Report listen address for validation
-                    println!(
-                        "  [OK] Listen address: {}:{}",
-                        config_type.service.listen_address, config_type.service.listen_port
-                    );
+            if type_str == "threshold"
+                && let Some(threshold_conf) = &config_type.threshold
+            {
+                // Report listen address for validation
+                println!(
+                    "  [OK] Listen address: {}:{}",
+                    config_type.service.listen_address, config_type.service.listen_port
+                );
 
-                    // Validate threshold setting - consistent with server-side health logic
-                    // threshold = max number of malicious/offline nodes tolerated
-                    // For Byzantine fault tolerance, need 2/3 majority for healthy status
-                    let threshold = threshold_conf.threshold;
-                    let total_nodes = threshold_conf.peers.as_ref().map_or(0, |p| p.len()); // peers list includes self
+                // Validate threshold setting - consistent with server-side health logic
+                // threshold = max number of malicious/offline nodes tolerated
+                // For Byzantine fault tolerance, need 2/3 majority for healthy status
+                let threshold = threshold_conf.threshold;
+                let total_nodes = threshold_conf.peers.as_ref().map_or(0, |p| p.len()); // peers list includes self
 
-                    // Ensure we have positive node count
-                    if total_nodes == 0 {
-                        result.overall_health = HealthStatus::Unhealthy;
-                        result
-                            .recommendations
-                            .push("Config error: No nodes defined in peers list".to_string());
-                        return Ok(result);
-                    }
+                // Ensure we have positive node count
+                if total_nodes == 0 {
+                    result.overall_health = HealthStatus::Unhealthy;
+                    result
+                        .recommendations
+                        .push("Config error: No nodes defined in peers list".to_string());
+                    return Ok(result);
+                }
 
-                    let min_nodes_required = threshold as usize + 1; // Need t+1 nodes for threshold operations
-                    let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority for Byzantine fault tolerance
+                let min_nodes_required = threshold as usize + 1; // Need t+1 nodes for threshold operations
+                let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority for Byzantine fault tolerance
 
-                    if total_nodes < min_nodes_required {
-                        result.overall_health = HealthStatus::Unhealthy;
-                        result.recommendations.push(format!(
+                if total_nodes < min_nodes_required {
+                    result.overall_health = HealthStatus::Unhealthy;
+                    result.recommendations.push(format!(
                             "Config error: {} nodes defined but threshold={} requires at least {} nodes (t+1)",
                             total_nodes, threshold, min_nodes_required
                         ));
-                    } else {
-                        println!("  [OK] Threshold: {} - Node requirements:", threshold);
-                        println!(
-                            "      - {} of {} nodes minimum for threshold operations (t+1)",
-                            min_nodes_required, total_nodes
-                        );
-                        println!(
-                            "      - {} of {} nodes for healthy status (2/3 majority)",
-                            min_nodes_for_healthy, total_nodes
-                        );
-                        println!(
-                            "      - {} of {} nodes for optimal status (all nodes online)",
-                            total_nodes, total_nodes
-                        );
-                        println!("      (!!!)  Operational recommendation: All {} nodes should be online for best performance", total_nodes);
-                    }
+                } else {
+                    println!("  [OK] Threshold: {} - Node requirements:", threshold);
+                    println!(
+                        "      - {} of {} nodes minimum for threshold operations (t+1)",
+                        min_nodes_required, total_nodes
+                    );
+                    println!(
+                        "      - {} of {} nodes for healthy status (2/3 majority)",
+                        min_nodes_for_healthy, total_nodes
+                    );
+                    println!(
+                        "      - {} of {} nodes for optimal status (all nodes online)",
+                        total_nodes, total_nodes
+                    );
+                    println!(
+                        "      (!!!)  Operational recommendation: All {} nodes should be online for best performance",
+                        total_nodes
+                    );
+                }
 
-                    // Validate peer addresses
-                    if let Some(peers) = &threshold_conf.peers {
-                        println!("  [OK] {} peers configured:", peers.len());
-                        for peer in peers {
-                            println!(
-                                "      - Peer {} at {}:{}",
-                                peer.party_id, peer.address, peer.port
-                            );
-                        }
-
-                        result.recommendations.push(format!(
-                            "Config defines {} peers for threshold KMS at {}:{}",
-                            peers.len(),
-                            threshold_conf.listen_address,
-                            threshold_conf.listen_port
-                        ));
-                    } else {
-                        println!("  [WARN] No peers configured in peers list");
-                        result.recommendations.push(format!(
-                            "Config defines 0 peers for threshold KMS at {}:{}",
-                            threshold_conf.listen_address, threshold_conf.listen_port
-                        ));
+                // Validate peer addresses
+                if let Some(peers) = &threshold_conf.peers {
+                    println!("  [OK] {} peers configured:", peers.len());
+                    for peer in peers {
+                        println!(
+                            "      - Peer {} at {}:{}",
+                            peer.party_id, peer.address, peer.port
+                        );
                     }
 
                     result.recommendations.push(format!(
+                        "Config defines {} peers for threshold KMS at {}:{}",
+                        peers.len(),
+                        threshold_conf.listen_address,
+                        threshold_conf.listen_port
+                    ));
+                } else {
+                    println!("  [WARN] No peers configured in peers list");
+                    result.recommendations.push(format!(
+                        "Config defines 0 peers for threshold KMS at {}:{}",
+                        threshold_conf.listen_address, threshold_conf.listen_port
+                    ));
+                }
+
+                result.recommendations.push(format!(
                         "OPERATIONAL: Monitor that all {} nodes remain online. While {} nodes provide healthy status, having all nodes online ensures optimal performance and fault tolerance",
                         total_nodes, min_nodes_for_healthy
                     ));
-                }
             }
         }
         Err(e) => {
@@ -304,23 +307,34 @@ async fn process_health_status(
 
         // Set overall health based on server's assessment
         let (context_health, recommendation) = match result_peers_status.status {
-            1 => (HealthStatus::Optimal, format!(
-                    "Optimal: All {} peers online and reachable",
-                    total_peers
-                )),   // HEALTH_STATUS_OPTIMAL
-            2 => (HealthStatus::Healthy, format!(
+            1 => (
+                HealthStatus::Optimal,
+                format!("Optimal: All {} peers online and reachable", total_peers),
+            ), // HEALTH_STATUS_OPTIMAL
+            2 => (
+                HealthStatus::Healthy,
+                format!(
                     "Healthy but not optimal: {}/{} peers reachable (sufficient majority but {} peers offline)",
-                    num_peers_reachable, total_peers, total_peers - num_peers_reachable
-                )),   // HEALTH_STATUS_HEALTHY
-            3 => (HealthStatus::Degraded, format!(
+                    num_peers_reachable,
+                    total_peers,
+                    total_peers - num_peers_reachable
+                ),
+            ), // HEALTH_STATUS_HEALTHY
+            3 => (
+                HealthStatus::Degraded,
+                format!(
                     "(!!!)  INVESTIGATE: Even with healthy status, explore why {} peers are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
                     total_peers - num_peers_reachable
-                )) , // HEALTH_STATUS_DEGRADED
-            4 => (HealthStatus::Unhealthy, format!(
+                ),
+            ), // HEALTH_STATUS_DEGRADED
+            4 => (
+                HealthStatus::Unhealthy,
+                format!(
                     "Critical: Only {} peers reachable, but {} required nodes for threshold operations",
                     num_peers_reachable, result_peers_status.threshold_required
-                )), // HEALTH_STATUS_UNHEALTHY
-            _ => return,                  // Keep current status for unspecified values
+                ),
+            ), // HEALTH_STATUS_UNHEALTHY
+            _ => return, // Keep current status for unspecified values
         };
 
         for peer in &result_peers_status.peers {
@@ -476,13 +490,13 @@ pub async fn run_full_check(
     }
 
     // Merge recommendations
-    if let Some(config_validation) = &result.config_valid {
-        if !config_validation.valid {
-            result.overall_health = HealthStatus::Unhealthy;
-            result
-                .recommendations
-                .insert(0, "Configuration validation failed".to_string());
-        }
+    if let Some(config_validation) = &result.config_valid
+        && !config_validation.valid
+    {
+        result.overall_health = HealthStatus::Unhealthy;
+        result
+            .recommendations
+            .insert(0, "Configuration validation failed".to_string());
     }
 
     Ok(result)

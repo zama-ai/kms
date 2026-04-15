@@ -82,6 +82,9 @@ mod test {
 
     use super::test_tools::{compress_serialize_versioned, safe_serialize_versioned};
     use super::tfhe_safe_deserialize_and_uncompress;
+    use tfhe::CompactPublicKey;
+    use tfhe::CompressedCiphertextListBuilder;
+    use tfhe::ConfigBuilder;
     use tfhe::integer::bigint::StaticUnsignedBigInt;
     use tfhe::integer::ciphertext::Expandable;
     use tfhe::named::Named;
@@ -91,16 +94,13 @@ mod test {
         COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
         PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
     };
-    use tfhe::CompactPublicKey;
-    use tfhe::CompressedCiphertextListBuilder;
-    use tfhe::ConfigBuilder;
-    use tfhe::{generate_keys, ClientKey, HlCompressible};
+    use tfhe::{ClientKey, HlCompressible, generate_keys};
     use tfhe::{
-        FheBool, FheUint1024, FheUint128, FheUint16, FheUint2048, FheUint256, FheUint32, FheUint4,
-        FheUint512, FheUint64, FheUint8,
+        FheBool, FheUint4, FheUint8, FheUint16, FheUint32, FheUint64, FheUint128, FheUint256,
+        FheUint512, FheUint1024, FheUint2048,
     };
     use tfhe::{Unversionize, Versionize};
-    use threshold_fhe::execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
+    use threshold_execution::tfhe_internals::parameters::{DKGParams, PARAMS_TEST_BK_SNS};
 
     fn max_val(num_bits: usize) -> StaticUnsignedBigInt<1> {
         StaticUnsignedBigInt::from([(2_u128.pow(num_bits as u32) - 1) as u64; 1])

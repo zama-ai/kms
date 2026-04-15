@@ -44,6 +44,7 @@ jobs:
       changes-backward-compatibility: ${{ steps.filter.outputs.backward-compatibility }}
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
+      changes-core-client-k8s-tests: ${{ steps.filter.outputs.core-client-k8s-tests }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
@@ -53,7 +54,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: true
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
           # Define paths that trigger specific component workflows
@@ -64,10 +65,14 @@ jobs:
             ci:
               - '.github/workflows/**'
             core-client:
-              - 'core-client/**'
+              - 'core-client/src/**'
+              - 'core-client/config/**'
+              - 'core-client/tests-utils/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            core-client-k8s-tests:
+              - 'core-client/tests/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -101,7 +106,7 @@ jobs:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
       id-token: write # Required for OIDC authentication
-      pull-requests: read # Required to read pull request information
+      pull-requests: read # Required to read pull requests information
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
@@ -194,7 +199,7 @@ jobs:
           persist-credentials: false
       - run: python3 -m pip install linkcheckmd
       - name: Check dead-link
-        run: python3 ci/script/local_docs_link_check.py
+        run: python3 ci/scripts/local_docs_link_check.py
 
   ############################################################################
   # KMS Backward Compatibility Testing
@@ -256,6 +261,9 @@ jobs:
   # - Changes to observability/**
   # - Changes to workflow file
   ############################################################################
+  # Prepares test matrix for core-client integration tests
+  # Splits tests into two parallel jobs: threshold and centralized
+  # Features required: threshold_tests (for PRSS tests), testing (for test helpers)
   prepare-core-client-matrix:
     name: main/prepare-core-client-matrix
     needs: check-changes
@@ -274,12 +282,17 @@ jobs:
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"}"
+                    # Threshold tests: includes PRSS tests (sequential execution via #[serial])
+          # Centralized tests: basic keygen, CRS, backup/restore workflows
+          # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
+          MATRIX="${MATRIX}{\"args-tests\":\"--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\",\"generate_default_material\":true},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\",\"generate_default_material\":false}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
 
-  # Core client integration tests
+  # Core client integration tests - Native execution (no Docker)
+  # Runs integration tests split across threshold and centralized jobs
+  # Uses pre-generated test material and isolated temporary directories
   test-core-client:
     name: main/test-core-client
     # job permissions
@@ -307,6 +320,7 @@ jobs:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       args-tests: ${{ matrix.args-tests }}
+      generate-default-material: ${{ matrix.generate_default_material }}
       app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -318,6 +332,44 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  # Core client nightly tests (runs ALL tests including nightly and full_gen_tests)
+  test-core-client-nightly:
+    name: main/test-core-client-nightly
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
+      # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
+      # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
+      args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
+      generate-default-material: true
+      nextest-profile: 'ci-nightly'
+      app-cache-dir: 'kms-core-client'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -348,7 +400,9 @@ jobs:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
-      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld'
+      # Also skip isolated_test_example which requires pre-generated test material
+      # Must include features to compile test code that uses feature-gated functions
+      args-tests: '--features testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
       app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -494,6 +548,8 @@ jobs:
       package-name: 'kms'
       # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -504,6 +560,8 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
+      enable-shared-material: true  # Use shared material mode (no copying)
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}

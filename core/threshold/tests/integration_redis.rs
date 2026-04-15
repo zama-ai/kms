@@ -1,30 +1,29 @@
-use ctor::ctor;
+use algebra::{
+    base_ring::{Z64, Z128},
+    galois_rings::degree_4::ResiduePolyF4,
+    sharing::share::Share,
+};
 use paste::paste;
 use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
-use threshold_fhe::algebra::base_ring::{Z128, Z64};
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
-use threshold_fhe::execution::online::preprocessing::{create_redis_factory, PreprocessorFactory};
-use threshold_fhe::execution::online::triple::Triple;
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::sharing::share::Share;
+use threshold_execution::online::{
+    preprocessing::{PreprocessorFactory, create_redis_factory, redis::RedisConf},
+    triple::Triple,
+};
+use threshold_types::role::Role;
 
 #[cfg(feature = "testing")]
-use threshold_fhe::{
-    execution::{
-        endpoints::keygen::SecureOnlineDistributedKeyGen,
-        online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
-        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-        tfhe_internals::parameters::DKGParams,
-    },
-    session_id::SessionId,
+use threshold_execution::{
+    endpoints::keygen::SecureOnlineDistributedKeyGen,
+    online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
+    runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
+    tfhe_internals::parameters::DKGParams,
 };
+use threshold_types::session_id::SessionId;
 
 #[cfg(feature = "testing")]
 use std::{fs, sync::Arc, thread};
 
-#[ctor]
 fn redis_tidy() {
     let redis_conf = RedisConf::default();
     let client = redis::Client::open(redis_conf.host).unwrap();
@@ -42,6 +41,8 @@ macro_rules! test_triples {
 
             #[tokio::test]
             async fn [<test_redis_preprocessing $z:lower>]() {
+                redis_tidy();
+
                 let test_key_prefix = format!("test_redis_preprocessing_{}",stringify!($z));
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -83,6 +84,7 @@ macro_rules! test_triples {
 
 #[tokio::test]
 async fn test_store_fetch_100_triples() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_triples".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -120,6 +122,7 @@ async fn test_store_fetch_100_triples() {
 
 #[tokio::test]
 async fn test_store_fetch_100_randoms() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_randoms".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -143,6 +146,7 @@ async fn test_store_fetch_100_randoms() {
 
 #[tokio::test]
 async fn test_store_fetch_100_bits() {
+    redis_tidy();
     let test_key_prefix = "test_store_fetch_100_bits".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -166,6 +170,7 @@ async fn test_store_fetch_100_bits() {
 
 #[tokio::test]
 async fn test_fetch_more_than_stored() {
+    redis_tidy();
     let store_count = 100;
     let fetch_count = 101;
 
@@ -185,14 +190,17 @@ async fn test_fetch_more_than_stored() {
     bit_redis_preprocessing.append_bits(bits.clone());
     let fetched_bits = bit_redis_preprocessing.next_bit_vec(fetch_count);
 
-    assert!(fetched_bits
-        .unwrap_err()
-        .to_string()
-        .contains("Pop length error."));
+    assert!(
+        fetched_bits
+            .unwrap_err()
+            .to_string()
+            .contains("Pop length error.")
+    );
 }
 
 #[tokio::test]
 async fn test_cleanup_on_drop() {
+    redis_tidy();
     let test_key_prefix = "test_cleanup_on_drop".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -239,17 +247,17 @@ fn test_dkg_orchestrator_large(
     params: DKGParams,
     tag: tfhe::Tag,
 ) {
+    use algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring};
     use itertools::Itertools;
-    use threshold_fhe::{
-        algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
-        execution::{
-            endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
-            online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
-        },
-        file_handling::tests::write_element,
-        networking::NetworkMode,
-        thread_handles::OsThreadGroup,
+    use test_utils::write_element;
+    use thread_handles::OsThreadGroup;
+    use threshold_execution::{
+        endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
+        online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
     };
+    use threshold_types::network::NetworkMode;
+
+    redis_tidy();
 
     let params_basics_handles = params.get_params_basics_handle();
 
@@ -273,7 +281,7 @@ fn test_dkg_orchestrator_large(
         let rt_handle = rt.handle().clone();
         let tag = tag.clone();
         handles.add(thread::spawn(move || {
-            use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+            use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 
             let _guard = rt_handle.enter();
             println!("Thread created for party {party}");
@@ -309,7 +317,7 @@ fn test_dkg_orchestrator_large(
             let dkg_session = sessions.get_mut(0).unwrap();
 
             let (pk, sk) = rt_handle.block_on(async {
-                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, tag, None)
+                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, tag)
                     .await
                     .unwrap()
             });
@@ -346,7 +354,7 @@ fn test_dkg_orchestrator_large(
 #[cfg(feature = "testing")]
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
-    use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
+    use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
     let params = PARAMS_TEST_BK_SNS;
     let params = params.get_params_without_sns();
@@ -372,13 +380,13 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
-    use threshold_fhe::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-        execution::online::preprocessing::{
-            dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing, TriplePreprocessing,
-        },
-        tests::helper::testing::get_dummy_parameters_for_parties,
+    use threshold_execution::online::preprocessing::{
+        BitDecPreprocessing, BitPreprocessing, InMemoryBitDecPreprocessing, TriplePreprocessing,
+        dummy::DummyPreprocessing,
     };
+    use threshold_execution::tests::helper::testing::get_dummy_parameters_for_parties;
+
+    redis_tidy();
 
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(
@@ -387,9 +395,10 @@ async fn test_cast_fail_memory_bit_dec_preprocessing() {
     );
     let parameters = get_dummy_parameters_for_parties(1, 0, Role::indexed_from_one(1));
 
-    let mut dummy_preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &parameters);
+    let mut dummy_preprocessing = DummyPreprocessing::new(42, &parameters);
 
-    let mut casted_from_dummy = dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
+    let mut casted_from_dummy: InMemoryBitDecPreprocessing<4> =
+        dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
 
     let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
 

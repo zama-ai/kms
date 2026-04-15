@@ -1,4 +1,5 @@
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
+use anyhow::bail;
 use async_cell::sync::AsyncCell;
 use kms_grpc::RequestId;
 use std::{
@@ -15,7 +16,6 @@ cfg_if::cfg_if! {
         use anyhow::anyhow;
         use std::fmt::{self};
         use tokio::sync::RwLockWriteGuard;
-        use tonic::Status;
     }
 }
 
@@ -123,7 +123,9 @@ impl<T: Clone> MetaStore<T> {
         if self.storage.len() >= self.capacity {
             // We have reached the capacity limit. Delete an old element.
             if self.complete_queue.len() <= self.min_cache {
-                return Err(anyhow_error_and_log("The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element."));
+                return Err(anyhow_error_and_log(
+                    "The system is fully loaded and the cache of finished elements is not at minimum size yet. Cannot insert new element.",
+                ));
             } else {
                 // Remove the first (oldest) element from the age queue
                 let old_request_id = some_or_err(
@@ -202,7 +204,9 @@ impl<T: Clone> MetaStore<T> {
                     // If we couldn't find it in complete_queue but it was completed,
                     // this indicates a potential invariant violation that we should log
                     if !found {
-                        tracing::error!("INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected");
+                        tracing::error!(
+                            "INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected"
+                        );
                     }
                 }
 
@@ -220,6 +224,11 @@ impl<T: Clone> MetaStore<T> {
     /// Get the current number of items in the store
     pub fn get_current_count(&self) -> usize {
         self.storage.len()
+    }
+
+    /// Get the total number of items in the store (alias for get_current_count)
+    pub fn get_total_count(&self) -> usize {
+        self.get_current_count()
     }
 
     /// Get the number of completed items
@@ -281,7 +290,7 @@ impl<T: Clone> MetaStore<T> {
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn add_req_to_meta_store<T: Clone>(
+pub(crate) fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
@@ -331,7 +340,6 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
         Err(e) => {
             // Update error counter for meta-store update failure
             MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
-
             false
         }
     }
@@ -350,14 +358,15 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     error: String,
     request_metric: &'static str,
 ) -> bool {
-    // Log and increment relevant metrics according to error
     MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
 
     match meta_store.update(req_id, Err(error.clone())) {
         Ok(()) => true,
         Err(e) => {
             // We already logged the original error, so just log the update failure here as there is not much else we can do
-            tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}");
+            tracing::error!(
+                "Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}"
+            );
             false
         }
     }
@@ -374,6 +383,85 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
     drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res_metriced(handle, req_id, metric_scope).await
+}
+
+/// Like [`retrieve_from_meta_store`] but with a custom server-side wait duration.
+/// Use this for operations (e.g. preprocessing) that are inherently slower than
+/// the default 60-second window.
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn retrieve_from_meta_store_with_timeout<T: Clone>(
+    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+    wait_secs: u64,
+) -> Result<T, MetricedError> {
+    let handle = meta_store.retrieve(req_id);
+    drop(meta_store); // Release the read lock early
+    handle_res_metriced_with_timeout(handle, req_id, metric_scope, wait_secs).await
+}
+
+#[cfg(feature = "non-wasm")]
+pub async fn handle_res<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+) -> anyhow::Result<T> {
+    match handle {
+        None => {
+            bail!("Could not retrieve the result with request ID {req_id}. It does not exist")
+        }
+        Some(cell) => {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
+                cell.get(),
+            )
+            .await;
+            // Peel off the potential errors
+            if let Ok(result) = result {
+                match result {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        let msg = format!(
+                            "Could not retrieve the result with request ID {req_id} since it finished with an error: {e}"
+                        );
+                        tracing::warn!(msg);
+                        bail!(msg);
+                    }
+                }
+            } else {
+                let msg = format!(
+                    "Could not retrieve the result with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                );
+                tracing::info!(msg);
+                bail!(msg);
+            }
+            // Note that this is not logged as an error as we expect calls to take some time to be completed
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+async fn handle_res_metriced<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<T, MetricedError> {
+    handle_res_metriced_with_timeout(
+        handle,
+        req_id,
+        metric_scope,
+        DURATION_WAITING_ON_RESULT_SECONDS,
+    )
+    .await
+}
+
+#[cfg(feature = "non-wasm")]
+async fn handle_res_metriced_with_timeout<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+    wait_secs: u64,
+) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(
@@ -388,19 +476,16 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
             ))
         }
         Some(cell) => {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
-                cell.get(),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(tokio::time::Duration::from_secs(wait_secs), cell.get()).await;
             // Peel off the potential errors
             if let Ok(result) = result {
                 match result {
                     Ok(result) => Ok(result),
                     Err(e) => {
                         let msg = format!(
-                                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
-                            );
+                            "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+                        );
                         tracing::warn!(msg);
                         Err(MetricedError::new(
                             metric_scope,
@@ -412,7 +497,7 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
                 }
             } else {
                 let msg = format!(
-                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {wait_secs} seconds"
                 );
                 tracing::info!(msg);
                 Err(MetricedError::new(
@@ -421,53 +506,6 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
                     anyhow!(msg),
                     tonic::Code::Unavailable,
                 ))
-            }
-            // Note that this is not logged as an error as we expect calls to take some time to be completed
-        }
-    }
-}
-
-/// Helper method for retrieving the result of a request from an appropriate meta store
-/// [req_id] is the request ID to retrieve
-/// [request_type] is a free-form string used only for error logging the origin of the failure
-#[cfg(feature = "non-wasm")]
-pub(crate) async fn handle_res_mapping<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
-    req_id: &RequestId,
-    request_type_info: &str,
-) -> Result<T, Status> {
-    match handle {
-        None => {
-            let msg = format!(
-                "Could not retrieve {request_type_info} with request ID {req_id}. It does not exist"
-            );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::NotFound, msg))
-        }
-        Some(cell) => {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
-                cell.get(),
-            )
-            .await;
-            // Peel off the potential errors
-            if let Ok(result) = result {
-                match result {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        let msg = format!(
-                                "Could not retrieve {request_type_info} with request ID {req_id} since it finished with an error: {e}"
-                            );
-                        tracing::warn!(msg);
-                        Err(tonic::Status::new(tonic::Code::Internal, msg))
-                    }
-                }
-            } else {
-                let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
-                );
-                tracing::info!(msg);
-                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
             }
             // Note that this is not logged as an error as we expect calls to take some time to be completed
         }
@@ -487,9 +525,11 @@ mod tests {
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
         // Data does not exist
         assert!(!meta_store.exists(&request_id));
-        assert!(meta_store
-            .update(&request_id, Ok("OK".to_string()))
-            .is_err());
+        assert!(
+            meta_store
+                .update(&request_id, Ok("OK".to_string()))
+                .is_err()
+        );
 
         meta_store.insert(&request_id).unwrap();
         // Data exits
@@ -497,9 +537,11 @@ mod tests {
         assert!(meta_store.update(&request_id, Ok("OK".to_string())).is_ok());
 
         // Re-update not allowed
-        assert!(meta_store
-            .update(&request_id, Ok("NOK".to_string()))
-            .is_err());
+        assert!(
+            meta_store
+                .update(&request_id, Ok("NOK".to_string()))
+                .is_err()
+        );
     }
 
     #[test]
@@ -509,18 +551,24 @@ mod tests {
         let request_id_2: RequestId = derive_request_id("2").unwrap();
         let request_id_3: RequestId = derive_request_id("3").unwrap();
         meta_store.insert(&request_id_1).unwrap();
-        assert!(meta_store
-            .update(&request_id_1, Err("Err1".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_1, Err("Err1".to_string()))
+                .is_ok()
+        );
         meta_store.insert(&request_id_2).unwrap();
-        assert!(meta_store
-            .update(&request_id_2, Ok("OK2".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_2, Ok("OK2".to_string()))
+                .is_ok()
+        );
         // The storage is full so we should kick the oldest element out
         meta_store.insert(&request_id_3).unwrap();
-        assert!(meta_store
-            .update(&request_id_3, Err("Err3".to_string()))
-            .is_ok());
+        assert!(
+            meta_store
+                .update(&request_id_3, Err("Err3".to_string()))
+                .is_ok()
+        );
 
         // Validate the oldest element is removed
         assert!(!meta_store.exists(&request_id_1));
@@ -583,7 +631,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let meta_store = Arc::clone(&cloned_meta_store);
             let handle = meta_store.read().await.retrieve(&req_1);
-            handle_res_mapping(handle, &req_1, "test").await
+            handle_res_metriced(handle, &req_1, "test").await
         });
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         meta_store

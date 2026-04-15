@@ -1,3 +1,9 @@
+// DEPRECATED: Isolated equivalents in `misc_tests_isolated.rs`
+// - test_central_health_endpoint_availability → test_central_health_endpoint_availability_isolated
+// - test_central_close_after_drop → test_central_close_after_drop_isolated
+// - test_largecipher → test_largecipher_isolated
+// TODO: Remove after migration complete.
+
 use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::consts::TEST_CENTRAL_KEY_ID;
@@ -20,8 +26,8 @@ cfg_if::cfg_if! {
     }
 }
 use tonic::server::NamedService;
-use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
+use tonic_health::pb::health_check_response::ServingStatus;
 
 /// Check that the centralized health service is serving as soons as boot is completed.
 #[tokio::test]
@@ -90,6 +96,7 @@ async fn test_central_close_after_drop() {
         &client_map,
         &mut internal_client,
         &[None],
+        None,
     )
     .await;
     // Drop server
@@ -123,7 +130,6 @@ async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
         consts::DEFAULT_EPOCH_ID,
-        cryptography::encryption::PkeSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         },
@@ -138,7 +144,7 @@ async fn test_largecipher() {
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
@@ -182,7 +188,8 @@ async fn test_largecipher() {
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
             None,
-            PkeSchemeType::MlKem512,
+            None,
+            &[],
         )
         .unwrap();
     let response = kms_client
@@ -203,11 +210,13 @@ async fn test_largecipher() {
     }
     // Check that we get a server error instead of a server crash
     assert_eq!(response.as_ref().unwrap_err().code(), tonic::Code::Internal);
-    assert!(response
-        .err()
-        .unwrap()
-        .message()
-        .contains("Failed on requestID"));
+    assert!(
+        response
+            .err()
+            .unwrap()
+            .message()
+            .contains("Failed on requestID")
+    );
     tracing::info!("aborting");
     kms_server.assert_shutdown().await;
 }

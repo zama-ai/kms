@@ -2,6 +2,7 @@ name: zama-core-threshold
 # TODO: proper networking between nodes
 
 services:
+
   # 1. We generate signing keys and CA certificates for all nodes
   dev-kms-core-gen-signing-keys-ca-certs:
     image: ghcr.io/zama-ai/kms/core-service:latest-dev
@@ -46,7 +47,7 @@ services:
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-  
+
   # 2. We start all cores
   dev-kms-core-1:
     hostname: abcd.dev-kms-core-1.com
@@ -66,10 +67,10 @@ services:
       - "9646:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50100"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -107,12 +108,13 @@ services:
     ports:
       - "50002:50002"
       - "50200:50200"
+      - "9647:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50200"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -150,12 +152,13 @@ services:
     ports:
       - "50003:50003"
       - "50300:50300"
+      - "9648:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50300"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys
@@ -193,12 +196,13 @@ services:
     ports:
       - "50004:50004"
       - "50400:50400"
+      - "9649:9646"
     healthcheck:
       test: "grpc_health_probe --addr=localhost:50400"
-      interval: 1s
-      timeout: 1s
-      retries: 5
-      start_period: 1s
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 10s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
       - keys:/app/kms/core/service/keys

@@ -34,7 +34,7 @@ use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_13_0::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
-    rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{CrsgenVerification, KeygenVerification},
     RequestId,
 };
@@ -42,11 +42,11 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_4::safe_serialization::safe_serialize;
-use tfhe_1_4::shortint::parameters::{
+use tfhe_1_5_1::safe_serialization::safe_serialize;
+use tfhe_1_5_1::shortint::parameters::{
     LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
 };
-use tfhe_1_4::{
+use tfhe_1_5_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -63,7 +63,7 @@ use tfhe_1_4::{
     },
     ServerKey, Tag,
 };
-use tfhe_versionable_0_6::Upgrade;
+use tfhe_versionable_0_7::Upgrade;
 use threshold_fhe_0_13_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe_0_13_0::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_13_0::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -91,8 +91,8 @@ use backward_compatibility::{
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
+    PrivDataTypeTest, PrivateKeySetTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest,
+    PubDataTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
     UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
@@ -120,7 +120,7 @@ macro_rules! store_versioned_auxiliary {
     };
 }
 
-fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
+pub fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
     DKGParamsSnS {
         regular_params: convert_dkg_params_regular(value.regular_params),
         sns_params: convert_sns_parameters(value.sns_params),
@@ -172,7 +172,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -185,7 +185,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_5_1::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -275,6 +275,14 @@ const RELEASE_PCR_VALUES_TEST: ReleasePCRValuesTest = ReleasePCRValuesTest {
     state: 64,
 };
 
+const PRIVATE_KEY_SET_TEST: PrivateKeySetTest = PrivateKeySetTest {
+    test_filename: Cow::Borrowed("private_key_set"),
+    amount: 2,
+    threshold: 1,
+    role_i: 1,
+    dkg_parameters_sns: TEST_DKG_PARAMS_SNS,
+};
+
 // KMS test
 const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
     test_filename: Cow::Borrowed("private_sig_key"),
@@ -290,10 +298,6 @@ const SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST: SignedPubDataHandleInternalTest =
         signature: [1, 2, 3],
         external_signature: [4, 5, 6],
     };
-
-const PUBLIC_KEY_TYPE: PublicKeyTypeTest = PublicKeyTypeTest {
-    test_filename: Cow::Borrowed("public_key_type"),
-};
 
 const PUB_DATA_TYPE: PubDataTypeTest = PubDataTypeTest {
     test_filename: Cow::Borrowed("pub_data_type"),
@@ -453,6 +457,7 @@ fn node_info_test() -> NodeInfoTest {
         party_id: 4,
         external_url: Cow::Borrowed("https://node4.example.com/mpc/something-something"),
         public_storage_url: Cow::Borrowed("https://storage.example.com/node4"),
+        public_storage_prefix: Cow::Borrowed("PUB"),
         ca_cert: Some(vec![1, 2, 3, 4, 6, 7, 8, 9]),
         state: 500,
     }
@@ -862,6 +867,7 @@ impl KmsV0_13 {
             external_url: "https://node42.example.com".to_string(),
             ca_cert: None,
             public_storage_url: "https://storage.example.com/node42".to_string(),
+            public_storage_prefix: Some("PUB".to_string()),
             extra_verification_keys: vec![],
         };
         let software_version = SoftwareVersion {
@@ -900,6 +906,7 @@ impl KmsV0_13 {
             external_url: node_info_test.external_url.to_string(),
             ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
             public_storage_url: node_info_test.public_storage_url.to_string(),
+            public_storage_prefix: Some(node_info_test.public_storage_prefix.to_string()),
             extra_verification_keys: vec![verf_key2],
         };
 
@@ -1502,6 +1509,29 @@ impl DistributedDecryptionV0_13 {
 
         TestMetadataDD::ReleasePCRValues(RELEASE_PCR_VALUES_TEST)
     }
+
+    fn gen_private_key_set(dir: &PathBuf) -> TestMetadataDD {
+        let role = Role::indexed_from_one(PRIVATE_KEY_SET_TEST.role_i);
+        let mut base_session = get_networkless_base_session_for_parties(
+            PRIVATE_KEY_SET_TEST.amount,
+            PRIVATE_KEY_SET_TEST.threshold,
+            role,
+        );
+        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
+            PRIVATE_KEY_SET_TEST.dkg_parameters_sns,
+        ));
+
+        let rt = Runtime::new().unwrap();
+        let (_, private_key_set) = rt.block_on(async {
+            initialize_key_material(&mut base_session, dkg_params, Tag::default())
+                .await
+                .unwrap()
+        });
+
+        store_versioned_test!(&private_key_set, dir, &PRIVATE_KEY_SET_TEST.test_filename);
+
+        TestMetadataDD::PrivateKeySet(PRIVATE_KEY_SET_TEST)
+    }
 }
 
 struct KmsGrpcV0_13;
@@ -1523,13 +1553,6 @@ impl KmsGrpcV0_13 {
         );
 
         TestMetadataKmsGrpc::SignedPubDataHandleInternal(SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST)
-    }
-
-    fn gen_public_key_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
-        let public_key_type = PublicKeyType::Compact;
-        store_versioned_test!(&public_key_type, dir, &PUBLIC_KEY_TYPE.test_filename);
-
-        TestMetadataKmsGrpc::PublicKeyType(PUBLIC_KEY_TYPE)
     }
 
     fn gen_pub_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
@@ -1605,6 +1628,7 @@ impl KMSCoreVersion for V0_13 {
             DistributedDecryptionV0_13::gen_share_128(&dir),
             DistributedDecryptionV0_13::gen_prf_key(&dir),
             DistributedDecryptionV0_13::gen_release_pcr_values(&dir),
+            DistributedDecryptionV0_13::gen_private_key_set(&dir),
         ]
     }
 
@@ -1614,7 +1638,6 @@ impl KMSCoreVersion for V0_13 {
 
         vec![
             KmsGrpcV0_13::gen_signed_pub_data_handle_internal(&dir),
-            KmsGrpcV0_13::gen_public_key_type(&dir),
             KmsGrpcV0_13::gen_pub_data_type(&dir),
             KmsGrpcV0_13::gen_priv_data_type(&dir),
         ]

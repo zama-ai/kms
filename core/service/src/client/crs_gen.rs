@@ -1,24 +1,30 @@
 use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
-use crate::engine::base::safe_serialize_hash_element_versioned;
+use crate::consts::DEFAULT_EPOCH_ID;
+use crate::consts::DEFAULT_MPC_CONTEXT;
 use crate::engine::base::DSEP_PUBDATA_CRS;
-use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
-use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
-use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
-use kms_grpc::solidity_types::CrsgenVerification;
+use kms_grpc::ContextId;
+use kms_grpc::EpochId;
 use kms_grpc::RequestId;
+use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
+use kms_grpc::rpc_types::{PubDataType, alloy_to_protobuf_domain};
+use kms_grpc::solidity_types::CrsgenVerification;
 use tfhe::zk::CompactPkeCrs;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,
+        context_id: Option<ContextId>,
+        epoch_id: Option<EpochId>,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
         eip712_domain: &Eip712Domain,
@@ -33,12 +39,24 @@ impl Client {
             )));
         }
 
+        let epoch_id = match epoch_id {
+            Some(e) => Some(e.into()),
+            None => Some((*DEFAULT_EPOCH_ID).into()), // default epoch ID if not provided
+        };
+
+        let context_id = match context_id {
+            Some(c) => Some(c.into()),
+            None => Some((*DEFAULT_MPC_CONTEXT).into()), // context ID is optional, so we can leave it as None if not provided
+        };
+
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
-            context_id: None,
+            context_id,
+            epoch_id,
+            extra_data: vec![],
         })
     }
 
@@ -55,6 +73,7 @@ impl Client {
         request_id: &RequestId,
         res_storage: Vec<(CrsGenResult, S)>,
         domain: &Eip712Domain,
+        _extra_data: Vec<u8>,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
@@ -106,7 +125,13 @@ impl Client {
 
             // check the signature
             match self.find_verifying_address(
-                &CrsgenVerification::new(request_id, max_num_bits, actual_digest.clone()),
+                &CrsgenVerification::new(
+                    request_id,
+                    max_num_bits,
+                    actual_digest.clone(),
+                    // TODO: reenable for RFC005
+                    // extra_data.clone(),
+                ),
                 domain,
                 &result.external_signature,
             ) {
@@ -174,9 +199,10 @@ impl Client {
         &self,
         crs_gen_result: &CrsGenResult,
         domain: &Eip712Domain,
+        _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<CompactPkeCrs>> {
-        let request_id = parse_optional_proto_request_id(
+        let request_id = parse_optional_grpc_request_id(
             &crs_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
         )
@@ -196,7 +222,13 @@ impl Client {
         let max_num_bits = max_num_bits_from_crs(&pp);
         if self
             .verify_external_signature(
-                &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
+                &CrsgenVerification::new(
+                    &request_id,
+                    max_num_bits,
+                    actual_digest.clone(),
+                    // TODO: reenable for RFC005
+                    // extra_data.clone(),
+                ),
                 domain,
                 &crs_gen_result.external_signature,
             )
@@ -228,12 +260,12 @@ impl Client {
 pub(crate) mod tests {
     use super::*;
     use crate::consts::TEST_PARAM;
-    use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::Storage;
-    use tfhe::zk::CompactPkeCrs;
+    use crate::vault::storage::ram::RamStorage;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use tfhe::zk::CompactPkeCrs;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
@@ -292,7 +324,7 @@ pub(crate) mod tests {
         verify_pp(&dkg_params, &crs);
     }
 
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
         // Setup
@@ -337,6 +369,7 @@ pub(crate) mod tests {
                 &request_id,
                 res_storage,
                 &domain,
+                vec![],
                 1, // min_agree_count
             )
             .await;

@@ -1,4 +1,4 @@
-pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
+pub use crate::identifiers::{ID_LENGTH, KeyId, RequestId};
 use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
@@ -112,7 +112,7 @@ pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInter
 pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> anyhow::Result<Eip712Domain> {
-    let inner = domain_ref.ok_or(anyhow::anyhow!("missing domain"))?;
+    let inner = domain_ref.ok_or_else(|| anyhow::anyhow!("missing domain"))?;
     let out = protobuf_to_alloy_domain(inner)
         .map_err(|e| anyhow::anyhow!("failed to convert protobuf domain to alloy domain: {e}"))?;
     Ok(out)
@@ -221,6 +221,10 @@ pub enum PubDataTypeVersioned {
 pub enum PubDataType {
     ServerKey,
     PublicKey,
+    #[deprecated(
+        since = "0.14.0",
+        note = "PublicKeyMetadata is no longer stored - use PubDataType::PublicKey directly"
+    )]
     PublicKeyMetadata,
     CRS,
     VerfKey,     // Type for the servers public verification keys
@@ -228,6 +232,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
+    CompressedXofKeySet, // Compressed xof keyset
 }
 
 impl std::str::FromStr for PubDataType {
@@ -246,6 +251,7 @@ impl std::str::FromStr for PubDataType {
 }
 
 impl fmt::Display for PubDataType {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PubDataType::PublicKey => write!(f, "PublicKey"),
@@ -257,6 +263,7 @@ impl fmt::Display for PubDataType {
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
+            PubDataType::CompressedXofKeySet => write!(f, "CompressedXofKeySet"),
         }
     }
 }
@@ -757,7 +764,10 @@ impl TypedPlaintext {
             );
         }
         if self.bytes[0] > 1 {
-            tracing::warn!("Plaintext should be Bool (0 or 1), but was bigger ({}). Returning the least significant bit as Bool.", self.bytes[0]);
+            tracing::warn!(
+                "Plaintext should be Bool (0 or 1), but was bigger ({}). Returning the least significant bit as Bool.",
+                self.bytes[0]
+            );
         }
         self.bytes[0] % 2 == 1
     }
@@ -780,46 +790,69 @@ impl TypedPlaintext {
             tracing::warn!("Plaintext is not of type u8. Returning the value modulo 256");
         }
         if self.bytes.len() != 1 {
-            tracing::warn!("U8 Plaintext should have 1 Byte, but was bigger ({} Bytes). Returning the least significant Byte", self.bytes.len());
+            tracing::warn!(
+                "U8 Plaintext should have 1 Byte, but was bigger ({} Bytes). Returning the least significant Byte",
+                self.bytes.len()
+            );
         }
         self.bytes[0]
     }
 
     pub fn as_u16(&self) -> u16 {
         if self.fhe_type != FheTypes::Uint16 as i32 {
-            tracing::warn!("Plaintext is not of type u16. Returning the value modulo 65536 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u16. Returning the value modulo 65536 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 2 {
-            tracing::warn!("U16 Plaintext should have 2 Bytes, but was not ({} Bytes). Truncating/Padding to 2 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U16 Plaintext should have 2 Bytes, but was not ({} Bytes). Truncating/Padding to 2 Bytes",
+                self.bytes.len()
+            );
         }
         u16::from_le_bytes(sub_slice::<2>(&self.bytes))
     }
 
     pub fn as_u32(&self) -> u32 {
         if self.fhe_type != FheTypes::Uint32 as i32 {
-            tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^32 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u32. Returning the value modulo 2^32 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 4 {
-            tracing::warn!("U32 Plaintext should have 4 Bytes, but was not ({} Bytes). Truncating/Padding to 4 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U32 Plaintext should have 4 Bytes, but was not ({} Bytes). Truncating/Padding to 4 Bytes",
+                self.bytes.len()
+            );
         }
         u32::from_le_bytes(sub_slice::<4>(&self.bytes))
     }
     pub fn as_u64(&self) -> u64 {
         if self.fhe_type != FheTypes::Uint64 as i32 {
-            tracing::warn!("Plaintext is not of type u64. Returning the value modulo 2^64 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u64. Returning the value modulo 2^64 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 8 {
-            tracing::warn!("U64 Plaintext should have 8 Bytes, but was not ({} Bytes). Truncating/Padding to 8 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U64 Plaintext should have 8 Bytes, but was not ({} Bytes). Truncating/Padding to 8 Bytes",
+                self.bytes.len()
+            );
         }
         u64::from_le_bytes(sub_slice::<8>(&self.bytes))
     }
 
     pub fn as_u80(&self) -> u128 {
         if self.fhe_type != FheTypes::Uint80 as i32 {
-            tracing::warn!("Plaintext is not of type u80. Returning the value modulo 2^80 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u80. Returning the value modulo 2^80 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 10 {
-            tracing::warn!("U80 Plaintext should have 10 Bytes, but was not ({} Bytes). Truncating/Padding to 10 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U80 Plaintext should have 10 Bytes, but was not ({} Bytes). Truncating/Padding to 10 Bytes",
+                self.bytes.len()
+            );
         }
 
         // We need a full 128-bit slice to convert to u128, but also need to make sure it's within 2^80.
@@ -829,20 +862,30 @@ impl TypedPlaintext {
 
     pub fn as_u128(&self) -> u128 {
         if self.fhe_type != FheTypes::Uint128 as i32 {
-            tracing::warn!("Plaintext is not of type u128. Returning the value modulo 2^128 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u128. Returning the value modulo 2^128 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 16 {
-            tracing::warn!("U128 Plaintext should have 16 Bytes, but was not ({} Bytes). Truncating/Padding to 16 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U128 Plaintext should have 16 Bytes, but was not ({} Bytes). Truncating/Padding to 16 Bytes",
+                self.bytes.len()
+            );
         }
         u128::from_le_bytes(sub_slice::<16>(&self.bytes))
     }
 
     pub fn as_u160(&self) -> tfhe::integer::U256 {
         if self.fhe_type != FheTypes::Uint160 as i32 {
-            tracing::warn!("Plaintext is not of type u160. Returning the value modulo 2^160 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u160. Returning the value modulo 2^160 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 20 {
-            tracing::warn!("U160 Plaintext should have 20 Bytes, but was not ({} Bytes). Truncating/Padding to 20 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U160 Plaintext should have 20 Bytes, but was not ({} Bytes). Truncating/Padding to 20 Bytes",
+                self.bytes.len()
+            );
         }
         let slice = sub_slice::<20>(&self.bytes);
         let low_128 = u128::from_le_bytes(
@@ -860,10 +903,15 @@ impl TypedPlaintext {
 
     pub fn as_u256(&self) -> tfhe::integer::U256 {
         if self.fhe_type != FheTypes::Uint256 as i32 {
-            tracing::warn!("Plaintext is not of type u256. Returning the value modulo 2^256 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u256. Returning the value modulo 2^256 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 32 {
-            tracing::warn!("U256 Plaintext should have 32 Bytes, but was not ({} Bytes). Truncating/Padding to 32 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U256 Plaintext should have 32 Bytes, but was not ({} Bytes). Truncating/Padding to 32 Bytes",
+                self.bytes.len()
+            );
         }
         let slice = sub_slice::<32>(&self.bytes);
         let low_128 = u128::from_le_bytes(
@@ -881,10 +929,15 @@ impl TypedPlaintext {
 
     pub fn as_u512(&self) -> tfhe::integer::U512 {
         if self.fhe_type != FheTypes::Uint512 as i32 {
-            tracing::warn!("Plaintext is not of type u512. Returning the value modulo 2^512 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u512. Returning the value modulo 2^512 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 64 {
-            tracing::warn!("U512 Plaintext should have 64 Bytes, but was not ({} Bytes). Truncating/Padding to 64 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U512 Plaintext should have 64 Bytes, but was not ({} Bytes). Truncating/Padding to 64 Bytes",
+                self.bytes.len()
+            );
         }
         let slice = sub_slice::<64>(&self.bytes);
         let mut value = tfhe::integer::bigint::U512::default();
@@ -894,10 +947,15 @@ impl TypedPlaintext {
 
     pub fn as_u1024(&self) -> tfhe::integer::bigint::U1024 {
         if self.fhe_type != FheTypes::Uint1024 as i32 {
-            tracing::warn!("Plaintext is not of type u1024. Returning the value modulo 2^1024 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u1024. Returning the value modulo 2^1024 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 128 {
-            tracing::warn!("U1024 Plaintext should have 128 Bytes, but was not ({} Bytes). Truncating/Padding to 128 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U1024 Plaintext should have 128 Bytes, but was not ({} Bytes). Truncating/Padding to 128 Bytes",
+                self.bytes.len()
+            );
         }
         let slice = sub_slice::<128>(&self.bytes);
         let mut value = tfhe::integer::bigint::U1024::default();
@@ -907,10 +965,15 @@ impl TypedPlaintext {
 
     pub fn as_u2048(&self) -> tfhe::integer::bigint::U2048 {
         if self.fhe_type != FheTypes::Uint2048 as i32 {
-            tracing::warn!("Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros");
+            tracing::warn!(
+                "Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros"
+            );
         }
         if self.bytes.len() != 256 {
-            tracing::warn!("U256 Plaintext should have 256 Bytes, but was not ({} Bytes). Truncating/Padding to 256 Bytes", self.bytes.len());
+            tracing::warn!(
+                "U256 Plaintext should have 256 Bytes, but was not ({} Bytes). Truncating/Padding to 256 Bytes",
+                self.bytes.len()
+            );
         }
         let slice = sub_slice::<256>(&self.bytes);
         let mut value = tfhe::integer::bigint::U2048::default();
@@ -1028,38 +1091,6 @@ impl FheTypeResponse for UserDecryptionResponsePayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
-pub enum PublicKeyTypeVersioned {
-    V0(PublicKeyType),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Versionize, PartialEq)]
-#[versionize(PublicKeyTypeVersioned)]
-pub enum PublicKeyType {
-    Compact,
-}
-
-impl Named for PublicKeyType {
-    const NAME: &'static str = "PublicKeyType";
-}
-
-pub enum WrappedPublicKey<'a> {
-    Compact(&'a tfhe::CompactPublicKey),
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub enum WrappedPublicKeyOwned {
-    Compact(tfhe::CompactPublicKey),
-}
-
-impl<'a> From<&'a WrappedPublicKeyOwned> for WrappedPublicKey<'a> {
-    fn from(value: &'a WrappedPublicKeyOwned) -> Self {
-        match value {
-            WrappedPublicKeyOwned::Compact(pk) => WrappedPublicKey::Compact(pk),
-        }
-    }
-}
-
 impl TryFrom<(String, String)> for TypedPlaintext {
     type Error = anyhow::Error;
     fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
@@ -1158,8 +1189,8 @@ mod tests {
         assert_eq!(v1::FheParameter::default(), v1::FheParameter::Default);
         assert_eq!(v1::ComputeKeyType::default(), v1::ComputeKeyType::Cpu);
         assert_eq!(
-            v1::KeySetCompressionConfig::default(),
-            v1::KeySetCompressionConfig::Generate
+            v1::KeyGenSecretKeyConfig::default(),
+            v1::KeyGenSecretKeyConfig::GenerateAll
         );
     }
 
@@ -1249,11 +1280,12 @@ mod tests {
                 context_id: Some(context_id.into()),
                 epoch_id: None,
             };
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_DOMAIN_NOT_FOUND));
+            assert!(
+                req.compute_link_checked()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_DOMAIN_NOT_FOUND)
+            );
         }
 
         // empty ciphertexts
@@ -1269,11 +1301,12 @@ mod tests {
                 context_id: Some(context_id.into()),
                 epoch_id: None,
             };
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_THERE_ARE_NO_HANDLES));
+            assert!(
+                req.compute_link_checked()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_THERE_ARE_NO_HANDLES)
+            );
         }
 
         // use the same address for verifying contract and client address should fail
@@ -1293,11 +1326,12 @@ mod tests {
                 epoch_id: None,
             };
 
-            assert!(req
-                .compute_link_checked()
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR));
+            assert!(
+                req.compute_link_checked()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR)
+            );
         }
 
         // everything is ok
@@ -1318,7 +1352,7 @@ mod tests {
     }
 
     #[test]
-    #[tracing_test::traced_test]
+    #[kms_test_tracing::traced_test]
     fn test_abi_encoding_fhevm() {
         // a batch with a single plaintext
         let pts_16: Vec<TypedPlaintext> = vec![TypedPlaintext::from_u16(16)];
@@ -1397,10 +1431,11 @@ mod tests {
 
         // encode plaintexts into a list of solidity bytes using `alloy`, this should fail and return an error due to unsupported types
         let res = super::abi_encode_plaintexts(&pts_mix3);
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("Received unsupported FHE type for ABI encoding"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Received unsupported FHE type for ABI encoding")
+        );
         // check that we also log an error when trying to encode unsupported types in pts_mix3
         assert!(
             logs_contain("Received unsupported FHE type for ABI encoding"),

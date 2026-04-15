@@ -87,9 +87,9 @@ use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponseP
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
-use wasm_bindgen::{prelude::wasm_bindgen, JsError, JsValue};
+use threshold_execution::endpoints::decryption::DecryptionMode;
+use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
+use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 // Since wasm_bindgen is limited, namely it says
 // structs with #[wasm_bindgen] cannot have lifetime or type parameters currently
@@ -293,7 +293,9 @@ pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Cli
     Client {
         server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
         client_address: transcript.client_address,
-        client_sk: transcript.client_sk.clone(),
+        // NOTE: instead of using transcript.client_sk, it will be None in practice
+        // because wasm clients do not store the signing key, that should be stored in wallets.
+        client_sk: None,
         params: transcript.params,
         decryption_mode: DecryptionMode::default(),
     }
@@ -334,7 +336,7 @@ pub fn ml_kem_pke_keygen() -> PrivateEncKeyMlKem512 {
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_get_pk(sk: &PrivateEncKeyMlKem512) -> PublicEncKeyMlKem512 {
-    PublicEncKeyMlKem512(PublicEncKey(sk.0 .0.encapsulation_key().clone()))
+    PublicEncKeyMlKem512(PublicEncKey(sk.0.0.encapsulation_key().clone()))
 }
 
 #[wasm_bindgen]
@@ -377,7 +379,7 @@ pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError
 pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8> {
     let mut rng = AesRng::from_entropy();
     bc2wrap::serialize(
-        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap(),
+        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0.0).unwrap(),
     )
     .unwrap()
 }
@@ -388,7 +390,7 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 #[wasm_bindgen]
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
     let ct: hybrid_ml_kem::HybridKemCt = deserialize_safe(ct).unwrap();
-    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0 .0).unwrap()
+    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0.0).unwrap()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -505,6 +507,11 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
+/// * `threshold` - Optional expected threshold/degree used during response validation.
+/// Validation requires at least `threshold + 1` matching responses, and the selected pivot
+/// response must have `degree == threshold`. If not provided, it is computed from the number
+/// of server addresses as `(n - 1) / 3`.
+///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
@@ -515,6 +522,7 @@ pub fn process_user_decryption_resp_from_js(
     agg_resp: JsValue,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
+    threshold: Option<usize>,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
@@ -538,9 +546,10 @@ pub fn process_user_decryption_resp_from_js(
         agg_resp,
         enc_pk,
         enc_sk,
+        threshold,
         verify,
     );
-    // Need to convert to BE for JS, evrerything is internally represented as LE
+    // Need to convert to BE for JS, everything is internally represented as LE
     match le_res {
         Ok(le_res) => Ok(le_res
             .into_iter()
@@ -572,6 +581,9 @@ pub fn process_user_decryption_resp_from_js(
 ///
 /// * `enc_sk` - The ephemeral secret key.
 ///
+/// * `threshold` - Optional threshold override for reconstruction.
+/// If not provided, it is computed from the number of server addresses as `(n - 1) / 3`.
+///
 /// * `verify` - Whether to perform signature verification for the response.
 /// It is insecure if `verify = false`!
 #[wasm_bindgen]
@@ -582,6 +594,7 @@ pub fn process_user_decryption_resp(
     agg_resp: Vec<UserDecryptionResponse>,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
+    threshold: Option<usize>,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
@@ -593,15 +606,15 @@ pub fn process_user_decryption_resp(
         client.process_user_decryption_resp(
             &request,
             &eip712_domain,
-            &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            threshold,
+            &agg_resp,
         )
     } else {
         client.insecure_process_user_decryption_resp(
-            &agg_resp,
-            &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
             &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            &agg_resp,
         )
     };
     match user_decrypt_resp {

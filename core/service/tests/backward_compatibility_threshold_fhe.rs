@@ -7,33 +7,32 @@ mod common;
 use common::load_and_unversionize;
 
 use aes_prng::AesRng;
-use backward_compatibility::{
-    data_dir,
-    load::{DataFormat, TestFailure, TestResult, TestSuccess},
-    tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, PrfKeyTest, PrssSetTest, ReleasePCRValuesTest, ShareTest, TestMetadataDD,
-    TestType, Testcase,
+use algebra::{
+    galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
+    sharing::share::Share,
+    structure_traits::{ErrorCorrect, Invert, Ring},
 };
+use backward_compatibility::{
+    PRSSSetupTest, PrfKeyTest, PrivateKeySetTest, PrssSetTest, ReleasePCRValuesTest, ShareTest,
+    TestMetadataDD, TestType, Testcase, data_dir,
+    load::{DataFormat, TestFailure, TestResult, TestSuccess},
+    tests::{TestedModule, run_all_tests},
+};
+use kms_lib::engine::context::SoftwareVersion;
 use rand::{RngCore, SeedableRng};
-use std::{env, path::Path};
+use std::path::Path;
 use tfhe_versionable::Unversionize;
 use tfhe_versionable::Upgrade;
-use threshold_fhe::{
-    algebra::{
-        galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        structure_traits::{ErrorCorrect, Invert, Ring},
+use threshold_execution::{
+    small_execution::{
+        prf::{PRSSConversions, PrfKey},
+        prss::{PRSSSetup, PrssSet, PrssSetV0},
     },
-    execution::{
-        runtime::party::Role,
-        sharing::share::Share,
-        small_execution::{
-            prf::{PRSSConversions, PrfKey},
-            prss::{PRSSSetup, PrssSet, PrssSetV0},
-        },
-    },
-    networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
+    tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
 };
+use threshold_networking::tls::ReleasePCRValues;
+use threshold_types::role::Role;
 
 use crate::common::load_and_unversionize_auxiliary;
 
@@ -250,6 +249,28 @@ fn test_release_pcr_values(
     }
 }
 
+fn test_private_key_gen(
+    dir: &Path,
+    test: &PrivateKeySetTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PrivateKeySet<4> = load_and_unversionize(dir, test, format)?;
+
+    // If the key comes from an old version, the encryption and compute key
+    // shares were stored as Z64, so we check that they are indeed Z64 after unversionizing.
+    assert!(matches!(
+        original_versionized.lwe_encryption_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
+
+    assert!(matches!(
+        original_versionized.lwe_compute_secret_key_share,
+        LweSecretKeyShareEnum::Z64(_)
+    ));
+
+    Ok(test.success(format))
+}
+
 struct ThresholdFhe;
 impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
@@ -270,17 +291,20 @@ impl TestedModule for ThresholdFhe {
             Self::Metadata::ReleasePCRValues(test) => {
                 test_release_pcr_values(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::PrivateKeySet(test) => {
+                test_private_key_gen(test_dir.as_ref(), test, format).into()
+            }
         }
     }
 }
 
 #[test]
 fn test_backward_compatibility_threshold_fhe() {
-    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_version = SoftwareVersion::current().expect("Current software version not valid. Check CARGO_PKG_VERSION format in the environment variable.");
 
     let base_data_dir = data_dir();
 
-    let results = run_all_tests::<ThresholdFhe>(&base_data_dir, pkg_version);
+    let results = run_all_tests::<ThresholdFhe>(&base_data_dir, &pkg_version.to_string());
 
     if results.iter().any(|r| r.is_failure()) {
         panic!("Backward compatibility tests for the threshold fhe module failed")

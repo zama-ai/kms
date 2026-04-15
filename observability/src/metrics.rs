@@ -1,82 +1,58 @@
-use opentelemetry::metrics::{Counter, Gauge, Histogram};
-use opentelemetry::{global, KeyValue};
-use std::borrow::Cow;
-use std::sync::{Arc, Mutex};
+use crate::metrics_names::{
+    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_USER_DECRYPTION_KIND,
+};
+use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
+use tracing::warn;
 
-/// Type-safe wrapper for metric tags
-#[derive(Debug, Clone)]
-pub struct MetricTag {
-    key: &'static str,
-    value: String,
-}
-
-impl MetricTag {
-    pub fn new(key: &'static str, value: impl Into<String>) -> Self {
-        let value = value.into();
-        if key.is_empty() || value.is_empty() {
-            tracing::warn!("Tag key or value is empty {key}:{value}");
-        }
-        Self { key, value }
-    }
-
-    fn into_key_value(self) -> KeyValue {
-        KeyValue::new(self.key, self.value)
-    }
-}
-
-/// Tagged metric wrapper that automatically handles labels
-#[derive(Debug, Clone)]
-pub struct TaggedMetric<T> {
-    metric: T,
-    default_tags: Vec<MetricTag>,
-}
-
-impl<T> TaggedMetric<T> {
-    fn new(metric: T, name: &'static str) -> Self {
-        Self {
-            metric,
-            default_tags: vec![MetricTag::new("name", name)],
-        }
-    }
-
-    fn with_tags(&self, tags: &[MetricTag]) -> Vec<KeyValue> {
-        self.default_tags
-            .iter()
-            .cloned()
-            .chain(tags.iter().cloned())
-            .map(|tag| tag.into_key_value())
-            .collect()
-    }
-}
+/// Label keys for the duration histogram (must match all tag keys used by callers)
+const DURATION_LABEL_KEYS: &[&str] = &[
+    TAG_OPERATION_TYPE,
+    TAG_PARTY_ID,
+    TAG_TFHE_TYPE,
+    TAG_PUBLIC_DECRYPTION_KIND,
+    TAG_USER_DECRYPTION_KIND,
+];
 
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
 pub struct CoreMetrics {
     // Counters
-    request_counter: TaggedMetric<Counter<u64>>,
-    error_counter: TaggedMetric<Counter<u64>>,
-    network_rx_counter: TaggedMetric<Counter<u64>>, //Note: Because we use counter we need to increment from last seen value.
-    network_tx_counter: TaggedMetric<Counter<u64>>, //Note: Because we use counter we need to increment from last seen value.
+    request_counter: IntCounterVec,
+    error_counter: IntCounterVec,
+    network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
+    network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
 
     // Histograms
-    duration_histogram: TaggedMetric<Histogram<f64>>, // TODO currently not used
-    size_histogram: TaggedMetric<Histogram<f64>>,     // TODO currently not used
+    duration_histogram: HistogramVec,
+    size_histogram: HistogramVec, // TODO currently not used
+
     // Gauges
-    gauge: TaggedMetric<Gauge<i64>>,
-    cpu_load_gauge: TaggedMetric<Gauge<f64>>,
-    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
-    file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
-    socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
-    socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
-    task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
+    file_descriptor_gauge: IntGauge, // Number of file descriptors of the KMS
+    socat_file_descriptor_gauge: IntGauge, // Number of socat file descriptors
+    socat_task_gauge: IntGauge,      // Number of socat tasks
+    task_gauge: IntGauge,            // Numbers active child processes of the KMS
+
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
-    rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
-    active_session_gauge: TaggedMetric<Gauge<u64>>, // Number of active sessions
-    inactive_session_gauge: TaggedMetric<Gauge<u64>>, // Number of inactive sessions
-    meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
-    meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
+    rate_limiter_gauge: IntGauge, // Number tokens used in the rate limiter
+    active_session_gauge: IntGauge, // Number of active sessions
+    inactive_session_gauge: IntGauge, // Number of inactive sessions
+    meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
+    meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
+    meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
+    meta_storage_user_dec_total_gauge: IntGauge, // Total number of user decryptions in meta storage
+
+    // System metrics
+    total_cpus_gauge: IntGauge,     // Total number of CPUs
+    process_cpu_usage_gauge: Gauge, // CPU load for the current process in percentage
+    total_memory_gauge: IntGauge,   // Total memory available
+    process_memory_gauge: IntGauge, // Memory usage for the current process
+    cpu_load_gauge: Gauge,          // 1-minute average CPU load, divided by number of cores
+    memory_usage_gauge: IntGauge,
+
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -93,220 +69,241 @@ impl CoreMetrics {
     }
 
     pub fn with_config(config: MetricsConfig) -> Self {
-        let meter = global::meter("kms");
+        let prefix = &config.prefix;
 
-        // Start by recording the version
-        meter
-            .u64_gauge("kms_version")
-            .with_description("KMS version information")
-            .with_unit("version")
-            .build()
-            .record(1, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
+        // Version gauge
+        let version_gauge = Gauge::with_opts(
+            Opts::new("kms_version", "KMS version information")
+                .const_label("version", env!("CARGO_PKG_VERSION")),
+        )
+        .expect("failed to create version gauge");
+        prometheus::register(Box::new(version_gauge.clone()))
+            .expect("failed to register version gauge");
+        version_gauge.set(1.0);
 
-        // Store metric names as static strings
-        let operations: Cow<'static, str> = format!("{}_operations", config.prefix).into();
-        let operation_errors: Cow<'static, str> =
-            format!("{}_operation_errors", config.prefix).into();
-        let duration_metric: Cow<'static, str> =
-            format!("{}_operation_duration_ms", config.prefix).into();
-        let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
-        let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
-        let memory_usage_metric: Cow<'static, str> =
-            format!("{}_memory_usage", config.prefix).into();
-        let network_rx_metric: Cow<'static, str> =
-            format!("{}_network_rx_bytes", config.prefix).into();
-        let network_tx_metric: Cow<'static, str> =
-            format!("{}_network_tx_bytes", config.prefix).into();
-        let file_descriptors_metric: Cow<'static, str> =
-            format!("{}_file_descriptors", config.prefix).into();
-        let socat_task_metric: Cow<'static, str> = format!("{}_socat_tasks", config.prefix).into();
-        let socat_file_descriptor_metric: Cow<'static, str> =
-            format!("{}_socat_file_descriptors", config.prefix).into();
-        let tasks_metric: Cow<'static, str> = format!("{}_tasks", config.prefix).into();
-        let rate_limiter_metric: Cow<'static, str> =
-            format!("{}_rate_limiter_usage", config.prefix).into();
-        let active_session_metric: Cow<'static, str> =
-            format!("{}_active_sessions", config.prefix).into();
-        let inactive_session_metric: Cow<'static, str> =
-            format!("{}_inactive_sessions", config.prefix).into();
-        let meta_store_user_metric: Cow<'static, str> =
-            format!("{}_meta_storage_user_decryptions", config.prefix).into();
-        let meta_store_pub_metric: Cow<'static, str> =
-            format!("{}_meta_storage_pub_decryptions", config.prefix).into();
-        let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
+        // Counters
+        let request_counter = IntCounterVec::new(
+            Opts::new(
+                format!("{prefix}_operations_total"),
+                "Total number of operations processed",
+            ),
+            &["operation"],
+        )
+        .expect("failed to create request counter");
+        prometheus::register(Box::new(request_counter.clone()))
+            .expect("failed to register request counter");
 
-        let request_counter = meter
-            .u64_counter(operations)
-            .with_description("Total number of operations processed")
-            .with_unit("operations")
-            .build();
-        //Increment by 0 just to make sure the counter is exported
-        request_counter.add(0, &[]);
+        let error_counter = IntCounterVec::new(
+            Opts::new(
+                format!("{prefix}_operation_errors_total"),
+                "Total number of operation errors",
+            ),
+            &["operation", "error"],
+        )
+        .expect("failed to create error counter");
+        prometheus::register(Box::new(error_counter.clone()))
+            .expect("failed to register error counter");
 
-        let error_counter = meter
-            .u64_counter(operation_errors)
-            .with_description("Total number of operation errors")
-            .with_unit("errors")
-            .build();
-        //Increment by 0 just to make sure the counter is exported
-        error_counter.add(0, &[]);
+        let network_rx_counter = IntCounter::with_opts(Opts::new(
+            format!("{prefix}_network_rx_bytes_total"),
+            "Total number of bytes received over the network",
+        ))
+        .expect("failed to create network rx counter");
+        prometheus::register(Box::new(network_rx_counter.clone()))
+            .expect("failed to register network rx counter");
 
-        let network_rx_counter = meter
-            .u64_counter(network_rx_metric)
-            .with_description("Total number of bytes received over the network")
-            .with_unit("bytes")
-            .build();
-        //Increment by 0 just to make sure the counter is exported
-        network_rx_counter.add(0, &[]);
+        let network_tx_counter = IntCounter::with_opts(Opts::new(
+            format!("{prefix}_network_tx_bytes_total"),
+            "Total number of bytes sent over the network",
+        ))
+        .expect("failed to create network tx counter");
+        prometheus::register(Box::new(network_tx_counter.clone()))
+            .expect("failed to register network tx counter");
 
-        let network_tx_counter = meter
-            .u64_counter(network_tx_metric)
-            .with_description("Total number of bytes sent over the network")
-            .with_unit("bytes")
-            .build();
-        //Increment by 0 just to make sure the counter is exported
-        network_tx_counter.add(0, &[]);
+        // Histograms
+        let duration_histogram = HistogramVec::new(
+            HistogramOpts::new(
+                format!("{prefix}_operation_duration_ms"),
+                "Duration of KMS operations",
+            ),
+            DURATION_LABEL_KEYS,
+        )
+        .expect("failed to create duration histogram");
+        prometheus::register(Box::new(duration_histogram.clone()))
+            .expect("failed to register duration histogram");
 
-        let duration_histogram = meter
-            .f64_histogram(duration_metric)
-            .with_description("Duration of KMS operations")
-            .with_unit("milliseconds")
-            .build();
-        //Record 0 just to make sure the histogram is exported
-        duration_histogram.record(0.0, &[]);
+        let size_histogram = HistogramVec::new(
+            HistogramOpts::new(
+                format!("{prefix}_payload_size_bytes"),
+                "Size of KMS operation payloads",
+            ),
+            &["operation"],
+        )
+        .expect("failed to create size histogram");
+        prometheus::register(Box::new(size_histogram.clone()))
+            .expect("failed to register size histogram");
 
-        let size_histogram = meter
-            .f64_histogram(size_metric)
-            .with_description("Size of KMS operation payloads")
-            .with_unit("bytes")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        size_histogram.record(0.0, &[]);
+        // IntGauge (u64) metrics
+        let file_descriptor_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_file_descriptors"),
+            "File descriptor usage for the KMS",
+        ))
+        .expect("failed to create file descriptor gauge");
+        prometheus::register(Box::new(file_descriptor_gauge.clone()))
+            .expect("failed to register file descriptor gauge");
 
-        let cpu_gauge = meter
-            .f64_gauge(cpu_load_metric)
-            .with_description("CPU load for KMS (averaged over all CPUs)")
-            .with_unit("percentage")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        cpu_gauge.record(0.0, &[]);
+        let socat_file_descriptor_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_socat_file_descriptors"),
+            "Number of socat file descriptors",
+        ))
+        .expect("failed to create socat file descriptor gauge");
+        prometheus::register(Box::new(socat_file_descriptor_gauge.clone()))
+            .expect("failed to register socat file descriptor gauge");
 
-        let memory_gauge = meter
-            .u64_gauge(memory_usage_metric)
-            .with_description("Memory used for KMS")
-            .with_unit("bytes")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        memory_gauge.record(0, &[]);
+        let socat_task_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_socat_tasks"),
+            "Number of socat tasks",
+        ))
+        .expect("failed to create socat task gauge");
+        prometheus::register(Box::new(socat_task_gauge.clone()))
+            .expect("failed to register socat task gauge");
 
-        let file_descriptor_gauge = meter
-            .u64_gauge(file_descriptors_metric)
-            .with_description("File descriptor usage for the KMS")
-            .with_unit("file_descriptors")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        file_descriptor_gauge.record(0, &[]);
+        let task_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_tasks"),
+            "Number of tasks started by the KMS",
+        ))
+        .expect("failed to create task gauge");
+        prometheus::register(Box::new(task_gauge.clone())).expect("failed to register task gauge");
 
-        let socat_file_descriptor_gauge = meter
-            .u64_gauge(socat_file_descriptor_metric)
-            .with_description("Number of socat file descriptors")
-            .with_unit("file descriptors")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        socat_file_descriptor_gauge.record(0, &[]);
+        let rate_limiter_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_rate_limiter_usage"),
+            "Rate limiter usage for the KMS",
+        ))
+        .expect("failed to create rate limiter gauge");
+        prometheus::register(Box::new(rate_limiter_gauge.clone()))
+            .expect("failed to register rate limiter gauge");
 
-        let socat_task_gauge = meter
-            .u64_gauge(socat_task_metric)
-            .with_description("Number of socat tasks")
-            .with_unit("tasks")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        socat_task_gauge.record(0, &[]);
+        let active_session_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_active_sessions"),
+            "Number of active sessions in the KMS",
+        ))
+        .expect("failed to create active session gauge");
+        prometheus::register(Box::new(active_session_gauge.clone()))
+            .expect("failed to register active session gauge");
 
-        let task_gauge = meter
-            .u64_gauge(tasks_metric)
-            .with_description("Number of started by the KMS")
-            .with_unit("tasks")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        task_gauge.record(0, &[]);
+        let inactive_session_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_inactive_sessions"),
+            "Number of inactive sessions in the KMS",
+        ))
+        .expect("failed to create inactive session gauge");
+        prometheus::register(Box::new(inactive_session_gauge.clone()))
+            .expect("failed to register inactive session gauge");
 
-        let rate_limiter_gauge = meter
-            .u64_gauge(rate_limiter_metric)
-            .with_description("Rate limiter usage for the KMS")
-            .with_unit("requests")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        rate_limiter_gauge.record(0, &[]);
+        let meta_storage_user_dec_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_meta_storage_user_decryptions"),
+            "Number of ONGOING user decryptions in meta storage",
+        ))
+        .expect("failed to create meta storage user dec gauge");
+        prometheus::register(Box::new(meta_storage_user_dec_gauge.clone()))
+            .expect("failed to register meta storage user dec gauge");
 
-        let active_session_gauge = meter
-            .u64_gauge(active_session_metric)
-            .with_description("Number of active sessions in the KMS")
-            .with_unit("sessions")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        active_session_gauge.record(0, &[]);
+        let meta_storage_pub_dec_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_meta_storage_pub_decryptions"),
+            "Number of ONGOING public decryptions in meta storage",
+        ))
+        .expect("failed to create meta storage pub dec gauge");
+        prometheus::register(Box::new(meta_storage_pub_dec_gauge.clone()))
+            .expect("failed to register meta storage pub dec gauge");
 
-        let inactive_session_gauge = meter
-            .u64_gauge(inactive_session_metric)
-            .with_description("Number of inactive sessions in the KMS")
-            .with_unit("sessions")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        inactive_session_gauge.record(0, &[]);
+        let meta_storage_user_dec_total_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_meta_storage_user_decryptions_in_store"),
+            "Total number of user decryptions in meta storage",
+        ))
+        .expect("failed to create meta storage user dec total gauge");
+        prometheus::register(Box::new(meta_storage_user_dec_total_gauge.clone()))
+            .expect("failed to register meta storage user dec total gauge");
 
-        let meta_storage_user_dec_gauge = meter
-            .u64_gauge(meta_store_user_metric)
-            .with_description("Number of ONGOING user decryptions in meta storage")
-            .with_unit("user decryptions")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        meta_storage_user_dec_gauge.record(0, &[]);
+        let meta_storage_pub_dec_total_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_meta_storage_pub_decryptions_in_store"),
+            "Total number of public decryptions in meta storage",
+        ))
+        .expect("failed to create meta storage pub dec total gauge");
+        prometheus::register(Box::new(meta_storage_pub_dec_total_gauge.clone()))
+            .expect("failed to register meta storage pub dec total gauge");
 
-        let meta_storage_pub_dec_gauge = meter
-            .u64_gauge(meta_store_pub_metric)
-            .with_description("Number of ONGOING public decryptions in meta storage")
-            .with_unit("public decryptions")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        meta_storage_pub_dec_gauge.record(0, &[]);
+        let total_cpus_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_total_cpus"),
+            "Amount of CPU cores available to the system",
+        ))
+        .expect("failed to create total cpus gauge");
+        prometheus::register(Box::new(total_cpus_gauge.clone()))
+            .expect("failed to register total cpus gauge");
 
-        let gauge = meter
-            .i64_gauge(gauge)
-            .with_description("An instrument that records independent values")
-            .with_unit("value")
-            .build();
-        //Record 0 just to make sure the gauge is exported
-        gauge.record(0, &[]);
+        let total_memory_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_total_memory"),
+            "Amount of available memory in the system",
+        ))
+        .expect("failed to create total memory gauge");
+        prometheus::register(Box::new(total_memory_gauge.clone()))
+            .expect("failed to register total memory gauge");
+
+        let process_memory_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_process_memory_usage"),
+            "Memory usage for the current process",
+        ))
+        .expect("failed to create process memory gauge");
+        prometheus::register(Box::new(process_memory_gauge.clone()))
+            .expect("failed to register process memory gauge");
+
+        let memory_usage_gauge = IntGauge::with_opts(Opts::new(
+            format!("{prefix}_memory_usage"),
+            "Memory used for KMS",
+        ))
+        .expect("failed to create memory usage gauge");
+        prometheus::register(Box::new(memory_usage_gauge.clone()))
+            .expect("failed to register memory usage gauge");
+
+        // Gauge (f64) metrics
+        let process_cpu_usage_gauge = Gauge::with_opts(Opts::new(
+            format!("{prefix}_process_cpu_usage"),
+            "CPU usage for the current process",
+        ))
+        .expect("failed to create process cpu usage gauge");
+        prometheus::register(Box::new(process_cpu_usage_gauge.clone()))
+            .expect("failed to register process cpu usage gauge");
+
+        let cpu_load_gauge = Gauge::with_opts(Opts::new(
+            format!("{prefix}_cpu_load"),
+            "CPU load for KMS (averaged over all CPUs)",
+        ))
+        .expect("failed to create cpu load gauge");
+        prometheus::register(Box::new(cpu_load_gauge.clone()))
+            .expect("failed to register cpu load gauge");
 
         Self {
-            request_counter: TaggedMetric::new(request_counter, "operations"),
-            error_counter: TaggedMetric::new(error_counter, "errors"),
-            network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx"),
-            network_tx_counter: TaggedMetric::new(network_tx_counter, "network_tx"),
-            duration_histogram: TaggedMetric::new(duration_histogram, "duration"),
-            size_histogram: TaggedMetric::new(size_histogram, "size"),
-            cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
-            memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
-            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
-            socat_file_descriptor_gauge: TaggedMetric::new(
-                socat_file_descriptor_gauge,
-                "socat_file_descriptors",
-            ),
-            socat_task_gauge: TaggedMetric::new(socat_task_gauge, "socat_tasks"),
-            task_gauge: TaggedMetric::new(task_gauge, "tasks"),
-            rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
-            active_session_gauge: TaggedMetric::new(active_session_gauge, "active_sessions"),
-            inactive_session_gauge: TaggedMetric::new(inactive_session_gauge, "inactive_sessions"),
-            meta_storage_pub_dec_gauge: TaggedMetric::new(
-                meta_storage_pub_dec_gauge,
-                "public_decryptions",
-            ),
-            meta_storage_user_dec_gauge: TaggedMetric::new(
-                meta_storage_user_dec_gauge,
-                "user_decryptions",
-            ),
-            gauge: TaggedMetric::new(gauge, "active_operations"),
+            request_counter,
+            error_counter,
+            network_rx_counter,
+            network_tx_counter,
+            duration_histogram,
+            size_histogram,
+            cpu_load_gauge,
+            memory_usage_gauge,
+            file_descriptor_gauge,
+            socat_file_descriptor_gauge,
+            socat_task_gauge,
+            task_gauge,
+            rate_limiter_gauge,
+            active_session_gauge,
+            inactive_session_gauge,
+            meta_storage_pub_dec_gauge,
+            meta_storage_user_dec_gauge,
+            meta_storage_pub_dec_total_gauge,
+            meta_storage_user_dec_total_gauge,
+            total_cpus_gauge,
+            total_memory_gauge,
+            process_cpu_usage_gauge,
+            process_memory_gauge,
             trace_guard: Arc::new(Mutex::new(None)),
         }
     }
@@ -318,36 +315,25 @@ impl CoreMetrics {
         }
     }
 
-    fn create_operation_tag(operation: impl Into<String>) -> MetricTag {
-        MetricTag::new("operation", operation)
-    }
-
     // Counter methods
-    pub fn increment_request_counter(&self, operation: impl Into<String>) {
-        let tags = vec![Self::create_operation_tag(operation)];
+    pub fn increment_request_counter(&self, operation: impl AsRef<str>) {
         self.request_counter
-            .metric
-            .add(1, &self.request_counter.with_tags(&tags));
+            .with_label_values(&[operation.as_ref()])
+            .inc();
     }
 
-    pub fn increment_error_counter(&self, operation: impl Into<String>, error: impl Into<String>) {
-        let mut tags = vec![Self::create_operation_tag(operation)];
-        tags.push(MetricTag::new("error", error));
+    pub fn increment_error_counter(&self, operation: impl AsRef<str>, error: impl AsRef<str>) {
         self.error_counter
-            .metric
-            .add(1, &self.error_counter.with_tags(&tags));
+            .with_label_values(&[operation.as_ref(), error.as_ref()])
+            .inc();
     }
 
     pub fn increment_network_rx_counter(&self, bytes: u64) {
-        self.network_rx_counter
-            .metric
-            .add(bytes, &self.network_rx_counter.with_tags(&[]));
+        self.network_rx_counter.inc_by(bytes);
     }
 
     pub fn increment_network_tx_counter(&self, bytes: u64) {
-        self.network_tx_counter
-            .metric
-            .add(bytes, &self.network_tx_counter.with_tags(&[]));
+        self.network_tx_counter.inc_by(bytes);
     }
 
     // Histogram methods
@@ -357,15 +343,18 @@ impl CoreMetrics {
         duration: Duration,
         extra_tags: &[(&'static str, String)],
     ) {
-        let mut tags = vec![Self::create_operation_tag(operation.as_ref())];
+        let mut values: Vec<&str> = vec![""; DURATION_LABEL_KEYS.len()];
+        values[0] = operation.as_ref();
         for (key, value) in extra_tags {
-            tags.push(MetricTag::new(key, value));
+            if let Some(idx) = DURATION_LABEL_KEYS.iter().position(|k| k == key) {
+                values[idx] = value;
+            } else {
+                warn!(key, "ignoring unknown duration metric tag key");
+            }
         }
-
-        self.duration_histogram.metric.record(
-            duration.as_millis() as f64,
-            &self.duration_histogram.with_tags(&tags),
-        );
+        self.duration_histogram
+            .with_label_values(&values)
+            .observe(duration.as_millis() as f64);
     }
 
     pub fn observe_duration(&self, operation: impl AsRef<str>, duration: Duration) {
@@ -381,19 +370,13 @@ impl CoreMetrics {
         self.record_duration_with_tags(operation, duration, tags)
     }
 
-    pub fn observe_size(&self, operation: impl Into<String>, size: f64) {
-        let tags = vec![Self::create_operation_tag(operation)];
+    pub fn observe_size(&self, operation: impl AsRef<str>, size: f64) {
+        if size == 0.0 {
+            return;
+        }
         self.size_histogram
-            .metric
-            .record(size, &self.size_histogram.with_tags(&tags));
-    }
-
-    // Gauge methods
-    pub fn gauge(&self, operation: impl Into<String>, value: i64) {
-        let tags = vec![Self::create_operation_tag(operation)];
-        self.gauge
-            .metric
-            .record(value, &self.gauge.with_tags(&tags));
+            .with_label_values(&[operation.as_ref()])
+            .observe(size);
     }
 
     /// Start building a duration guard for timing an operation
@@ -405,81 +388,116 @@ impl CoreMetrics {
         }
     }
 
-    /// Record the current CPU load into the gauge
-    pub fn record_cpu_load(&self, load: f64) {
-        self.cpu_load_gauge
-            .metric
-            .record(load, &self.cpu_load_gauge.with_tags(&[]));
-    }
-
-    /// Record the current memory usage into the gauge
-    pub fn record_memory_usage(&self, usage: u64) {
-        self.memory_usage_gauge
-            .metric
-            .record(usage, &self.memory_usage_gauge.with_tags(&[]));
-    }
-
     /// Record the current number of tasks into the gauge
     pub fn record_tasks(&self, count: u64) {
-        self.task_gauge
-            .metric
-            .record(count, &self.task_gauge.with_tags(&[]));
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
+        self.task_gauge.set(count as i64);
     }
 
     /// Record the current number of open file descriptors into the gauge
     pub fn record_open_file_descriptors(&self, count: u64) {
-        self.file_descriptor_gauge
-            .metric
-            .record(count, &self.file_descriptor_gauge.with_tags(&[]));
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
+        self.file_descriptor_gauge.set(count as i64);
     }
 
     /// Record the current number of socat file descriptors into the gauge
     pub fn record_socat_file_descriptors(&self, count: u64) {
-        self.socat_file_descriptor_gauge
-            .metric
-            .record(count, &self.socat_file_descriptor_gauge.with_tags(&[]));
+        self.socat_file_descriptor_gauge.set(count as i64);
     }
 
     /// Record the current number of socat tasks into the gauge
     pub fn record_socat_tasks(&self, count: u64) {
-        self.socat_task_gauge
-            .metric
-            .record(count, &self.socat_task_gauge.with_tags(&[]));
+        self.socat_task_gauge.set(count as i64);
     }
 
     /// Record the current rate limiter usage into the gauge
     pub fn record_rate_limiter_usage(&self, count: u64) {
-        self.rate_limiter_gauge
-            .metric
-            .record(count, &self.rate_limiter_gauge.with_tags(&[]));
+        self.rate_limiter_gauge.set(count as i64);
     }
 
     /// Record the sum of active sessions done with other parties into the gauge
     pub fn record_active_sessions(&self, count: u64) {
-        self.active_session_gauge
-            .metric
-            .record(count, &self.active_session_gauge.with_tags(&[]));
+        self.active_session_gauge.set(count as i64);
     }
 
     /// Record the sum of inactive sessions done with other parties into the gauge
     pub fn record_inactive_sessions(&self, count: u64) {
-        self.inactive_session_gauge
-            .metric
-            .record(count, &self.inactive_session_gauge.with_tags(&[]));
+        self.inactive_session_gauge.set(count as i64);
     }
 
     /// Record the current number of ongoing public decryptions into the gauge
     pub fn record_meta_storage_user_decryptions(&self, count: u64) {
-        self.meta_storage_user_dec_gauge
-            .metric
-            .record(count, &self.meta_storage_user_dec_gauge.with_tags(&[]));
+        self.meta_storage_user_dec_gauge.set(count as i64);
     }
 
     /// Record the current number of ongoing user decryptions into the gauge
     pub fn record_meta_storage_public_decryptions(&self, count: u64) {
-        self.meta_storage_pub_dec_gauge
-            .metric
-            .record(count, &self.meta_storage_pub_dec_gauge.with_tags(&[]));
+        self.meta_storage_pub_dec_gauge.set(count as i64);
+    }
+
+    /// Record the total number of user decryptions in meta storage into the gauge
+    pub fn record_meta_storage_user_decryptions_total(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
+        self.meta_storage_user_dec_total_gauge.set(count as i64);
+    }
+
+    /// Record the total number of public decryptions in meta storage into the gauge
+    pub fn record_meta_storage_public_decryptions_total(&self, count: u64) {
+        // Should never be 0
+        if count == 0 {
+            return;
+        }
+        self.meta_storage_pub_dec_total_gauge.set(count as i64);
+    }
+
+    /// Record the amount of CPU cores
+    pub fn record_total_cpus(&self, amount: u64) {
+        // Should never be 0
+        if amount == 0 {
+            return;
+        }
+        self.total_cpus_gauge.set(amount as i64);
+    }
+
+    /// Record the current CPU load into the gauge
+    pub fn record_cpu_load(&self, load: f64) {
+        self.cpu_load_gauge.set(load);
+    }
+
+    /// Record the total memory on the system
+    pub fn record_total_memory(&self, memory: u64) {
+        // Should never be 0
+        if memory == 0 {
+            return;
+        }
+        self.total_memory_gauge.set(memory as i64);
+    }
+
+    /// Record the current memory usage into the gauge
+    pub fn record_memory_usage(&self, usage: u64) {
+        self.memory_usage_gauge.set(usage as i64);
+    }
+
+    /// Record the current process CPU usage into the gauge
+    pub fn record_process_cpu_usage(&self, usage: f64) {
+        self.process_cpu_usage_gauge.set(usage);
+    }
+
+    /// Record the current process memory usage into the gauge
+    pub fn record_process_memory_usage(&self, usage: u64) {
+        if usage == 0 {
+            return;
+        }
+        self.process_memory_gauge.set(usage as i64);
     }
 }
 
@@ -494,18 +512,13 @@ pub struct DurationGuardBuilder<'a> {
 impl<'a> DurationGuardBuilder<'a> {
     /// Add a single tag
     pub fn tag(mut self, key: &'static str, value: impl Into<String>) -> Self {
-        let value = value.into();
-        // Validate tag before adding
-        MetricTag::new(key, value.clone());
-        self.tags.push((key, value));
+        self.tags.push((key, value.into()));
         self
     }
 
     /// Add multiple tags at once
     pub fn tags(mut self, tags: impl IntoIterator<Item = (&'static str, String)>) -> Self {
         for (key, value) in tags {
-            // Validate each tag before adding
-            MetricTag::new(key, value.clone());
             self.tags.push((key, value));
         }
         self
@@ -545,17 +558,12 @@ impl DurationGuard<'_> {
 
     /// Add a single tag
     pub fn tag(&mut self, key: &'static str, value: impl Into<String>) {
-        let value = value.into();
-        // Validate tag before adding
-        MetricTag::new(key, value.clone());
-        self.tags.push((key, value));
+        self.tags.push((key, value.into()));
     }
 
     /// Add multiple tags at once
     pub fn tags(&mut self, tags: impl IntoIterator<Item = (&'static str, String)>) {
         for (key, value) in tags {
-            // Validate each tag before adding
-            MetricTag::new(key, value.clone());
             self.tags.push((key, value));
         }
     }
@@ -574,11 +582,7 @@ impl Drop for DurationGuard<'_> {
 }
 
 // Global metrics instance
-lazy_static::lazy_static! {
-    pub static ref METRICS: CoreMetrics = {
-        CoreMetrics::new()
-    };
-}
+pub static METRICS: LazyLock<CoreMetrics> = LazyLock::new(CoreMetrics::new);
 
 /// Configuration for metrics initialization
 #[derive(Debug, Clone)]
@@ -592,6 +596,128 @@ impl Default for MetricsConfig {
         Self {
             prefix: "kms".to_string(),
             default_unit: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn metric_families_match_allowlist() {
+        // Touch the LazyLock to ensure metrics are registered
+        let _ = &*METRICS;
+
+        // Seed Vec-type metrics so they appear in gather()
+        METRICS.increment_request_counter("_test");
+        METRICS.increment_error_counter("_test", "_test");
+        METRICS.observe_duration("_test", Duration::from_millis(0));
+        METRICS.observe_size("_test", 1.0);
+
+        let families = prometheus::gather();
+        let mut names: Vec<&str> = families.iter().map(|f| f.name()).collect();
+        names.sort();
+
+        // Exhaustive allowlist — update this when adding/removing metrics
+        #[allow(unused_mut)]
+        let mut expected_metrics = vec![
+            "kms_active_sessions",
+            "kms_cpu_load",
+            "kms_file_descriptors",
+            "kms_inactive_sessions",
+            "kms_memory_usage",
+            "kms_meta_storage_pub_decryptions",
+            "kms_meta_storage_pub_decryptions_in_store",
+            "kms_meta_storage_user_decryptions",
+            "kms_meta_storage_user_decryptions_in_store",
+            "kms_network_rx_bytes_total",
+            "kms_network_tx_bytes_total",
+            "kms_operation_duration_ms",
+            "kms_operation_errors_total",
+            "kms_operations_total",
+            "kms_payload_size_bytes",
+            "kms_process_cpu_usage",
+            "kms_process_memory_usage",
+            "kms_rate_limiter_usage",
+            "kms_socat_file_descriptors",
+            "kms_socat_tasks",
+            "kms_tasks",
+            "kms_total_cpus",
+            "kms_total_memory",
+            "kms_version",
+        ];
+        // process_* metrics come from the prometheus crate's `process` feature (linux only),
+        #[cfg(target_os = "linux")]
+        expected_metrics.extend_from_slice(&[
+            "process_cpu_seconds_total",
+            "process_max_fds",
+            "process_open_fds",
+            "process_resident_memory_bytes",
+            "process_start_time_seconds",
+            "process_threads",
+            "process_virtual_memory_bytes",
+        ]);
+
+        assert_eq!(
+            names, expected_metrics,
+            "Metric families changed. If intentional, update the allowlist in this test."
+        );
+    }
+
+    #[test]
+    fn duration_histogram_uses_only_low_cardinality_labels() {
+        let _ = &*METRICS;
+
+        METRICS.observe_duration_with_tags(
+            "_test_cardinality",
+            Duration::from_millis(1),
+            &[
+                (TAG_PARTY_ID, "1".to_string()),
+                (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
+                (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
+            ],
+        );
+
+        let duration_family = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_operation_duration_ms")
+            .expect("duration histogram should be registered");
+        let observed_metric = duration_family
+            .get_metric()
+            .iter()
+            .find(|metric| {
+                metric.get_label().iter().any(|label| {
+                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
+                })
+            })
+            .expect("seeded duration sample should be present");
+
+        let actual_labels: BTreeSet<&str> = observed_metric
+            .get_label()
+            .iter()
+            .map(|label| label.name())
+            .collect();
+        let expected_labels: BTreeSet<&str> = DURATION_LABEL_KEYS.iter().copied().collect();
+
+        assert_eq!(
+            actual_labels, expected_labels,
+            "duration histogram labels should stay low-cardinality"
+        );
+
+        println!("Actual labels: {actual_labels:#?}");
+
+        assert!(
+            actual_labels.len() <= 5,
+            "duration histogram should have at most 5 labels to avoid high cardinality"
+        );
+
+        for disallowed_label in ["key_id", "context_id", "epoch_id", "crs_id"] {
+            assert!(
+                !actual_labels.contains(disallowed_label),
+                "high-cardinality label {disallowed_label} should not be exported"
+            );
         }
     }
 }
