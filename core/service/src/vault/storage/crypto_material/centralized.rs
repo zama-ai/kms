@@ -74,7 +74,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
-    ) {
+    ) -> anyhow::Result<()> {
         self.inner
             .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
             .await
@@ -105,7 +105,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         key_info: KmsFheKeyHandles,
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
+    ) -> anyhow::Result<()> {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
@@ -197,17 +197,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         };
 
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        if r1
-            && r2
-            && r3
-            && guarded_meta_store
-                .update(key_id, Ok(key_info.public_key_info.to_owned()))
-                .inspect_err(|e| {
-                    tracing::error!("Error ({e}) while updating PK meta store for {}", key_id)
-                })
-                .is_ok()
-        {
-            {
+        if r1 && r2 && r3 {
+            let meta_update =
+                guarded_meta_store.update(key_id, Ok(key_info.public_key_info.clone()));
+            if meta_update.is_ok() {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
                 if previous.is_some() {
@@ -220,6 +213,18 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     "Successfully stored centralized keygen material for request {}",
                     key_id
                 );
+                Ok(())
+            } else {
+                // Try to delete stored data to avoid anything dangling
+                // Ignore any failure to delete something since
+                // it might be because the data did not get created
+                // In any case, we can't do much.
+                self.inner
+                    .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
+                    .await;
+                meta_update.map_err(|e| {
+                    anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
+                })
             }
         } else {
             // Try to delete stored data to avoid anything dangling
@@ -229,6 +234,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             self.inner
                 .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
                 .await;
+            anyhow::bail!("Storage write failed for key {key_id}");
         }
     }
 
@@ -245,7 +251,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         key_info: KmsFheKeyHandles,
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
+    ) -> anyhow::Result<()> {
         self.inner
             .write_compressed_keys_with_dkg_meta_store(
                 key_id,

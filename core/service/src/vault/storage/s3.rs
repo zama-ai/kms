@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StorageType};
+use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
@@ -329,7 +329,9 @@ impl StorageReaderExt for S3Storage {
         &self,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
-        all_data_ids_from_all_epochs_impl(self, data_type).await
+        all_data_ids_from_all_epochs_impl(self, data_type)
+            .await
+            .map(|(ids, _)| ids)
     }
 
     async fn load_bytes_at_epoch(
@@ -359,17 +361,18 @@ impl Storage for S3Storage {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key(data_id, data_type);
-        self.store_data_at_key(key, data).await
+        self.store_data_at_key(key, data).await?;
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes(
@@ -377,14 +380,14 @@ impl Storage for S3Storage {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The data {}-{} already exists. Keeping the data without overwriting",
                 data_id,
                 data_type
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key(data_id, data_type);
 
@@ -392,7 +395,7 @@ impl Storage for S3Storage {
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
@@ -408,7 +411,7 @@ impl StorageExt for S3Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -419,10 +422,11 @@ impl StorageExt for S3Storage {
                 data_type,
                 epoch_id
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
-        self.store_data_at_key(key, data).await
+        self.store_data_at_key(key, data).await?;
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn store_bytes_at_epoch(
@@ -431,7 +435,7 @@ impl StorageExt for S3Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -442,7 +446,7 @@ impl StorageExt for S3Storage {
                 data_type,
                 epoch_id
             );
-            return Ok(());
+            return Ok(StoreWriteOutcome::SkippedExisting);
         }
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
 
@@ -450,7 +454,7 @@ impl StorageExt for S3Storage {
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 
-        Ok(())
+        Ok(StoreWriteOutcome::Created)
     }
 
     async fn delete_data_at_epoch(
@@ -699,7 +703,6 @@ mod tests {
         test_batch_helper_methods(&mut pub_storage).await;
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_epoch_methods_in_s3() {
         let mut priv_storage =
@@ -718,7 +721,6 @@ mod tests {
     }
 
     /// Test that files don't get silently overwritten
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_overwrite_logic_files() {
         let mut pub_storage = create_s3_storage(
@@ -728,9 +730,6 @@ mod tests {
         .await;
         test_store_bytes_does_not_overwrite_existing_bytes(&mut pub_storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut pub_storage).await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]
@@ -780,7 +779,6 @@ mod tests {
             .await;
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
         let mut priv_storage = create_s3_storage(
@@ -792,9 +790,6 @@ mod tests {
             &mut priv_storage,
         )
         .await;
-        assert!(logs_contain(
-            "already exists. Keeping the data without overwriting"
-        ));
     }
 
     #[tokio::test]

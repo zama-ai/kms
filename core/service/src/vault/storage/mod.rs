@@ -19,6 +19,15 @@ use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{Unversionize, Versionize, named::Named};
 use tracing;
 
+/// Result of a store operation when the API declines to overwrite existing objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreWriteOutcome {
+    /// New data was written.
+    Created,
+    /// Data was already present; existing value was kept.
+    SkippedExisting,
+}
+
 pub mod crypto_material;
 pub mod file;
 pub mod ram;
@@ -51,7 +60,7 @@ pub trait StorageReader {
     /// before deserializing, to avoid issues with version upgrades changing the serialized form.
     async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 
-    /// Return all URLs stored of a specific data type.
+    /// Return all data IDs stored for a specific data type.
     ///
     /// This function does not consider data types that are stored under different epochs,
     /// use [StorageReaderExt::all_data_ids_at_epoch] instead.
@@ -61,11 +70,14 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
-/// Return all URLs stored of a specific data type
+/// Return all data IDs stored for a specific data type.
+/// Returns `(ids, had_inconsistency)` where `had_inconsistency` is `true` when
+/// both epoch-aware and non-epoch paths contained data for the same `data_type`
+/// (indicative of a storage migration artifact).
 pub(crate) async fn all_data_ids_from_all_epochs_impl(
     storage: &impl StorageReaderExt,
     data_type: &str,
-) -> anyhow::Result<HashSet<RequestId>> {
+) -> anyhow::Result<(HashSet<RequestId>, bool)> {
     // First, get IDs from non-epoch path using StorageReader's implementation
     let ids_from_non_epoch_storage = storage.all_data_ids(data_type).await?;
 
@@ -79,11 +91,11 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
 
     if ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
         // Both are empty, return empty set
-        Ok(HashSet::new())
+        Ok((HashSet::new(), false))
     } else if ids_from_non_epoch_storage.is_empty() && !ids_from_epoch_storage.is_empty() {
-        Ok(ids_from_epoch_storage)
+        Ok((ids_from_epoch_storage, false))
     } else if !ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
-        Ok(ids_from_non_epoch_storage)
+        Ok((ids_from_non_epoch_storage, false))
     } else {
         // when both are non empty, then we have some inconsistency
         // there is no correct set to return and returning the union is also problematic
@@ -93,7 +105,7 @@ pub(crate) async fn all_data_ids_from_all_epochs_impl(
             ids_from_epoch_storage.len(),
             data_type
         );
-        Ok(ids_from_epoch_storage)
+        Ok((ids_from_epoch_storage, true))
     }
 }
 
@@ -131,7 +143,7 @@ pub trait StorageReaderExt: StorageReader {
         data_type: &str,
     ) -> anyhow::Result<T>;
 
-    /// Return all URLs stored of a specific data type
+    /// Return all data IDs stored for a specific data type.
     // In theory only a default implementation is needed,
     // but we cannot implement it easily due to this issue
     // https://github.com/rust-lang/impl-trait-utils/issues/17
@@ -161,25 +173,25 @@ pub trait Storage: StorageReader {
     /// Store the given `data` with the given `data_id` of the given `data_type`
     /// Under the hood, the versioned data is stored.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, but the call will succeed.
+    /// instead a warning is logged, but the call will succeed with [`StoreWriteOutcome::SkippedExisting`].
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Store raw bytes directly without versioning or serialization.
     /// This is useful for storing ASCII text (e.g., Ethereum addresses, PEM certificates)
     /// or raw bytes like cryptographic commitments.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, but the call will succeed.
+    /// instead a warning is logged, but the call will succeed with [`StoreWriteOutcome::SkippedExisting`].
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Delete the given `data_id` with the given `data_type`.
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
@@ -200,7 +212,7 @@ pub trait StorageExt: StorageReaderExt + Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Store raw bytes at the specified epoch without versioning or serialization.
     async fn store_bytes_at_epoch(
@@ -209,7 +221,7 @@ pub trait StorageExt: StorageReaderExt + Storage {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<StoreWriteOutcome>;
 
     /// Deletes data at the specified data ID, epoch ID, and data type.
     async fn delete_data_at_epoch(
@@ -245,6 +257,7 @@ where
                 "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 /// Store some data at a location defined by `request_id` and `data_type`.
@@ -271,6 +284,7 @@ where
                 "Could not store data with ID {request_id}, epoch ID {epoch_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 // Helper method for storing text under a request ID.
@@ -289,6 +303,7 @@ pub async fn store_text_at_request_id<S: Storage>(
                 "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
+        .map(|_| ())
 }
 
 // Helper method for reading text under a request ID.
@@ -834,17 +849,23 @@ pub mod tests {
 
         // First bytes to store
         let original_bytes = vec![1, 2, 3, 4, 5];
-        storage
-            .store_bytes(&original_bytes, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes(&original_bytes, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
         // Attempt to overwrite with different bytes
         let new_bytes = vec![9, 8, 7, 6, 5];
-        storage
-            .store_bytes(&new_bytes, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes(&new_bytes, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Read back and verify it is still the original bytes
         let loaded = storage.load_bytes(&data_id, &data_type).await.unwrap();
@@ -862,17 +883,23 @@ pub mod tests {
 
         // First data to store
         let original_data = TestType { i: 42 };
-        storage
-            .store_data(&original_data, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_data(&original_data, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
         // Attempt to overwrite with different data
         let new_data = TestType { i: 99 };
-        storage
-            .store_data(&new_data, &data_id, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_data(&new_data, &data_id, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Read back and verify it is still the original data
         let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
@@ -882,7 +909,6 @@ pub mod tests {
         storage.delete_data(&data_id, &data_type).await.unwrap();
     }
 
-    #[kms_test_tracing::traced_test]
     pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
         let mut rng = AesRng::seed_from_u64(98765);
         let epoch1 = EpochId::new_random(&mut rng);
@@ -952,19 +978,21 @@ pub mod tests {
         assert!(ids.contains(&id4));
         assert!(ids.contains(&id5));
 
-        // Case 3: Data in both epoch and non-epoch storage (should produce warning and only return epoched data)
+        // Case 3: Data in both epoch and non-epoch storage (should detect inconsistency and only return epoched data)
         storage
             .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
             .await
             .unwrap();
 
-        let ids = storage
-            .all_data_ids_from_all_epochs(&data_type)
+        let (ids, had_inconsistency) = all_data_ids_from_all_epochs_impl(storage, &data_type)
             .await
             .unwrap();
         assert_eq!(ids.len(), 1);
         assert!(ids.contains(&id1));
-        assert!(logs_contain("inconsistent storage"));
+        assert!(
+            had_inconsistency,
+            "Expected inconsistency flag when both epoch and non-epoch data exist"
+        );
 
         // Clean up
         storage
@@ -1051,17 +1079,21 @@ pub mod tests {
         let data_id = derive_request_id("BYTES_EPOCH_OVERWRITE").unwrap();
         let data_type = PrivDataType::FheKeyInfo.to_string();
 
-        // Store original bytes
-        storage
-            .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::Created
+        );
 
-        // Attempt to overwrite with different bytes
-        storage
-            .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
-            .await
-            .unwrap();
+        assert_eq!(
+            storage
+                .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
+                .await
+                .unwrap(),
+            StoreWriteOutcome::SkippedExisting
+        );
 
         // Verify original bytes are preserved
         let loaded = storage
@@ -1084,7 +1116,6 @@ pub mod tests {
     /// between epoched data (stored at `<data_type>/<epoch_id>/<key_id>`) and
     /// non-epoched data (stored at `<data_type>/<key_id>`), even when the same
     /// `key_id` is used in both locations.
-    #[kms_test_tracing::traced_test]
     pub async fn test_all_epoch_ids_and_data_ids_with_mixed_storage<S: StorageExt>(
         storage: &mut S,
     ) {
@@ -1188,13 +1219,15 @@ pub mod tests {
         assert!(epoch2_data_ids.contains(&shared_key_id));
 
         // --- Verify that all_data_ids_from_all_epochs detects the inconsistency ---
-        // Since we have data in both epoch and non-epoch storage, this should produce a warning return the epoched data
-        let ids = storage
-            .all_data_ids_from_all_epochs(&data_type)
+        // Since we have data in both epoch and non-epoch storage, this should return the epoched data and flag the inconsistency
+        let (ids, had_inconsistency) = all_data_ids_from_all_epochs_impl(storage, &data_type)
             .await
             .unwrap();
         assert_eq!(ids, epoch1_data_ids);
-        assert!(logs_contain("inconsistent storage"));
+        assert!(
+            had_inconsistency,
+            "Expected inconsistency flag when both epoch and non-epoch data exist"
+        );
 
         // --- Clean up ---
         storage
