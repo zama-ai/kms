@@ -295,6 +295,13 @@ impl<
         }
     }
 
+    async fn inner_abort_crs_gen(
+        &self,
+        _request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        todo!();
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn crs_gen_background(
         req_id: &RequestId,
@@ -446,6 +453,13 @@ impl<
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
+
+    async fn abort_crs_gen(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.inner_abort_crs_gen(request).await
+    }
 }
 
 #[cfg(feature = "insecure")]
@@ -505,6 +519,13 @@ impl<
         self.real_crs_generator
             .inner_get_result(request, true)
             .await
+    }
+
+    async fn abort_crs_gen(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.real_crs_generator.inner_abort_crs_gen(request).await
     }
 }
 

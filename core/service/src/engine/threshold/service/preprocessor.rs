@@ -404,6 +404,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         ).await.map_err(|e| MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, Some(request_id), anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), tonic::Code::Internal))?;
         Ok(Response::new(Empty {}))
     }
+
+    async fn inner_abort_key_gen_preproc(
+        &self,
+        _request: v1::RequestId,
+    ) -> Result<v1::RequestId, MetricedError> {
+        todo!();
+    }
 }
 
 #[tonic::async_trait]
@@ -488,6 +495,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             preprocessing_id: Some(request_id.into()),
             external_signature: preproc_data.external_signature,
         }))
+    }
+
+    async fn abort_key_gen_preproc(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<v1::RequestId, MetricedError> {
+        self.inner_abort_key_gen_preproc(request.into_inner()).await
     }
 
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {

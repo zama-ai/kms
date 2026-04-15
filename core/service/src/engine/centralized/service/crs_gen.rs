@@ -187,6 +187,18 @@ pub async fn get_crs_gen_result_impl<
     }
 }
 
+pub async fn abort_crs_gen_impl<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+>(
+    _service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    _request: Request<kms_grpc::kms::v1::RequestId>,
+) -> Result<Response<Empty>, MetricedError> {
+    todo!();
+}
+
 /// Background task for CRS generation
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<

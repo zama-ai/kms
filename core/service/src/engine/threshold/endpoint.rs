@@ -92,13 +92,19 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
+        async fn abort_key_gen(&self, request: Request<RequestId>) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_KEYGEN_ABORT);
+            let preproc_abort_res = self.keygen_preprocessor.abort_key_gen_preproc(request).await?;
+            self.key_generator.abort_key_gen(preproc_abort_res).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
         async fn user_decrypt(
             &self,
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
             self.user_decryptor.user_decrypt(request).await.map_err(|e| e.into())
-
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -108,8 +114,6 @@ impl_endpoint! {
         ) -> Result<Response<UserDecryptionResponse>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
             self.user_decryptor.get_result(request).await.map_err(|e| e.into())
-
-
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -130,7 +134,6 @@ impl_endpoint! {
             self.decryptor.get_result(request).await.map_err(|e| e.into())
        }
 
-
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
@@ -144,6 +147,12 @@ impl_endpoint! {
         ) -> Result<Response<CrsGenResult>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
             self.crs_generator.get_result(request).await.map_err(|e| e.into())
+        }
+
+       #[tracing::instrument(skip(self, request))]
+        async fn abort_crs_gen(&self, request: Request<RequestId>) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
+            self.crs_generator.abort_crs_gen(request).await.map_err(|e| e.into())
         }
 
         #[cfg(feature = "insecure")]

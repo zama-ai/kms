@@ -255,6 +255,18 @@ pub async fn get_key_gen_result_impl<
     }
 }
 
+pub async fn abort_key_gen_impl<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
+>(
+    _service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    _request: Request<kms_grpc::kms::v1::RequestId>,
+) -> Result<Response<Empty>, MetricedError> {
+    todo!();
+}
+
 /// Background task for key generation
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<

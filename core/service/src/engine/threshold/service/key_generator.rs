@@ -203,6 +203,15 @@ impl<
             .inner_get_result(request, true)
             .await
     }
+
+    async fn abort_key_gen(
+        &self,
+        preproc_id: v1::RequestId,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.real_key_generator
+            .inner_abort_key_gen(preproc_id)
+            .await
+    }
 }
 
 // This is an enum to determine whether to start the dkg
@@ -524,6 +533,13 @@ impl<
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
+    }
+
+    async fn inner_abort_key_gen(
+        &self,
+        _preproc_id: v1::RequestId,
+    ) -> Result<Response<Empty>, MetricedError> {
+        todo!();
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
@@ -1464,6 +1480,13 @@ impl<
         request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
+    }
+
+    async fn abort_key_gen(
+        &self,
+        preproc_id: v1::RequestId,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.inner_abort_key_gen(preproc_id).await
     }
 }
 
