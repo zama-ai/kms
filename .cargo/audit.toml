@@ -12,7 +12,7 @@
 # when socat proxies are used, the connection goes to localhost and if we don't
 # overload the server names, the handshake would fail because localhost isn't
 # `sts.*.amazonaws.com`).
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0049"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0049", "RUSTSEC-2026-0098", "RUSTSEC-2026-0099"]
 informational_warnings = ["unmaintained"]
 severity_threshold = "medium"
 
