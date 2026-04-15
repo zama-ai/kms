@@ -147,10 +147,7 @@ pub fn extract_parent_span_id<T>(request: &Request<T>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_test_tracing::traced_test;
-
     #[test]
-    #[traced_test]
     fn test_build_request_with_id() {
         let payload = "test_payload";
         let request_id = "test_id".to_string();
@@ -161,7 +158,6 @@ mod tests {
     }
 
     #[test]
-    #[traced_test]
     fn test_build_request_auto_generate_id() {
         let payload = "test_payload";
         let result = build_request(payload, None, None);
@@ -171,7 +167,6 @@ mod tests {
     }
 
     #[test]
-    #[traced_test]
     fn test_build_request_no_id_no_generate() {
         let payload = "test_payload";
         let config = RequestConfig {

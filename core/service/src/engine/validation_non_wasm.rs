@@ -1106,7 +1106,6 @@ mod tests {
         }
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test

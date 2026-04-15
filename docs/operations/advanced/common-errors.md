@@ -31,7 +31,7 @@ You are using an old version and should use `--pub-path` or `--priv-path` inst
 SetGlobalDefaultError("a global default trace dispatcher has already been set")
 ```
 
-This typically occurs if you are setting a tracer multiple times. Implicitly this happens using `#[kms_test_tracing::traced_test]` or through `tracing::subscriber::set_global_default` 
+This typically occurs if you are setting a tracer multiple times, e.g. through `tracing::subscriber::set_global_default`.
 
 ---
 

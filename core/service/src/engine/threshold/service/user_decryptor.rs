@@ -784,7 +784,10 @@ mod tests {
                 fhe_key_set,
                 Arc::clone(&key_meta_store),
             )
-            .await;
+            .await
+            .unwrap_or_else(|_| {
+                panic!("failed to write threshold keys for key {key_id} in test setup")
+            });
 
         {
             // check existence
