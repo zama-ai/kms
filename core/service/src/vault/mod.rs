@@ -533,10 +533,9 @@ pub mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
-        let mut keychain =
-            SecretShareKeychain::<AesRng>::new::<crate::vault::storage::ram::RamStorage>(rng, None)
-                .await
-                .unwrap();
+        let mut keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
+            .await
+            .unwrap();
         let custodian_context_id = derive_request_id("test_custodian_context").unwrap();
         keychain.set_backup_enc_key(custodian_context_id, enc_key);
 
