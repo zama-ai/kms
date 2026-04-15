@@ -84,7 +84,7 @@ jobs:
               - 'core/service/**'
               - 'core/threshold/**'
               - 'core/threshold-*/**'
-              - 'core/test-utils/**';
+              - 'core/test-utils/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
