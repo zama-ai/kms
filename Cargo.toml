@@ -171,8 +171,8 @@ proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintain
 prost = "=0.14.3"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
 quote = "=1.0.40"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.5"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
-rasn = "=0.20.2"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
-rasn-cms = "=0.20.2"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
+rasn = "=0.28.11"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
+rasn-cms = "=0.28.11"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
 rayon = "=1.11.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
 redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team

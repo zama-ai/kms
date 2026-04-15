@@ -24,7 +24,6 @@ cfg_if::cfg_if! {
         use crate::client::client_wasm::Client;
         use kms_grpc::kms::v1::Empty;
         use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-        use crate::cryptography::encryption::PkeSchemeType;
         use crate::engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         };
@@ -215,7 +214,6 @@ async fn test_largecipher_isolated() -> Result<()> {
             &DEFAULT_CENTRAL_KEY_ID,
             None, // context_id
             None, // epoch_id
-            PkeSchemeType::MlKem512,
             &[],
         )
         .unwrap();

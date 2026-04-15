@@ -1,0 +1,28 @@
+name: Docker Login
+description: Reusable wrapper around docker/login-action
+
+inputs:
+  registry:
+    description: Container registry hostname
+    required: true
+  username:
+    description: Registry username
+    required: true
+  password:
+    description: Registry password or token
+    required: true
+  logout:
+    description: Log out at the end of the job
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Login to registry
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+        logout: ${{ inputs.logout }}
