@@ -45,9 +45,9 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: 'zama-zws/zws-gitops'
           ref: ${{ inputs.branch-name }}
           token: ${{ secrets.ZWS_BOT_TOKEN }}
+          repository: 'zama-zws/zws-gitops'
           persist-credentials: true
 
       - name: Change image tag

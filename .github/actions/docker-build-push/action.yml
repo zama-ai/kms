@@ -1,0 +1,105 @@
+name: Docker Build Push
+description: Reusable wrapper around docker/build-push-action
+
+inputs:
+  context:
+    description: Build context path
+    required: false
+    default: "."
+  file:
+    description: Dockerfile path
+    required: false
+    default: "Dockerfile"
+  build-args:
+    description: Multiline build arguments
+    required: false
+    default: ""
+  build-contexts:
+    description: Additional named build contexts
+    required: false
+    default: ""
+  secrets:
+    description: Build secrets definition
+    required: false
+    default: ""
+  platforms:
+    description: Target platforms
+    required: false
+    default: ""
+  push:
+    description: Whether to push image to registry
+    required: false
+    default: "false"
+  pull:
+    description: Whether to always pull base images
+    required: false
+    default: "false"
+  load:
+    description: Whether to load image to local Docker
+    required: false
+    default: "false"
+  provenance:
+    description: Generate provenance attestation
+    required: false
+    default: "false"
+  sbom:
+    description: Generate SBOM attestation
+    required: false
+    default: "false"
+  target:
+    description: Target build stage
+    required: false
+    default: ""
+  tags:
+    description: Multiline image tags
+    required: false
+    default: ""
+  cache-from:
+    description: Cache sources
+    required: false
+    default: ""
+  cache-to:
+    description: Cache destinations
+    required: false
+    default: ""
+  labels:
+    description: Image labels
+    required: false
+    default: ""
+
+outputs:
+  image:
+    description: Built image reference
+    value: ${{ steps.build.outputs.image }}
+  digest:
+    description: Built image digest
+    value: ${{ steps.build.outputs.digest }}
+  metadata:
+    description: Build metadata JSON
+    value: ${{ steps.build.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build and push image
+      id: build
+      uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+      env:
+        CONTEXT: ${{ inputs.context }}
+      with:
+        context: ${{ env.CONTEXT }}
+        file: ${{ inputs.file }}
+        build-args: ${{ inputs.build-args }}
+        build-contexts: ${{ inputs.build-contexts }}
+        secrets: ${{ inputs.secrets }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        pull: ${{ inputs.pull }}
+        load: ${{ inputs.load }}
+        provenance: ${{ inputs.provenance }}
+        sbom: ${{ inputs.sbom }}
+        target: ${{ inputs.target }}
+        tags: ${{ inputs.tags }}
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}
+        labels: ${{ inputs.labels }}

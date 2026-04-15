@@ -890,7 +890,7 @@ where
         let exists_in_storage = self.inner.mpc_context_exists_in_storage(context_id).await?;
         if exists_in_storage != exsits_in_session_maker {
             anyhow::bail!(
-                "inconsistent context state for context while checking existance, exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}"
+                "inconsistent context state for context while checking existence, exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}"
             )
         } else {
             Ok(exsits_in_session_maker && exists_in_storage)

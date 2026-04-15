@@ -21,7 +21,7 @@ use kms_grpc::kms::v1::{
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
-    OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use tonic::{Request, Response};
@@ -38,7 +38,7 @@ pub async fn user_decrypt_impl<
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let permit = service.rate_limiter.start_user_decrypt().await?;
-    let mut timer = METRICS
+    let timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
@@ -69,14 +69,6 @@ pub async fn user_decrypt_impl<
         ));
     }
     // Observe we accept any epoch ID
-
-    // Use a constant party ID since this is the central KMS
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
-        (TAG_EPOCH_ID, epoch_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
 
     match service
         .crypto_storage
@@ -156,7 +148,6 @@ pub async fn user_decrypt_impl<
                 &client_address,
                 server_verf_key,
                 &domain,
-                metric_tags,
                 &extra_data,
             )
             .await;
@@ -243,7 +234,7 @@ pub async fn public_decrypt_impl<
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let permit = service.rate_limiter.start_pub_decrypt().await?;
-    let mut timer = METRICS
+    let timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -265,13 +256,6 @@ pub async fn public_decrypt_impl<
         ));
     }
     // Observe we accept any epoch ID
-
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
-        (TAG_EPOCH_ID, epoch_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
 
     let keys_exist = match service
         .crypto_storage
@@ -360,8 +344,7 @@ pub async fn public_decrypt_impl<
         // run the computation in a separate rayon thread to avoid blocking the tokio runtime
         let (send, recv) = tokio::sync::oneshot::channel();
         rayon::spawn_fifo(move || {
-            let decryptions =
-                central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
+            let decryptions = central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts);
             let _ = send.send(decryptions);
         });
         let decryptions = recv.await;

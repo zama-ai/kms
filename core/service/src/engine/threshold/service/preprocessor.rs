@@ -11,8 +11,7 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard, METRICS},
     metrics_names::{
-        ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_CONTEXT_ID,
-        TAG_EPOCH_ID, TAG_PARTY_ID,
+        ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -380,11 +379,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             &epoch_id,
         )
         .await?;
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_CONTEXT_ID, context_id.as_str()),
-            (TAG_EPOCH_ID, epoch_id.as_str()),
-        ];
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
         // Add preprocessing to metastore and fail in case it is already present

@@ -106,7 +106,6 @@ async fn default_user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,
-        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -147,7 +146,6 @@ async fn default_user_decryption_threshold_sns_precompute(
     user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
-        false,
         false,
         msg,
         EncryptionConfig {
@@ -190,7 +188,6 @@ async fn default_user_decryption_threshold_with_crash(
     user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
-        false,
         false,
         msg,
         EncryptionConfig {

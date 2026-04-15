@@ -1006,7 +1006,7 @@ where
         T: PrivateCryptoMaterialReader + PrivateMaterialUnderEpoch,
     {
         // This function does not need to be atomic, so we take a read lock
-        // on the cache first and check for existance, then release it.
+        // on the cache first and check for existence, then release it.
         // We do this because we want to avoid write locks unless necessary.
         let exists = {
             let guarded_fhe_keys = cache.read().await;
