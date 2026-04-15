@@ -27,8 +27,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
-        TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
+        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
+        TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -484,9 +484,6 @@ impl<
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, context and epoch
-            (TAG_CONTEXT_ID, context_id.as_str()),
-            (TAG_EPOCH_ID, epoch_id.as_str()),
             (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
         ];
         timer.tags(metric_tags.clone());
@@ -790,7 +787,7 @@ mod tests {
             .await;
 
         {
-            // check existance
+            // check existence
             let _guard = user_decryptor
                 .crypto_storage
                 .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)
