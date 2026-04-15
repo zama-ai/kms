@@ -395,8 +395,7 @@ async fn test_keygen_backup_presence_central() {
     let threshold = 1;
     let req_new_cus: RequestId =
         derive_request_id("test_keygen_backup_presence_central_cus").unwrap();
-    let key_id: RequestId =
-        derive_request_id("test_keygen_backup_presence_central_key").unwrap();
+    let key_id: RequestId = derive_request_id("test_keygen_backup_presence_central_key").unwrap();
     let epoch_id = *DEFAULT_EPOCH_ID;
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
@@ -452,8 +451,7 @@ async fn test_keygen_backup_presence_central() {
 async fn test_mpc_context_backup_central() {
     let amount_custodians = 3;
     let threshold = 1;
-    let req_new_cus: RequestId =
-        derive_request_id("test_mpc_context_backup_central_cus").unwrap();
+    let req_new_cus: RequestId = derive_request_id("test_mpc_context_backup_central_cus").unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -471,8 +469,9 @@ async fn test_mpc_context_backup_central() {
 
     // Build a new MPC context by cloning the default one
     let priv_store = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
-    let default_context: ContextInfo =
-        read_context_at_id(&priv_store, &DEFAULT_MPC_CONTEXT).await.unwrap();
+    let default_context: ContextInfo = read_context_at_id(&priv_store, &DEFAULT_MPC_CONTEXT)
+        .await
+        .unwrap();
     let new_context = {
         let mut ctx = default_context.clone();
         let mut rng = AesRng::seed_from_u64(42);

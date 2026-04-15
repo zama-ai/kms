@@ -488,13 +488,13 @@ pub(crate) fn storage_prefix_safety(
 #[cfg(test)]
 pub mod tests {
     use super::{Vault, VaultDataType};
+    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use crate::engine::base::derive_request_id;
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::{Storage, StorageType};
     use aes_prng::AesRng;
-    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use kms_grpc::{RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
 

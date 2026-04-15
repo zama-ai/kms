@@ -676,12 +676,9 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
     let threshold = 1;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
-    let req_cus_a: RequestId =
-        derive_request_id("test_custodian_reencryption_cus_a").unwrap();
-    let req_cus_b: RequestId =
-        derive_request_id("test_custodian_reencryption_cus_b").unwrap();
-    let req_key_id: RequestId =
-        derive_request_id("test_custodian_reencryption_key").unwrap();
+    let req_cus_a: RequestId = derive_request_id("test_custodian_reencryption_cus_a").unwrap();
+    let req_cus_b: RequestId = derive_request_id("test_custodian_reencryption_cus_b").unwrap();
+    let req_key_id: RequestId = derive_request_id("test_custodian_reencryption_key").unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -820,8 +817,9 @@ async fn test_mpc_context_backup_threshold() {
         priv_storage_prefixes[0].as_deref(),
     )
     .unwrap();
-    let default_context: ContextInfo =
-        read_context_at_id(&priv_store_0, &DEFAULT_MPC_CONTEXT).await.unwrap();
+    let default_context: ContextInfo = read_context_at_id(&priv_store_0, &DEFAULT_MPC_CONTEXT)
+        .await
+        .unwrap();
     let new_context = {
         let mut ctx = default_context.clone();
         let mut rng = AesRng::seed_from_u64(99);
@@ -830,9 +828,7 @@ async fn test_mpc_context_backup_threshold() {
         // Fill in verification keys from public storage
         let all_pub_storage: Vec<FileStorage> = pub_storage_prefixes
             .iter()
-            .map(|prefix| {
-                FileStorage::new(test_path, StorageType::PUB, prefix.as_deref()).unwrap()
-            })
+            .map(|prefix| FileStorage::new(test_path, StorageType::PUB, prefix.as_deref()).unwrap())
             .collect();
         for node in ctx.mpc_nodes.iter_mut() {
             let pk: PublicSigKey = read_versioned_at_request_id(
@@ -888,6 +884,222 @@ async fn test_mpc_context_backup_threshold() {
     for (_, kms_server) in kms_servers {
         kms_server.assert_shutdown().await;
     }
+}
+
+/// Test that backup contains reshared key material and CRS after an epoch
+/// transition (reshare). This validates that `update_backup_vault` is called
+/// after `store_reshared_keys` completes.
+#[cfg(feature = "insecure")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_backup_after_reshare_threshold() {
+    backup_after_reshare(3, 1).await;
+}
+
+#[cfg(feature = "insecure")]
+async fn backup_after_reshare(amount_custodians: usize, threshold: u32) {
+    use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
+    use kms_grpc::identifiers::EpochId;
+    use kms_grpc::kms::v1::{CrsInfo, KeyInfo, PreviousEpochInfo};
+
+    let amount_parties = 4;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+
+    let req_new_cus: RequestId =
+        derive_request_id("test_backup_after_reshare_threshold_cus").unwrap();
+    let req_key_id: RequestId =
+        derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
+    let crs_req: RequestId = derive_request_id("test_backup_after_reshare_threshold_crs").unwrap();
+    let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_threshold_epoch")
+        .unwrap()
+        .into();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let _mnemonics = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Generate a key (so we have material to reshare)
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset, _) = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &req_key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        test_path,
+        0,
+    )
+    .await;
+
+    // Compute key digests needed for the reshare request
+    let (_, public_key, server_key) = keyset.get_standard();
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
+    let public_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+
+    // Generate CRS (so we have CRS to reshare)
+    let crs_info_vec = run_crs(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        true,
+        &crs_req,
+        Some(16),
+        test_path,
+    )
+    .await;
+    assert_eq!(crs_info_vec.len(), 1);
+    let crs_info_item = &crs_info_vec[0];
+
+    // Verify initial backup exists at default epoch before reshare
+    let initial_key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_new_cus,
+        &req_key_id,
+        *DEFAULT_EPOCH_ID,
+        &PrivDataType::FheKeyInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        initial_key_backup.len(),
+        amount_parties,
+        "Expected initial FheKeyInfo backup before reshare"
+    );
+
+    // Build the reshare request
+    let previous_epoch = PreviousEpochInfo {
+        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        keys_info: vec![KeyInfo {
+            key_id: Some(req_key_id.into()),
+            preproc_id: Some((*INSECURE_PREPROCESSING_ID).into()),
+            key_parameters: FheParameter::Test.into(),
+            key_digests: vec![
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::ServerKey.to_string(),
+                    digest: server_key_digest,
+                },
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::PublicKey.to_string(),
+                    digest: public_key_digest,
+                },
+            ],
+        }],
+        crs_info: vec![CrsInfo {
+            crs_id: crs_info_item.crs_id.clone(),
+            crs_digest: crs_info_item.crs_digest.clone(),
+        }],
+    };
+
+    let epoch_request = internal_client
+        .new_epoch_request(
+            &DEFAULT_MPC_CONTEXT,
+            &new_epoch_id,
+            Some(previous_epoch),
+            Some(&crate::dummy_domain()),
+        )
+        .unwrap();
+
+    // Execute the reshare on all parties
+    let mut tasks = JoinSet::new();
+    for (_, client) in kms_clients.iter() {
+        let req = epoch_request.clone();
+        let mut client = client.clone();
+        tasks.spawn(async move { client.new_mpc_epoch(tonic::Request::new(req)).await });
+    }
+    for res in tasks.join_all().await {
+        assert!(res.is_ok(), "Reshare failed: {:?}", res.err());
+    }
+
+    // Poll until reshare completes
+    let new_epoch_req_id: RequestId = new_epoch_id.into();
+    for (_, client) in kms_clients.iter() {
+        let mut client = client.clone();
+        let req_id = new_epoch_req_id;
+        let mut ctr = 0_usize;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let response = client
+                .get_epoch_result(tonic::Request::new(req_id.into()))
+                .await;
+            match response {
+                Ok(_) => break,
+                Err(e) if e.code() == tonic::Code::Unavailable => {
+                    ctr += 1;
+                    if ctr >= 50 {
+                        panic!("Timeout waiting for reshare to complete");
+                    }
+                }
+                Err(e) => panic!("Unexpected error polling epoch result: {e:?}"),
+            }
+        }
+    }
+
+    // Verify that reshared FheKeyInfo appears in backup at the NEW epoch
+    let reshared_key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_new_cus,
+        &req_key_id,
+        new_epoch_id,
+        &PrivDataType::FheKeyInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        reshared_key_backup.len(),
+        amount_parties,
+        "Expected one FheKeyInfo backup entry per party at the new epoch after reshare"
+    );
+    for entry in &reshared_key_backup {
+        assert_eq!(entry.priv_data_type, PrivDataType::FheKeyInfo);
+    }
+
+    // Verify that reshared CrsInfo appears in backup at the NEW epoch
+    let crs_id: RequestId = crs_info_item.crs_id.as_ref().unwrap().try_into().unwrap();
+    let reshared_crs_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
+        test_path,
+        &req_new_cus,
+        &crs_id,
+        new_epoch_id,
+        &PrivDataType::CrsInfo.to_string(),
+        backup_storage_prefixes,
+    )
+    .await;
+    assert_eq!(
+        reshared_crs_backup.len(),
+        amount_parties,
+        "Expected one CrsInfo backup entry per party at the new epoch after reshare"
+    );
+    for entry in &reshared_crs_backup {
+        assert_eq!(entry.priv_data_type, PrivDataType::CrsInfo);
+    }
+
+    // Shut down the servers
+    shutdown_servers_and_client(kms_servers, kms_clients, internal_client).await;
 }
 
 #[cfg(feature = "insecure")]
