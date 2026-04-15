@@ -373,7 +373,11 @@ pub(crate) mod tests {
             )
             .await;
 
-        // Should fail: invalid signature → nothing inserted → empty hash_counter_map.
+        // Should fail. `hash_counter_map` is filled only after a result passes request ID, digest,
+        // and signature checks in order. Invalid signatures discard every result before insertion,
+        // which surfaces as "hash_counter_map is empty". If some results pass those checks but the
+        // set still misses majority, a different error is returned instead. The assert covers both
+        // reachable failure modes.
         let err_msg = res.unwrap_err().to_string();
         assert!(
             err_msg.contains("logic error: hash_counter_map is empty")
