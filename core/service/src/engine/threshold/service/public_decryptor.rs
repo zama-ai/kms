@@ -879,7 +879,10 @@ mod tests {
                 fhe_key_set,
                 Arc::clone(&key_meta_store),
             )
-            .await;
+            .await
+            .unwrap_or_else(|_| {
+                panic!("failed to write threshold keys for key {key_id} in test setup")
+            });
         {
             // check existence
             let _guard = public_decryptor
@@ -932,7 +935,6 @@ mod tests {
         public_decryptor.set_bucket_size(100);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);

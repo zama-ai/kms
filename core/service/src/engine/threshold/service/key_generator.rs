@@ -1358,7 +1358,7 @@ impl<
 
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
-                crypto_storage
+                if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store(
                         req_id,
                         epoch_id,
@@ -1366,7 +1366,11 @@ impl<
                         pub_key_set,
                         meta_store,
                     )
-                    .await;
+                    .await
+                {
+                    tracing::error!("Failed to write threshold keys for request {req_id}: {e}");
+                    return;
+                }
             }
             ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
                 //Compute info for compressed keygen
@@ -1412,7 +1416,7 @@ impl<
                     meta_data: info,
                 };
 
-                crypto_storage
+                if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store_compressed(
                         req_id,
                         epoch_id,
@@ -1420,7 +1424,13 @@ impl<
                         &compressed_keyset,
                         meta_store,
                     )
-                    .await;
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to write compressed threshold keys for request {req_id}: {e}"
+                    );
+                    return;
+                }
             }
         }
 

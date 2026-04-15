@@ -1340,7 +1340,7 @@ impl KmsV0_13 {
                 RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
             )
             .unwrap()
-            .0[&Role::indexed_from_one(1)];
+            .ct_shares[&Role::indexed_from_one(1)];
 
         store_versioned_test!(
             operator_backup_output,

@@ -1,4 +1,5 @@
 pub mod random_free_port;
+pub mod test_logging;
 
 use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
