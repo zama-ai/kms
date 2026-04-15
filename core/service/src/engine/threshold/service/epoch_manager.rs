@@ -746,7 +746,9 @@ impl<
         meta_store.write().await.update(
             &new_epoch_id.into(),
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
-        )
+        )?;
+        // Update the backup vault
+        crypto_storage.inner.update_backup_vault(false).await
     }
 
     async fn reshare_as_set_2(
