@@ -13,8 +13,7 @@ cfg_if::cfg_if! {
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
         use crate::cryptography::signatures::PublicSigKey;
-        use crate::engine::base::CrsGenMetadata;
-        use crate::engine::base::INSECURE_PREPROCESSING_ID;
+        use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned, CrsGenMetadata, INSECURE_PREPROCESSING_ID};
         use crate::engine::context::ContextInfo;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -26,9 +25,8 @@ cfg_if::cfg_if! {
         use crate::vault::storage::StorageType;
         use aes_prng::AesRng;
         use rand::SeedableRng;
-        use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
-        use kms_grpc::kms::v1::CustodianRecoveryOutput;
-        use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
+        use kms_grpc::identifiers::EpochId;
+        use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest, CrsInfo, KeyInfo, PreviousEpochInfo, CustodianRecoveryOutput, CustodianRecoveryInitRequest, };
         use kms_grpc::rpc_types::PubDataType;
         use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
         use std::collections::HashMap;
@@ -533,9 +531,9 @@ async fn test_prss_in_custodian_backup_threshold() {
     let amount_custodians = 3;
     let threshold = 1;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-
-    let req_new_cus: RequestId = derive_request_id(&format!(
-        "test_prss_in_custodian_backup_threshold_{amount_parties}_{amount_custodians}_{threshold}"
+    let req_new_cus: RequestId = derive_request_id(std::stringify!(
+        test_prss_in_custodian_backup_threshold,
+        "cus_req"
     ))
     .unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
@@ -563,7 +561,7 @@ async fn test_prss_in_custodian_backup_threshold() {
 
     // PRSS is stored with epoch_id.into() as the request_id (non-epoched layout)
     let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
-    let prss_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
+    let backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         test_path,
         &req_new_cus,
         &prss_req_id,
@@ -572,11 +570,11 @@ async fn test_prss_in_custodian_backup_threshold() {
     )
     .await;
     assert_eq!(
-        prss_backup.len(),
+        backup.len(),
         amount_parties,
         "Expected one PRSS backup entry per party"
     );
-    for entry in &prss_backup {
+    for entry in &backup {
         assert_eq!(entry.priv_data_type, PrivDataType::PrssSetupCombined);
     }
 
@@ -597,10 +595,16 @@ async fn test_keygen_backup_presence_threshold() {
     let threshold = 1;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
-    let req_new_cus: RequestId =
-        derive_request_id("test_keygen_backup_presence_threshold_cus").unwrap();
-    let req_key_id: RequestId =
-        derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
+    let req_new_cus: RequestId = derive_request_id(std::stringify!(
+        test_keygen_backup_presence_threshold,
+        "cus_req"
+    ))
+    .unwrap();
+    let req_key_id: RequestId = derive_request_id(std::stringify!(
+        test_keygen_backup_presence_threshold,
+        "key_id"
+    ))
+    .unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -676,9 +680,21 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
     let threshold = 1;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
-    let req_cus_a: RequestId = derive_request_id("test_custodian_reencryption_cus_a").unwrap();
-    let req_cus_b: RequestId = derive_request_id("test_custodian_reencryption_cus_b").unwrap();
-    let req_key_id: RequestId = derive_request_id("test_custodian_reencryption_key").unwrap();
+    let req_cus_a: RequestId = derive_request_id(std::stringify!(
+        test_custodian_reencryption_with_existing_data_threshold,
+        "cus_req_a"
+    ))
+    .unwrap();
+    let req_cus_b: RequestId = derive_request_id(std::stringify!(
+        test_custodian_reencryption_with_existing_data_threshold,
+        "cus_req_b"
+    ))
+    .unwrap();
+    let req_key_id: RequestId = derive_request_id(std::stringify!(
+        test_custodian_reencryption_with_existing_data_threshold,
+        "key_id"
+    ))
+    .unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -785,8 +801,11 @@ async fn test_mpc_context_backup_threshold() {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
-    let req_new_cus: RequestId =
-        derive_request_id("test_mpc_context_backup_threshold_cus").unwrap();
+    let req_new_cus: RequestId = derive_request_id(std::stringify!(
+        test_mpc_context_backup_threshold,
+        "cus_req"
+    ))
+    .unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -893,29 +912,34 @@ async fn test_mpc_context_backup_threshold() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_backup_after_reshare_threshold() {
-    backup_after_reshare(3, 1).await;
-}
-
-#[cfg(feature = "insecure")]
-async fn backup_after_reshare(amount_custodians: usize, threshold: u32) {
-    use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
-    use kms_grpc::identifiers::EpochId;
-    use kms_grpc::kms::v1::{CrsInfo, KeyInfo, PreviousEpochInfo};
-
     let amount_parties = 4;
+    let amount_custodians = 3;
+    let threshold = 1;
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
-
-    let req_new_cus: RequestId =
-        derive_request_id("test_backup_after_reshare_threshold_cus").unwrap();
-    let req_key_id: RequestId =
-        derive_request_id("test_backup_after_reshare_threshold_key").unwrap();
-    let crs_req: RequestId = derive_request_id("test_backup_after_reshare_threshold_crs").unwrap();
-    let new_epoch_id: EpochId = derive_request_id("test_backup_after_reshare_threshold_epoch")
-        .unwrap()
-        .into();
+    let req_new_cus: RequestId = derive_request_id(std::stringify!(
+        test_backup_after_reshare_threshold,
+        "cus_req"
+    ))
+    .unwrap();
+    let req_key_id: RequestId = derive_request_id(std::stringify!(
+        test_backup_after_reshare_threshold,
+        "key_gen"
+    ))
+    .unwrap();
+    let crs_req: RequestId = derive_request_id(std::stringify!(
+        test_backup_after_reshare_threshold,
+        "crs_gen"
+    ))
+    .unwrap();
+    let new_epoch_id: EpochId = derive_request_id(std::stringify!(
+        test_backup_after_reshare_threshold,
+        "new_epoch"
+    ))
+    .unwrap()
+    .into();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
