@@ -8,7 +8,10 @@ TARGET_DIR="$(pwd)/non_threshold_bench/zk-bench"
 OUTPUT_FILE="$TARGET_DIR/bench_results.json"
 MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
 
+# Create target directory and clear output files
 mkdir -p "$TARGET_DIR"
+: > "$OUTPUT_FILE"
+: > "$MEMORY_OUTPUT_FILE"
 
 echo "Running ZK PoK speed benchmarks → $OUTPUT_FILE"
 cargo-criterion \

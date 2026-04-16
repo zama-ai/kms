@@ -25,7 +25,10 @@ MEMORY_BENCH_LIST=(
     "non-threshold_bgv_basic-ops_memory"
 )
 
+# Create target directory and clear output files
 mkdir -p $TARGET_DIR
+: > "$OUTPUT_FILE"
+: > "$MEMORY_OUTPUT_FILE"
 
 # Run the latency benchmarks
 for bench in "${SPEED_BENCH_LIST[@]}"; do
