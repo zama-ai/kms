@@ -7,7 +7,8 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_CRS_GEN_ABORT, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+    OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
 };
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 
@@ -193,10 +194,46 @@ pub async fn abort_crs_gen_impl<
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
-    _service: &CentralizedKms<PubS, PrivS, CM, BO>,
-    _request: Request<kms_grpc::kms::v1::RequestId>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
-    todo!();
+    // Handle abort request. In the centralized case we don't actually abort the background task, we just mark the request as aborted in the meta store in case it might actually be running
+    let request_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
+        .map_err(|e| MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
+
+    // First check if the request exists in the meta store
+    let guarded_meta_store = service.crs_meta_map.read().await;
+    let status = guarded_meta_store.retrieve(&request_id);
+    match status {
+        Some(status) => {
+            if status.is_set() {
+                Err(MetricedError::new(
+                    OP_CRS_GEN_ABORT,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "CRS generation already finished for the supplied request ID, cannot abort"
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ))
+            } else {
+                // Process started but not finished, since it is so quick in the central case, for now we simply don't allow abort
+                Err(MetricedError::new(
+                    OP_CRS_GEN_ABORT,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "CRS generation is almost finished for the supplied request ID, cannot abort"
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ))
+            }
+        }
+        None => Err(MetricedError::new(
+            OP_CRS_GEN_ABORT,
+            Some(request_id),
+            anyhow::anyhow!("No ongoing CRS generation found for the supplied request ID"),
+            tonic::Code::NotFound,
+        )),
+    }
 }
 
 /// Background task for CRS generation
@@ -242,10 +279,15 @@ pub(crate) async fn crs_gen_background<
         }
     };
 
-    crypto_storage
+    if let Err(e) = crypto_storage
         .inner
         .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-        .await;
+        .await
+    {
+        tracing::error!("Failed to write CRS to storage: {e}");
+        return;
+    }
+
     tracing::info!(
         "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
         req_id,
