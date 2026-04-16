@@ -17,19 +17,19 @@ use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::zk_utils::{
-    gen_crs, gen_crs_from_params, gen_proof, gen_proof_inputs, pke_params_from_dkg, seeded_rng,
-    verify_batched, verify_two_steps,
+    nist_gen_crs, nist_gen_crs_from_params, nist_gen_proof, nist_gen_proof_inputs,
+    nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched, nist_verify_two_steps,
 };
 use utilities::ALL_PARAMS;
 
 /// Benchmark CRS generation.
 fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
-    let pke_params = pke_params_from_dkg(params);
+    let pke_params = nist_pke_params_from_dkg(params);
 
     group.bench_function("crs_gen", |b| {
         b.iter(|| {
-            let mut rng = seeded_rng(*b"BENCHCRS");
-            std::hint::black_box(gen_crs_from_params(&pke_params, &mut rng));
+            let mut rng = nist_seeded_rng(*b"BENCHCRS");
+            std::hint::black_box(nist_gen_crs_from_params(&pke_params, &mut rng));
         });
     });
 }
@@ -37,12 +37,12 @@ fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
 /// Benchmark proof generation.
 /// The CRS and commits are pre-computed outside the timed region.
 fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
-    let crs = gen_crs(params);
-    let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, params);
+    let crs = nist_gen_crs(params);
+    let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, params);
 
     group.bench_function("load_verify_proof_gen", |b| {
         b.iter(|| {
-            std::hint::black_box(gen_proof(
+            std::hint::black_box(nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -54,7 +54,7 @@ fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) 
 
     group.bench_function("load_proof_proof_gen", |b| {
         b.iter(|| {
-            std::hint::black_box(gen_proof(
+            std::hint::black_box(nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -68,9 +68,9 @@ fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) 
 /// Benchmark proof verification in TwoSteps pairing mode.
 /// The CRS, commits, and proof are all pre-computed outside the timed region.
 fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
-    let crs = gen_crs(params);
-    let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, params);
-    let proof = gen_proof(
+    let crs = nist_gen_crs(params);
+    let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, params);
+    let proof = nist_gen_proof(
         &crs,
         &public_commit,
         &private_commit,
@@ -81,12 +81,12 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
     group.bench_function("load_verify_verify_two_steps", |b| {
         b.iter(|| {
             std::hint::black_box(
-                verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
+                nist_verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
             );
         });
     });
 
-    let proof = gen_proof(
+    let proof = nist_gen_proof(
         &crs,
         &public_commit,
         &private_commit,
@@ -97,7 +97,7 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
     group.bench_function("load_proof_verify_two_steps", |b| {
         b.iter(|| {
             std::hint::black_box(
-                verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
+                nist_verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
             );
         });
     });
@@ -106,9 +106,9 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 /// Benchmark proof verification in Batched pairing mode.
 /// The CRS, commits, and proof are all pre-computed outside the timed region.
 fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
-    let crs = gen_crs(params);
-    let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, params);
-    let proof = gen_proof(
+    let crs = nist_gen_crs(params);
+    let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, params);
+    let proof = nist_gen_proof(
         &crs,
         &public_commit,
         &private_commit,
@@ -118,11 +118,13 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_proof_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(verify_batched(&proof, &crs, &public_commit, &metadata).unwrap());
+            std::hint::black_box(
+                nist_verify_batched(&proof, &crs, &public_commit, &metadata).unwrap(),
+            );
         });
     });
 
-    let proof = gen_proof(
+    let proof = nist_gen_proof(
         &crs,
         &public_commit,
         &private_commit,
@@ -132,7 +134,9 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_verify_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(verify_batched(&proof, &crs, &public_commit, &metadata).unwrap());
+            std::hint::black_box(
+                nist_verify_batched(&proof, &crs, &public_commit, &metadata).unwrap(),
+            );
         });
     });
 }

@@ -3,7 +3,9 @@ use std::path::Path;
 use tfhe_zk_pok::curve_api::Bls12_446;
 use tfhe_zk_pok::proofs::pke_v2::{Proof as ProofV2, PublicParams};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::zk_utils::{gen_crs, gen_proof, gen_proof_inputs, run_verify};
+use threshold_fhe::zk_utils::{
+    nist_gen_crs, nist_gen_proof, nist_gen_proof_inputs, nist_run_verify,
+};
 
 #[derive(Parser, Debug)]
 #[clap(name = "non-threshold-zk-pok-kat")]
@@ -58,7 +60,7 @@ fn generate_and_save_crs(
     storage_path: &Path,
     save: bool,
 ) -> PublicParams<Bls12_446> {
-    let crs = gen_crs(params);
+    let crs = nist_gen_crs(params);
 
     if save {
         println!("Saving CRS...");
@@ -74,8 +76,8 @@ fn generate_proof(
     storage_path: &Path,
     save: bool,
 ) -> ProofV2<Bls12_446> {
-    let (public_commit, private_commit, metadata) = gen_proof_inputs(crs, params);
-    let proof = gen_proof(
+    let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(crs, params);
+    let proof = nist_gen_proof(
         crs,
         &public_commit,
         &private_commit,
@@ -92,8 +94,8 @@ fn generate_proof(
 }
 
 fn verify_proof(proof: &ProofV2<Bls12_446>, crs: &PublicParams<Bls12_446>, params: DKGParams) {
-    let (public_commit, _private_commit, metadata) = gen_proof_inputs(crs, params);
-    run_verify(proof, crs, &public_commit, &metadata);
+    let (public_commit, _private_commit, metadata) = nist_gen_proof_inputs(crs, params);
+    nist_run_verify(proof, crs, &public_commit, &metadata);
 }
 
 fn main() {

@@ -22,8 +22,9 @@ use utilities::{ALL_PARAMS, bench_memory};
 use tfhe_zk_pok::curve_api::Bls12_446;
 use tfhe_zk_pok::proofs::pke_v2::{PrivateCommit, Proof as ProofV2, PublicCommit, PublicParams};
 use threshold_fhe::zk_utils::{
-    METADATA_LEN, PkeZkParams, gen_crs, gen_crs_from_params, gen_proof, gen_proof_inputs,
-    pke_params_from_dkg, seeded_rng, verify_batched, verify_two_steps,
+    METADATA_LEN, PkeZkParams, nist_gen_crs, nist_gen_crs_from_params, nist_gen_proof,
+    nist_gen_proof_inputs, nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched,
+    nist_verify_two_steps,
 };
 
 #[global_allocator]
@@ -33,7 +34,7 @@ fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (params_name, dkg_params) in ALL_PARAMS {
-        let pke_params: PkeZkParams = pke_params_from_dkg(dkg_params);
+        let pke_params: PkeZkParams = nist_pke_params_from_dkg(dkg_params);
 
         // CRS generation
         {
@@ -43,8 +44,8 @@ fn main() {
             // work without sharing any state.
             bench_memory(
                 |p: &mut PkeZkParams| {
-                    let mut rng = seeded_rng(*b"BENCHCRS");
-                    gen_crs_from_params(p, &mut rng)
+                    let mut rng = nist_seeded_rng(*b"BENCHCRS");
+                    nist_gen_crs_from_params(p, &mut rng)
                 },
                 &mut pke_params.clone(),
                 bench_name,
@@ -55,8 +56,8 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_proof_gen_load_proof_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
 
             let mut proof_inputs: (
                 PublicParams<Bls12_446>,
@@ -72,7 +73,7 @@ fn main() {
                     PrivateCommit<Bls12_446>,
                     [u8; METADATA_LEN],
                 )| {
-                    gen_proof(crs, pub_c, priv_c, meta, tfhe::zk::ZkComputeLoad::Proof)
+                    nist_gen_proof(crs, pub_c, priv_c, meta, tfhe::zk::ZkComputeLoad::Proof)
                 },
                 &mut proof_inputs,
                 bench_name,
@@ -83,8 +84,8 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_proof_gen_load_verify_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
 
             let mut proof_inputs: (
                 PublicParams<Bls12_446>,
@@ -100,7 +101,7 @@ fn main() {
                     PrivateCommit<Bls12_446>,
                     [u8; METADATA_LEN],
                 )| {
-                    gen_proof(crs, pub_c, priv_c, meta, tfhe::zk::ZkComputeLoad::Verify)
+                    nist_gen_proof(crs, pub_c, priv_c, meta, tfhe::zk::ZkComputeLoad::Verify)
                 },
                 &mut proof_inputs,
                 bench_name,
@@ -111,9 +112,9 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_two_steps_load_proof_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            let proof: ProofV2<Bls12_446> = gen_proof(
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
+            let proof: ProofV2<Bls12_446> = nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -134,7 +135,7 @@ fn main() {
                     PublicParams<Bls12_446>,
                     PublicCommit<Bls12_446>,
                     [u8; METADATA_LEN],
-                )| verify_two_steps(proof, crs, pub_c, meta).unwrap(),
+                )| nist_verify_two_steps(proof, crs, pub_c, meta).unwrap(),
                 &mut verify_inputs,
                 bench_name,
             );
@@ -144,9 +145,9 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_two_steps_load_verify_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            let proof: ProofV2<Bls12_446> = gen_proof(
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
+            let proof: ProofV2<Bls12_446> = nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -167,7 +168,7 @@ fn main() {
                     PublicParams<Bls12_446>,
                     PublicCommit<Bls12_446>,
                     [u8; METADATA_LEN],
-                )| verify_two_steps(proof, crs, pub_c, meta).unwrap(),
+                )| nist_verify_two_steps(proof, crs, pub_c, meta).unwrap(),
                 &mut verify_inputs,
                 bench_name,
             );
@@ -177,9 +178,9 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_batched_load_proof_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            let proof: ProofV2<Bls12_446> = gen_proof(
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
+            let proof: ProofV2<Bls12_446> = nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -200,7 +201,7 @@ fn main() {
                     PublicParams<Bls12_446>,
                     PublicCommit<Bls12_446>,
                     [u8; METADATA_LEN],
-                )| verify_batched(proof, crs, pub_c, meta).unwrap(),
+                )| nist_verify_batched(proof, crs, pub_c, meta).unwrap(),
                 &mut verify_inputs,
                 bench_name,
             );
@@ -210,9 +211,9 @@ fn main() {
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_batched_load_verify_memory");
-            let crs: PublicParams<Bls12_446> = gen_crs(dkg_params);
-            let (public_commit, private_commit, metadata) = gen_proof_inputs(&crs, dkg_params);
-            let proof: ProofV2<Bls12_446> = gen_proof(
+            let crs: PublicParams<Bls12_446> = nist_gen_crs(dkg_params);
+            let (public_commit, private_commit, metadata) = nist_gen_proof_inputs(&crs, dkg_params);
+            let proof: ProofV2<Bls12_446> = nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -233,7 +234,7 @@ fn main() {
                     PublicParams<Bls12_446>,
                     PublicCommit<Bls12_446>,
                     [u8; METADATA_LEN],
-                )| verify_batched(proof, crs, pub_c, meta).unwrap(),
+                )| nist_verify_batched(proof, crs, pub_c, meta).unwrap(),
                 &mut verify_inputs,
                 bench_name,
             );

@@ -54,13 +54,13 @@ pub struct ZkTestcase {
     pub s: Vec<i64>,
 }
 
-pub fn seeded_rng(domain: [u8; 8]) -> RandomGenerator<SoftwareRandomGenerator> {
+pub fn nist_seeded_rng(domain: [u8; 8]) -> RandomGenerator<SoftwareRandomGenerator> {
     // Seed is fixed for reproducibility
     RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(1995, domain))
 }
 
 /// Derive ZK PKE parameters from a [`DKGParams`] instance.
-pub fn pke_params_from_dkg(params: DKGParams) -> PkeZkParams {
+pub fn nist_pke_params_from_dkg(params: DKGParams) -> PkeZkParams {
     let pke_params = params
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
@@ -238,14 +238,14 @@ impl ZkTestcase {
 }
 
 /// Deterministically generates a CRS for `params`.
-pub fn gen_crs(params: DKGParams) -> PublicParams<Bls12_446> {
-    let pke_params = pke_params_from_dkg(params);
-    let mut rng = seeded_rng(*b"ZK_CRS__");
-    gen_crs_from_params(&pke_params, &mut rng)
+pub fn nist_gen_crs(params: DKGParams) -> PublicParams<Bls12_446> {
+    let pke_params = nist_pke_params_from_dkg(params);
+    let mut rng = nist_seeded_rng(*b"ZK_CRS__");
+    nist_gen_crs_from_params(&pke_params, &mut rng)
 }
 
 /// Generate a CRS from pre-computed [`PkeZkParams`] and a caller-supplied RNG.
-pub fn gen_crs_from_params(
+pub fn nist_gen_crs_from_params(
     pke_params: &PkeZkParams,
     rng: &mut RandomGenerator<SoftwareRandomGenerator>,
 ) -> PublicParams<Bls12_446> {
@@ -261,7 +261,7 @@ pub fn gen_crs_from_params(
 }
 
 /// Build the public commit, private commit, and metadata needed for proving.
-pub fn gen_proof_inputs(
+pub fn nist_gen_proof_inputs(
     crs: &PublicParams<Bls12_446>,
     params: DKGParams,
 ) -> (
@@ -269,8 +269,8 @@ pub fn gen_proof_inputs(
     PrivateCommit<Bls12_446>,
     [u8; METADATA_LEN],
 ) {
-    let pke_params = pke_params_from_dkg(params);
-    let mut rng = seeded_rng(*b"ZK_INPUT");
+    let pke_params = nist_pke_params_from_dkg(params);
+    let mut rng = nist_seeded_rng(*b"ZK_INPUT");
     let testcase = ZkTestcase::generate(&mut rng, pke_params);
     let ciphertext = testcase.encrypt(pke_params);
 
@@ -290,14 +290,14 @@ pub fn gen_proof_inputs(
 }
 
 /// Generate a ZK proof.
-pub fn gen_proof(
+pub fn nist_gen_proof(
     crs: &PublicParams<Bls12_446>,
     public_commit: &PublicCommit<Bls12_446>,
     private_commit: &PrivateCommit<Bls12_446>,
     metadata: &[u8; METADATA_LEN],
     compute_load: ComputeLoad,
 ) -> ProofV2<Bls12_446> {
-    let mut proof_seed_rng = seeded_rng(*b"ZK_PROOF");
+    let mut proof_seed_rng = nist_seeded_rng(*b"ZK_PROOF");
     let mut proof_seed = [0u8; 16];
     proof_seed_rng.fill_bytes(&mut proof_seed);
 
@@ -312,7 +312,7 @@ pub fn gen_proof(
 
 /// Verify `proof` using the two-step pairing mode.
 #[allow(clippy::result_unit_err)]
-pub fn verify_two_steps(
+pub fn nist_verify_two_steps(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,
     public_commit: &PublicCommit<Bls12_446>,
@@ -328,7 +328,7 @@ pub fn verify_two_steps(
 
 /// Verify `proof` using the batched pairing mode.
 #[allow(clippy::result_unit_err)]
-pub fn verify_batched(
+pub fn nist_verify_batched(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,
     public_commit: &PublicCommit<Bls12_446>,
@@ -344,14 +344,14 @@ pub fn verify_batched(
 
 /// Verify `proof` in both [`VerificationPairingMode::TwoSteps`] and
 /// [`VerificationPairingMode::Batched`] modes.
-pub fn run_verify(
+pub fn nist_run_verify(
     proof: &ProofV2<Bls12_446>,
     crs: &PublicParams<Bls12_446>,
     public_commit: &PublicCommit<Bls12_446>,
     metadata: &[u8; METADATA_LEN],
 ) {
-    verify_two_steps(proof, crs, public_commit, metadata)
+    nist_verify_two_steps(proof, crs, public_commit, metadata)
         .expect("❌ proof verification failed in TwoSteps mode");
-    verify_batched(proof, crs, public_commit, metadata)
+    nist_verify_batched(proof, crs, public_commit, metadata)
         .expect("❌ proof verification failed in Batched mode");
 }
