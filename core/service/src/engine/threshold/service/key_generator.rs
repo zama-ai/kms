@@ -21,8 +21,7 @@ use observability::{
         OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN_REQUEST,
         OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_COMPRESSED_KEYGEN,
         OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT,
-        OP_STANDARD_COMPRESSED_KEYGEN, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID,
-        TAG_KEY_ID, TAG_PARTY_ID,
+        OP_STANDARD_COMPRESSED_KEYGEN, OP_STANDARD_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -483,13 +482,8 @@ impl<
             &epoch_id,
         )
         .await?;
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, req_id.to_string()),
-            (TAG_CONTEXT_ID, context_id.to_string()),
-            (TAG_EPOCH_ID, epoch_id.to_string()),
-        ];
-        timer.tags(metric_tags.clone());
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
+        timer.tags(metric_tags);
 
         let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
@@ -1348,7 +1342,7 @@ impl<
 
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
-                crypto_storage
+                if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store(
                         req_id,
                         epoch_id,
@@ -1356,7 +1350,11 @@ impl<
                         pub_key_set,
                         meta_store,
                     )
-                    .await;
+                    .await
+                {
+                    tracing::error!("Failed to write threshold keys for request {req_id}: {e}");
+                    return;
+                }
             }
             ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
                 //Compute info for compressed keygen
@@ -1402,7 +1400,7 @@ impl<
                     meta_data: info,
                 };
 
-                crypto_storage
+                if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store_compressed(
                         req_id,
                         epoch_id,
@@ -1410,7 +1408,13 @@ impl<
                         &compressed_keyset,
                         meta_store,
                     )
-                    .await;
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to write compressed threshold keys for request {req_id}: {e}"
+                    );
+                    return;
+                }
             }
         }
 

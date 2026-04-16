@@ -54,7 +54,6 @@ use alloy_primitives::Address;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use serial_test::serial;
 
-#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -278,7 +277,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 }
 
 #[cfg(feature = "insecure")]
-#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
@@ -407,18 +405,13 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+/// Same intent as centralized negative test: corrupt signcryption for two custodians; invalid
+/// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
 #[cfg(feature = "insecure")]
-#[kms_test_tracing::traced_test]
 #[tokio::test]
 #[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
-    assert!(logs_contain(
-        "Could not validate signcryption for custodian role 1"
-    ));
-    assert!(logs_contain(
-        "Could not validate signcryption for custodian role 3"
-    ));
 }
 
 #[cfg(feature = "insecure")]

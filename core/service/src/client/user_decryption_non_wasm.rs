@@ -1,8 +1,8 @@
 use crate::client::client_wasm::Client;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::RequestId;
@@ -30,7 +30,6 @@ impl Client {
         key_id: &RequestId,
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
-        encryption_scheme: PkeSchemeType,
         extra_data: &[u8],
     ) -> anyhow::Result<(
         UserDecryptionRequest,
@@ -49,16 +48,22 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
-        // NOTE: we only support MlKem512 in the latest version
-        let mut encryption = Encryption::new(encryption_scheme, &mut self.rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut self.rng);
         let (enc_sk, enc_pk) = encryption.keygen()?;
 
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
-                enc_key: enc_pk
-                    .to_legacy_bytes()
-                    .expect("Failed to serialize ephemeral encryption key"),
+                enc_key: {
+                    let mut buf = Vec::new();
+                    tfhe::safe_serialization::safe_serialize(
+                        &enc_pk,
+                        &mut buf,
+                        SAFE_SER_SIZE_LIMIT,
+                    )
+                    .expect("Failed to serialize ephemeral encryption key");
+                    buf
+                },
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),

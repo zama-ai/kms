@@ -2,6 +2,27 @@ use thiserror::Error;
 
 use crate::cryptography::error::CryptographyError;
 
+/// Why a single custodian setup message was skipped during validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupSkipReason {
+    InvalidTimestamp,
+    InvalidHeader,
+    InvalidRole,
+    DuplicateRole,
+}
+
+/// Why a single custodian recovery output was skipped during filtering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoverySkipReason {
+    WrongOperator,
+    InvalidRole,
+    MissingVerificationKey,
+    MissingSigncryption,
+    InvalidSigncryption,
+    ParseError,
+    DuplicateRole,
+}
+
 #[derive(Error, Debug)]
 pub enum BackupError {
     #[error(transparent)]
@@ -38,4 +59,21 @@ pub enum BackupError {
     SafeDeserializationError(String),
     #[error("operator error: {0}")]
     OperatorError(String),
+    #[error(
+        "not enough valid custodian setup messages: expected at least {expected_min}, got {received}, skipped: {skipped:?}"
+    )]
+    SetupValidationFailed {
+        expected_min: usize,
+        received: usize,
+        skipped: Vec<SetupSkipReason>,
+    },
+    #[error(
+        "not enough valid recovery outputs: expected at least {required_min}, got {received} (threshold parameter: {threshold}), skipped: {skipped:?}"
+    )]
+    RecoveryThresholdNotMet {
+        required_min: usize,
+        received: usize,
+        threshold: usize,
+        skipped: Vec<RecoverySkipReason>,
+    },
 }

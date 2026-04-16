@@ -7,8 +7,7 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
-    TAG_CONTEXT_ID, TAG_CRS_ID, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
 };
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 
@@ -50,18 +49,13 @@ pub async fn crs_gen_impl<
     };
 
     let permit = service.rate_limiter.start_crsgen(op_tag).await?;
-    let mut timer = METRICS
+    let timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
     let max_bits = inner.max_num_bits;
     let verified = validate_crs_gen_request(inner, op_tag)?;
-    let metric_tags = vec![
-        (TAG_CRS_ID, verified.req_id.to_string()),
-        (TAG_CONTEXT_ID, verified.context_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
 
     if !service
         .context_manager
@@ -236,9 +230,13 @@ pub(crate) async fn crs_gen_background<
         }
     };
 
-    crypto_storage
+    if let Err(e) = crypto_storage
         .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-        .await;
+        .await
+    {
+        tracing::error!("Failed to write CRS for request {req_id}: {e}");
+        return;
+    }
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
     tracing::info!(

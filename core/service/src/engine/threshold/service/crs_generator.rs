@@ -13,8 +13,7 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard},
     metrics_names::{
-        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
-        TAG_CRS_ID, TAG_PARTY_ID,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -108,12 +107,8 @@ impl<
             .map_err(|e| {
                 MetricedError::new(op_tag, Some(verified.req_id), e, tonic::Code::NotFound)
             })?;
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_CRS_ID, verified.req_id.as_str()),
-            (TAG_CONTEXT_ID, verified.context_id.as_str()),
-        ];
-        timer.tags(metric_tags.clone());
+        let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
+        timer.tags(metric_tags);
 
         // Validate the request ID before proceeding
         self.crypto_storage
@@ -123,7 +118,7 @@ impl<
                 MetricedError::new(
                     op_tag,
                     None,
-                    format!("Could not check crs existance in storage: {e}"),
+                    format!("Could not check crs existence in storage: {e}"),
                     tonic::Code::AlreadyExists,
                 )
             })?;
@@ -418,9 +413,13 @@ impl<
 
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
-        crypto_storage
+        if let Err(e) = crypto_storage
             .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-            .await;
+            .await
+        {
+            tracing::error!("Failed to write CRS for request {req_id}: {e}");
+            return;
+        }
 
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);

@@ -20,9 +20,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-        TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, TAG_PARTY_ID,
+        TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -301,9 +300,6 @@ impl<
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()),
-            (TAG_CONTEXT_ID, context_id.as_str()),
-            (TAG_EPOCH_ID, epoch_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,
                 dec_mode.as_str_name().to_string(),
@@ -883,9 +879,12 @@ mod tests {
                 fhe_key_set,
                 Arc::clone(&key_meta_store),
             )
-            .await;
+            .await
+            .unwrap_or_else(|_| {
+                panic!("failed to write threshold keys for key {key_id} in test setup")
+            });
         {
-            // check existance
+            // check existence
             let _guard = public_decryptor
                 .crypto_storage
                 .read_guarded_threshold_fhe_keys(&key_id, &epoch_id)
@@ -936,7 +935,6 @@ mod tests {
         public_decryptor.set_bucket_size(100);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);

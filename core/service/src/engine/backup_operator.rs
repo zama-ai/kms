@@ -1,4 +1,5 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
+use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
@@ -552,6 +553,7 @@ async fn filter_custodian_data(
     ephemeral_enc_key: &UnifiedPublicEncKey,
 ) -> anyhow::Result<HashMap<Role, InternalCustodianRecoveryOutput>> {
     let mut parsed_custodian_rec: HashMap<Role, InternalCustodianRecoveryOutput> = HashMap::new();
+    let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
     for cur_recovery_output in &custodian_recovery_outputs {
         let current_verf_key: PublicSigKey =
             bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
@@ -561,6 +563,7 @@ async fn filter_custodian_data(
                 current_verf_key.address(),
                 my_verf_key.address(),
             );
+            skip_reasons.push(RecoverySkipReason::WrongOperator);
             continue;
         }
         if cur_recovery_output.custodian_role == 0
@@ -570,6 +573,7 @@ async fn filter_custodian_data(
                 "Received recovery output with invalid custodian role {}. The output will be ignored.",
                 cur_recovery_output.custodian_role,
             );
+            skip_reasons.push(RecoverySkipReason::InvalidRole);
             continue;
         }
         let cur_verf = match recovery_material.custodian_context().custodian_nodes.get(
@@ -581,6 +585,7 @@ async fn filter_custodian_data(
                     "Could not find verification key for custodian role {}",
                     cur_recovery_output.custodian_role
                 );
+                skip_reasons.push(RecoverySkipReason::MissingVerificationKey);
                 continue;
             }
         };
@@ -599,6 +604,7 @@ async fn filter_custodian_data(
                     "Could not find signcryption for custodian role {}",
                     cur_recovery_output.custodian_role
                 );
+                skip_reasons.push(RecoverySkipReason::MissingSigncryption);
                 continue;
             }
         };
@@ -610,40 +616,51 @@ async fn filter_custodian_data(
                 "Could not validate signcryption for custodian role {}",
                 cur_recovery_output.custodian_role
             );
+            skip_reasons.push(RecoverySkipReason::InvalidSigncryption);
             continue;
         }
         match <InternalCustodianRecoveryOutput as TryFrom<_>>::try_from(
             cur_recovery_output.to_owned(),
         ) {
-            Ok(output) => {
-                match parsed_custodian_rec.entry(output.custodian_role) {
-                    std::collections::hash_map::Entry::Occupied(_) => {
-                        /* do nothing if occupied */
-                        tracing::warn!(
-                            "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
-                            current_verf_key.address(),
-                        );
-                    }
-                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert(output);
-                    }
+            Ok(output) => match parsed_custodian_rec.entry(output.custodian_role) {
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    tracing::warn!(
+                        "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
+                        current_verf_key.address(),
+                    );
+                    skip_reasons.push(RecoverySkipReason::DuplicateRole);
                 }
-            }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(output);
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
                     current_verf_key.address(),
                 );
+                skip_reasons.push(RecoverySkipReason::ParseError);
                 continue;
             }
         }
     }
-    if parsed_custodian_rec.len() < 1 + recovery_material.custodian_context().threshold as usize {
-        return Err(anyhow_error_and_log(format!(
-            "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-            parsed_custodian_rec.len(),
-            recovery_material.custodian_context().threshold
-        )));
+    let threshold = recovery_material.custodian_context().threshold as usize;
+    let required_min = threshold + 1;
+    if parsed_custodian_rec.len() < required_min {
+        let received = parsed_custodian_rec.len();
+        tracing::error!(
+            received,
+            threshold,
+            ?skip_reasons,
+            "Cannot recover the backup decryption key: not enough valid recovery outputs"
+        );
+        return Err(BackupError::RecoveryThresholdNotMet {
+            required_min,
+            received,
+            threshold,
+            skipped: skip_reasons,
+        }
+        .into());
     }
     Ok(parsed_custodian_rec)
 }
@@ -1209,6 +1226,7 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::error::{BackupError, RecoverySkipReason};
     use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
@@ -1327,7 +1345,20 @@ mod tests {
         }
     }
 
-    #[kms_test_tracing::traced_test]
+    fn expect_threshold_not_met(err: anyhow::Error) -> (usize, Vec<RecoverySkipReason>) {
+        let backup_err = err
+            .downcast_ref::<BackupError>()
+            .expect("expected BackupError");
+        if let BackupError::RecoveryThresholdNotMet {
+            received, skipped, ..
+        } = backup_err
+        {
+            (*received, skipped.clone())
+        } else {
+            panic!("expected RecoveryThresholdNotMet, got: {backup_err}");
+        }
+    }
+
     #[tokio::test]
     async fn test_filter_custodian_missing_cus_output() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1341,13 +1372,14 @@ mod tests {
         outputs.push(cus_2);
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(logs_contain(
-            "Could not find signcryption for custodian role"
-        ));
-        assert!(result.is_err());
+        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
+        assert_eq!(received, 0);
+        assert!(
+            skipped.contains(&RecoverySkipReason::MissingSigncryption),
+            "expected MissingSigncryption in skip reasons: {skipped:?}"
+        );
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1361,11 +1393,14 @@ mod tests {
             &enc_key,
         )
         .await;
-        assert!(result.is_err());
-        assert!(logs_contain("Cannot recover the backup decryption key"));
+        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
+        assert_eq!(received, 0);
+        assert!(
+            skipped.contains(&RecoverySkipReason::WrongOperator),
+            "expected WrongOperator in skip reasons: {skipped:?}"
+        );
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
@@ -1375,16 +1410,16 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
-        assert!(logs_contain(
-            "Received recovery output with invalid custodian role"
-        ));
+        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
+        assert_eq!(received, 0);
+        assert!(
+            skipped.contains(&RecoverySkipReason::InvalidRole),
+            "expected InvalidRole in skip reasons: {skipped:?}"
+        );
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_signature() {
-        // Note there is no node information in the dummy material
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
         let outputs = vec![
             dummy_output_for_operator(1, verf_key.clone()),
@@ -1393,22 +1428,16 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
-        assert!(logs_contain(
-            "Could not validate signcryption for custodian"
-        ));
+        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
+        assert_eq!(received, 0);
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Only received 0 valid recovery outputs")
-        ); // Signatures are wrong so no valid outputs
+            skipped.contains(&RecoverySkipReason::InvalidSigncryption),
+            "expected InvalidSigncryption in skip reasons: {skipped:?}"
+        );
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_missing_verification_key() {
-        // Note there is no node information in the dummy material
         let (mut recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
         recovery_material
             .payload
@@ -1421,10 +1450,12 @@ mod tests {
         ];
         let result =
             filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
-        assert!(result.is_err());
-        assert!(logs_contain(
-            "Could not find verification key for custodian role"
-        ));
+        let (received, skipped) = expect_threshold_not_met(result.unwrap_err());
+        assert_eq!(received, 0);
+        assert!(
+            skipped.contains(&RecoverySkipReason::MissingVerificationKey),
+            "expected MissingVerificationKey in skip reasons: {skipped:?}"
+        );
     }
     #[tokio::test]
     async fn test_update_backup_vault() {

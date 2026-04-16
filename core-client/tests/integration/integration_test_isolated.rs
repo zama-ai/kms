@@ -235,7 +235,6 @@ use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
 use kms_lib::testing::prelude::*;
-use kms_test_tracing::init_logging;
 use observability::conf::Settings;
 use serde::Deserialize;
 use serial_test::serial;
@@ -245,6 +244,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
+use test_utils::test_logging::init_test_logging as init_logging;
 #[cfg(feature = "threshold_tests")]
 use tfhe::zk::CompactPkeCrs;
 use tracing::info;

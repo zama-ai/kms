@@ -24,7 +24,7 @@ use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_REQUEST,
-    OP_KEYGEN_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    OP_KEYGEN_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
@@ -55,7 +55,7 @@ pub async fn key_gen_impl<
     // TODO add serial lock to have similar flow to threshold case
     // Acquire the serial lock to make sure no other keygen is running concurrently
     // let _guard = service.serial_lock.lock().await;
-    let mut timer = METRICS
+    let timer = METRICS
         .time_operation(op_tag)
         // Use a constant party ID since this is the central KMS
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
@@ -73,12 +73,7 @@ pub async fn key_gen_impl<
         eip712_domain,
         extra_data,
     ) = validate_key_gen_request(inner, op_tag)?;
-    let metric_tags = vec![
-        (TAG_KEY_ID, req_id.to_string()),
-        (TAG_CONTEXT_ID, context_id.to_string()),
-        (TAG_EPOCH_ID, epoch_id.to_string()),
-    ];
-    timer.tags(metric_tags.clone());
+
     tracing::info!("centralized key-gen with request id: {:?}", req_id);
 
     if !service
@@ -94,7 +89,7 @@ pub async fn key_gen_impl<
         ));
     }
 
-    // Check for existance of request preprocessing ID
+    // Check for existence of request preprocessing ID
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
@@ -323,7 +318,7 @@ pub(crate) async fn key_gen_background<
 
             match keygen_result {
                 CentralizedKeyGenResult::Uncompressed(fhe_key_set, key_info) => {
-                    crypto_storage
+                    if let Err(e) = crypto_storage
                         .write_centralized_keys_with_meta_store(
                             req_id,
                             epoch_id,
@@ -331,10 +326,16 @@ pub(crate) async fn key_gen_background<
                             fhe_key_set,
                             meta_store,
                         )
-                        .await;
+                        .await
+                    {
+                        tracing::error!(
+                            "Failed to write centralized keys for request {req_id}: {e}"
+                        );
+                        return;
+                    }
                 }
                 CentralizedKeyGenResult::Compressed(compressed_keyset, key_info) => {
-                    crypto_storage
+                    if let Err(e) = crypto_storage
                         .write_centralized_compressed_keys_with_meta_store(
                             req_id,
                             epoch_id,
@@ -342,7 +343,13 @@ pub(crate) async fn key_gen_background<
                             &compressed_keyset,
                             meta_store,
                         )
-                        .await;
+                        .await
+                    {
+                        tracing::error!(
+                            "Failed to write compressed centralized keys for request {req_id}: {e}"
+                        );
+                        return;
+                    }
                 }
             }
 
@@ -533,7 +540,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[kms_test_tracing::traced_test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_invalid_arg_preproc_id").unwrap();
