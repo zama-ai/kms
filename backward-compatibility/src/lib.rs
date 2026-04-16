@@ -798,7 +798,6 @@ pub struct InternalRecoveryRequestTest {
     pub test_filename: Cow<'static, str>,
     pub amount: u8,
     pub state: u64,
-    pub mpc_context_id: [u8; 32],
 }
 
 impl TestType for InternalRecoveryRequestTest {

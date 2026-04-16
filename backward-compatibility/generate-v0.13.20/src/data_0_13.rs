@@ -478,7 +478,6 @@ const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalReco
     test_filename: Cow::Borrowed("internal_recovery_request"),
     amount: 10,
     state: 300,
-    mpc_context_id: [7u8; 32],
 };
 
 // KMS test
