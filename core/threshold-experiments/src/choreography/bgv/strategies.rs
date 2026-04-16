@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use tonic::transport::server::Router;
+use super::grpc::ExperimentalGrpcChoreography;
+use crate::choreography::server::ChoreoRoutingHelper;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
@@ -9,8 +10,7 @@ use algebra::{
 use threshold_execution::online::preprocessing::PreprocessorFactory;
 use threshold_networking::grpc::GrpcNetworkingManager;
 use threshold_types::role::Role;
-use crate::choreography::server::ChoreoRoutingHelper;
-use super::grpc::ExperimentalGrpcChoreography;
+use tonic::transport::server::Router;
 
 pub struct ExperimentalChoreoRoutingHelper;
 

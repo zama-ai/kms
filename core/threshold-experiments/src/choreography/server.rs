@@ -6,7 +6,9 @@ use algebra::{
 };
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use threshold_execution::online::preprocessing::{PreprocessorFactory, create_memory_factory, create_redis_factory};
+use threshold_execution::online::preprocessing::{
+    PreprocessorFactory, create_memory_factory, create_redis_factory,
+};
 use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
 use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use threshold_types::role::Role;
@@ -143,4 +145,3 @@ where
         _ => Ok(()),
     }
 }
-

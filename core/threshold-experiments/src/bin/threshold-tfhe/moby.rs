@@ -3,9 +3,9 @@ use observability::conf::{Settings, TelemetryConfig};
 use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
+use threshold_experiments::choreography;
 use threshold_experiments::choreography::tfhe_rs::strategies::DefaultChoreoRoutingHelper;
 use threshold_experiments::conf::party::PartyConf;
-use threshold_experiments::choreography;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]
@@ -94,7 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tracer_provider = init_tracing(&telemetry_config).await?;
 
     // Run the server and get the result
-    let result = choreography::server::run::<EXTENSION_DEGREE>(&settings, DefaultChoreoRoutingHelper).await;
+    let result =
+        choreography::server::run::<EXTENSION_DEGREE>(&settings, DefaultChoreoRoutingHelper).await;
 
     // After the server has completed, shut down telemetry
     // Sleep to let some time for the process to export all the spans before shutdown

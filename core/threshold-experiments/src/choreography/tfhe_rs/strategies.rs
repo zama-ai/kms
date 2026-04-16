@@ -14,11 +14,14 @@ use threshold_types::role::Role;
 use crate::choreography::tfhe_rs::grpc::GrpcChoreography;
 use threshold_execution::{
     large_execution::{
-        coinflip::RealCoinflip, double_sharing::RealDoubleSharing,
-        local_double_share::RealLocalDoubleShare, local_single_share::RealLocalSingleShare,
+        coinflip::RealCoinflip,
+        double_sharing::RealDoubleSharing,
+        local_double_share::RealLocalDoubleShare,
+        local_single_share::RealLocalSingleShare,
         offline::{RealLargePreprocessing, SecureLargePreprocessing},
         share_dispute::RealShareDispute,
-        single_sharing::RealSingleSharing, vss::RealVss,
+        single_sharing::RealSingleSharing,
+        vss::RealVss,
     },
     malicious_execution::{
         communication::malicious_broadcast::MaliciousBroadcastSenderEcho,

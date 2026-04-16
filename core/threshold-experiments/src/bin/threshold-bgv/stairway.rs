@@ -5,9 +5,9 @@ use observability::conf::{Settings, TelemetryConfig};
 use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
+use threshold_experiments::choreography;
 use threshold_experiments::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
 use threshold_experiments::conf::party::PartyConf;
-use threshold_experiments::choreography;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]

@@ -1,6 +1,7 @@
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
+use algebra::structure_traits::{ErrorCorrect, Invert};
 use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
 use rand::RngCore;
@@ -10,7 +11,6 @@ use threshold_execution::runtime::sessions::session_parameters::GenericParameter
 use threshold_execution::small_execution::prf::PRSSConversions;
 use threshold_execution::small_execution::prss::DerivePRSSState;
 use threshold_types::session_id::SessionId;
-use algebra::structure_traits::{ErrorCorrect, Invert};
 
 /// Fills tracing span fields with aggregate network and memory stats for multiple parallel sessions:
 /// - total number of sessions
