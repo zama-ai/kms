@@ -95,8 +95,8 @@ name = "threshold-gen-tls-certs"
 path = "src/bin/threshold-gen-tls-certs.rs"
 
 [[bin]]
-name = "non-threshold-kat"
-path = "src/bin/non-threshold/kat.rs"
+name = "non-threshold-tfhe-kat"
+path = "src/bin/non-threshold/tfhe-kat.rs"
 
 [[bin]]
 name = "non-threshold-zk-pok-kat"
@@ -104,19 +104,19 @@ path = "src/bin/non-threshold/zk-pok-kat.rs"
 
 [[bin]]
 name = "moby"
-path = "src/bin/tfhe/moby.rs"
+path = "src/bin/threshold-tfhe/moby.rs"
 
 [[bin]]
 name = "mobygo"
-path = "src/bin/tfhe/mobygo.rs"
+path = "src/bin/threshold-tfhe/mobygo.rs"
 
 [[bin]]
 name = "stairway"
-path = "src/bin/bgv/stairway.rs"
+path = "src/bin/threshold-bgv/stairway.rs"
 
 [[bin]]
 name = "stairwayctl"
-path = "src/bin/bgv/stairwayctl.rs"
+path = "src/bin/threshold-bgv/stairwayctl.rs"
 
 [[bench]]
 name = "ddec"

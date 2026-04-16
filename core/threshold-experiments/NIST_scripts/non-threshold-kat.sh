@@ -21,7 +21,7 @@
 
 
 echo "Generating and verifying TFHE KAT ..."
-cargo run --bin non-threshold-kat --release --
+cargo run --bin non-threshold-tfhe-kat --release --
 
 echo "Generating and verifying ZK PoK KAT ..."
 cargo run --bin non-threshold-zk-pok-kat --release
