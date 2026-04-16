@@ -21,7 +21,6 @@ error-utils.workspace = true
 threshold-execution = { workspace = true, features = ["malicious_strategies"] }
 futures.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true
 hex.workspace = true
 itertools.workspace = true
 minijinja = { workspace = true, optional = true }
@@ -72,9 +71,6 @@ thread-handles.workspace = true
 test-utils.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 threshold-experiments = { workspace = true, features = ["measure_memory"] }
-
-[package.metadata.cargo-machete]
-ignored = ["getrandom"]
 
 [lib]
 crate-type = ["lib", "cdylib"]

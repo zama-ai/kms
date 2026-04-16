@@ -68,6 +68,7 @@ clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
+getrandom.workspace = true # For some weird reason it needs to be here for wasm builds ? (even though we don't use it anywhere ?)
 hashing.workspace = true
 hex.workspace = true
 http-legacy.workspace = true
@@ -136,7 +137,6 @@ zeroize.workspace = true
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
-threshold-experiments.workspace = true
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
@@ -179,7 +179,7 @@ non-wasm = [
     "dep:x509-parser",
 ]
 slow_tests = ["testing"]
-wasm_tests = ["testing"]
+wasm_tests = ["testing", "algebra/extension_degree_4"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
