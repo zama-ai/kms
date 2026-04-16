@@ -879,11 +879,9 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
 /// provided GLWE key. The function also returns each party's share of the
 /// freshly sampled LWE secret key.
 ///
-/// **Security note:** production callers MUST drop the returned
-/// `LweSecretKeyShare` immediately — a quorum of reconstructed shares
-/// recovers the PRF key, which defeats the whole point of this protocol.
-/// The share is returned only so that tests can reconstruct the PRF key
-/// and validate the BSK against a plaintext reference.
+/// **Security note:** the returned `LweSecretKeyShare` only exists in case
+/// it is needed to generate another key. Normally it should not be used in
+/// another protocol.
 #[instrument(name="TFHE.HomPRF-BSK-Gen", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_homprf_bsk_gen<
     Z: BaseRing,
@@ -903,6 +901,10 @@ pub async fn distributed_homprf_bsk_gen<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // TODO(zama-ai/kms-internal#2980) after tfhe-rs upgrade, we should make this
+    // function into a pub(crate) and integrate it into a normal keygen as the
+    // normal keygen would include this bsk.
+
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -1020,6 +1022,8 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::tests::helper::tests_and_benches::execute_protocol_large_w_extra_data;
+    #[cfg(feature = "slow_tests")]
+    use crate::tfhe_internals::parameters::BC_PARAMS_SNS;
     use crate::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file;
     use crate::{
         endpoints::keygen::conformance::check_drift_technique_key,
@@ -1045,6 +1049,7 @@ pub mod tests {
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
+    use algebra::sharing::share::Share;
     use algebra::{
         base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
@@ -1680,7 +1685,7 @@ pub mod tests {
         n: usize,
         t: usize,
         rng: &mut R,
-    ) -> Vec<Vec<algebra::sharing::share::Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+    ) -> Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
@@ -1754,7 +1759,6 @@ pub mod tests {
                 glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
             },
         };
-        use algebra::sharing::share::Share;
         use test_utils::{read_element, write_element};
 
         // first we need to generate two server keys
@@ -2778,7 +2782,7 @@ pub mod tests {
     /// Given the PRF's small LWE secret key, a seed, the shortint params, and
     /// the `random_bits_count`, returns the expected OPRF output in
     /// `[0, 2^random_bits_count)`.
-    // #[cfg(feature = "slow_tests")]
+    #[cfg(feature = "slow_tests")]
     fn oprf_expected_plaintext(
         prf_lwe_sk: &tfhe::core_crypto::prelude::LweSecretKeyView<u64>,
         seed: tfhe_csprng::seeders::Seed,
@@ -2842,25 +2846,18 @@ pub mod tests {
         prf(plain_prf_input)
     }
 
-    /// Combined consistency + end-to-end correctness test for the distributed
-    /// homomorphic PRF bootstrap key. After running DKG and the distributed
-    /// homprf BSK generation, this test performs two verifications:
-    ///
-    /// 1. BSK consistency — asserts all parties produced the same seeded BSK.
-    /// 2. OPRF correctness — mirrors `oprf_compare_plain_from_seed` in tfhe-rs:
-    ///    reconstructs the PRF's LWE secret key (and the GLWE secret key) from
-    ///    the parties' shares, plugs the distributed BSK into a shortint
-    ///    ServerKey, runs `generate_oblivious_pseudo_random` for several seeds,
-    ///    and asserts each decrypted ciphertext matches the plaintext reference.
-    // #[cfg(feature = "slow_tests")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial_test::serial]
     async fn homprf_bsk_gen_and_oprf_correctness_f4() {
-        use crate::runtime::sessions::small_session::SmallSession;
-        use crate::tests::helper::tests_and_benches::execute_protocol_small;
         use crate::tfhe_internals::lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof;
+        use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
+        use crate::tfhe_internals::test_feature::{
+            gen_key_set, keygen_all_party_shares_from_keyset,
+        };
         use crate::tfhe_internals::utils::reconstruct_bit_vec;
-        use algebra::sharing::share::Share;
+        use aes_prng::AesRng;
+        use rand::SeedableRng;
         use std::collections::HashMap;
         use tfhe::core_crypto::prelude::{
             FourierLweBootstrapKey, GlweSecretKey,
@@ -2873,27 +2870,41 @@ pub mod tests {
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        let params = PARAMS_TEST_BK_SNS;
+        // NOTE: it is not possible to use small parameters as that doesn't work for oprf
+        let params = BC_PARAMS_SNS;
         let num_parties = 4;
         let threshold = 1u8;
         let tag = tfhe::Tag::default();
 
+        // Generate centralized keys and secret-share the GLWE key.
+        let mut rng = AesRng::seed_from_u64(42);
+        let keyset = gen_key_set(params, tag.clone(), &mut rng);
+        let pk = keyset.public_keys.clone();
+        let ciphertext_params = params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+        let key_shares = keygen_all_party_shares_from_keyset::<_, 4>(
+            &keyset,
+            ciphertext_params,
+            &mut rng,
+            num_parties,
+            threshold as usize,
+        )
+        .unwrap();
+        let mut glwe_shares_map: HashMap<_, _> = key_shares
+            .into_iter()
+            .enumerate()
+            .map(|(i, ks)| {
+                let role = Role::indexed_from_one(i + 1);
+                (role, ks.glwe_secret_key_share.unsafe_cast_to_z128())
+            })
+            .collect();
+
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, 4>>, _: Option<String>| {
-            let tag = tag.clone();
+            let glwe_sk_share = glwe_shares_map.remove(&session.my_role()).unwrap();
             async move {
                 let my_role = session.my_role();
                 let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
-
-                let (pk, sk) = super::SecureOnlineDistributedKeyGen128::<4>::keygen(
-                    &mut session,
-                    &mut dkg_preproc,
-                    params,
-                    tag,
-                )
-                .await
-                .unwrap();
-
-                let glwe_sk_share = sk.glwe_secret_key_share.clone().unsafe_cast_to_z128();
 
                 let (seeded_bsk, prf_lwe_sk_share) =
                     super::distributed_homprf_bsk_gen::<Z128, _, _, u64, 4>(
@@ -2905,7 +2916,7 @@ pub mod tests {
                     .await
                     .unwrap();
 
-                (my_role, pk, seeded_bsk, prf_lwe_sk_share, glwe_sk_share)
+                (my_role, seeded_bsk, prf_lwe_sk_share, glwe_sk_share)
             }
         };
 
@@ -2922,18 +2933,15 @@ pub mod tests {
         .await;
 
         // Sanity: all parties produced the same seeded BSK.
-        let bsk_ref = results[0].2.clone();
-        for (_role, _pk, bsk, _lwe_share, _glwe_share) in &results[1..] {
+        let bsk_ref = results[0].1.clone();
+        for (_role, bsk, _lwe_share, _glwe_share) in &results[1..] {
             assert_eq!(bsk, &bsk_ref);
         }
-
-        // Take pk from the first party (deterministic across parties).
-        let pk = results[0].1.clone();
 
         // Collect prf-LWE-sk shares and GLWE-sk shares from all parties.
         let mut prf_lwe_shares: HashMap<Role, Vec<Share<ResiduePoly<Z128, 4>>>> = HashMap::new();
         let mut glwe_shares: HashMap<Role, Vec<Share<ResiduePoly<Z128, 4>>>> = HashMap::new();
-        for (role, _pk, _bsk, prf_lwe_share, glwe_share) in &results {
+        for (role, _bsk, prf_lwe_share, glwe_share) in &results {
             prf_lwe_shares.insert(*role, prf_lwe_share.data.clone());
             glwe_shares.insert(*role, glwe_share.data.clone());
         }
@@ -2942,7 +2950,6 @@ pub mod tests {
         let lwe_dim = params_basics.lwe_dimension().0;
         let glwe_total = params_basics.glwe_sk_num_bits();
         let polynomial_size = params_basics.polynomial_size();
-        let ciphertext_params = params_basics.to_classic_pbs_parameters();
 
         // PARAMS_TEST_BK_SNS uses KS-PBS order — the OPRF output is post-PBS,
         // encrypted under the big LWE key (extracted from GLWE). If this ever
@@ -2988,8 +2995,8 @@ pub mod tests {
         // bootstrapping key with our distributed PRF BSK. The KSK is left
         // intact — `generate_oblivious_pseudo_random` does not use it in
         // KS-PBS order.
-        let mut shortint_sk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
-        match &mut shortint_sk.atomic_pattern {
+        let mut shortint_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        match &mut shortint_server_key.atomic_pattern {
             AtomicPatternServerKey::Standard(sap) => match &mut sap.bootstrapping_key {
                 ShortintBootstrappingKey::Classic { bsk, .. } => {
                     *bsk = fourier_prf_bsk;
@@ -3016,11 +3023,11 @@ pub mod tests {
 
         // Run the homomorphic PRF for a range of seeds and compare each
         // decrypted output to the plaintext reference.
-        let random_bits_count: u64 = 2; // <= log2(message_modulus) = log2(4) = 2
+        let random_bits_count: u64 = ciphertext_params.message_modulus_log().into();
         let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
         for s in 0u128..50u128 {
             let seed = Seed(s);
-            let img = shortint_sk.generate_oblivious_pseudo_random(seed, random_bits_count);
+            let img = shortint_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
             let actual = shortint_ck.decrypt_message_and_carry(&img);
             let expected = oprf_expected_plaintext(
                 &reconstructed_prf_lwe_sk.as_view(),
@@ -3030,5 +3037,28 @@ pub mod tests {
             );
             assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
         }
+
+        // Negative test: using the original DKG server key (without the PRF
+        // BSK) must produce mismatches against oprf_expected_plaintext.
+        let wrong_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        let mut mismatches = 0u64;
+        for s in 0u128..50u128 {
+            let seed = Seed(s);
+            let img = wrong_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
+            let actual = shortint_ck.decrypt_message_and_carry(&img);
+            let expected = oprf_expected_plaintext(
+                &reconstructed_prf_lwe_sk.as_view(),
+                seed,
+                shortint_params,
+                random_bits_count,
+            );
+            if actual != expected {
+                mismatches += 1;
+            }
+        }
+        assert!(
+            mismatches > 0,
+            "expected mismatches when using the wrong (non-PRF) server key, but all 50 matched"
+        );
     }
 }
