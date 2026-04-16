@@ -182,7 +182,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
-                .map_err(|e| {
+                .ok_or_else(|| {
                     anyhow::anyhow!(
                         "No ciphertext found for custodian role: {}",
                         custodian.role()
