@@ -387,7 +387,6 @@ where
     // =========================
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
-    /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material<T: Clone>(
         &self,
         req_id: &RequestId,
@@ -398,10 +397,6 @@ where
         // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
         let mut pub_storage = self.public_storage.lock().await;
         let mut priv_storage = self.private_storage.lock().await;
-        let back_vault = match self.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
-        };
 
         let f1 = async {
             let pk_result = delete_pk_at_request_id(&mut (*pub_storage), req_id).await;
@@ -451,43 +446,8 @@ where
             }
             result.is_err()
         };
-        let f3 = async {
-            match back_vault {
-                Some(mut guarded_backup_vault) => {
-                    let result = match kms_type {
-                        KMSType::Centralized => {
-                            delete_at_request_and_epoch_id(
-                                &mut (*guarded_backup_vault),
-                                req_id,
-                                epoch_id,
-                                &PrivDataType::FhePrivateKey.to_string(),
-                            )
-                            .await
-                        }
-                        KMSType::Threshold => {
-                            delete_at_request_and_epoch_id(
-                                &mut (*guarded_backup_vault),
-                                req_id,
-                                epoch_id,
-                                &PrivDataType::FheKeyInfo.to_string(),
-                            )
-                            .await
-                        }
-                    };
-                    if let Err(e) = &result {
-                        tracing::warn!(
-                            "Failed to delete FHE key info from backup storage for request {}: {}",
-                            req_id,
-                            e
-                        );
-                    }
-                    result.is_err()
-                }
-                None => false,
-            }
-        };
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        if r1 || r2 || r3 {
+        let (r1, r2) = tokio::join!(f1, f2);
+        if r1 || r2 {
             tracing::error!("Failed to delete key material for request {}", req_id);
         } else {
             tracing::info!("Deleted all key material for request {}", req_id);
@@ -755,7 +715,7 @@ where
                 Ok(_) => {}
                 Err(e) => {
                     tracing::error!("Failed to insert request ID {req_id} into meta store: {e}",);
-                    self.purge_backup_material(&req_id, guarded_meta_store)
+                    self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
                         .await;
                     return;
                 }
@@ -764,11 +724,11 @@ where
             if pub_res {
                 if let Err(e) = guarded_meta_store.update(&req_id, Ok(recovery_material.clone())) {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
-                    self.purge_backup_material(&req_id, guarded_meta_store)
+                    self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
                         .await;
                 }
             } else {
-                self.purge_backup_material(&req_id, guarded_meta_store)
+                self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
                     .await;
                 tracing::error!(
                     "Failed to store backup keys for request {}: pub_res: {}",
@@ -808,7 +768,7 @@ where
 
     /// Tries to delete all the data related to a custodian context (used for backup) for a specific context id [RequestId].
     /// WARNING: This also deletes ALL backups of a given context. Hence the method should only be used to clean up.
-    pub async fn purge_backup_material(
+    pub async fn purge_backup_material_and_backedup_content(
         &self,
         req_id: &RequestId,
         mut guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,

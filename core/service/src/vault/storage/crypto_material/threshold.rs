@@ -531,7 +531,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
-    /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material<T: Clone>(
         &self,
         req_id: &RequestId,
