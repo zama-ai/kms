@@ -48,6 +48,7 @@ jobs:
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
+      changes-tools: ${{ steps.filter.outputs.tools }}
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
@@ -233,6 +234,7 @@ jobs:
       needs.check-changes.outputs.changes-core-threshold == 'true' ||
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
       github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
@@ -282,6 +284,7 @@ jobs:
       needs.check-changes.outputs.changes-core-threshold == 'true' ||
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
@@ -321,6 +324,7 @@ jobs:
       needs.check-changes.outputs.changes-core-threshold == 'true' ||
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
       github.ref == 'refs/heads/main'
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
@@ -609,7 +613,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true'
+    if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true' ||
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
