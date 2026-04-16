@@ -82,7 +82,7 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating meta store for"),
+        err.contains("Failed to update meta store for CRS"),
         "expected meta-store update failure when empty, got: {err}"
     );
     {
@@ -141,7 +141,7 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating meta store for"),
+        err.contains("Failed to update meta store for CRS"),
         "expected meta-store conflict on double write, got: {err}"
     );
     {
@@ -178,7 +178,7 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Storage write failed for CRS"),
+        err.contains("Failed to write CRS"),
         "expected underlying storage failure, got: {err}"
     );
 
