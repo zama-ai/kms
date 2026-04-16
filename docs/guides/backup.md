@@ -49,14 +49,14 @@ $ cargo run --bin kms-custodian verify --seed-phrase "stick essence exhaust bunk
 
 Run the CLI tool with the `decrypt` command in order to decrypt a backup, and then reencrypt it under a supplied operator keyset. More specifically:
 ```bash
-$ kms-backup decrypt --seed-phrase <the seed phrased used for generation> --randomness <random string of chars> --custodian-role <1-index role> --recovery-request-path <path and name of the file where the operator recovery request reside> --output-path <path and name of the file where the result of the reencryption should be stored>
+$ kms-backup decrypt --seed-phrase <the seed phrase used for generation> --randomness <random string of chars> --custodian-role <1-index role> --recovery-request-path <path and name of the file where the operator recovery request reside> --output-path <path and name of the file where the result of the reencryption should be stored>
 ```
 Observe that the `randomness` supplied is used along with entropy of the current system to do re-encryption, and thus the command is *not* idempotent. 
 
 IMPORTANT: IT IS NOT POSSIBLE FOR THE CUSTODIAN TO VALIDATE THE AUTHENTICITY OF A REQUEST! HENCE IT IS PARAMOUNT THAT IT IS VALIDATED OUT-OF-BOUNDS, E.G. THROUGH A DIGEST ON A BLOCKCHAIN.
 Run the CLI tool with the `decrypt` command in order decrypt a backup, and then reencrypt it under a supplied operator keyset. More specifically:
 ```{bash}
-$ cargo run --bin kms-custodian decrypt--seed-phrase <the seed phrased used for generation> --randomness <random string of chars> --custodian-role <1-indexed role of the custodian> --recovery-request-path <path to the recovery information given by the operator from custodian-recovery-init> --operator-verf-key <the path to the verification key of the KMS operator> --mpc-context-id <the MPC context to used for the backup> --output-path <path to store the custodian's output to the specific operator whose recovery info was given>
+$ cargo run --bin kms-custodian decrypt --seed-phrase <the seed phrase used for generation> --randomness <random string of chars> --custodian-role <1-indexed role of the custodian> --recovery-request-path <path to the recovery information given by the operator from custodian-recovery-init> --operator-verf-key <the path to the verification key of the KMS operator> --mpc-context-id <the MPC context to use for the backup> --output-path <path to store the custodian's output to the specific operator whose recovery info was given>
 ```
 Observe that the `randomness` supplied is used along with entropy of the current system to do re-encryption, and thus the command is *not* idempotent. 
 

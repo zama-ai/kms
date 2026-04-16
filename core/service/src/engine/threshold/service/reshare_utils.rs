@@ -650,7 +650,7 @@ mod tests {
         .unwrap();
         assert_eq!(protocol.as_str(), "https://");
         assert_eq!(domain.as_str(), "s3.us-west-1.amazonaws.com");
-        assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87/");
+        assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
     }
 
     async fn setup_public_materials_test(

@@ -567,7 +567,7 @@ fn validate_public_decrypt_responses(
         }
         if !found_new_verf_key {
             tracing::warn!(
-                "Verification key {} in public decryption response does not match any, not already validated, verification key",
+                "Verification key {} in public decryption could not be matched with a unique and validated verification key",
                 hex::encode(&cur_payload.verification_key),
             );
             continue;
