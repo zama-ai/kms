@@ -2022,10 +2022,13 @@ pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_1_CARRY_1_COMPACT_PK_PBS_KS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
-        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.798 }),
+    secret_key_deviations: Some(SecretKeyDeviations {
+        log2_failure_proba: -80,
+        pmax: 0.798,
+    }),
     // No support for rerand for PBS-KS type of keys
     cpk_re_randomization_ksk_params: None,
 };
@@ -2046,10 +2049,13 @@ pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_2_CARRY_2_COMPACT_PK_PBS_KS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
-        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.8044 }),
+    secret_key_deviations: Some(SecretKeyDeviations {
+        log2_failure_proba: -80,
+        pmax: 0.8044,
+    }),
     // No support for rerand for PBS-KS type of keys
     cpk_re_randomization_ksk_params: None,
 };
@@ -2071,11 +2077,16 @@ pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_1_CARRY_1_COMPACT_PK_KS_PBS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
-        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.5022 }),
-    cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128)
+    secret_key_deviations: Some(SecretKeyDeviations {
+        log2_failure_proba: -80,
+        pmax: 0.5022,
+    }),
+    cpk_re_randomization_ksk_params: Some(
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
+    ),
 };
 
 pub const NIST_PARAMS_P8_NO_SNS_FGLWE: DKGParams =
@@ -2096,11 +2107,16 @@ pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_2_CARRY_2_COMPACT_PK_KS_PBS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
         super::raw_parameters::NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
-        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.7499 }),
-    cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
+    secret_key_deviations: Some(SecretKeyDeviations {
+        log2_failure_proba: -80,
+        pmax: 0.7499,
+    }),
+    cpk_re_randomization_ksk_params: Some(
+        super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+    ),
 };
 
 pub const NIST_PARAMS_P32_NO_SNS_FGLWE: DKGParams =
