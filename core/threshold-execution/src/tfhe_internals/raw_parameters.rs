@@ -53,7 +53,7 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 PBS_KS compute parameters
 // arriving under the destination key
-pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
+pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(5),
     ks_base_log: DecompositionBaseLog(3),
@@ -111,7 +111,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 PBS_KS compute parameters
 // arriving under the destination key
-pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
+pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(7),
     ks_base_log: DecompositionBaseLog(3),
@@ -171,7 +171,7 @@ pub const NIST_PARAM_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
 
 // Parameters to keyswitch from input PKE 1_1 TUniform parameters to 1_1 KS_PBS compute parameters
 // arriving under the destination key
-pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
+pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(1),
     ks_base_log: DecompositionBaseLog(18),
@@ -229,7 +229,7 @@ pub const NIST_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
 
 // Parameters to keyswitch from input PKE 2_2 TUniform parameters to 2_2 KS_PBS compute parameters
 // arriving under the destination key
-pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
+pub const NIST_PARAM_KEYSWITCH_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     ShortintKeySwitchingParameters = ShortintKeySwitchingParameters {
     ks_level: DecompositionLevelCount(1),
     ks_base_log: DecompositionBaseLog(19),

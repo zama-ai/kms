@@ -12,5 +12,10 @@ pub mod grpc;
 #[cfg(feature = "non-wasm")]
 pub mod tls_certs;
 
+pub mod utils;
+
 #[cfg(all(feature = "choreographer", feature = "non-wasm"))]
 pub mod malicious_moby;
+
+#[cfg(feature = "non-wasm")]
+pub mod zk_utils;
