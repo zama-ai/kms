@@ -78,6 +78,7 @@ pub(crate) fn keygen_config_from_existing(
             to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
             use_existing_key_tag,
+            copy_compressed_key_to_original: false,
         }),
     )
 }
@@ -98,6 +99,7 @@ pub(crate) fn decompression_keygen_config(
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
             existing_keyset_id: None,
             use_existing_key_tag: false,
+            copy_compressed_key_to_original: false,
         }),
     )
 }

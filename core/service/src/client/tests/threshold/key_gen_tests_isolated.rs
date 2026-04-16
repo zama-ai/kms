@@ -807,6 +807,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,
                 use_existing_key_tag: false,
+                copy_compressed_key_to_original: false,
             }),
             context_id: None,
             epoch_id: None,
