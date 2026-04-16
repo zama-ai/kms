@@ -141,7 +141,7 @@ fn main() {
             );
         }
 
-        // Verification – TwoSteps mode - Compute load: Proof
+        // Verification – TwoSteps mode - Compute load: Verify
         {
             let bench_name =
                 format!("non-threshold_zk-pok_{params_name}_verify_two_steps_load_verify_memory");
