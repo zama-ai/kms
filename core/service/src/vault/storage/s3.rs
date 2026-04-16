@@ -520,7 +520,11 @@ pub fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String, Stri
     };
 
     // Extract bucket from path or domain
-    let path_bucket = parsed.path().trim_start_matches('/').to_owned();
+    let path_bucket = parsed
+        .path()
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_owned();
 
     if path_bucket.is_empty() {
         tracing::warn!(
