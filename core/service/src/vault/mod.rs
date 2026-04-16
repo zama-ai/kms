@@ -3,7 +3,7 @@ use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{Storage, StorageProxy, StorageReader};
+use storage::{Storage, StorageProxy, StorageReader, StoreWriteOutcome};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{Unversionize, Versionize, named::Named};
@@ -323,7 +323,7 @@ impl Storage for Vault {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
         match self.keychain.as_mut() {
             Some(kcp) => {
@@ -336,15 +336,13 @@ impl Storage for Vault {
                         .storage
                         .store_data(&blob, data_id, data_type)
                         .await
-                        .map_err(|e| anyhow!("Key blob store failed: {e}"))?,
-                    EnvelopeStore::OperatorBackupOutput(ct) => {
-                        self.storage
-                            .store_data(&ct, data_id, &vault_data_type)
-                            .await
-                            .map_err(|e| anyhow!("Backup output store failed: {e}"))?;
-                    }
+                        .map_err(|e| anyhow!("Key blob store failed: {e}")),
+                    EnvelopeStore::OperatorBackupOutput(ct) => self
+                        .storage
+                        .store_data(&ct, data_id, &vault_data_type)
+                        .await
+                        .map_err(|e| anyhow!("Backup output store failed: {e}")),
                 }
-                Ok(())
             }
             None => self
                 .storage
@@ -367,7 +365,7 @@ impl Storage for Vault {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
         self.storage
             .store_bytes(bytes, data_id, &backup_type)
@@ -384,7 +382,7 @@ impl StorageExt for Vault {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
         match self.keychain.as_mut() {
             Some(kcp) => {
@@ -397,15 +395,13 @@ impl StorageExt for Vault {
                         .storage
                         .store_data_at_epoch(&blob, data_id, epoch_id, data_type)
                         .await
-                        .map_err(|e| anyhow!("Key blob store failed: {e}"))?,
-                    EnvelopeStore::OperatorBackupOutput(ct) => {
-                        self.storage
-                            .store_data_at_epoch(&ct, data_id, epoch_id, &vault_data_type)
-                            .await
-                            .map_err(|e| anyhow!("Backup output store failed: {e}"))?;
-                    }
+                        .map_err(|e| anyhow!("Key blob store failed: {e}")),
+                    EnvelopeStore::OperatorBackupOutput(ct) => self
+                        .storage
+                        .store_data_at_epoch(&ct, data_id, epoch_id, &vault_data_type)
+                        .await
+                        .map_err(|e| anyhow!("Backup output store failed: {e}")),
                 }
-                Ok(())
             }
             None => self
                 .storage
@@ -421,7 +417,7 @@ impl StorageExt for Vault {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
         self.storage
             .store_bytes_at_epoch(bytes, data_id, epoch_id, &backup_type)

@@ -26,8 +26,8 @@ serde_json.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 sysinfo.workspace = true
+test-utils.workspace = true
 thiserror.workspace = true
-kms-test-tracing.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }

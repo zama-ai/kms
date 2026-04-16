@@ -413,13 +413,19 @@ impl<
 
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
-        crypto_storage
+        if let Err(e) = crypto_storage
             .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-            .await;
+            .await
+        {
+            tracing::error!("Failed to write CRS for request {req_id}: {e}");
+            return;
+        }
         // Update backup
         if let Err(e) = crypto_storage.inner.update_backup_vault(false).await {
             tracing::error!("Failed to update backup vault after CRS generation: {e}");
+            return;
         }
+
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
         tracing::info!(

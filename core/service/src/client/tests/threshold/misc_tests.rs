@@ -361,7 +361,6 @@ async fn test_ratelimiter() {
 }
 
 /// Validates the fix that ensures that a party is notified if it starts a session the others consider completed.
-#[kms_test_tracing::traced_test]
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
 #[serial]

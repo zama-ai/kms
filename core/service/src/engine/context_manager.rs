@@ -926,11 +926,13 @@ async fn gen_recovery_validation(
         &mut serialized_priv_key,
         SAFE_SER_SIZE_LIMIT,
     )?;
-    let (ct_map, commitments) = operator.secret_share_and_signcrypt(
+    let signcrypt_result = operator.secret_share_and_signcrypt(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
     )?;
+    let ct_map = signcrypt_result.ct_shares;
+    let commitments = signcrypt_result.commitments;
     let validation_material = RecoveryValidationMaterial::new(
         ct_map,
         commitments,
@@ -1499,7 +1501,6 @@ mod tests {
         }
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_custodian_context() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
@@ -1666,7 +1667,6 @@ mod tests {
     }
 
     // Test to sanity check the overall flow of construction of material needed for backup
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);

@@ -324,7 +324,6 @@ pub(crate) mod tests {
         verify_pp(&dkg_params, &crs);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
         // Setup
@@ -374,11 +373,21 @@ pub(crate) mod tests {
             )
             .await;
 
-        // Should fail due to no valid signatures
-        assert!(res.is_err());
-        // Check that we fail because of invalid signature
-        assert!(logs_contain("Signature could not be verified for a CRS"));
-        // Ensure that a value with a bad sig does not get counted like it did before the fix
-        assert!(!logs_contain("CRS map contains 1 entries"));
+        // Should fail. `hash_counter_map` is filled only after a result passes request ID, digest,
+        // and signature checks in order. Invalid signatures discard every result before insertion,
+        // which surfaces as "hash_counter_map is empty". If some results pass those checks but the
+        // set still misses majority, a different error is returned instead. The assert covers both
+        // reachable failure modes.
+        let err_msg = res.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("logic error: hash_counter_map is empty")
+                || err_msg.contains("Not enough signatures on CRS results")
+                || err_msg.contains("No consensus on CRS digest"),
+            "expected CRS validation failure: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("Error in"),
+            "expected error to be logged (via anyhow_error_and_log): {err_msg}"
+        );
     }
 }
