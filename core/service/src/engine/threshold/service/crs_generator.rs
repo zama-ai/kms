@@ -13,7 +13,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard},
     metrics_names::{
-        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+        OP_CRS_GEN_ABORT, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
+        TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -225,9 +226,22 @@ impl<
                             Some(req_id),
                             anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
                         );
-                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
-                        let guarded_meta_store= meta_store_cancelled.write().await;
-                        crypto_storage_cancelled.purge_crs_material(&req_id, &epoch_id, guarded_meta_store).await;
+                        let del_res = crypto_storage_cancelled.purge_crs_material(&req_id, &epoch_id).await;
+                        {
+                            let mut guarded_meta_store = meta_store_cancelled.write().await;
+                            let msg = if del_res {
+                                // Successfull deletion
+                                let msg = format!("CRS generation aborted and crs material deleted successfully for request {}", req_id);
+                                tracing::info!(msg);
+                                msg
+                            } else {
+                                // Error during deletion
+                                let msg = format!("CRS generation aborted but failed to delete crs material for request {}", req_id);
+                                tracing::error!(msg);
+                                msg
+                            };
+                            update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, op_tag);
+                        }
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -297,9 +311,30 @@ impl<
 
     async fn inner_abort_crs_gen(
         &self,
-        _request: Request<v1::RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<Empty>, MetricedError> {
-        todo!();
+        let parsed_id: RequestId =
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
+                .map_err(|e| {
+                    MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument)
+                })?;
+        // Find the token
+        let mut ongoing = self.ongoing.lock().await;
+        match ongoing.remove(&parsed_id) {
+            Some(token) => {
+                // Observe that the cancellation arm handles the abortion and clean-up
+                token.cancel();
+            }
+            None => {
+                return Err(MetricedError::new(
+                    OP_CRS_GEN_ABORT,
+                    Some(parsed_id),
+                    anyhow!("No ongoing CRS generation found for the supplied request ID"),
+                    tonic::Code::NotFound,
+                ));
+            }
+        }
+        Ok(Response::new(Empty {}))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -420,11 +455,12 @@ impl<
 
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
-        if let Err(e) = crypto_storage
+        if !crypto_storage
+            .inner
             .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await
         {
-            tracing::error!("Failed to write CRS for request {req_id}: {e}");
+            tracing::error!("Failed to write CRS for request {req_id}.");
             return;
         }
 

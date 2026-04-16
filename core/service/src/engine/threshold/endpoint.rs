@@ -151,7 +151,7 @@ impl_endpoint! {
 
        #[tracing::instrument(skip(self, request))]
         async fn abort_crs_gen(&self, request: Request<RequestId>) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
+            METRICS.increment_request_counter(OP_CRS_GEN_ABORT);
             self.crs_generator.abort_crs_gen(request).await.map_err(|e| e.into())
         }
 

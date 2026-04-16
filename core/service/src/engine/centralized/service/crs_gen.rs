@@ -242,18 +242,14 @@ pub(crate) async fn crs_gen_background<
         }
     };
 
-    if let Err(e) = crypto_storage
+    crypto_storage
+        .inner
         .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-        .await
-    {
-        tracing::error!("Failed to write CRS for request {req_id}: {e}");
-        return;
-    }
-
-    tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
+        .await;
     tracing::info!(
-        "CRS generation of request {} completed successfully.",
-        req_id
+        "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
+        req_id,
+        start.elapsed()
     );
 }
 

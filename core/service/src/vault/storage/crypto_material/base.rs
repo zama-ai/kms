@@ -4,10 +4,7 @@
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
-use crate::util::meta_store::{
-    ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
-    update_ok_req_in_meta_store,
-};
+use crate::util::meta_store::{update_err_req_in_meta_store, update_ok_req_in_meta_store};
 use crate::vault::storage::{StorageReader, store_versioned_at_request_and_epoch_id};
 use crate::{
     anyhow_error_and_warn_log,
@@ -545,17 +542,63 @@ where
         }
     }
 
-    /// Write the CRS to the storage backend.
-    /// On failure, the meta_store is used to purge dangling data.
-    /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    /// Returns `true` if the write succeeded, `false` if any sub-operation failed.
-    pub(crate) async fn inner_write_crs<T: Clone>(
+    /// Write the CRS to the storage backend as well as the cache,
+    /// and update the [meta_store] to "Done" if the procedure is successful.
+    /// In case of an error, update the meta-store with the relevant error information and storage data is purged.
+    /// Returns true if the write is successful, false otherwise.
+    ///
+    /// When calling this function more than once, the same [meta_store]
+    /// must be used, otherwise the storage state may become inconsistent.
+    pub async fn write_crs_with_meta_store(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<T>>>,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
+    ) -> bool {
+        if self
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info.clone())
+            .await
+        {
+            // Everything went well, update meta store
+            update_ok_req_in_meta_store(
+                &mut meta_store.write().await,
+                crs_id,
+                crs_info,
+                op_metric_tag,
+            )
+        } else {
+            // Something went wrong, perform clean up and update meta store with error
+            // First purge potentially dangling CRS material in storage
+            if self.purge_crs_material(crs_id, epoch_id).await {
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    crs_id,
+                    "Failed to write CRS to storage".to_string(),
+                    op_metric_tag,
+                );
+            } else {
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    crs_id,
+                    "Failed to write CRS to storage, and failed to purge dangling CRS material"
+                        .to_string(),
+                    op_metric_tag,
+                );
+            }
+            false
+        }
+    }
+    /// Write the CRS to the storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    pub(crate) async fn inner_write_crs(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
     ) -> bool {
         let (r1, r2, r3) = {
             // Enforce locking order for internal types
@@ -630,78 +673,14 @@ where
             };
             tokio::join!(f1, f2, f3)
         };
-
-        if !(r1 && r2 && r3) {
-            // Some store op failed, we need to purge any potentially
-            // dangling data and update the meta store accordingly.
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might
-            // be because the data did not get created
-            // In any case, we can't do much.
-            let guarded_meta_store = meta_store.write().await;
-            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
-                .await;
-            return false;
-        }
-        true
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [`MetaStore`] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    ///
-    /// Returns `Ok(())` on success, or `Err` if storage writes or the meta-store update failed.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
-
-        let info = crs_info.clone();
-        let storage_ok = self
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info, Arc::clone(&meta_store))
-            .await;
-        if !storage_ok {
-            anyhow::bail!("Storage write failed for CRS {crs_id}");
-        }
-        let mut guarded_meta_store = meta_store.write().await;
-        let meta_ok =
-            update_ok_req_in_meta_store(&mut guarded_meta_store, crs_id, info, op_metric_tag);
-        if !meta_ok {
-            self.handle_crs_meta_update_failure(crs_id, epoch_id, guarded_meta_store)
-                .await;
-            anyhow::bail!("Error while updating meta store for {crs_id}");
-        }
-        Ok(())
-    }
-
-    async fn handle_crs_meta_update_failure(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
-    ) {
-        if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
-            self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
-                .await;
-        }
+        // Only return true if all subprocesses went well
+        r1 && r2 && r3
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
+    /// Returns true if the purge is successful, false otherwise.
     /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
-    pub async fn purge_crs_material<T: Clone>(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
-    ) {
+    pub async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
         let mut priv_storage = self.private_storage.lock().await;
@@ -766,30 +745,10 @@ where
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         if r1 || r2 || r3 {
             tracing::error!("Failed to delete crs material for request {}", req_id);
+            false
         } else {
             tracing::info!("Deleted all crs material for request {}", req_id);
-        }
-        // We cannot do much if updating the meta store fails at this point,
-        // so just log an error.
-        let meta_update_result = guarded_meta_store.update(
-            req_id,
-            Err(format!(
-                "Failed to store CRS data to public storage for ID {req_id}"
-            )),
-        );
-        let r3 = if let Err(e) = &meta_update_result {
-            tracing::error!("Removing CRS from meta store failed with error: {}", e);
             true
-        } else {
-            false
-        };
-
-        // We cannot do much if updating CRS cache fails at this point,
-        // so just log an error.
-        if r3 {
-            tracing::error!("Failed to remove crs cached data for request {}", req_id);
-        } else {
-            tracing::info!("Removed all crs cached data for request {}", req_id);
         }
     }
 
