@@ -59,12 +59,12 @@ attestation-doc-validation.workspace = true
 bc2wrap.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
-threshold-execution.workspace = true
+threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
 hex.workspace = true
 k256.workspace = true
-kms = { workspace = true, default-features = false, features = [
-    "non-wasm",
+kms = { workspace = true, features = [
+    "default",
     "testing",
     "insecure",
 ] }

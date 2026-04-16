@@ -3346,6 +3346,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "threshold-execution",
  "tokio",
  "tracing",
  "tracing-subscriber",

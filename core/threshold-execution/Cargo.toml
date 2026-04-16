@@ -70,7 +70,7 @@ algebra = { workspace = true, features = ["all_extension_degrees"] }
 
 
 [features]
-default = ["non-wasm"]
+default = ["non-wasm", "algebra/extension_degree_4"]
 non-wasm = [
     "dep:threshold-networking",
     "dep:tfhe-zk-pok",

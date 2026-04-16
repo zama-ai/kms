@@ -42,7 +42,7 @@ aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
 aes.workspace = true
-algebra.workspace = true
+algebra = { workspace= true, features = ["extension_degree_4"] }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer-local.workspace = true
@@ -114,7 +114,7 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-tokio-util.workspace = true
+tokio-util = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
@@ -153,6 +153,7 @@ default = ["non-wasm"]
 testing = ["dep:tempfile"]
 non-wasm = [
     "kms-grpc/non-wasm",
+    "threshold-execution/non-wasm",
     "dep:threshold-networking",
     "dep:attestation-doc-validation",
     "dep:aws-config",
@@ -170,6 +171,7 @@ non-wasm = [
     "dep:test-utils",
     "dep:thread-handles",
     "dep:tokio",
+    "dep:tokio-util",
     "dep:tokio-rustls",
     "dep:tonic",
     "dep:tonic-health",
@@ -179,7 +181,7 @@ non-wasm = [
     "dep:x509-parser",
 ]
 slow_tests = ["testing"]
-wasm_tests = ["testing", "algebra/extension_degree_4"]
+wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
