@@ -182,6 +182,12 @@ impl InternalKeySetConfig {
             .is_some_and(|info| info.use_existing_key_tag)
     }
 
+    pub fn copy_compressed_key_to_original(&self) -> bool {
+        self.keyset_added_info
+            .as_ref()
+            .is_some_and(|info| info.copy_compressed_key_to_original)
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         match &self.keyset_config {
             ddec_keyset_config::KeySetConfig::Standard(inner) => match inner.secret_key_config {

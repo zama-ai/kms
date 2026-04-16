@@ -19,6 +19,7 @@ use tfhe::{
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
+    cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
@@ -30,11 +31,16 @@ use crate::{
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, crypto_material::log_storage_success, read_all_data_versioned,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            Storage, StorageExt, crypto_material::log_storage_success,
+            delete_at_request_and_epoch_id, delete_at_request_id, delete_pk_at_request_id,
+            read_all_data_versioned, read_versioned_at_request_and_epoch_id,
+            read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
         },
     },
 };
+
+use kms_grpc::solidity_types::KeygenVerification;
 
 use super::base::CryptoMaterialStorage;
 
@@ -510,6 +516,254 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .await;
             false
         }
+    }
+
+    /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the
+    /// compressed keyset under `new_key_id`, this function copies it to `old_key_id`
+    /// and replaces the `ThresholdFheKeys` at `(old_key_id, old_epoch_id)` with the
+    /// migrated one, re-signed under `old_key_id`.
+    ///
+    /// The operation is split into validate-then-mutate phases: everything is read
+    /// and checked before any backend is mutated, so a malformed migration input
+    /// cannot leave pub and priv storage in inconsistent states. Once validation
+    /// passes, pub storage, priv storage, backup vault, in-memory cache, and the
+    /// keygen meta-store are all updated under the same held locks so a concurrent
+    /// reader cannot observe a mixed pre/post state.
+    ///
+    /// Stale pub-data left over from the original (pre-migration) uncompressed
+    /// keyset at `old_key_id` is removed so that pub storage at `old_key_id`
+    /// exactly reflects the new metadata's `key_digest_map`. The migrate keygen
+    /// preserves the old `CompactPublicKey` at `new_key_id`, so `PubDataType::PublicKey`
+    /// is present in both old and new digest maps and is **not** part of the
+    /// stale-types diff — the compact public key file at `old_key_id` is left
+    /// untouched, and remains identical to the one stored at `new_key_id`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn copy_compressed_key_to_original(
+        &self,
+        new_key_id: &RequestId,
+        new_epoch_id: &EpochId,
+        old_key_id: &RequestId,
+        old_epoch_id: &EpochId,
+        sk: &PrivateSigKey,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
+        dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) -> anyhow::Result<()> {
+        // Lock order: pub -> priv -> backup -> fhe_keys (see base.rs lock-ordering
+        // convention). Hold them for the whole read-and-write, so concurrent
+        // callers observe either the pre- or post-migration state, never a mix.
+        let mut pub_storage = self.inner.public_storage.lock().await;
+        let mut priv_storage = self.inner.private_storage.lock().await;
+        let mut back_vault = match self.inner.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
+
+        // --- Phase A: validate everything before mutating anything. ---
+
+        // Source of the migrated compressed keyset.
+        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
+            &*pub_storage,
+            new_key_id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await?;
+
+        // Source of the migrated ThresholdFheKeys (stored by the keygen at
+        // (new_key_id, new_epoch_id); this may differ from old_epoch_id).
+        let migrated_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+            &*priv_storage,
+            new_key_id,
+            new_epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+
+        // The pre-migration ThresholdFheKeys at (old_key_id, old_epoch_id); we
+        // use its key_digest_map to decide which stale PubDataTypes to delete
+        // from pub storage at old_key_id.
+        let old_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+            &*priv_storage,
+            old_key_id,
+            old_epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "No existing ThresholdFheKeys at (old_key_id={old_key_id}, \
+                 old_epoch_id={old_epoch_id:?}): {e}"
+            )
+        })?;
+
+        // Reject LegacyV0 migrated metadata (we can't re-sign without the
+        // structured digest map) and confirm the CompressedXofKeySet digest
+        // is present.
+        let migrated_inner = match &migrated_fhe_keys.meta_data {
+            KeyGenMetadata::Current(inner) => inner,
+            KeyGenMetadata::LegacyV0(_) => {
+                anyhow::bail!(
+                    "Cannot copy compressed key to original: \
+                     migrated ThresholdFheKeys has LegacyV0 metadata"
+                );
+            }
+        };
+        let compressed_digest = migrated_inner
+            .key_digest_map
+            .get(&PubDataType::CompressedXofKeySet)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Migrated ThresholdFheKeys metadata missing CompressedXofKeySet digest"
+                )
+            })?
+            .clone();
+        let public_key_digest = migrated_inner
+            .key_digest_map
+            .get(&PubDataType::PublicKey)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Migrated ThresholdFheKeys metadata missing PublicKey digest")
+            })?
+            .clone();
+
+        // Re-sign the metadata under old_key_id.
+        let sol_type = KeygenVerification::new_compressed(
+            &migrated_inner.preprocessing_id,
+            old_key_id,
+            compressed_digest,
+            public_key_digest,
+        );
+        let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
+        let new_metadata = KeyGenMetadata::new(
+            *old_key_id,
+            migrated_inner.preprocessing_id,
+            migrated_inner.key_digest_map.clone(),
+            new_signature,
+        );
+        let new_key_digest_keys: std::collections::HashSet<PubDataType> =
+            migrated_inner.key_digest_map.keys().copied().collect();
+
+        let updated_fhe_keys = ThresholdFheKeys::new(
+            migrated_fhe_keys.private_keys.clone(),
+            migrated_fhe_keys.public_material.clone(),
+            new_metadata.clone(),
+        );
+
+        // --- Phase B: mutate all backends under the held locks. ---
+
+        // Pub storage at old_key_id: remove any pre-migration pub-data types
+        // that are NOT present in the new digest map (stale ServerKey/PublicKey
+        // from the original uncompressed keyset), then overwrite the
+        // CompressedXofKeySet.
+        let stale_pub_types: Vec<PubDataType> = match &old_fhe_keys.meta_data {
+            KeyGenMetadata::Current(old_inner) => old_inner
+                .key_digest_map
+                .keys()
+                .copied()
+                .filter(|t| !new_key_digest_keys.contains(t))
+                .collect(),
+            // Legacy pre-upgrade metadata: we can still tell which pub-data
+            // types were written by looking at the raw map.
+            KeyGenMetadata::LegacyV0(map) => map
+                .keys()
+                .copied()
+                .filter(|t| !new_key_digest_keys.contains(t))
+                .collect(),
+        };
+        for pub_type in &stale_pub_types {
+            match pub_type {
+                PubDataType::PublicKey => {
+                    delete_pk_at_request_id(&mut *pub_storage, old_key_id).await?;
+                }
+                other => {
+                    delete_at_request_id(&mut *pub_storage, old_key_id, &other.to_string()).await?;
+                }
+            }
+        }
+        delete_at_request_id(
+            &mut *pub_storage,
+            old_key_id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await?;
+        store_versioned_at_request_id(
+            &mut *pub_storage,
+            old_key_id,
+            &compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await?;
+
+        // Priv storage at (old_key_id, old_epoch_id): delete + re-store.
+        delete_at_request_and_epoch_id(
+            &mut *priv_storage,
+            old_key_id,
+            old_epoch_id,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+        store_versioned_at_request_and_epoch_id(
+            &mut *priv_storage,
+            old_key_id,
+            old_epoch_id,
+            &updated_fhe_keys,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+
+        // Backup vault (if configured): delete + re-store at the same location
+        // so a restore brings back the migrated keys, not the pre-migration
+        // uncompressed ones.
+        if let Some(vault) = back_vault.as_deref_mut() {
+            delete_at_request_and_epoch_id(
+                vault,
+                old_key_id,
+                old_epoch_id,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await?;
+            store_versioned_at_request_and_epoch_id(
+                vault,
+                old_key_id,
+                old_epoch_id,
+                &updated_fhe_keys,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await?;
+        } else {
+            tracing::warn!(
+                "No backup vault configured. Skipping backup update during \
+                 copy_compressed_key_to_original for {old_key_id}"
+            );
+        }
+
+        // In-memory cache.
+        {
+            let mut guarded_fhe_keys = self.fhe_keys.write().await;
+            guarded_fhe_keys.insert((*old_key_id, *old_epoch_id), updated_fhe_keys);
+        }
+
+        // --- Phase C: refresh dkg_pubinfo_meta_store for old_key_id. ---
+        // `MetaStore::update` only accepts pending entries, so replace the
+        // existing completed entry with delete + insert + update, all under
+        // the same write guard.
+        {
+            let mut guarded_meta_store = dkg_pubinfo_meta_store.write().await;
+            let _ = guarded_meta_store.delete(old_key_id);
+            guarded_meta_store.insert(old_key_id).map_err(|e| {
+                anyhow::anyhow!("Failed to insert {old_key_id} into keygen meta-store: {e}")
+            })?;
+            guarded_meta_store
+                .update(old_key_id, Ok(new_metadata))
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to update {old_key_id} in keygen meta-store: {e}")
+                })?;
+        }
+
+        tracing::info!(
+            "Copied compressed key from {new_key_id} to original {old_key_id} \
+             and updated metadata"
+        );
+
+        Ok(())
     }
 
     /// Read the key materials for decryption in the threshold case.

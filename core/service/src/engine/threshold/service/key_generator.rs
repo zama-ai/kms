@@ -1487,7 +1487,7 @@ impl<
                         threshold_fhe_keys,
                         &compressed_keyset,
                         &compact_pk,
-                        meta_store,
+                        Arc::clone(&meta_store),
                     )
                     .await
                 {
@@ -1495,6 +1495,50 @@ impl<
                         "Failed to write compressed threshold keys for request {req_id}: {e}"
                     );
                     return;
+                }
+
+                // If requested, copy the compressed key to the original key ID.
+                //
+                // Note: at this point the *new* keygen has already been committed
+                // and its meta_store entry is Done — that part of the request
+                // succeeded. The copy is a follow-up on a *different* key id
+                // (old_key_id), so a failure here does not invalidate the
+                // new_key_id material. We log loudly so operators can detect
+                // partial success and retry the migration, but we do not try
+                // to mark the new keygen itself as failed.
+                //
+                // TODO if copying fails, do we still call `update_backup_vault`?
+                if matches!(
+                    keyset_config.secret_key_config,
+                    ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
+                ) && internal_keyset_config.copy_compressed_key_to_original()
+                {
+                    let old_key_id = internal_keyset_config
+                        .get_existing_keyset_id()
+                        .expect("validated");
+                    // UseExisting reads the old private shares at the current
+                    // epoch_id (see key_gen_from_existing_private_keyset), so
+                    // the copy targets the same (old_key_id, epoch_id) pair.
+                    if let Err(e) = crypto_storage
+                        .copy_compressed_key_to_original(
+                            req_id,
+                            epoch_id,
+                            &old_key_id,
+                            epoch_id,
+                            &sk,
+                            &eip712_domain,
+                            Arc::clone(&meta_store),
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            "Compressed keygen for {req_id} committed successfully, but the \
+                             follow-up copy to original key id {old_key_id} failed: {e}. \
+                             The new keys at {req_id} are valid; \
+                             the migration to {old_key_id} must be retried."
+                        );
+                        return;
+                    }
                 }
             }
         }
