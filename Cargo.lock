@@ -7639,6 +7639,7 @@ dependencies = [
  "num-integer",
  "paste",
  "rand 0.8.5",
+ "rayon",
  "serde",
  "tfhe",
  "tfhe-csprng",

@@ -31,6 +31,7 @@ tonic.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+rayon.workspace = true
 threshold-execution = { workspace = true, features = ["non-wasm", "testing"] }
 
 [features]
