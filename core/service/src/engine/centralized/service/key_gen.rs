@@ -421,10 +421,11 @@ pub(crate) async fn key_gen_background<
             );
         }
     }
-    // Update backup
-    if let Err(e) = crypto_storage.inner.update_backup_vault(false).await {
-        tracing::error!("Failed to update backup vault after key generation: {e}");
-    }
+    // Update the backup and handle potential failures by incrementing backup errors in the metrics
+    crypto_storage
+        .inner
+        .update_backup_vault(false, op_tag)
+        .await;
 }
 
 #[cfg(test)]

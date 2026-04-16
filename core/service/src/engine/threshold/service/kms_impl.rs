@@ -9,7 +9,7 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
-use observability::{conf::TelemetryConfig, metrics};
+use observability::{conf::TelemetryConfig, metrics, metrics_names::OP_BOOT};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, core_crypto::prelude::LweKeyswitchKey, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
@@ -695,7 +695,10 @@ where
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
     // existing values are not re-backed up
-    backup_operator.update_backup_vault(false).await?;
+    crypto_storage
+        .inner
+        .update_backup_vault(false, OP_BOOT)
+        .await;
 
     // Start updating system metrics
     update_threshold_kms_system_metrics(

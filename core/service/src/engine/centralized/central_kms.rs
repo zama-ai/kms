@@ -28,6 +28,7 @@ use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::metrics_names::OP_BOOT;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 
 use crate::util::rate_limiter::RateLimiter;
@@ -952,7 +953,10 @@ impl<
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption hence
         // existing values are not re-backed up
-        backup_operator.update_backup_vault(false).await?;
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_BOOT)
+            .await;
 
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =

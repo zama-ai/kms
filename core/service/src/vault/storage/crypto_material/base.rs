@@ -40,6 +40,8 @@ use kms_grpc::{
     identifiers::{ContextId, EpochId},
     rpc_types::{KMSType, PrivDataType, PubDataType},
 };
+use observability::metrics::METRICS;
+use observability::metrics_names::ERR_BACKUP;
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
@@ -1111,7 +1113,8 @@ where
         Ok(context_map.into_values().collect())
     }
 
-    /// Synchronize the backup vault with the current private storage contents.
+    /// Synchronize the backup vault with the current private storage contents
+    /// and log and update the metrics in case of an error.
     ///
     /// Iterates over all [`PrivDataType`] variants and copies any data present
     /// in private storage but missing from the backup vault.
@@ -1119,7 +1122,24 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
-    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
+    pub async fn update_backup_vault(&self, overwrite: bool, op_metric_tag: &'static str) {
+        if let Err(e) = self.inner_update_backup_vault(overwrite).await {
+            tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
+            METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
+        } else {
+            tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
+        }
+    }
+
+    /// Synchronize the backup vault with the current private storage contents
+    ///
+    /// Iterates over all [`PrivDataType`] variants and copies any data present
+    /// in private storage but missing from the backup vault.
+    ///
+    /// When `overwrite` is `true`, existing backup entries are deleted and
+    /// re-written (used when the backup encryption key changes, e.g. on a new
+    /// custodian context). When `false`, existing entries are skipped.
+    async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();

@@ -357,9 +357,12 @@ impl<
         };
 
         crypto_storage.write_prss_info(epoch_id, &prss).await?;
-        crypto_storage.inner.update_backup_vault(false).await?;
-
         session_maker.add_epoch(*epoch_id, prss).await;
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
 
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
@@ -748,8 +751,12 @@ impl<
             &new_epoch_id.into(),
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
         )?;
-        // Update the backup vault
-        crypto_storage.inner.update_backup_vault(false).await
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
+        Ok(())
     }
 
     async fn reshare_as_set_2(

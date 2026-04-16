@@ -976,16 +976,6 @@ where
     Ok(())
 }
 
-impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-{
-    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
-        self.crypto_storage.update_backup_vault(overwrite).await
-    }
-}
-
 // *WARNING* this function only works with n=13, t=4
 #[allow(deprecated)]
 pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(

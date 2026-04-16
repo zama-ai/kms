@@ -420,11 +420,11 @@ impl<
             tracing::error!("Failed to write CRS for request {req_id}: {e}");
             return;
         }
-        // Update backup
-        if let Err(e) = crypto_storage.inner.update_backup_vault(false).await {
-            tracing::error!("Failed to update backup vault after CRS generation: {e}");
-            return;
-        }
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, op_tag)
+            .await;
 
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
