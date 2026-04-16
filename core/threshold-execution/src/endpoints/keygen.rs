@@ -1022,8 +1022,6 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::tests::helper::tests_and_benches::execute_protocol_large_w_extra_data;
-    #[cfg(feature = "slow_tests")]
-    use crate::tfhe_internals::parameters::BC_PARAMS_SNS;
     use crate::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file;
     use crate::{
         endpoints::keygen::conformance::check_drift_technique_key,
@@ -2871,7 +2869,7 @@ pub mod tests {
         use threshold_types::role::Role;
 
         // NOTE: it is not possible to use small parameters as that doesn't work for oprf
-        let params = BC_PARAMS_SNS;
+        let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1u8;
         let tag = tfhe::Tag::default();
@@ -2964,6 +2962,10 @@ pub mod tests {
         // Reconstruct the PRF's small LWE secret key.
         let prf_lwe_key_bits =
             reconstruct_bit_vec::<Z128, 4>(prf_lwe_shares, lwe_dim, threshold as usize);
+        // Clone and flip one bit to create a deliberately wrong LWE key for the
+        // negative test below.
+        let mut wrong_lwe_key_bits = prf_lwe_key_bits.clone();
+        wrong_lwe_key_bits[0] ^= 1;
         let reconstructed_prf_lwe_sk =
             tfhe::core_crypto::prelude::LweSecretKey::from_container(prf_lwe_key_bits);
 
@@ -3009,6 +3011,7 @@ pub mod tests {
         // Build a shortint ClientKey using the reconstructed GLWE sk. The
         // small LWE sk slot is unused for OPRF decryption in KS-PBS order, so
         // a zero-filled placeholder of the correct dimension suffices.
+        let wrong_glwe_sk = reconstructed_glwe_sk.clone();
         let dummy_small_lwe_sk =
             tfhe::core_crypto::prelude::LweSecretKey::from_container(vec![0u64; lwe_dim]);
         let sck = StandardAtomicPatternClientKey::from_raw_parts(
@@ -3038,9 +3041,21 @@ pub mod tests {
             assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
         }
 
-        // Negative test: using the original DKG server key (without the PRF
-        // BSK) must produce mismatches against oprf_expected_plaintext.
-        let wrong_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        // Negative test: construct a server key from the PRF LWE key with one
+        // bit flipped. This guarantees the BSK embeds a different key than the
+        // actual PRF key, eliminating any chance of accidental collision.
+        let wrong_lwe_sk =
+            tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_lwe_key_bits);
+        let wrong_sck = StandardAtomicPatternClientKey::from_raw_parts(
+            wrong_glwe_sk,
+            wrong_lwe_sk,
+            PBSParameters::PBS(ciphertext_params),
+            None,
+        );
+        let wrong_shortint_ck = tfhe::shortint::ClientKey {
+            atomic_pattern: AtomicPatternClientKey::Standard(wrong_sck),
+        };
+        let wrong_server_key = tfhe::shortint::ServerKey::new(&wrong_shortint_ck);
         let mut mismatches = 0u64;
         for s in 0u128..50u128 {
             let seed = Seed(s);
