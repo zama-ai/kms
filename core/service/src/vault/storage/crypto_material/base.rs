@@ -4,7 +4,10 @@
 //! both centralized and threshold KMS variants.
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
-use crate::util::meta_store::{update_err_req_in_meta_store, update_ok_req_in_meta_store};
+use crate::util::meta_store::{
+    ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
+    update_err_req_in_meta_store, update_ok_req_in_meta_store,
+};
 use crate::vault::storage::{StorageReader, store_versioned_at_request_and_epoch_id};
 use crate::{
     anyhow_error_and_warn_log,
@@ -558,31 +561,27 @@ where
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
     ) -> anyhow::Result<()> {
-        if self
+        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
+        let storage_ok = self
             .inner_write_crs(crs_id, epoch_id, pp, crs_info.clone())
             .await
-        {
-            // Everything went well, update meta store
-            if update_ok_req_in_meta_store(
+            && update_ok_req_in_meta_store(
                 &mut meta_store.write().await,
                 crs_id,
                 crs_info,
                 op_metric_tag,
-            ) {
-                return Ok(());
-            } else {
-                anyhow::bail!(
-                    "Failed to update meta store for CRS {crs_id} after successful storage write"
-                );
-            }
-        } else {
-            // Something went wrong, perform clean up and update meta store with error
-            // First purge potentially dangling CRS material in storage
-            if self.purge_crs_material(crs_id, epoch_id).await {
+            );
+        if !storage_ok {
+            let mut guarded_meta_store = meta_store.write().await;
+            if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
+                let purge_res = self.purge_crs_material(crs_id, epoch_id).await;
                 if update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
+                    &mut guarded_meta_store,
                     crs_id,
-                    "Failed to write CRS to storage".to_string(),
+                    format!(
+                        "Failed to write CRS to storage, purge after failure {}",
+                        if purge_res { "succeeded" } else { "failed" }
+                    ),
                     op_metric_tag,
                 ) {
                     anyhow::bail!(
@@ -593,24 +592,12 @@ where
                         "Failed to write CRS {crs_id} to storage, and failed to update meta store after purging dangling CRS material"
                     );
                 }
-            } else {
-                if update_err_req_in_meta_store(
-                    &mut meta_store.write().await,
-                    crs_id,
-                    "Failed to write CRS to storage, and failed to purge dangling CRS material"
-                        .to_string(),
-                    op_metric_tag,
-                ) {
-                    anyhow::bail!(
-                        "Failed to write CRS {crs_id} to storage, and failed to purge dangling CRS material, but updated meta store with error information"
-                    );
-                } else {
-                    anyhow::bail!(
-                        "Failed to write CRS {crs_id} to storage, and failed to purge dangling CRS material, and failed to update meta store with error information"
-                    );
-                }
             }
+            anyhow::bail!(
+                "Failed to write CRS {crs_id} to storage, and purge after failure is not needed"
+            );
         }
+        Ok(())
     }
     /// Write the CRS to the storage backend.
     /// Returns true if the write is successful, false otherwise.
