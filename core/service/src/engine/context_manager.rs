@@ -260,8 +260,9 @@ where
             // Ensure we free the lock on backup vault before performing the new backup!
             drop(guarded_backup_vault);
             // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
+            // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
             self.crypto_storage
-                .update_backup_vault(false, OP_NEW_CUSTODIAN_CONTEXT)
+                .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
                 .await;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)

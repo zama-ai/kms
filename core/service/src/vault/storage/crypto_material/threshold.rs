@@ -72,6 +72,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         Arc::clone(&self.inner.private_storage)
     }
 
+    /// Write the PRSS info to the storage backend.
+    /// No actions are taken on failure, but the error is returned to the caller for potential handling.
     pub async fn write_prss_info(
         &self,
         epoch_id: &EpochId,
@@ -542,7 +544,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,

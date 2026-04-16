@@ -626,7 +626,6 @@ where
     }
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
     pub async fn purge_crs_material<T: Clone>(
         &self,
         req_id: &RequestId,
