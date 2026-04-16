@@ -557,38 +557,59 @@ where
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
-    ) -> bool {
+    ) -> anyhow::Result<()> {
         if self
             .inner_write_crs(crs_id, epoch_id, pp, crs_info.clone())
             .await
         {
             // Everything went well, update meta store
-            update_ok_req_in_meta_store(
+            if update_ok_req_in_meta_store(
                 &mut meta_store.write().await,
                 crs_id,
                 crs_info,
                 op_metric_tag,
-            )
+            ) {
+                return Ok(());
+            } else {
+                anyhow::bail!(
+                    "Failed to update meta store for CRS {crs_id} after successful storage write"
+                );
+            }
         } else {
             // Something went wrong, perform clean up and update meta store with error
             // First purge potentially dangling CRS material in storage
             if self.purge_crs_material(crs_id, epoch_id).await {
-                let _ = update_err_req_in_meta_store(
+                if update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     crs_id,
                     "Failed to write CRS to storage".to_string(),
                     op_metric_tag,
-                );
+                ) {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, but successfully purged dangling CRS material and updated meta store"
+                    );
+                } else {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, and failed to update meta store after purging dangling CRS material"
+                    );
+                }
             } else {
-                let _ = update_err_req_in_meta_store(
+                if update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     crs_id,
                     "Failed to write CRS to storage, and failed to purge dangling CRS material"
                         .to_string(),
                     op_metric_tag,
-                );
+                ) {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, and failed to purge dangling CRS material, but updated meta store with error information"
+                    );
+                } else {
+                    anyhow::bail!(
+                        "Failed to write CRS {crs_id} to storage, and failed to purge dangling CRS material, and failed to update meta store with error information"
+                    );
+                }
             }
-            false
         }
     }
     /// Write the CRS to the storage backend.

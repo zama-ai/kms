@@ -455,12 +455,12 @@ impl<
 
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
-        if !crypto_storage
+        if let Err(e) = crypto_storage
             .inner
             .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await
         {
-            tracing::error!("Failed to write CRS for request {req_id}.");
+            tracing::error!("Failed to write CRS for request {req_id}: {e}");
             return;
         }
 
