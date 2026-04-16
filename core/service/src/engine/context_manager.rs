@@ -260,7 +260,7 @@ where
             // Ensure we free the lock on backup vault before performing the new backup!
             drop(guarded_backup_vault);
             // Now redo the backup
-            self.crypto_storage.update_backup_vault(false).await?;
+            self.crypto_storage.update_backup_vault(true).await?;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
