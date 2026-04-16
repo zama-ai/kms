@@ -12,7 +12,6 @@ aes-prng.workspace = true
 algebra.workspace = true
 anyhow.workspace = true
 bc2wrap.workspace = true
-clap.workspace = true
 crypto-bigint.workspace = true
 error-utils.workspace = true
 threshold-execution = { workspace = true, features = ["non-wasm"] }

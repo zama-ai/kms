@@ -988,9 +988,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.13.3"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "497c00e0fd83a72a79a39fcbd8e3e2f055d6f6c7e025f3b3d91f4f8e76527fb8"
+checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -5293,9 +5293,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "piper"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96c8c490f422ef9a4efd2cb5b42b76c8613d7e7dfc1caf667b8a3350a5acc066"
+checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
 dependencies = [
  "atomic-waker",
  "fastrand",
@@ -7633,7 +7633,6 @@ dependencies = [
  "aes-prng",
  "anyhow",
  "bc2wrap",
- "clap",
  "crypto-bigint 0.6.1",
  "error-utils",
  "itertools 0.14.0",
@@ -7672,7 +7671,6 @@ dependencies = [
  "getrandom 0.2.15",
  "hex",
  "itertools 0.14.0",
- "k256",
  "minijinja",
  "observability",
  "paste",
@@ -7681,13 +7679,9 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "redis",
- "rustls-webpki 0.103.9",
  "serde",
  "serial_test",
  "sha2",
- "strum",
- "strum_macros",
- "tempfile",
  "test-utils",
  "tfhe",
  "tfhe-csprng",
@@ -7707,7 +7701,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "x509-parser",
- "zeroize",
 ]
 
 [[package]]
@@ -7743,10 +7736,7 @@ dependencies = [
  "serde",
  "sha2",
  "test-utils",
- "tfhe",
  "tfhe-versionable",
- "thread-handles",
- "threshold-algebra",
  "threshold-execution",
  "threshold-types",
  "tokio",
@@ -7764,10 +7754,8 @@ dependencies = [
 name = "threshold-types"
 version = "0.13.20-0"
 dependencies = [
- "aes-prng",
  "anyhow",
  "async-trait",
- "rand 0.8.5",
  "serde",
  "tfhe-versionable",
  "threshold-hashing",
