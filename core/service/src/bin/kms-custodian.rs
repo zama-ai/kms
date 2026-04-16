@@ -165,7 +165,7 @@ async fn main() -> Result<(), anyhow::Error> {
             );
             let mpc_context_id_str = params.mpc_context_id;
             let mpc_context_id = ContextId::try_from(&mpc_context_id_str).map_err(|e| anyhow::anyhow!(
-                "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID.",
+                "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID: {e}.",
                 mpc_context_id_str
             ))?;
             let operator_verf_key: PublicSigKey =
