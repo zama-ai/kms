@@ -1207,7 +1207,6 @@
             test_filename: "internal_recovery_request",
             amount: 10,
             state: 300,
-            mpc_context_id: (7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7),
         )),
     ),
     (
