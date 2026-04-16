@@ -1,12 +1,9 @@
-use std::path::Path;
-
-use clap::Parser;
 use tfhe::Tag;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{FftAlgo, Method, Plan, setup_custom_fft_plan};
 use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{
-    ClientKey, CompressedServerKey, FheUint64, Seed,
+    ClientKey, FheUint64, Seed,
     core_crypto::commons::generators::DeterministicSeeder,
     prelude::{FheDecrypt, FheEncrypt},
     set_server_key,
@@ -14,33 +11,29 @@ use tfhe::{
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use threshold_execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
+use threshold_fhe::utils::check_hash;
 
 const CLIENT_KEY_PATH: &str = "client_key.bin";
 const SERVER_KEY_PATH: &str = "server_key.bin";
+const EXPECTED_HASH_CLIENT_KEY: &str =
+    "e632247063e3712eb6de0244fdf08bede700dc7052d018fbc9420e60cfceb36b";
+const EXPECTED_HASH_SERVER_KEY: &str =
+    "9580a04fc3277c52842ea23b52a45a1ae787d27533f57f4aba8812c64dbdb531";
 
 const CIPHERTEXT43_PATH: &str = "ciphertext_43.bin";
 const CIPHERTEXT4445_PATH: &str = "ciphertext_4445.bin";
 const CIPHERTEXT_ADD_PATH: &str = "ciphertext_add.bin";
 const CIPHERTEXT_MULT_PATH: &str = "ciphertext_mult.bin";
+const EXPECTED_HASH_CTXT_43: &str =
+    "55d217ab5f970299619a3a08c7388eb74887c0f7830aa0b60d5ee50a467b4498";
+const EXPECTED_HASH_CTXT_4445: &str =
+    "85fb15a41a29abea8e732afd43c640b21b7009f96e0c11460c83e07e302b2c8f";
+const EXPECTED_HASH_CTXT_ADD: &str =
+    "b586addc5282f8455aa7a02cc715889df881b97f5d3d4c78e13f80c53d95f7d5";
+const EXPECTED_HASH_CTXT_MUL: &str =
+    "53d133225f103fd45419b90ee92678aceec2d931033b6d8203e8080b13d25b02";
 
-#[derive(Parser, Debug)]
-#[clap(name = "tfhe-kat")]
-#[clap(about = "Known Answer Tests for TFHE")]
-struct KatCli {
-    /// Whether to generate the KAT files (instead of reading and verifying them)
-    #[clap(short, long, default_value_t = false)]
-    generate_kat: bool,
-
-    /// Path to the folder where to read/write the KAT files
-    #[clap(short, long, default_value = "./tfhe_kat")]
-    path_to_kat_folder: String,
-}
-
-fn generate_and_save_keys(
-    params: DKGParams,
-    storage_path: &str,
-    save: bool,
-) -> (ClientKey, CompressedXofKeySet) {
+fn generate_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
     let max_norm_hwt = params
         .get_params_basics_handle()
@@ -56,112 +49,65 @@ fn generate_and_save_keys(
     )
     .expect("XofKeySet generation for KAT failed");
 
-    if save {
-        // Save keys to files
+    let serialized_ck = bc2wrap::serialize(&(params, &client_key)).unwrap();
+    let serialized_sk = bc2wrap::serialize(&(params, &compressed_server_key)).unwrap();
 
-        let storage = Path::new(storage_path);
-        let path_to_client_key = storage.join(CLIENT_KEY_PATH);
-        let path_to_server_key = storage.join(SERVER_KEY_PATH);
-
-        let serialized_ck = bc2wrap::serialize(&(params, &client_key)).unwrap();
-
-        let serialized_sk = bc2wrap::serialize(&(params, &compressed_server_key)).unwrap();
-
-        std::fs::write(path_to_client_key, serialized_ck).unwrap();
-        std::fs::write(path_to_server_key, serialized_sk).unwrap();
-
-        println!(
-            "KAT files for the keys generated and saved to {}",
-            storage_path
-        );
-    }
+    check_hash(
+        CLIENT_KEY_PATH,
+        &serialized_ck,
+        EXPECTED_HASH_CLIENT_KEY,
+        false,
+    );
+    check_hash(
+        SERVER_KEY_PATH,
+        &serialized_sk,
+        EXPECTED_HASH_SERVER_KEY,
+        false,
+    );
 
     (client_key, compressed_server_key)
 }
 
-fn read_keys(expected_params: DKGParams, storage_path: &str) -> (ClientKey, CompressedServerKey) {
-    println!("Reading KAT files of the keys from {}", storage_path);
-
-    let storage = Path::new(storage_path);
-    let path_to_client_key = storage.join(CLIENT_KEY_PATH);
-    let path_to_server_key = storage.join(SERVER_KEY_PATH);
-
-    let (params, client_key): (DKGParams, ClientKey) =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_client_key).unwrap()).unwrap();
-    let (params_sk, compressed_server_key): (DKGParams, CompressedServerKey) =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_server_key).unwrap()).unwrap();
-
-    assert_eq!(
-        expected_params, params,
-        "❌ Parameters read from client key KAT do not match expected parameters"
-    );
-
-    assert_eq!(
-        params, params_sk,
-        "❌ Mismatched parameters between client and server keys"
-    );
-    (client_key, compressed_server_key)
-}
-
-fn generate_and_save_ciphertexts(
-    client_key: &ClientKey,
-    storage_path: &str,
-    save: bool,
-) -> (FheUint64, FheUint64, FheUint64, FheUint64) {
+fn generate_ciphertexts(client_key: &ClientKey) -> (FheUint64, FheUint64, FheUint64, FheUint64) {
     let ciphertext_43 = FheUint64::encrypt(43u32, client_key);
     let ciphertext_4445 = FheUint64::encrypt(4445u32, client_key);
 
     let ciphertext_add = &ciphertext_43 + &ciphertext_4445;
     let ciphertext_mult = &ciphertext_43 * &ciphertext_4445;
 
-    if save {
-        let storage = Path::new(storage_path);
-        let path_to_ciphertext_43 = storage.join(CIPHERTEXT43_PATH);
-        let path_to_ciphertext_4445 = storage.join(CIPHERTEXT4445_PATH);
-        let path_to_ciphertext_add = storage.join(CIPHERTEXT_ADD_PATH);
-        let path_to_ciphertext_mult = storage.join(CIPHERTEXT_MULT_PATH);
+    let serialized_ct_43 = bc2wrap::serialize(&ciphertext_43).unwrap();
+    let serialized_ct_4445 = bc2wrap::serialize(&ciphertext_4445).unwrap();
+    let serialized_ct_add = bc2wrap::serialize(&ciphertext_add).unwrap();
+    let serialized_ct_mult = bc2wrap::serialize(&ciphertext_mult).unwrap();
 
-        let serialized_ct_43 = bc2wrap::serialize(&ciphertext_43).unwrap();
-        let serialized_ct_4445 = bc2wrap::serialize(&ciphertext_4445).unwrap();
-        let serialized_ct_add = bc2wrap::serialize(&ciphertext_add).unwrap();
-        let serialized_ct_mult = bc2wrap::serialize(&ciphertext_mult).unwrap();
+    check_hash(
+        CIPHERTEXT43_PATH,
+        &serialized_ct_43,
+        EXPECTED_HASH_CTXT_43,
+        false,
+    );
+    check_hash(
+        CIPHERTEXT4445_PATH,
+        &serialized_ct_4445,
+        EXPECTED_HASH_CTXT_4445,
+        false,
+    );
 
-        std::fs::write(path_to_ciphertext_43, serialized_ct_43).unwrap();
-        std::fs::write(path_to_ciphertext_4445, serialized_ct_4445).unwrap();
-        std::fs::write(path_to_ciphertext_add, serialized_ct_add).unwrap();
-        std::fs::write(path_to_ciphertext_mult, serialized_ct_mult).unwrap();
-
-        println!(
-            "KAT files for the ciphertexts generated and saved to {}",
-            storage_path
-        );
-    }
-
-    (
-        ciphertext_43,
-        ciphertext_4445,
-        ciphertext_add,
-        ciphertext_mult,
-    )
-}
-
-fn read_ciphertexts(storage_path: &str) -> (FheUint64, FheUint64, FheUint64, FheUint64) {
-    println!("Reading KAT files of the ciphertexts from {}", storage_path);
-
-    let storage = Path::new(storage_path);
-    let path_to_ciphertext_43 = storage.join(CIPHERTEXT43_PATH);
-    let path_to_ciphertext_4445 = storage.join(CIPHERTEXT4445_PATH);
-    let path_to_ciphertext_add = storage.join(CIPHERTEXT_ADD_PATH);
-    let path_to_ciphertext_mult = storage.join(CIPHERTEXT_MULT_PATH);
-
-    let ciphertext_43: FheUint64 =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_ciphertext_43).unwrap()).unwrap();
-    let ciphertext_4445: FheUint64 =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_ciphertext_4445).unwrap()).unwrap();
-    let ciphertext_add: FheUint64 =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_ciphertext_add).unwrap()).unwrap();
-    let ciphertext_mult: FheUint64 =
-        bc2wrap::deserialize_unsafe(&std::fs::read(path_to_ciphertext_mult).unwrap()).unwrap();
+    println!(
+        "NOTE: Hashes for addition and multiplication ciphertexts are CPU dependent due to FFT and may vary across machines"
+    );
+    check_hash(
+        CIPHERTEXT_ADD_PATH,
+        &serialized_ct_add,
+        EXPECTED_HASH_CTXT_ADD,
+        true,
+    );
+    check_hash(
+        CIPHERTEXT_MULT_PATH,
+        &serialized_ct_mult,
+        EXPECTED_HASH_CTXT_MUL,
+        true,
+    );
 
     (
         ciphertext_43,
@@ -188,18 +134,7 @@ pub fn set_plan() {
 }
 
 fn main() {
-    let args = KatCli::parse();
-
-    println!(" STARTING TFHE KAT WITH {:?}", args);
-    let storage = Path::new(&args.path_to_kat_folder);
-    if args.generate_kat {
-        std::fs::create_dir_all(storage).unwrap();
-    } else if !storage.exists() {
-        panic!(
-            "KAT folder {} does not exist. Cannot verify KAT files.",
-            args.path_to_kat_folder
-        );
-    }
+    println!("STARTING TFHE KAT");
 
     set_plan();
 
@@ -211,29 +146,7 @@ fn main() {
     let shortint_engine = ShortintEngine::new_from_seeder(&mut seeder);
     ShortintEngine::with_thread_local_mut(|engine| std::mem::replace(engine, shortint_engine));
 
-    let (client_key, compressed_server_key) =
-        generate_and_save_keys(params, &args.path_to_kat_folder, args.generate_kat);
-
-    if !args.generate_kat {
-        println!("Verifying generated keys against KAT files...");
-        let (expected_client_key, expected_compressed_server_key) =
-            read_keys(params, &args.path_to_kat_folder);
-
-        // Check there serialization, cause the struct don't derive eq
-        assert_eq!(
-            bc2wrap::serialize(&expected_client_key).unwrap(),
-            bc2wrap::serialize(&client_key).unwrap(),
-            "❌ Client key read from KAT does not match generated client key"
-        );
-
-        assert_eq!(
-            bc2wrap::serialize(&expected_compressed_server_key).unwrap(),
-            bc2wrap::serialize(&compressed_server_key).unwrap(),
-            "❌ Compressed server key read from KAT does not match generated compressed server key"
-        );
-
-        println!("✅ Keys are identical !");
-    }
+    let (client_key, compressed_server_key) = generate_keys(params);
 
     set_server_key(
         compressed_server_key
@@ -244,42 +157,7 @@ fn main() {
     );
 
     let (ciphertext_43, ciphertext_4445, ciphertext_add, ciphertext_mult) =
-        generate_and_save_ciphertexts(&client_key, &args.path_to_kat_folder, args.generate_kat);
-
-    if !args.generate_kat {
-        println!("Verifying generated ciphertexts against KAT files...");
-        let (
-            expected_ciphertext_43,
-            expected_ciphertext_4445,
-            expected_ciphertext_add,
-            expected_ciphertext_mult,
-        ) = read_ciphertexts(&args.path_to_kat_folder);
-
-        assert_eq!(
-            bc2wrap::serialize(&expected_ciphertext_43).unwrap(),
-            bc2wrap::serialize(&ciphertext_43).unwrap(),
-            "❌ Ciphertext of 43 read from KAT does not match generated ciphertext"
-        );
-
-        assert_eq!(
-            bc2wrap::serialize(&expected_ciphertext_4445).unwrap(),
-            bc2wrap::serialize(&ciphertext_4445).unwrap(),
-            "❌ Ciphertext of 4445 read from KAT does not match generated ciphertext"
-        );
-
-        assert_eq!(
-            bc2wrap::serialize(&expected_ciphertext_add).unwrap(),
-            bc2wrap::serialize(&ciphertext_add).unwrap(),
-            "❌ Ciphertext of addition read from KAT does not match generated ciphertext"
-        );
-
-        assert_eq!(
-            bc2wrap::serialize(&expected_ciphertext_mult).unwrap(),
-            bc2wrap::serialize(&ciphertext_mult).unwrap(),
-            "❌ Ciphertext of multiplication read from KAT does not match generated ciphertext"
-        );
-        println!("✅ All ciphertexts are identical !");
-    }
+        generate_ciphertexts(&client_key);
 
     println!("Decrypting ciphertexts and verifying results...");
     let decrypted_43: u64 = FheUint64::decrypt(&ciphertext_43, &client_key);
