@@ -692,7 +692,7 @@ where
 
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
-    // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+    // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
     // existing values are not re-backed up
     crypto_storage
