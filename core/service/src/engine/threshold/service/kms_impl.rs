@@ -1078,6 +1078,7 @@ mod tests {
             safe_deserialize(&mut std::io::Cursor::new(&buf), SAFE_SER_SIZE_LIMIT).unwrap();
 
         assert!(deserialized.is_compressed());
+        assert!(deserialized.key_cache.get().is_none());
 
         // Lazy decompression on the deserialized value should produce identical keys
         let srv_key = bc2wrap::serialize(&*deserialized.integer_server_key()).unwrap();
