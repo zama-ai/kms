@@ -9,7 +9,11 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
-use observability::{conf::TelemetryConfig, metrics};
+use observability::{
+    conf::TelemetryConfig,
+    metrics::{self},
+    metrics_names::OP_BOOT,
+};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, core_crypto::prelude::LweKeyswitchKey, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
@@ -564,7 +568,7 @@ where
 
     let session_maker = SessionMaker::new_initialized(
         threshold_config.my_id.map(Role::indexed_from_one),
-        &crypto_storage.inner,
+        &crypto_storage,
         networking_manager,
         verifier,
         base_kms.new_rng().await,
@@ -694,11 +698,17 @@ where
 
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
-    // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+    // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
-    // existing values are not re-backed up
-    backup_operator.update_backup_vault(false).await?;
-
+    // existing values are not overwritten or backed up again
+    if !crypto_storage
+        .inner
+        .update_backup_vault(false, OP_BOOT)
+        .await
+    {
+        anyhow::bail!("Failed to update backup vault when booting");
+    }
+    tracing::info!("Successfully updated backup vault when booting");
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),
