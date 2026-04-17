@@ -698,7 +698,7 @@ where
     crypto_storage
         .inner
         .update_backup_vault(false, OP_BOOT)
-        .await;
+        .await?;
 
     // Start updating system metrics
     update_threshold_kms_system_metrics(
