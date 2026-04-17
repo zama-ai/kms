@@ -110,7 +110,7 @@ pub(crate) async fn async_generate_fhe_keys(
 
     rayon::spawn_fifo(move || {
         let out = match keyset_config.compressed_key_config {
-            CompressedKeyConfig::None => generate_fhe_keys(
+            CompressedKeyConfig::None => generate_uncompressed_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -121,7 +121,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
-            CompressedKeyConfig::All => generate_compressed_fhe_keys(
+            CompressedKeyConfig::All => generate_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -219,7 +219,7 @@ pub(crate) async fn async_generate_crs(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_compressed_fhe_keys(
+pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
@@ -258,8 +258,8 @@ fn generate_compressed_fhe_keys(
         .unwrap_or(1.0);
 
     // unwrap is ok here because parameters should always have a correct pmax
-    let max_norm_hwt =
-        tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let max_norm_hwt = tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt)
+        .expect("Users are expected to set pmax correctly between ]0.5,1.0]");
 
     let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
         config,
@@ -270,8 +270,7 @@ fn generate_compressed_fhe_keys(
     )?;
 
     let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
-    let server_key_parts = server_key.into_raw_parts();
-    let decompression_key = server_key_parts.3.clone();
+    let (_, _, _, decompression_key, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -288,7 +287,7 @@ fn generate_compressed_fhe_keys(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_fhe_keys(
+pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
@@ -1097,7 +1096,10 @@ fn update_central_kms_system_metrics(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys};
+    use super::{
+        CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys,
+        generate_uncompressed_fhe_keys,
+    };
     use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -1287,7 +1289,7 @@ pub(crate) mod tests {
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let domain = dummy_domain();
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(
+        let (pub_fhe_keys, key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1302,7 +1304,7 @@ pub(crate) mod tests {
         // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
+        let (other_pub_fhe_keys, other_key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1375,8 +1377,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_generate_compressed_fhe_keys() {
-        use super::generate_compressed_fhe_keys;
+    fn test_generate_fhe_keys() {
+        use super::generate_fhe_keys;
         use kms_grpc::rpc_types::PubDataType;
         use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 
@@ -1387,7 +1389,7 @@ pub(crate) mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let seed = Some(Seed(42));
 
-        let result = generate_compressed_fhe_keys(
+        let result = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,

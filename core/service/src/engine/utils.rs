@@ -76,10 +76,40 @@ async fn verify_digests<S: StorageReader + Sync>(
     id: &RequestId,
     key_digest_map: &HashMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<()> {
+    // TODO(dp): Why use contains_key here? Just look it up and do nothing if it's not there. Why even use a HashMap?
+    // This code is all weird.
     if key_digest_map.contains_key(&PubDataType::PublicKey) {
+        let public_key_exists = storage
+            .data_exists(id, &PubDataType::PublicKey.to_string())
+            .await?;
+        let server_key_exists = storage
+            .data_exists(id, &PubDataType::ServerKey.to_string())
+            .await?;
+
+        if !(public_key_exists && server_key_exists)
+            && storage
+                .data_exists(id, &PubDataType::CompressedXofKeySet.to_string())
+                .await?
+        {
+            tracing::warn!(
+                "Public material for id={id} still references legacy PublicKey/ServerKey metadata, \
+                 but only CompressedXofKeySet is present. Falling back to compressed readability."
+            );
+            read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
+                storage,
+                id,
+                &PubDataType::CompressedXofKeySet.to_string(),
+            )
+            .await?;
+            // TODO(dp): this shortcutting is burried. Lift it.
+            return Ok(());
+        }
+
         let public_key_bytes = storage
             .load_bytes(id, &PubDataType::PublicKey.to_string())
             .await?;
+        // TODO(dp): this is potentially enormous. Figure out why we're doing this and if we can stop. Is `verify_digests` called from production code? Loading gigabytes of data
+        // and then hashing it is silly for tests. Let the tests fail instead.
         let server_key_bytes = storage
             .load_bytes(id, &PubDataType::ServerKey.to_string())
             .await?;
@@ -124,6 +154,31 @@ async fn check_readability<S: StorageReader + Sync>(
     pub_data_types: &HashSet<PubDataType>,
 ) -> anyhow::Result<()> {
     if pub_data_types.contains(&PubDataType::PublicKey) {
+        let public_key_exists = storage
+            .data_exists(id, &PubDataType::PublicKey.to_string())
+            .await?;
+        let server_key_exists = storage
+            .data_exists(id, &PubDataType::ServerKey.to_string())
+            .await?;
+
+        if !(public_key_exists && server_key_exists)
+            && storage
+                .data_exists(id, &PubDataType::CompressedXofKeySet.to_string())
+                .await?
+        {
+            tracing::warn!(
+                "Legacy public metadata for id={id} points to PublicKey/ServerKey, \
+                 but only CompressedXofKeySet is present. Falling back to compressed readability."
+            );
+            read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
+                storage,
+                id,
+                &PubDataType::CompressedXofKeySet.to_string(),
+            )
+            .await?;
+            return Ok(());
+        }
+
         read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
             storage,
             id,
