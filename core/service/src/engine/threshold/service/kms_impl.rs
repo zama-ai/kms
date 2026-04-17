@@ -9,7 +9,11 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
-use observability::{conf::TelemetryConfig, metrics, metrics_names::OP_BOOT};
+use observability::{
+    conf::TelemetryConfig,
+    metrics::{self, METRICS},
+    metrics_names::{ERR_BACKUP, OP_BOOT},
+};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, core_crypto::prelude::LweKeyswitchKey, named::Named};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
@@ -695,10 +699,11 @@ where
     // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
     // existing values are not overwritten or backed up again
-    crypto_storage
-        .inner
-        .update_backup_vault(false, OP_BOOT)
-        .await?;
+    if let Err(e) = crypto_storage.inner.inner_update_backup_vault(false).await {
+        METRICS.increment_backup_error_counter(OP_BOOT, ERR_BACKUP);
+        anyhow::bail!("Failed to update backup vault when booting: {e}");
+    }
+    tracing::info!("Successfully updated backup vault when booting");
 
     // Start updating system metrics
     update_threshold_kms_system_metrics(

@@ -1098,7 +1098,7 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
-    async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
+    pub(crate) async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();
