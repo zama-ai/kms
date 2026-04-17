@@ -494,9 +494,101 @@ impl Intercept for HostHeaderInterceptor {
     }
 }
 
+/// Split an S3 URL into its protocol, domain and bucket name.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
+/// protocol: "https://", domain: "s3.eu-west-1.amazonaws.com", bucket: "zama-zws-dev-tkms-b6q87"
+///
+/// The URL http://localhost:9000/kms will be split into
+/// protocol: "http://", domain: "localhost:9000", bucket: "kms"
+///
+/// The URL file:///tmp/somepath will be split into
+/// protocol: "file://", domain: "", bucket: "/tmp/somepath"
+///
+/// Code is adapted from
+/// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
+pub fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String, String)> {
+    tracing::info!("Splitting S3 url: {}", s3_bucket_url);
+    let parsed = url::Url::parse(s3_bucket_url.as_str())?;
+    let protocol = format!("{}://", parsed.scheme());
+
+    // Build domain as host + optional port
+    let domain = match (parsed.host_str(), parsed.port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_string(),
+        _ => String::new(),
+    };
+
+    // Extract bucket from path or domain
+    let path_bucket = parsed
+        .path()
+        .trim_start_matches('/')
+        .trim_end_matches('/')
+        .to_owned();
+
+    if path_bucket.is_empty() {
+        tracing::warn!(
+            "Bucket is empty, attempting to deduce from domain {:?}",
+            parsed
+        );
+        // e.g BBBBBB.s3.eu-west-1.amazonaws.com, the bucket is part of the domain
+        let bucket_from_domain = bucket_from_domain(&parsed)?;
+        // Remove bucket subdomain from domain string
+        let domain = domain
+            .replace(&(bucket_from_domain.clone() + "."), "")
+            .trim_end_matches('/')
+            .to_string();
+
+        tracing::info!(
+            s3_bucket_url,
+            protocol,
+            domain,
+            bucket_from_domain,
+            "Bucket from domain"
+        );
+        Ok((protocol, domain, bucket_from_domain))
+    } else if protocol == "file://" {
+        // For file:// URLs, the full path is the "bucket" (filesystem root)
+        let full_path = parsed.path().to_string();
+        tracing::info!(
+            s3_bucket_url,
+            protocol,
+            domain,
+            bucket = full_path,
+            "File URL"
+        );
+        Ok((protocol, domain, full_path))
+    } else {
+        tracing::info!(
+            s3_bucket_url,
+            protocol,
+            domain,
+            path_bucket,
+            "Parsed S3 url"
+        );
+        Ok((protocol, domain, path_bucket))
+    }
+}
+
+fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
+    let Some(domain) = url.domain() else {
+        anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
+    };
+    let domain_parts = domain.split('.').collect::<Vec<&str>>();
+    if domain_parts.len() < 2 {
+        tracing::warn!(
+            "Cannot deduce the bucket name from url {:?}. Returning default bucket used in testing",
+            url
+        );
+        Ok("kms".to_owned())
+    } else {
+        Ok(domain_parts[0].to_owned())
+    }
+}
+
 // This builds an anonymous S3 client, useful for accessing public S3 buckets.
 pub async fn build_anonymous_s3_client(
-    aws_s3_endpoint: Url,
+    aws_s3_endpoint: &str,
     region: String,
 ) -> anyhow::Result<S3Client> {
     let aws_region = Region::new(region);
@@ -507,7 +599,7 @@ pub async fn build_anonymous_s3_client(
         .await;
 
     let s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config)
-        .endpoint_url(aws_s3_endpoint)
+        .endpoint_url(url::Url::parse(aws_s3_endpoint)?)
         .force_path_style(true);
     let s3_config = s3_config_builder.build();
     Ok(S3Client::from_conf(s3_config))
@@ -603,6 +695,37 @@ pub(crate) async fn s3_put_blob(
                 "AWS error, please refer to other logs.: {err}"
             ))
         }
+    }
+}
+
+/// Find the AWS region from an S3 bucket URL.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will return "eu-west-1".
+pub fn find_region_from_s3_url(s3_bucket_url: &str) -> anyhow::Result<String> {
+    let parsed_url = url::Url::parse(s3_bucket_url)?;
+    let domain = parsed_url
+        .domain()
+        .ok_or(anyhow::anyhow!("Cannot parse domain from URL"))?;
+    let domain_parts: Vec<&str> = domain.split('.').collect();
+    if domain_parts.len() < 4 {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        return Ok("us-east-1".to_owned()); // default region
+    }
+    let dot_com_pos = domain_parts.len() - 1;
+    let expected_s3_pos = dot_com_pos - 3;
+    let expected_region_pos = dot_com_pos - 2;
+    // e.g s3.eu-west-1.amazonaws.com
+    if domain_parts[expected_s3_pos] == "s3" {
+        Ok(domain_parts[expected_region_pos].to_owned())
+    } else {
+        tracing::warn!(
+            "Cannot deduce the region from url {:?}. Using default us-east-1",
+            s3_bucket_url
+        );
+        Ok("us-east-1".to_owned()) // default region
     }
 }
 
@@ -802,10 +925,9 @@ mod tests {
             .unwrap();
 
         // Build an anonymous client pointing at local MinIO
-        let s3_client =
-            build_anonymous_s3_client(Url::parse(AWS_S3_ENDPOINT).unwrap(), AWS_REGION.to_string())
-                .await
-                .unwrap();
+        let s3_client = build_anonymous_s3_client(AWS_S3_ENDPOINT, AWS_REGION.to_string())
+            .await
+            .unwrap();
 
         let pub_storage = ReadOnlyS3Storage::new(
             s3_client,
@@ -908,4 +1030,23 @@ impl StorageReader for DummyReadOnlyS3Storage {
     fn info(&self) -> String {
         self.ram_storage.info()
     }
+}
+
+#[test]
+fn test_find_region() {
+    let url = "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "eu-west-1");
+
+    let url = "https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-west-1");
+
+    let url = "https://s3.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-east-1");
+
+    let url = "http://dev-s3-mock:9000".to_string();
+    let region = find_region_from_s3_url(&url).unwrap();
+    assert_eq!(region.as_str(), "us-east-1");
 }

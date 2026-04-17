@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
-use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID};
+use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::util::key_setup::test_tools::backup_exists;
 use crate::util::key_setup::test_tools::read_custodian_backup_files;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
@@ -145,7 +145,12 @@ pub(crate) async fn run_new_cus_context(
     threshold: u32,
 ) -> Vec<String> {
     let (new_cus_req, mnemonics) = internal_client
-        .new_custodian_context_request(req_new_cus, amount_custodians, threshold)
+        .new_custodian_context_request(
+            req_new_cus,
+            &DEFAULT_MPC_CONTEXT,
+            amount_custodians,
+            threshold,
+        )
         .unwrap();
 
     let responses = launch_new_cus(&new_cus_req, kms_clients).await;

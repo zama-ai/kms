@@ -33,6 +33,7 @@ use threshold_networking::{
     tls::AttestedVerifier,
 };
 
+use threshold_types::role::Role;
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -566,6 +567,7 @@ where
         .await;
 
     let session_maker = SessionMaker::new_initialized(
+        threshold_config.my_id.map(Role::indexed_from_one),
         &crypto_storage,
         networking_manager,
         verifier,

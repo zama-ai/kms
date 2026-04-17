@@ -90,6 +90,7 @@ impl SessionMaker {
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
     >(
+        my_id: Option<Role>,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
@@ -107,6 +108,19 @@ impl SessionMaker {
             tracing::info!(
                 "Loaded PRSS Setup from storage for request ID {}.",
                 epoch_id
+            );
+        }
+        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
+        if mpc_contexts.is_empty() {
+            tracing::warn!(
+                "No MPC context found in storage! There should at a minimum be a default context!"
+            );
+        }
+        for context_info in mpc_contexts {
+            session_maker.add_context_info(my_id, &context_info).await?;
+            tracing::info!(
+                "Loaded MPC context from storage for context ID {}.",
+                context_info.context_id()
             );
         }
         Ok(session_maker)

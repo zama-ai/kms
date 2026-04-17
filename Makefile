@@ -41,6 +41,7 @@ clean-backward-compatibility-data:
 	rm -rf backward-compatibility/data/0_11_1
 	rm -rf backward-compatibility/data/0_13_0
 	rm -rf backward-compatibility/data/0_13_10
+	rm -rf backward-compatibility/data/0_13_20
 
 generate-backward-compatibility-v0.11.0:
 	cd backward-compatibility/generate-v0.11.0 && cargo run --release
@@ -53,8 +54,11 @@ generate-backward-compatibility-v0.13.0:
 
 generate-backward-compatibility-v0.13.10:
 	cd backward-compatibility/generate-v0.13.10 && cargo run --release
+	
+generate-backward-compatibility-v0.13.20:
+	cd backward-compatibility/generate-v0.13.20 && cargo run --release
 
-generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0 generate-backward-compatibility-v0.13.10
+generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0 generate-backward-compatibility-v0.13.10 generate-backward-compatibility-v0.13.20
 	@echo "Generated backward compatibility data for all versions"
 
 # Test material generation targets
