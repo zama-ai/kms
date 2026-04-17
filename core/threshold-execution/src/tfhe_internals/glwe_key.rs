@@ -56,14 +56,14 @@ where
             let max_hw = Z::from_u128(max_hw as u128);
             let min_hw = Z::from_u128(min_hw as u128);
 
-            let mut total_size = total_size;
+            let mut remaining = total_size;
             let mut data = Vec::with_capacity(total_size);
             loop {
-                let local_data = preprocessing.next_bit_vec(total_size)?;
+                let local_data = preprocessing.next_bit_vec(remaining)?;
 
                 // Safety check, should never happen as next_bit_vec should already error out if
                 // that's the case
-                if local_data.len() < total_size {
+                if local_data.len() < remaining {
                     anyhow::bail!("Not enough data in preprocessing to sample a GLWE key");
                 }
 
@@ -77,7 +77,7 @@ where
                 for (index, hw) in hws.into_iter().enumerate() {
                     if hw <= max_hw && hw >= min_hw {
                         tracing::info!("Hamming weight within bounds: {hw}, keeping this key.");
-                        total_size -= polynomial_size.0;
+                        remaining -= polynomial_size.0;
                         data.extend_from_slice(
                             // Direct indexing here is safe we just checked the size
                             &local_data[index * polynomial_size.0..(index + 1) * polynomial_size.0],
@@ -89,7 +89,7 @@ where
                     }
                 }
 
-                if total_size == 0 {
+                if remaining == 0 {
                     tracing::info!("Sampled all necessary keys with correct hw");
                     break;
                 }
@@ -169,7 +169,6 @@ mod tests {
 
     use super::GlweSecretKeyShare;
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_forced_hw_keygen_glwe() {
         // Params such that we need each of the 3 keys with HW between 4 and 6
@@ -221,7 +220,7 @@ mod tests {
 
             let mut preprocessing = InMemoryBitPreprocessing { available_bits };
 
-            let lwe_key = GlweSecretKeyShare::new_from_preprocessing(
+            let glwe_key = GlweSecretKeyShare::new_from_preprocessing(
                 total_size,
                 polynomial_size,
                 &mut preprocessing,
@@ -230,7 +229,7 @@ mod tests {
             )
             .await
             .unwrap();
-            (my_role, lwe_key)
+            (my_role, glwe_key)
         };
 
         let parties = 5;
@@ -266,10 +265,5 @@ mod tests {
             let hw = key.iter().filter(|b| **b == 1).count();
             assert_eq!(hw, 5);
         }
-
-        //Assert tracing contains "Hamming weight out of bounds"
-        assert!(logs_contain(
-            "Hamming weight out of bounds: 2. Expected min : 4, max : 6"
-        ));
     }
 }

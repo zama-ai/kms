@@ -40,8 +40,7 @@ use anyhow::anyhow;
 use std::{fmt, panic::Location};
 
 // NOTE: the below is copied from core/threshold
-// since the calling tracing from another crate
-// does not generate correct logs in kms_test_tracing::traced_test
+// since calling tracing from another crate may not generate correct logs
 #[cfg(feature = "non-wasm")]
 #[track_caller]
 pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {

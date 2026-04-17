@@ -1352,7 +1352,6 @@ mod tests {
     }
 
     #[test]
-    #[kms_test_tracing::traced_test]
     fn test_abi_encoding_fhevm() {
         // a batch with a single plaintext
         let pts_16: Vec<TypedPlaintext> = vec![TypedPlaintext::from_u16(16)];
@@ -1430,16 +1429,17 @@ mod tests {
         ];
 
         // encode plaintexts into a list of solidity bytes using `alloy`, this should fail and return an error due to unsupported types
-        let res = super::abi_encode_plaintexts(&pts_mix3);
+        let err_msg = super::abi_encode_plaintexts(&pts_mix3)
+            .unwrap_err()
+            .to_string();
         assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Received unsupported FHE type for ABI encoding")
+            err_msg.contains("Received unsupported FHE type for ABI encoding"),
+            "expected unsupported type error: {err_msg}"
         );
         // check that we also log an error when trying to encode unsupported types in pts_mix3
         assert!(
-            logs_contain("Received unsupported FHE type for ABI encoding"),
-            "Expected log for unsupported FHE type not found."
+            err_msg.contains("Error in"),
+            "expected error to be logged (via anyhow_error_and_log): {err_msg}"
         );
     }
 

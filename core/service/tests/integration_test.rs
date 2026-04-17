@@ -652,7 +652,7 @@ mod kms_custodian_binary_tests {
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        kms_test_tracing::init_logging();
+        test_utils::test_logging::init_test_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {
@@ -723,7 +723,6 @@ mod kms_custodian_binary_tests {
         let _verf_out = run_custodian_cli(verf_command);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     #[serial_test::serial]
     async fn sunshine_decrypt_custodian() {
@@ -893,13 +892,15 @@ mod kms_custodian_binary_tests {
         )
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();
-        let (ct_map, commitments) = operator
+        let signcrypt_result = operator
             .secret_share_and_signcrypt(
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,
             )
             .unwrap();
+        let ct_map = signcrypt_result.ct_shares;
+        let commitments = signcrypt_result.commitments;
         let custodian_context = InternalCustodianContext::new(
             CustodianContext {
                 custodian_nodes: setup_msgs

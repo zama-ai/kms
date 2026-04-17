@@ -430,7 +430,6 @@ pub(crate) mod tests {
     };
     use futures_util::future::join;
     use itertools::Itertools;
-    use kms_test_tracing::traced_test;
     use rand::SeedableRng;
     use rstest::rstest;
     use std::{collections::HashSet, num::Wrapping};
@@ -696,7 +695,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    #[traced_test]
     #[test]
     fn test_evaluate_w_zero_roots() {
         let parties = 4;

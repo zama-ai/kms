@@ -151,7 +151,6 @@ threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
-kms-test-tracing.workspace = true
 
 
 [features]
