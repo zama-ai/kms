@@ -694,7 +694,7 @@ where
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
-    // existing values are not re-backed up
+    // existing values are not overwritten or backed up again
     crypto_storage
         .inner
         .update_backup_vault(false, OP_BOOT)
