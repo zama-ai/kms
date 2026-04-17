@@ -11,7 +11,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard, METRICS},
     metrics_names::{
-        ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
+        ERR_CANCELLED, OP_KEYGEN_ABORT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -28,7 +29,7 @@ use threshold_execution::{
 use threshold_types::party::Identity;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 // === Internal Crate ===
@@ -45,7 +46,10 @@ use crate::{
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
-        meta_store::{MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout},
+        meta_store::{
+            MetaStore, add_req_to_meta_store, retrieve_from_meta_store_with_timeout,
+            update_err_req_in_meta_store,
+        },
         rate_limiter::RateLimiter,
     },
 };
@@ -407,9 +411,45 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
     async fn inner_abort_key_gen_preproc(
         &self,
-        _request: v1::RequestId,
-    ) -> Result<v1::RequestId, MetricedError> {
-        todo!();
+        preproc_id: RequestId,
+        key_gen_cancel_res: Status,
+    ) -> Result<Response<Empty>, MetricedError> {
+        // Step 1: If preprocessing is still running — cancel it
+        let mut ongoing = self.ongoing.lock().await;
+        if let Some(token) = ongoing.remove(&preproc_id) {
+            // Observe that the cancellation arm handles the abortion and clean-up
+            token.cancel();
+            tracing::info!("Cancelled preprocessing {}", preproc_id);
+            Ok(Response::new(Empty {}))
+        } else {
+            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existsed
+            // Regardless set the bucket handle to be canceled if it exists
+            let mut buckets: tokio::sync::RwLockWriteGuard<'_, MetaStore<BucketMetaStore>> =
+                self.preproc_buckets.write().await;
+            if buckets.exists(&preproc_id) {
+                update_err_req_in_meta_store(
+                    &mut buckets,
+                    &preproc_id,
+                    "Preprocessing aborted!".to_string(),
+                    OP_KEYGEN_ABORT,
+                );
+                Ok(Response::new(Empty {}))
+            } else {
+                // Bucket either never existed or has already been consumed by key gen, ragardless return keg gen abort result
+                if key_gen_cancel_res.code() == tonic::Code::Ok {
+                    // Existed and had been consumed by key gen, but key gen was able to cancel successfully
+                    Ok(Response::new(Empty {}))
+                } else {
+                    // Either did not exist or something went wrong with key gen cancellation
+                    Err(MetricedError::new(
+                        OP_KEYGEN_ABORT,
+                        Some(preproc_id),
+                        key_gen_cancel_res.message().to_string(),
+                        key_gen_cancel_res.code(),
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -499,9 +539,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
     async fn abort_key_gen_preproc(
         &self,
-        request: Request<v1::RequestId>,
-    ) -> Result<v1::RequestId, MetricedError> {
-        self.inner_abort_key_gen_preproc(request.into_inner()).await
+        preproc_id: RequestId,
+        key_gen_cancel_res: Status,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.inner_abort_key_gen_preproc(preproc_id, key_gen_cancel_res)
+            .await
     }
 
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {

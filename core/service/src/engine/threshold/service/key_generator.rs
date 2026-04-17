@@ -40,7 +40,7 @@ use threshold_execution::{
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 // === Internal Crate Imports ===
@@ -134,7 +134,7 @@ pub struct RealKeyGenerator<
     pub(crate) session_maker: ImmutableSessionMaker,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
-    // Map of ongoing key generation tasks
+    // Map of ongoing key generation tasks, indexed by the preprocessing ID
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
@@ -204,10 +204,7 @@ impl<
             .await
     }
 
-    async fn abort_key_gen(
-        &self,
-        preproc_id: v1::RequestId,
-    ) -> Result<Response<Empty>, MetricedError> {
+    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
         self.real_key_generator
             .inner_abort_key_gen(preproc_id)
             .await
@@ -335,13 +332,14 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
-        let preproc_handle_w_mode_copy = preproc_handle_w_mode.clone();
-
-        let token = CancellationToken::new();
-        {
-            self.ongoing.lock().await.insert(req_id, token.clone());
-        }
         let ongoing = Arc::clone(&self.ongoing);
+
+        let preproc_id = match &preproc_handle_w_mode {
+            PreprocHandleWithMode::Secure((preproc_id, _)) => *preproc_id,
+            PreprocHandleWithMode::Insecure => *INSECURE_PREPROCESSING_ID,
+        };
+        let token = CancellationToken::new();
+        self.ongoing.lock().await.insert(preproc_id, token.clone());
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
@@ -394,7 +392,7 @@ impl<
                         dkg_sessions,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode_copy,
+                        preproc_handle_w_mode,
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
@@ -414,7 +412,7 @@ impl<
                         dkg_sessions.session_z128.base_session,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode_copy,
+                        preproc_handle_w_mode,
                         sk,
                         dkg_params,
                         internal_keyset_config
@@ -433,17 +431,16 @@ impl<
                 let _timer = timer.start();
                 tokio::select! {
                     () = keygen_background => {
-                        tracing::info!("Key generation of request {} exiting normally.", req_id);
+                        tracing::info!("Key generation of request {} with preproc id {} exiting normally.", req_id, preproc_id);
                         // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&req_id);
+                        ongoing.lock().await.remove(&preproc_id);
                     },
                     () = token.cancelled() => {
                          MetricedError::handle_unreturnable_error(
                                     OP_KEYGEN_REQUEST,
                                     Some(req_id),
-                                    "Key generation background failed since the task got cancelled".to_string(),
+                                    format!("Key generation background with preprocessing id {} failed since the task got cancelled", preproc_id),
                                 );
-                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
                     },
@@ -535,11 +532,21 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    async fn inner_abort_key_gen(
-        &self,
-        _preproc_id: v1::RequestId,
-    ) -> Result<Response<Empty>, MetricedError> {
-        todo!();
+    async fn inner_abort_key_gen(&self, preproc_id: RequestId) -> Status {
+        match self.ongoing.lock().await.get(&preproc_id) {
+            Some(cancellation_token) => {
+                // Observe that the cancellation arm handles the abortion and clean-up
+                cancellation_token.cancel();
+                tracing::info!("Cancelled key generation with preprocessing {}", preproc_id);
+            }
+            None => {
+                // No keygen consumed this preprocessing — nothing to cancel
+                return Status::not_found(
+                    "No ongoing key generation found for the supplied preprocessing ID",
+                );
+            }
+        }
+        Status::ok("Key gen cancelled successfully")
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
@@ -1492,10 +1499,7 @@ impl<
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_key_gen(
-        &self,
-        preproc_id: v1::RequestId,
-    ) -> Result<Response<Empty>, MetricedError> {
+    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
         self.inner_abort_key_gen(preproc_id).await
     }
 }

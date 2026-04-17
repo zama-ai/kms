@@ -86,7 +86,6 @@ pub(crate) enum RequestIdParsingErr {
     CrsGenResponse,
     CrsGenAbort,
     PreprocResponse,
-    PreprocAbort,
     KeyGenResponse,
     KeyGenAbort,
     UserDecResponse,
@@ -125,9 +124,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::PreprocResponse => {
                 write!(f, "Invalid get pre-processing result response ID")
-            }
-            RequestIdParsingErr::PreprocAbort => {
-                write!(f, "Invalid abort pre-processing request ID")
             }
             RequestIdParsingErr::KeyGenAbort => {
                 write!(f, "Invalid abort key generation request ID")

@@ -1,6 +1,6 @@
 use crate::engine::utils::MetricedError;
 use kms_grpc::kms::v1::*;
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait UserDecryptor {
@@ -36,7 +36,7 @@ pub trait KeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Result<Response<Empty>, MetricedError>;
+    async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 
 #[cfg(feature = "insecure")]
@@ -50,7 +50,7 @@ pub trait InsecureKeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Result<Response<Empty>, MetricedError>;
+    async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 
 #[tonic::async_trait]
@@ -75,8 +75,9 @@ pub trait KeyGenPreprocessor {
 
     async fn abort_key_gen_preproc(
         &self,
-        request: Request<RequestId>,
-    ) -> Result<RequestId, MetricedError>;
+        preproc_id: kms_grpc::RequestId,
+        key_gen_cancel_res: Status,
+    ) -> Result<Response<Empty>, MetricedError>;
 }
 
 #[tonic::async_trait]
