@@ -28,7 +28,7 @@ use threshold_fhe_0_11_1::{
 use kms_0_11_1::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11_1::{
     kms::v1::TypedPlaintext,
-    rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
 use rand::{RngCore, SeedableRng};
 use std::num::Wrapping;
@@ -57,10 +57,10 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
-    PrivateSigKeyTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, ShareTest,
-    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    PrivateSigKeyTest, PubDataTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
+    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_11_1::cryptography::signcryption::SigncryptionPayload;

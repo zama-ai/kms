@@ -406,6 +406,7 @@ async fn emulate_custodian(
             .verify_reencrypt(
                 rng,
                 &cur_cus_reenc.to_owned().try_into().unwrap(),
+                kms_grpc::RequestId::from_bytes([7u8; 32]),
                 &verf_key,
                 &cur_enc_key,
                 backup_id.clone().try_into().unwrap(),
