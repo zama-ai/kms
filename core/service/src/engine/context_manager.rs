@@ -1811,7 +1811,7 @@ mod tests {
     /// creation to fail.
     #[tokio::test]
     async fn test_custodian_context_fails_on_backup_update_failure() {
-        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
 
         // Store corrupt data in private storage under ContextInfo type.
@@ -1857,11 +1857,12 @@ mod tests {
         let context_id = RequestId::from_bytes([4u8; 32]);
         let context = CustodianContext {
             custodian_nodes: setup_msgs,
-            context_id: Some(context_id.into()),
+            custodian_context_id: Some(context_id.into()),
             threshold: threshold as u32,
         };
         let request = Request::new(NewCustodianContextRequest {
-            new_context: Some(context),
+            new_custodian_context: Some(context),
+            mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
