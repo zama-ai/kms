@@ -5,7 +5,7 @@
 
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
-    use crate::client::tests::common::{OptKeySetConfigAccessor, standard_keygen_config};
+    use crate::client::tests::common::{OptKeySetConfigAccessor, keygen_config};
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
@@ -35,10 +35,10 @@ cfg_if::cfg_if! {
     use tonic::transport::Channel;
 }}
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::client::tests::common::compressed_keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, decompression_keygen_config};
+use crate::client::tests::common::{
+    TIME_TO_SLEEP_MS, decompression_keygen_config, uncompressed_keygen_config,
+};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]
@@ -73,7 +73,6 @@ pub(crate) enum TestKeyGenResult {
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-#[allow(dead_code)]
 impl TestKeyGenResult {
     fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
         match self {
@@ -151,7 +150,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -160,14 +159,16 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         &key_id,
         keyset_config,
         keyset_added_info,
-        true,
+        true, // insecure
         None,
         0,
     )
     .await
     .0;
-    _ = keys.clone().get_standard();
+    // Check that we generated the expected key.
+    _ = keys.clone().get_compressed();
 
+    // Check that fetching a kind of key we did not generate panics.
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
 }
@@ -197,7 +198,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = compressed_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -233,6 +234,8 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
 
+    use crate::client::key_gen::tests::check_conformance;
+
     let param = FheParameter::Default;
     let dkg_param: WrappedDKGParams = param.into();
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -252,7 +255,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         param,
         &kms_clients,
@@ -269,8 +272,9 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .0;
 
     // check that we have the new mod switch key
-    let (client_key, _, server_key) = keys.clone().get_standard();
-    crate::client::key_gen::tests::check_conformance(server_key, client_key);
+    let (client_key, compressed_keyset) = keys.clone().get_compressed();
+    let (_pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+    check_conformance(server_key, client_key);
 
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
@@ -668,7 +672,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys1 = run_threshold_keygen(
         parameter,
         &kms_clients,
@@ -683,7 +687,8 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
+    let (client_key_1, compressed_keyset_1) = keys1.get_compressed();
+    let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
     if !insecure {
         run_preproc(
@@ -699,7 +704,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys2 = run_threshold_keygen(
         parameter,
         &kms_clients,
@@ -714,7 +719,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
+    let (client_key_2, _compressed_keyset_2) = keys2.get_compressed();
 
     // We always need to run preproc for the last keygen
     run_preproc(
@@ -927,9 +932,9 @@ pub(crate) async fn preproc_and_keygen(
             let key_id = *key_id;
             let preproc_id = *preproc_id;
             let (keyset_config, keyset_added_info) = if compressed {
-                compressed_keygen_config()
+                keygen_config()
             } else {
-                standard_keygen_config()
+                uncompressed_keygen_config()
             };
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
@@ -981,7 +986,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                compressed,
+                !compressed,
             )
             .await;
         }
@@ -1009,9 +1014,9 @@ pub(crate) async fn preproc_and_keygen(
         .await;
         for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
             let (keyset_config, keyset_added_info) = if compressed {
-                compressed_keygen_config()
+                keygen_config()
             } else {
-                standard_keygen_config()
+                uncompressed_keygen_config()
             };
             let keyset = run_threshold_keygen(
                 parameter,
@@ -1047,7 +1052,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                compressed,
+                !compressed,
             )
             .await;
         }

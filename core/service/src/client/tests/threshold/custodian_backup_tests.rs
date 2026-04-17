@@ -4,10 +4,11 @@ cfg_if::cfg_if! {
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::client_wasm::Client;
         use crate::client::test_tools::ServerHandle;
+        use crate::client::tests::common::keygen_config;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::common::standard_keygen_config;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+        use crate::consts::DEFAULT_EPOCH_ID;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
         use crate::cryptography::signatures::PublicSigKey;
@@ -35,8 +36,6 @@ cfg_if::cfg_if! {
 }
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-#[cfg(feature = "insecure")]
-use crate::consts::DEFAULT_EPOCH_ID;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
@@ -324,7 +323,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -400,7 +399,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         1,
         test_path,
-        keyset_config.is_compressed(),
+        !keyset_config.is_compressed(),
     )
     .await;
 }
