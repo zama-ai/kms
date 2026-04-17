@@ -1,5 +1,6 @@
 use aes_prng::AesRng;
 use rand::SeedableRng;
+use std::time::Duration;
 use tfhe::xof_key_set::CompressedXofKeySet;
 
 use crate::{
@@ -170,5 +171,82 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         Err(anyhow::anyhow!(
             "This keygen implementation is supposed to fail"
         ))
+    }
+}
+
+/// Online DKG that delays completion long enough (10 seconds) to be reliably aborted mid-execution.
+/// All variants just sleep and then bail — the tests using this keygen expect the task
+/// to be cancelled before any return value is produced.
+pub struct SlowOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
+
+async fn slow_abort_bail<T>() -> anyhow::Result<T> {
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    anyhow::bail!("SlowOnlineDistributedKeyGen128 should have been aborted before completing")
+}
+
+#[tonic::async_trait]
+impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>
+    for SlowOnlineDistributedKeyGen128<EXTENSION_DEGREE>
+{
+    async fn keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        slow_abort_bail().await
+    }
+
+    async fn compressed_keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+    ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        slow_abort_bail().await
+    }
+
+    async fn compressed_keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<CompressedXofKeySet>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        slow_abort_bail().await
+    }
+
+    async fn keygen_from_existing_private_keyset<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _tag: tfhe::Tag,
+        _existing_private_keyset: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<FhePubKeySet>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        slow_abort_bail().await
     }
 }

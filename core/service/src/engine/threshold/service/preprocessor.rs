@@ -878,4 +878,58 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn abort_preproc_not_found() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let random_id = RequestId::new_random(&mut rng);
+
+        // When there is no preproc and the key gen returned NotFound too,
+        // the abort endpoint must surface NotFound.
+        let key_gen_cancel_res = Status::not_found("no keygen running");
+        let err = prep
+            .abort_key_gen_preproc(random_id, key_gen_cancel_res)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Start a real preprocessing task and abort it right after it has started.
+    #[tokio::test]
+    async fn abort_during_preproc() {
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        // No key generation is running, so the outer endpoint would abort alright
+        let key_gen_cancel_res = Status::not_found("no keygen running");
+        assert!(
+            prep.abort_key_gen_preproc(req_id, key_gen_cancel_res)
+                .await
+                .is_ok()
+        );
+
+        // Retrieving the result must now surface an error (the bucket was updated to aborted)
+        assert_eq!(
+            prep.get_result(tonic::Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
 }

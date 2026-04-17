@@ -1517,14 +1517,16 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
-    use rand::rngs::OsRng;
+    use rand::SeedableRng;
     use threshold_execution::{
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
+            SlowOnlineDistributedKeyGen128,
         },
         online::preprocessing::dummy::DummyPreprocessing,
         small_execution::prss::PRSSSetup,
@@ -1605,7 +1607,8 @@ mod tests {
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
-        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(1);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -1623,7 +1626,7 @@ mod tests {
         .await;
 
         let prep_ids: [RequestId; 4] = (0..4)
-            .map(|_| RequestId::new_random(&mut OsRng))
+            .map(|_| RequestId::new_random(&mut rng))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
@@ -1693,7 +1696,7 @@ mod tests {
         }
         {
             // bad domain
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(42));
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "bad_contract".to_string();
 
@@ -1716,7 +1719,7 @@ mod tests {
         }
         {
             // bad keyset_config
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(42));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let keyset_config = KeySetConfig {
                 keyset_type: 100, // bad keyset type
@@ -1749,8 +1752,9 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
+        let mut rng = AesRng::seed_from_u64(1);
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let key_id = RequestId::new_random(&mut rng);
 
         // Set bucket size to zero, so no operations are allowed
         kg.set_bucket_size(0);
@@ -1780,11 +1784,11 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-
+        let mut rng = AesRng::seed_from_u64(1);
         // use a random prep ID and it should be not found
         {
-            let key_id = RequestId::new_random(&mut OsRng);
-            let bad_prep_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut rng);
+            let bad_prep_id = RequestId::new_random(&mut rng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
@@ -1806,7 +1810,7 @@ mod tests {
 
         {
             // the result is not found since it's a fresh key ID
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut rng);
             assert_eq!(
                 kg.get_result(tonic::Request::new(key_id.into()))
                     .await
@@ -1824,7 +1828,8 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(1);
+        let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
@@ -1860,7 +1865,8 @@ mod tests {
         .await;
         let prep_id0 = prep_ids[0];
         let prep_id1 = prep_ids[1];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(1);
+        let key_id = RequestId::new_random(&mut rng);
 
         // do one keygen
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1916,8 +1922,9 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
-        let wrong_keyset_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(1);
+        let key_id = RequestId::new_random(&mut rng);
+        let wrong_keyset_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let keyset_config = KeySetConfig {
@@ -1963,7 +1970,8 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(1);
+        let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -1987,5 +1995,50 @@ mod tests {
         kg.get_result(tonic::Request::new(key_id.into()))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_key_gen_not_found() {
+        let (_prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+
+        // Abort with a preproc ID for which no key generation is running
+        let mut rng = AesRng::seed_from_u64(1);
+        let random_id = RequestId::new_random(&mut rng);
+        let status = kg.abort_key_gen(random_id).await;
+        assert_eq!(status.code(), tonic::Code::NotFound);
+    }
+
+    /// Dummy preprocessing (pre-populated into the bucket by [`setup_key_generator`]) is
+    /// consumed by the key generation, after which the slow DKG is aborted mid-execution.
+    #[tokio::test]
+    async fn abort_during_key_gen() {
+        let (prep_ids, kg) = setup_key_generator::<
+            SlowOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
+        let mut rng = AesRng::seed_from_u64(1);
+        let key_id = RequestId::new_random(&mut rng);
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let tonic_req = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(prep_id.into()),
+            domain: Some(domain),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
+            extra_data: vec![],
+        });
+        kg.key_gen(tonic_req).await.unwrap();
+
+        // The slow DKG is still running — abort should cancel it
+        let status = kg.abort_key_gen(prep_id).await;
+        assert_eq!(status.code(), tonic::Code::Ok);
     }
 }

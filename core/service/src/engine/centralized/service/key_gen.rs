@@ -858,4 +858,32 @@ pub(crate) mod tests {
             assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
         }
     }
+
+    #[tokio::test]
+    async fn abort_not_found() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let preproc_id = derive_request_id("test_central_keygen_abort_not_found").unwrap();
+
+        let err = abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// In the centralized case preprocessing is near-instantaneous and abort is not supported
+    /// once the preproc entry has been registered, so the endpoint must return FailedPrecondition.
+    #[tokio::test]
+    async fn abort_with_existing_preproc() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let preproc_id =
+            derive_request_id("test_central_keygen_abort_with_existing_preproc").unwrap();
+        // setup_test_kms_with_preproc registers a preproc entry in the meta store
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+
+        let err = abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
 }
