@@ -953,11 +953,15 @@ impl<
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption hence
         // existing values are not re-backed up
-        crypto_storage
+        if !crypto_storage
             .inner
             .update_backup_vault(false, OP_BOOT)
-            .await;
-
+            .await
+        {
+            anyhow::bail!("Failed to update backup vault when booting");
+        }
+        tracing::info!("Successfully updated backup vault when booting");
+        
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =
             Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
