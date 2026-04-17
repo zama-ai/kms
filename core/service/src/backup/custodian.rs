@@ -43,6 +43,7 @@ pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
     pub operator_verification_key: PublicSigKey,
+    pub mpc_context_id: RequestId,
 }
 
 impl Named for InternalCustodianRecoveryOutput {
@@ -67,6 +68,13 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
         let backup_output = &value.backup_output.ok_or_else(|| {
             anyhow::anyhow!("backup output not part of the custodian recovery output")
         })?;
+        let mpc_context_id = value
+            .mpc_context_id
+            .ok_or_else(|| {
+                anyhow::anyhow!("MPC context ID not part of the custodian recovery output")
+            })?
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("Failed to parse MPC context ID: {}", e))?;
         Ok(InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
@@ -75,6 +83,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
             operator_verification_key: verification_key,
+            mpc_context_id,
         })
     }
 }
@@ -92,6 +101,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
             }),
             custodian_role: value.custodian_role.one_based() as u64,
             operator_verification_key: verification_key_buf,
+            mpc_context_id: Some(value.mpc_context_id.into()),
         })
     }
 }
@@ -247,7 +257,7 @@ impl InternalCustodianContext {
             }
         }
         let context_id: RequestId = parse_optional_grpc_request_id(
-            &custodian_context.context_id,
+            &custodian_context.custodian_context_id,
             RequestIdParsingErr::CustodianContext,
         )?;
         Ok(InternalCustodianContext {
@@ -303,6 +313,7 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
+        mpc_context_id: RequestId,
         operator_verification_key: &PublicSigKey,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
         backup_id: RequestId,
@@ -361,6 +372,7 @@ impl Custodian {
             signcryption,
             custodian_role: self.role,
             operator_verification_key: operator_verification_key.clone(),
+            mpc_context_id,
         })
     }
 
@@ -436,7 +448,7 @@ mod tests {
         };
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: None,
+            custodian_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk);
@@ -466,7 +478,7 @@ mod tests {
         };
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2],
-            context_id: None,
+            custodian_context_id: None,
             threshold: 1, // Invalid threshold, since 1 is not less than 2/2
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -513,7 +525,7 @@ mod tests {
         };
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: None,
+            custodian_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -549,7 +561,7 @@ mod tests {
         };
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: None,
+            custodian_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());

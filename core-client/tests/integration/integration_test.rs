@@ -12,11 +12,13 @@ use kms_grpc::RequestId;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::consts::DEFAULT_MPC_CONTEXT;
 use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
+use kms_lib::engine::base::derive_request_id;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
@@ -553,6 +555,7 @@ async fn new_custodian_context<T: DockerComposeManager>(
     let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
         threshold: custodian_threshold,
         setup_msg_paths,
+        mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
     });
     let init_config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
@@ -833,6 +836,7 @@ async fn custodian_reencrypt(
     amount_operators: usize,
     amount_custodians: usize,
     backup_id: RequestId,
+    mpc_context_id: ContextId,
     seeds: &[String],
     recovery_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
@@ -928,6 +932,8 @@ async fn custodian_reencrypt(
                 &custodian_index.to_string(),
                 "--operator-verf-key",
                 verf_path.to_str().unwrap(),
+                "--mpc-context-id",
+                &mpc_context_id.to_string(),
                 "-b",
                 cur_recovery_path.to_str().unwrap(),
                 "-o",
@@ -1065,6 +1071,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
         1,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &[operator_recovery_resp_path],
     )
@@ -1531,6 +1538,7 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianTe
         amount_operators,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &operator_recovery_resp_paths,
     )
@@ -1562,9 +1570,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
     let key_id = insecure_key_gen(ctx, test_path, false).await;
 
     // create and store mpc context
-    let context_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222222222")
-            .unwrap();
+    let context_id = derive_request_id("CONTEXT_SWITCH").unwrap().into();
     store_mpc_context_in_file(&context_path, &config_path, context_id).await;
 
     // do the context switch
@@ -1602,18 +1608,14 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
     let config_path = ctx.root_path().join(ctx.config_path());
 
     // create and store mpc context
-    let context_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")
-            .unwrap();
+    let context_id = derive_request_id("CONTEXT_INIT").unwrap().into();
     store_mpc_context_in_file(&context_path, &config_path, context_id).await;
 
     // create the new context
     new_mpc_context(&context_path, &config_path, test_path).await;
 
     // create PRSS
-    let epoch_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
-            .unwrap();
+    let epoch_id = derive_request_id("EPOCH_INIT").unwrap().into();
     new_genesis_epoch(context_id, epoch_id, &config_path, test_path).await;
 
     // do preproc and keygen (which should use the prss)
@@ -1646,19 +1648,15 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let context_path = temp_dir.path().join("mpc_context.bin");
 
         // create and store mpc context
-        let context_id =
-            ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")
-                .unwrap();
-        store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+        let context_id_1 = derive_request_id("CONTEXT_6P_SET_1").unwrap().into();
+        store_mpc_context_in_file(&context_path, &config_path, context_id_1).await;
 
         // create the new context
         new_mpc_context(&context_path, &config_path, test_path).await;
 
         // create PRSS
-        let epoch_id =
-            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
-                .unwrap();
-        new_genesis_epoch(context_id, epoch_id, &config_path, test_path).await;
+        let epoch_id_1 = derive_request_id("EPOCH_6P_SET_1").unwrap().into();
+        new_genesis_epoch(context_id_1, epoch_id_1, &config_path, test_path).await;
     }
 
     // second mpc context with parties 5, 6, 3, 4
@@ -1668,27 +1666,29 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let context_path = temp_dir.path().join("mpc_context.bin");
 
         // create and store mpc context
-        let context_id =
-            ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
-                .unwrap();
-        store_mpc_context_in_file(&context_path, &alternative_config_path, context_id).await;
+        let context_id_2 = derive_request_id("CONTEXT_6P_SET_2").unwrap().into();
+        store_mpc_context_in_file(&context_path, &alternative_config_path, context_id_2).await;
 
         // create the new context
         new_mpc_context(&context_path, &alternative_config_path, test_path).await;
 
         // create PRSS
-        let epoch_id =
-            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
-                .unwrap();
-        new_genesis_epoch(context_id, epoch_id, &alternative_config_path, test_path).await;
+        let epoch_id_2 = derive_request_id("EPOCH_6P_SET_2").unwrap().into();
+        new_genesis_epoch(
+            context_id_2,
+            epoch_id_2,
+            &alternative_config_path,
+            test_path,
+        )
+        .await;
 
         // do preproc and keygen (which should use the prss)
         let _ = real_preproc_and_keygen(
             alternative_config_path.to_str().unwrap(),
             test_path,
             SharedKeyGenParameters {
-                context_id: Some(context_id),
-                epoch_id: Some(epoch_id),
+                context_id: Some(context_id_2),
+                epoch_id: Some(epoch_id_2),
                 ..Default::default()
             },
             200,
@@ -1696,15 +1696,15 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         .await;
 
         // delete context
-        destroy_mpc_context(&context_id, &alternative_config_path, test_path).await;
+        destroy_mpc_context(&context_id_2, &alternative_config_path, test_path).await;
 
         // check whether the context is deleted by running keygen, which should fail
         let err = real_preproc(
             alternative_config_path.to_str().unwrap(),
             test_path,
             &SharedKeyGenParameters {
-                context_id: Some(context_id),
-                epoch_id: Some(epoch_id),
+                context_id: Some(context_id_2),
+                epoch_id: Some(epoch_id_2),
                 compressed: false,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
@@ -1737,9 +1737,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let config_path_set_2 = ctx.root_path().join(ctx.alternative_config_path());
 
     // create and store mpc context
-    let context_id_set_1 =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
-            .unwrap();
+    let context_id_set_1 = derive_request_id("CONTEXT_SET_1").unwrap().into();
     store_mpc_context_in_file(&context_path_set_1, &config_path_set_1, context_id_set_1).await;
 
     // create the new context
@@ -1758,9 +1756,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     // Create the first epoch (i.e. Init the PRSS)
     println!("Creating first epoch");
-    let epoch_id_set_1 =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
-            .unwrap();
+    let epoch_id_set_1 = derive_request_id("EPOCH_ID_1").unwrap().into();
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_1,
         new_context_id: context_id_set_1,
@@ -1856,9 +1852,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     // create and store second mpc context
     // create and store mpc context
     println!("Creating second MPC context");
-    let context_id_set_2 =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333335555")
-            .unwrap();
+    let context_id_set_2 = derive_request_id("CONTEXT_SET_2").unwrap().into();
     store_mpc_context_in_file(&context_path_set_2, &config_path_set_2, context_id_set_2).await;
 
     // create the new context
@@ -1873,9 +1867,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     // Create a new epoch for this context, with resharing from the first context and epoch
     println!("Creating reshared epoch");
-    let epoch_id_set_2 =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")
-            .unwrap();
+    let epoch_id_set_2 = derive_request_id("EPOCH_ID_2").unwrap().into();
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_2,
         new_context_id: context_id_set_2,
