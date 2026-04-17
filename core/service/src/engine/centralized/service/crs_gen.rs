@@ -206,26 +206,18 @@ pub async fn abort_crs_gen_impl<
     let status = guarded_meta_store.retrieve(&request_id);
     match status {
         Some(status) => {
-            if status.is_set() {
-                Err(MetricedError::new(
-                    OP_CRS_GEN_ABORT,
-                    Some(request_id),
-                    anyhow::anyhow!(
-                        "CRS generation already finished for the supplied request ID, cannot abort"
-                    ),
-                    tonic::Code::FailedPrecondition,
-                ))
+            let err_msg = if status.is_set() {
+                "CRS generation already finished for the supplied request ID, cannot abort"
             } else {
                 // Process started but not finished, since it is so quick in the central case, for now we simply don't allow abort
-                Err(MetricedError::new(
-                    OP_CRS_GEN_ABORT,
-                    Some(request_id),
-                    anyhow::anyhow!(
-                        "CRS generation is almost finished for the supplied request ID, cannot abort"
-                    ),
-                    tonic::Code::FailedPrecondition,
-                ))
-            }
+                "CRS generation almost finished for the supplied request ID, cannot abort"
+            };
+            Err(MetricedError::new(
+                OP_CRS_GEN_ABORT,
+                Some(request_id),
+                anyhow::anyhow!(err_msg),
+                tonic::Code::FailedPrecondition,
+            ))
         }
         None => Err(MetricedError::new(
             OP_CRS_GEN_ABORT,

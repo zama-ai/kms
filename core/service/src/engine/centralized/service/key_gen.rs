@@ -23,8 +23,8 @@ use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_REQUEST,
-    OP_KEYGEN_RESULT, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_ABORT,
+    OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
@@ -261,10 +261,46 @@ pub async fn abort_key_gen_impl<
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
-    _service: &CentralizedKms<PubS, PrivS, CM, BO>,
-    _request: Request<kms_grpc::kms::v1::RequestId>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
-    todo!();
+    // Handle abort request. In the centralized case we don't actually abort the background task, we just check the preprocessing meta store to return an appropriate error
+    let preproc_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenAbort)
+        .map_err(|e| MetricedError::new(OP_KEYGEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
+
+    // If the preprocessing has been consumed by a key generation, the entry will no longer be in the preprocessing meta store
+    let guarded_meta_store = service.preprocessing_meta_store.read().await;
+    let status = guarded_meta_store.retrieve(&preproc_id);
+    match status {
+        Some(status) => {
+            if status.is_set() {
+                Err(MetricedError::new(
+                    OP_KEYGEN_ABORT,
+                    Some(preproc_id),
+                    anyhow::anyhow!(
+                        "Preprocessing already finished for the supplied preprocessing ID, cannot abort"
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ))
+            } else {
+                // Process started but not finished, since it is so quick in the central case, for now we simply don't allow abort
+                Err(MetricedError::new(
+                    OP_KEYGEN_ABORT,
+                    Some(preproc_id),
+                    anyhow::anyhow!(
+                        "Preprocessing is almost finished for the supplied preprocessing ID, cannot abort"
+                    ),
+                    tonic::Code::FailedPrecondition,
+                ))
+            }
+        }
+        None => Err(MetricedError::new(
+            OP_KEYGEN_ABORT,
+            Some(preproc_id),
+            anyhow::anyhow!("No ongoing key generation found for the supplied preprocessing ID"),
+            tonic::Code::NotFound,
+        )),
+    }
 }
 
 /// Background task for key generation
