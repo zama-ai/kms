@@ -235,42 +235,42 @@ where
 
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            let lock_acquired_time = lock_start.elapsed();
-            let mut guarded_backup_vault = backup_vault.lock().await;
-            // First update the backup vault's context ID
-            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
-                guarded_backup_vault.keychain.as_mut()
+        let lock_start = std::time::Instant::now();
+        let mut guarded_backup_vault = backup_vault.lock().await;
+        // First update the backup vault's context ID
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+            guarded_backup_vault.keychain.as_mut()
+        {
+            if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                && cur_backup_id == inner_context.context_id
             {
-                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
-                    && cur_backup_id == inner_context.context_id
-                {
-                    anyhow::bail!(
-                        "A custodian context with the same context ID already exists in the backup vault!"
-                    );
-                }
-                secret_share_keychain
-                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
-            } else {
-                return Err(anyhow_error_and_log(
-                    "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
-                ));
+                anyhow::bail!(
+                    "A custodian context with the same context ID already exists in the backup vault!"
+                );
             }
-            // Ensure we free the lock on backup vault before performing the new backup!
-            drop(guarded_backup_vault);
-            // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
-            // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
-            self.crypto_storage
-                .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
-                .await;
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
+            secret_share_keychain
+                .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
+        } else {
+            return Err(anyhow_error_and_log(
+                "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
+            ));
         };
+        // Ensure we free the lock on backup vault before performing the new backup!
+        drop(guarded_backup_vault);
+        // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
+        // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
+        // Hence we do a complete failure of the method if this fails
+        if !self
+            .crypto_storage
+            .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
+            .await
+        {
+            return Err(anyhow_error_and_log("Failed to update backup vault"));
+        }
+        let total_lock_time = lock_start.elapsed();
         tracing::info!(
-            "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            "New context storage - context_id={}, total_lock_held={:?}",
             inner_context.context_id,
-            lock_acquired_time,
             total_lock_time
         );
         // Then store the results

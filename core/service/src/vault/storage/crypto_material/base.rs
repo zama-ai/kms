@@ -1081,12 +1081,16 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
-    pub async fn update_backup_vault(&self, overwrite: bool, op_metric_tag: &'static str) {
+    ///
+    /// Returns `true` if the update succeeded, `false` if it failed (in which case the error is also logged and the metrics are updated).
+    pub async fn update_backup_vault(&self, overwrite: bool, op_metric_tag: &'static str) -> bool {
         if let Err(e) = self.inner_update_backup_vault(overwrite).await {
             tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
             METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
+            false
         } else {
             tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
+            true
         }
     }
 
@@ -1098,7 +1102,7 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
-    pub(crate) async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
+    async fn inner_update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();
