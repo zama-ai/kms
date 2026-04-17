@@ -2876,7 +2876,7 @@ pub mod tests {
 
         // Generate centralized keys and secret-share the GLWE key.
         let mut rng = AesRng::seed_from_u64(42);
-        let keyset = gen_key_set(params, tag.clone(), &mut rng);
+        let (keyset, _) = gen_key_set(params, tag.clone(), &mut rng).unwrap();
         let pk = keyset.public_keys.clone();
         let ciphertext_params = params
             .get_params_basics_handle()
