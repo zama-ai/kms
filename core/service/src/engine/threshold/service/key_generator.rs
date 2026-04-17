@@ -336,7 +336,18 @@ impl<
 
         let preproc_id = match &preproc_handle_w_mode {
             PreprocHandleWithMode::Secure((preproc_id, _)) => *preproc_id,
-            PreprocHandleWithMode::Insecure => *INSECURE_PREPROCESSING_ID,
+            PreprocHandleWithMode::Insecure => {
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!(
+                        "attempting to call insecure keygen when the insecure feature is not set"
+                    );
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    *INSECURE_PREPROCESSING_ID
+                }
+            }
         };
         let token = CancellationToken::new();
         self.ongoing.lock().await.insert(preproc_id, token.clone());
