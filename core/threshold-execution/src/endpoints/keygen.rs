@@ -1754,7 +1754,7 @@ pub mod tests {
             endpoints::keygen::distributed_decompression_keygen_z128,
             tfhe_internals::{
                 compression_decompression_key::CompressionPrivateKeyShares,
-                glwe_key::GlweSecretKeyShare, test_feature::gen_key_set,
+                glwe_key::GlweSecretKeyShare, test_feature::gen_uncompressed_key_set,
             },
         };
         use test_utils::{read_element, write_element};
@@ -1763,8 +1763,8 @@ pub mod tests {
         let keyset_config = KeySetConfig::DecompressionOnly;
         let mut rng = aes_prng::AesRng::from_random_seed();
         let tag = tfhe::Tag::default();
-        let keyset1 = gen_key_set(params, tag.clone(), &mut rng);
-        let keyset2 = gen_key_set(params, tag, &mut rng);
+        let keyset1 = gen_uncompressed_key_set(params, tag.clone(), &mut rng);
+        let keyset2 = gen_uncompressed_key_set(params, tag, &mut rng);
 
         let compression_key_1_poly_size = keyset1
             .get_raw_compression_client_key()
