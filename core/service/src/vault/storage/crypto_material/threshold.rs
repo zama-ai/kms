@@ -22,7 +22,9 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::ThresholdFheKeys,
     },
-    util::meta_store::MetaStore,
+    util::meta_store::{
+        MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
+    },
     vault::{
         Vault,
         storage::{
@@ -80,7 +82,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) {
+    ) -> bool {
         self.inner
             .inner_write_crs(crs_id, epoch_id, pp, crs_info, meta_store)
             .await
@@ -99,7 +101,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         op_metric_tag: &'static str,
-    ) {
+    ) -> anyhow::Result<()> {
         self.inner
             .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
             .await
@@ -118,7 +120,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) {
+    ) -> bool {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
@@ -254,6 +256,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
             }
             tracing::info!("Finished storing key for Key Id {key_id}.");
+            true
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might be
@@ -266,6 +269,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             let guarded_meta_storage = meta_store.write().await;
             self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
                 .await;
+            false
         }
     }
 
@@ -282,26 +286,29 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
-        let info = threshold_fhe_keys.meta_data.clone();
-        self.inner_write_threshold_keys(
-            key_id,
-            epoch_id,
-            threshold_fhe_keys,
-            fhe_key_set,
-            Arc::clone(&meta_store),
-        )
-        .await;
+    ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, key_id).await?;
 
-        // Not much we can do if this fails
-        // Note: it will fail if inner_write_threshold_keys failed
-        let _ = meta_store
-            .write()
-            .await
-            .update(key_id, Ok(info))
-            .inspect_err(|e| {
-                tracing::error!("Error ({}) while updating meta store for {}", e, key_id)
-            });
+        let info = threshold_fhe_keys.meta_data.clone();
+        let storage_ok = self
+            .inner_write_threshold_keys(
+                key_id,
+                epoch_id,
+                threshold_fhe_keys,
+                fhe_key_set,
+                Arc::clone(&meta_store),
+            )
+            .await;
+        if !storage_ok {
+            anyhow::bail!("Storage write failed for threshold key {key_id}");
+        }
+        let mut guarded_meta_store = meta_store.write().await;
+        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
+            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
+                .await;
+            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
+        }
+        Ok(())
     }
 
     /// Write the key materials (result of a compressed keygen) to storage and cache
@@ -316,25 +323,46 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
+    ) -> anyhow::Result<()> {
+        ensure_meta_store_request_pending(&meta_store, key_id).await?;
+
         let info = threshold_fhe_keys.meta_data.clone();
-        self.inner_write_threshold_keys_compressed(
-            key_id,
-            epoch_id,
-            threshold_fhe_keys,
-            compressed_keyset,
-            Arc::clone(&meta_store),
-        )
-        .await;
-        // Not much we can do if this fails
-        // Note: it will fail if inner_write_threshold_keys failed
-        let _ = meta_store
-            .write()
-            .await
-            .update(key_id, Ok(info))
-            .inspect_err(|e| {
-                tracing::error!("Error ({}) while updating meta store for {}", e, key_id)
-            });
+        let storage_ok = self
+            .inner_write_threshold_keys_compressed(
+                key_id,
+                epoch_id,
+                threshold_fhe_keys,
+                compressed_keyset,
+                Arc::clone(&meta_store),
+            )
+            .await;
+        if !storage_ok {
+            anyhow::bail!("Storage write failed for compressed threshold key {key_id}");
+        }
+        let mut guarded_meta_store = meta_store.write().await;
+        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
+            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
+                .await;
+            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
+        }
+        Ok(())
+    }
+
+    async fn handle_threshold_meta_update_failure(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
+    ) {
+        if should_purge_after_meta_update_failure(&guarded_meta_store, key_id) {
+            self.purge_key_material(key_id, epoch_id, guarded_meta_store)
+                .await;
+        } else {
+            drop(guarded_meta_store);
+        }
+
+        let mut guarded_fhe_keys = self.fhe_keys.write().await;
+        guarded_fhe_keys.remove(&(*key_id, *epoch_id));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -345,7 +373,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) {
+    ) -> bool {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
@@ -471,6 +499,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
             }
             tracing::info!("Finished storing compressed key for Key Id {key_id}.");
+            true
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might be
@@ -482,6 +511,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             );
             self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
                 .await;
+            false
         }
     }
 

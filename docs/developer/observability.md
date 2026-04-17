@@ -187,17 +187,34 @@ let result = build_request(payload, request_id, config)
     .context("Failed to create request")?;
 ```
 
-### Testing
+### Testing and local debugging
 
-In this repository, test logging is handled by our in-repo `kms-test-tracing`
-crate (workspace path `tools/kms-test-tracing`; distinct from crates.io
-`tracing-test`). It keeps the familiar `#[kms_test_tracing::traced_test]`
-workflow and adds repo-specific controls for console/file logging. In practice,
-use one of these two paths:
+Production observability (OpenTelemetry, metrics, cross-service tracing) is
+separate from **test logging**: the latter is what you use to see `tracing`
+output while developing or when a failing test needs more context. The shared
+implementation lives in `test_utils::test_logging` (filter presets, env-var
+resolution, stderr subscriber). The `observability` crate reuses those helpers
+when `TRACE_PERSISTENCE` is enabled so persistent trace files use the same
+rules as console output.
 
-- `#[kms_test_tracing::traced_test]` for log assertions (`logs_contain`, `logs_assert`)
-- `#[integration_test]` / `kms_test_tracing::init_logging()` for
-  integration-style stderr output
+**Getting logs on your machine**
+
+1. **Integration-style tests** — Prefer `#[integration_test]` from the
+   `test_utils_service` crate on the test function. It sets `RUN_MODE=integration`
+   and calls `init_test_logging()` once per process so stderr logging can attach.
+2. **Other tests** — Call `test_utils::test_logging::init_test_logging()` once
+   (for example at the top of the test body or behind a `static Once` if you
+   cannot use the macro).
+
+By default, stderr logging is quiet so suites stay fast. To actually see lines
+in the terminal, set `KMS_TEST_LOG_MODE` and/or the `KMS_TEST_LOG_*` filters
+below, and run with `cargo test … -- --nocapture` so output is not swallowed by
+the test harness.
+
+**CI** — Workflows upload JUnit XML (`junit-test-report-*` artifacts) for the
+consolidated test reporter; enabling `TRACE_PERSISTENCE` (often via
+`#[persistent_traces]` where used) writes additional trace logs for failures
+analysis without changing how you drive filters locally.
 
 Filter resolution is "first match wins", per output:
 

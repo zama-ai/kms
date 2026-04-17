@@ -831,7 +831,6 @@ mod test {
 
     /// Unit testing of [`reconstruct_d_values`]
     /// Test what happens when a party send a wrong type of value
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     async fn test_wrong_type() {
         let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_from_one(1));
@@ -854,9 +853,6 @@ mod test {
             .unwrap();
         assert_eq!(1, session.corrupt_roles().len());
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
-        assert!(logs_contain(
-            "did not broadcast the correct type and is thus malicious"
-        ));
         assert_eq!(1, res.len());
         let first = res.first();
         assert!(first.is_some());
