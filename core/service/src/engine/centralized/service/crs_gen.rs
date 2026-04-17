@@ -574,4 +574,45 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
+
+    #[tokio::test]
+    async fn abort_not_found() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_abort_not_found").unwrap();
+        let err = abort_crs_gen_impl(&kms, Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn abort_already_finished() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_abort_already_finished").unwrap();
+        let epoch_id = derive_request_id("test_crs_gen_abort_already_finished_epoch").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = CrsGenRequest {
+            request_id: Some(req_id.into()),
+            epoch_id: Some(epoch_id.into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain),
+            extra_data: vec![],
+            max_num_bits: Some(2048),
+        };
+        crs_gen_impl(&kms, Request::new(request), false)
+            .await
+            .unwrap();
+        // Block until CRS generation completes so the meta store entry is set
+        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+            .await
+            .unwrap();
+
+        let err = abort_crs_gen_impl(&kms, Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
 }

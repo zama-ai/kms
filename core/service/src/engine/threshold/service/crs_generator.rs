@@ -954,4 +954,50 @@ mod tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn abort_not_found() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        let err = crs_gen
+            .abort_crs_gen(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn abort_sunshine() {
+        let mut rng = AesRng::seed_from_u64(123);
+        // SlowCeremony keeps the background task running long enough for abort to land
+        let crs_gen = make_crs_gen::<SlowCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        };
+
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+        // We manage to abort successfully first time
+        assert!(
+            crs_gen
+                .abort_crs_gen(Request::new(req_id.into()))
+                .await
+                .is_ok()
+        );
+        // Second abort fails because the cancellation token has already been consumed
+        let err = crs_gen
+            .abort_crs_gen(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
 }
