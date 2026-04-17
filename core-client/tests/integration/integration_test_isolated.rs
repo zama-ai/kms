@@ -255,6 +255,7 @@ use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::engine::base::derive_request_id;
 use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
@@ -1992,6 +1993,7 @@ async fn new_custodian_context_isolated(
         CCCommand::NewCustodianContext(NewCustodianContextParameters {
             threshold: custodian_threshold,
             setup_msg_paths,
+            mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
         }),
         200,
     );
@@ -2109,6 +2111,7 @@ async fn custodian_reencrypt(
     amount_operators: usize,
     amount_custodians: usize,
     backup_id: RequestId,
+    mpc_context_id: ContextId,
     seeds: &[String],
     recovery_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
@@ -2164,6 +2167,8 @@ async fn custodian_reencrypt(
                 &custodian_index.to_string(),
                 "--operator-verf-key",
                 verf_path.to_str().unwrap(),
+                "--mpc-context-id",
+                &mpc_context_id.to_string(),
                 "-b",
                 cur_recovery_path.to_str().unwrap(),
                 "-o",
@@ -2425,6 +2430,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
         1,
         amount_custodians,
         init_backup_id.parse()?,
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &[operator_recovery_resp_path],
     )
@@ -2688,8 +2694,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let key_id = insecure_key_gen_isolated(&config_path, test_path, false).await?;
 
     // Create and store a new MPC context
-    let context_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222222222")?;
+    let context_id = derive_request_id("CONTEXT_ID")?.into();
     store_mpc_context_in_file_isolated(&context_path, &config_path, context_id).await?;
 
     // Perform the context switch
@@ -2799,6 +2804,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
         amount_operators,
         amount_custodians,
         init_backup_id.parse()?,
+        *DEFAULT_MPC_CONTEXT,
         &seeds,
         &operator_recovery_resp_paths,
     )
@@ -2941,16 +2947,14 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context.bin");
 
     // Step 1: Create and store MPC context to file
-    let context_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")?;
+    let context_id = derive_request_id("CONTEXT_ID")?.into();
     store_mpc_context_in_file_isolated(&context_path, &config_path, context_id).await?;
 
     // Step 2: Initialize the new MPC context in KMS servers
     new_mpc_context_isolated(&config_path, &context_path, test_path).await?;
 
     // Step 3: Initialize PRSS for this context
-    let epoch_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")?;
+    let epoch_id = derive_request_id("EPOCH_ID")?.into();
     new_prss_isolated(&config_path, context_id, epoch_id, test_path).await?;
 
     // Step 4: Run preprocessing and keygen using the context and PRSS
@@ -3006,10 +3010,8 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     info!("========== CONTEXT 1 ==========");
     info!("Creating first context with servers [1, 2, 3, 4] as parties [1, 2, 3, 4]");
 
-    let context_1_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")?;
-    let epoch_1_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")?;
+    let context_1_id = derive_request_id("CONTEXT_6P_SET_1")?.into();
+    let epoch_1_id = derive_request_id("EPOCH_6P_SET_1")?.into();
     let context_1_path = material_dir.path().join("mpc_context_1.bin");
 
     store_mpc_context_in_file_isolated(&context_1_path, &config_path_1234, context_1_id).await?;
@@ -3034,10 +3036,8 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     info!("Creating second context with servers [5, 6, 4, 3] as parties [1, 2, 3, 4]");
     info!("Note: Servers 5,6 REPLACE servers 1,2; servers 3,4 SWAP roles in this context");
 
-    let context_2_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
-    let epoch_2_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")?;
+    let context_2_id = derive_request_id("CONTEXT_6P_SET_2")?.into();
+    let epoch_2_id = derive_request_id("EPOCH_6P_SET_2")?.into();
     let context_2_path = material_dir.path().join("mpc_context_2.bin");
 
     store_mpc_context_in_file_isolated(&context_2_path, &config_path_5634, context_2_id).await?;
@@ -3127,16 +3127,14 @@ async fn test_threshold_reshare() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context.bin");
 
     // Step 1: Create and store MPC context to file
-    let context_id =
-        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
+    let context_id = derive_request_id("CONTEXT_ID_RESHARE")?.into();
     store_mpc_context_in_file_isolated(&context_path, &config_path, context_id).await?;
 
     // Step 2: Initialize the new MPC context in KMS servers
     new_mpc_context_isolated(&config_path, &context_path, test_path).await?;
 
     // Step 3: Initialize PRSS for this context
-    let epoch_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")?;
+    let epoch_id = derive_request_id("EPOCH__ID_RESHARE")?.into();
     new_prss_isolated(&config_path, context_id, epoch_id, test_path).await?;
 
     // Step 4: Run preprocessing and keygen with the context (get both key_id and preproc_id)
@@ -3217,8 +3215,7 @@ async fn test_threshold_reshare() -> Result<()> {
     )?);
 
     // Step 8: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
-    let new_epoch_id =
-        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")?;
+    let new_epoch_id = derive_request_id("EPOCH_RESHARE_NEW")?.into();
     let preproc_id = RequestId::from_str(&preproc_id_str)?;
     let previous_key_info = PreviousKeyInfo {
         key_id: key_id.into(),

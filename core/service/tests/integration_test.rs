@@ -637,6 +637,7 @@ mod kms_custodian_binary_tests {
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{
                 Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -790,6 +791,8 @@ mod kms_custodian_binary_tests {
                     custodian_index.to_string(),
                     "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
+                    "--mpc-context-id".to_string(),
+                    DEFAULT_MPC_CONTEXT.to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
@@ -907,7 +910,7 @@ mod kms_custodian_binary_tests {
                     .iter()
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
-                context_id: Some(backup_id.into()),
+                custodian_context_id: Some(backup_id.into()),
                 threshold: threshold as u32,
             },
             backup_pke,
@@ -918,6 +921,7 @@ mod kms_custodian_binary_tests {
             commitments.clone(),
             custodian_context,
             &signing_key,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         let mut ciphertexts = BTreeMap::new();

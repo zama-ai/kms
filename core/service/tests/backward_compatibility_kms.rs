@@ -747,8 +747,14 @@ fn test_recovery_material(
         };
         cts.insert(cus_role, cts_out.clone());
     }
-    let new_versionized =
-        RecoveryValidationMaterial::new(cts, commitments, icc, &operator_sk).unwrap();
+    let new_versionized = RecoveryValidationMaterial::new(
+        cts,
+        commitments,
+        icc,
+        &operator_sk,
+        kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
+    )
+    .unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -869,6 +875,7 @@ fn test_internal_custodian_recovery_output(
         signcryption,
         custodian_role: Role::indexed_from_one(2),
         operator_verification_key,
+        mpc_context_id: kms_grpc::RequestId::from_bytes([7u8; 32]),
     };
 
     if original_versionized != new_versionized {

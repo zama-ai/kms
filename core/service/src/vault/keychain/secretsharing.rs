@@ -399,7 +399,7 @@ mod tests {
             .collect();
         let custodian_context = CustodianContext {
             custodian_nodes: setup_msgs,
-            context_id: Some(backup_id.into()),
+            custodian_context_id: Some(backup_id.into()),
             threshold: 1,
         };
         let internal_custodian_context =
@@ -423,9 +423,14 @@ mod tests {
             commitments.insert(role, vec![i as u8; 32]);
         }
 
-        let rec_material =
-            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
-                .unwrap();
+        let rec_material = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
+        )
+        .unwrap();
 
         // Store it in RamStorage
         let mut storage = RamStorage::default();
