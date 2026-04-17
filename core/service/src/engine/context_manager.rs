@@ -1711,6 +1711,82 @@ mod tests {
         );
     }
 
+    /// Verify that `inner_new_custodian_context` returns an error when
+    /// `update_backup_vault` fails. We trigger this by storing corrupt bytes
+    /// in private storage under `ContextInfo` — when the backup logic tries
+    /// to deserialize them, it fails, causing the whole custodian context
+    /// creation to fail.
+    #[tokio::test]
+    async fn test_custodian_context_fails_on_backup_update_failure() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+
+        // Store corrupt data in private storage under ContextInfo type.
+        {
+            use crate::vault::storage::Storage;
+            let mut priv_storage = crypto_storage.private_storage.lock().await;
+            let corrupt_req_id = RequestId::from_bytes([99u8; 32]);
+            priv_storage
+                .store_bytes(
+                    b"corrupt_data",
+                    &corrupt_req_id,
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Generate custodian keys
+        let threshold = 1;
+        let amount_custodians = 2 * threshold + 1;
+        let mut setup_msgs = Vec::new();
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        for custodian_index in 1..=amount_custodians {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
+            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let cur_msg = InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(custodian_index),
+                name: format!("Custodian-{}", custodian_index),
+                random_value: [2u8; 32],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                public_enc_key: pk_enc_key,
+                public_verf_key: verf_key,
+            };
+            setup_msgs.push(cur_msg.try_into().unwrap());
+        }
+
+        let context_id = RequestId::from_bytes([4u8; 32]);
+        let context = CustodianContext {
+            custodian_nodes: setup_msgs,
+            context_id: Some(context_id.into()),
+            threshold: threshold as u32,
+        };
+        let request = Request::new(NewCustodianContextRequest {
+            new_context: Some(context),
+        });
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            session_maker,
+        );
+
+        // The custodian context creation should fail because backup update fails
+        let response = context_manager.new_custodian_context(request).await;
+        assert!(
+            response.is_err(),
+            "Expected custodian context creation to fail when backup update fails"
+        );
+    }
+
     #[tokio::test]
     async fn test_centralized_context_cache() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
