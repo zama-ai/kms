@@ -707,7 +707,6 @@ where
         anyhow::bail!("Failed to update backup vault when booting");
     }
     tracing::info!("Successfully updated backup vault when booting");
-
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),
