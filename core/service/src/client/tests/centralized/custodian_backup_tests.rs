@@ -478,6 +478,7 @@ async fn test_mpc_context_backup_central() {
             .await
             .unwrap();
             node.verification_key = Some(pk);
+            node.external_url = "http://fake.url:8080".to_string();
         }
         ctx
     };

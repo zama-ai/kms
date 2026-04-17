@@ -680,6 +680,7 @@ async fn test_mpc_context_backup_threshold() {
             .await
             .unwrap();
             node.verification_key = Some(pk);
+            node.external_url = format!("http://example.com:8080/party{}", node.party_id);
         }
         ctx
     };
