@@ -1047,7 +1047,6 @@ pub mod tests {
             utils::tests::reconstruct_glwe_secret_key_from_file,
         },
     };
-    use algebra::sharing::share::Share;
     use algebra::{
         base_ring::{Z64, Z128},
         galois_rings::common::ResiduePoly,
