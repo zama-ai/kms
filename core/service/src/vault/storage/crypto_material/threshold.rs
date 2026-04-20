@@ -149,7 +149,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 let _ = update_err_req_in_meta_store(
                     &mut guarded_meta_store,
                     crs_id,
-                    "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}".to_string(),
+                    format!(
+                        "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}"
+                    ),
                     OP_NEW_EPOCH,
                 );
             }
