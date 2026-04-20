@@ -230,7 +230,7 @@ impl<
                         {
                             let mut guarded_meta_store = meta_store_cancelled.write().await;
                             let msg = if del_res {
-                                // Successfull deletion
+                                // Successful deletion
                                 let msg = format!("CRS generation aborted and crs material deleted successfully for request {}", req_id);
                                 tracing::info!(msg);
                                 msg
