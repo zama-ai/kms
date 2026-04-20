@@ -5,7 +5,8 @@ on:
     inputs:
       working-directory:
         type: string
-        required: true
+        required: false
+        default: '.'
       build-publish-docs:
         type: boolean
         required: false
@@ -43,8 +44,20 @@ on:
         required: false
         default: '-F wasm_tests'
       package-name:
+        # A list of packages forwarded to cargo to run, e.g.
+        # `-p abc -p def -p ghi`. Injected verbatim into `cargo clippy`
+        # (and effectively into nextest via `args-tests`).
+        # TODO(dp): rename to `crate-names` (plural) — it's a list and
+        # we call them crates, not packages.
         type: string
         required: true
+      skip-test-material:
+        # When true, skip LFS pull, test-material generation, and the
+        # kms-custodian build. Useful for light unit-test-only jobs on
+        # crates that don't need integration test fixtures.
+        type: boolean
+        required: false
+        default: false
       test-coverage:
         type: boolean
         required: false
@@ -58,6 +71,9 @@ on:
         required: false
         default: false
       app-cache-dir:
+        # TODO(dp): unused — not referenced in any step in this workflow.
+        # Remove it here, in common-testing-big-instance.yml, and from all
+        # callers in main.yml.
         type: string
         required: true
       nextest-profile:
@@ -158,6 +174,7 @@ jobs:
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
       - name: setup gitlfs from binary
+        if: ${{ ! inputs.skip-test-material }}
         env:
           GIT_LFS_VERSION: '3.6.1'
         run: |
@@ -183,6 +200,8 @@ jobs:
 
       ############################################################################
       # Initialize Docker Buildx for multi-platform builds.
+      # TODO(dp): is this step still in use? No caller in this repo passes
+      # anything that matches 'simulator' — looks like dead code.
       - name: Set up Docker Buildx
         if: inputs.package-name == 'simulator'
         uses: ./.github/actions/docker-setup-buildx
@@ -268,10 +287,14 @@ jobs:
       #     PACKAGE_NAME: ${{inputs.package-name}}
       #   run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
+      # TODO(dp): Clippy is cheap; replace per-crate clippy with a single workspace-level
+      # `cargo clippy --workspace --all-targets --all-features` job.
       - name: Linting All features
         env:
           PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+        run: |
+          # shellcheck disable=SC2086  # intentional word-splitting: PACKAGE_NAME is a flag list like `-p a -p b`
+          cargo clippy --all-targets --all-features ${PACKAGE_NAME} -- -D warnings
 
       - name: Linting dylint
         run: cargo dylint --all
@@ -297,6 +320,7 @@ jobs:
       # Generate testing material (always needed, small and fast to generate)
       # Must run from workspace root, not working-directory
       - name: Generate Test Material (Testing)
+        if: ${{ ! inputs.skip-test-material }}
         working-directory: .
         run: |
           echo "Generating testing material..."
@@ -305,7 +329,7 @@ jobs:
       # Generate default material when explicitly requested or for slow_tests,
       # and only when not using pre-generated artifacts.
       - name: Generate Test Material (Default)
-        if: ${{ ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
+        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
         working-directory: .
         run: |
           echo "Generating default test material..."
@@ -313,6 +337,7 @@ jobs:
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
+        if: ${{ ! inputs.skip-test-material }}
         run: cargo build --package kms --bin kms-custodian
 
       # Test execution
@@ -445,11 +470,22 @@ jobs:
         run: echo "id=$(date "+%s%N" | md5sum | head -c 8)" >> "$GITHUB_OUTPUT"
         shell: bash
 
+      # `package-name` holds cargo flags like `-p kms` or `-p a -p b -p c`.
+      # Strip the `-p` tokens and join remaining crate names with `_` so the
+      # artifact label stays readable (e.g. `kms`, `a_b_c`).
+      - name: Compute logs label
+        if: always()
+        id: logs-label
+        env:
+          PACKAGE_NAME: ${{ inputs.package-name }}
+        shell: bash
+        run: echo "value=$(echo "${PACKAGE_NAME}" | sed -E 's/-p +//g' | tr ' ' '_')" >> "$GITHUB_OUTPUT"
+
       - name: Archive integration test trace logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
+          name: logs-${{ steps.logs-label.outputs.value }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
           path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore

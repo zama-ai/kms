@@ -48,6 +48,7 @@ jobs:
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
+      changes-workspace-crates: ${{ steps.filter.outputs.workspace-crates }}
       changes-tools: ${{ steps.filter.outputs.tools }}
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
@@ -95,6 +96,19 @@ jobs:
               - 'core/threshold-*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            # Workspace crates that have no dedicated CI job of their own.
+            # Used by `test-workspace-crates` to run their unit tests grouped
+            # across a few runners.
+            workspace-crates:
+              - 'bc2wrap/**'
+              - 'core/error-utils/**'
+              - 'core/test-utils/**'
+              - 'core/thread-handles/**'
+              - 'core/threshold-*/**'
+              - 'observability/**'
+              - 'tools/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             tools:
@@ -240,7 +254,7 @@ jobs:
     with:
       working-directory: './core/service'
       args-tests: 'backward_compatibility'
-      package-name: 'kms'
+      package-name: '-p kms'
       # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
       # Availables runners:
@@ -331,7 +345,7 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      package-name: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
       app-cache-dir: 'kms-core-client'
@@ -375,7 +389,7 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      package-name: '-p kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
       # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
       args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
@@ -411,7 +425,7 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      package-name: '-p kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
       # Also skip isolated_test_example which requires pre-generated test material
       # Must include features to compile test code that uses feature-gated functions
@@ -461,7 +475,7 @@ jobs:
     with:
       working-directory: './core/grpc'
       args-tests: '--all-features'
-      package-name: 'kms-grpc'
+      package-name: '-p kms-grpc'
       app-cache-dir: 'kms-grpc'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -558,7 +572,7 @@ jobs:
       working-directory: './core/service'
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
-      package-name: 'kms'
+      package-name: '-p kms'
       # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
       runner-volume: '400gb'
@@ -620,7 +634,7 @@ jobs:
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
       args-tests: '-F slow_tests --lib'
-      package-name: 'threshold-fhe'
+      package-name: '-p threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
       # Availables runners:
@@ -667,7 +681,7 @@ jobs:
       # and limit the number of test ran in parallel to 4
       args-tests: '-F slow_tests --lib'
       run-redis: true
-      package-name: 'threshold-fhe'
+      package-name: '-p threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
       # Availables runners:
@@ -710,7 +724,7 @@ jobs:
     with:
       working-directory: './core/threshold'
       args-tests: '--lib'
-      package-name: 'threshold-fhe'
+      package-name: '-p threshold-fhe'
       app-cache-dir: 'threshold-fhe'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -722,6 +736,54 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Workspace crates
+  # Runs clippy + unit tests for workspace crates that have no dedicated CI
+  # job. Crates are split into four groups to amortize runner setup cost.
+  # Triggered by:
+  # - Changes to any of the grouped crates (filter: workspace-crates)
+  # - Changes to CI workflows
+  # TODO(dp): the rest of this file still uses an explicit `secrets:` block
+  # per reusable-workflow call. Consider migrating them all to `secrets: inherit`
+  # (this job is the first one to use it).
+  ############################################################################
+  test-workspace-crates:
+    name: main/test-workspace-crates
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-workspace-crates == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      # A somewhat arbitrary grouping of crates aiming at a reasonable number of
+      # workers (4) executing somewhat similarly-sized work.
+      matrix:
+        include:
+          - group: threshold-foundations
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra'
+          - group: threshold-runtime
+            crates: '-p threshold-execution -p threshold-networking -p threshold-experimental'
+          - group: workspace-utils
+            crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+          - group: tools
+            crates: '-p kms-health-check -p generate-test-material'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      args-tests: ${{ matrix.crates }}
+      package-name: ${{ matrix.crates }}
+      app-cache-dir: 'workspace-crates-${{ matrix.group }}'
+      skip-test-material: true
+      runs-on: '8cpu-linux-x64'
+    secrets: inherit
 
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
@@ -736,6 +798,7 @@ jobs:
       - test-core-service
       - test-core-threshold-pr
       - test-core-threshold-main
+      - test-workspace-crates
       - test-wasm
       - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
