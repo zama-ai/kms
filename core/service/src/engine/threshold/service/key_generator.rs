@@ -1056,7 +1056,7 @@ impl<
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
-        existing_epoch_id: EpochId,
+        epoch_id: EpochId,
         preprocessing: &mut P,
         tag: tfhe::Tag,
     ) -> anyhow::Result<(
@@ -1070,7 +1070,7 @@ impl<
     {
         let existing_private_keys = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &existing_epoch_id)
+                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
             threshold_keys.private_keys.as_ref().clone()
         };
@@ -1100,7 +1100,7 @@ impl<
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         existing_keyset_id: RequestId,
-        existing_epoch_id: EpochId,
+        epoch_id: EpochId,
         preprocessing: &mut P,
         tag: tfhe::Tag,
     ) -> anyhow::Result<(
@@ -1114,7 +1114,7 @@ impl<
     {
         let existing_private_keys = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &existing_epoch_id)
+                .read_guarded_threshold_fhe_keys(&existing_keyset_id, &epoch_id)
                 .await?;
             threshold_keys.private_keys.as_ref().clone()
         };
@@ -1255,17 +1255,13 @@ impl<
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
                                 .expect("validated");
-                            let existing_epoch_id = internal_keyset_config
-                                .get_existing_epoch_id()
-                                .expect("validated")
-                                .unwrap_or(*epoch_id);
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
-                                existing_epoch_id,
+                                *epoch_id,
                                 preproc_handle.as_mut(),
                                 tag,
                             )
@@ -1280,17 +1276,13 @@ impl<
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
                                 .expect("validated");
-                            let existing_epoch_id = internal_keyset_config
-                                .get_existing_epoch_id()
-                                .expect("validated")
-                                .unwrap_or(*epoch_id);
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::compressed_key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
                                 crypto_storage.clone(),
                                 params,
                                 existing_keyset_id,
-                                existing_epoch_id,
+                                *epoch_id,
                                 preproc_handle.as_mut(),
                                 tag,
                             )
@@ -1412,7 +1404,7 @@ impl<
                     },
                 };
 
-                //Compute info for compressed keygen
+                // Compute info for compressed keygen
                 let info = match compute_info_compressed_keygen(
                     &sk,
                     &DSEP_PUBDATA_KEY,
@@ -1443,6 +1435,8 @@ impl<
                     info,
                 );
 
+                // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
+                // then this pk is effectively copied to the new key ID.
                 if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store_compressed(
                         req_id,

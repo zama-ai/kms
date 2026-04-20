@@ -54,10 +54,6 @@ message KeySetAddedInfo {
   // Must be set if KeyGenSecretKeyConfig::UseExisting is used
   RequestId existing_keyset_id = 3;
 
-  // Can be set if KeyGenSecretKeyConfig::UseExisting is used,
-  // if it's not set then the epoch ID from the KeyGenRequest is used.
-  RequestId existing_epoch_id = 4;
-
   // If true, use the tag from the existing keyset's PublicKeyMaterial
   // instead of deriving the tag from the new request ID.
   //

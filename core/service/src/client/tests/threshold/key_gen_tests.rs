@@ -69,7 +69,13 @@ use tonic::{Response, Status};
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
     Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
-    Compressed((tfhe::ClientKey, tfhe::xof_key_set::CompressedXofKeySet)),
+    Compressed(
+        (
+            tfhe::ClientKey,
+            tfhe::xof_key_set::CompressedXofKeySet,
+            tfhe::CompactPublicKey,
+        ),
+    ),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -90,7 +96,11 @@ impl TestKeyGenResult {
 
     pub(crate) fn get_compressed(
         self,
-    ) -> (tfhe::ClientKey, tfhe::xof_key_set::CompressedXofKeySet) {
+    ) -> (
+        tfhe::ClientKey,
+        tfhe::xof_key_set::CompressedXofKeySet,
+        tfhe::CompactPublicKey,
+    ) {
         match self {
             TestKeyGenResult::Compressed(inner) => inner,
             _ => panic!("expected to find compressed"),
@@ -108,10 +118,10 @@ impl TestKeyGenResult {
             TestKeyGenResult::Standard((client_key, public_key, server_key)) => {
                 (client_key, public_key.clone(), server_key.clone())
             }
-            TestKeyGenResult::Compressed((client_key, keyset)) => {
-                let (public_key, server_key) =
+            TestKeyGenResult::Compressed((client_key, keyset, public_key)) => {
+                let (_derived_pk, server_key) =
                     keyset.clone().decompress().unwrap().into_raw_parts();
-                (client_key, public_key, server_key)
+                (client_key, public_key.clone(), server_key)
             }
         };
 
@@ -272,9 +282,27 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .0;
 
     // check that we have the new mod switch key
-    let (client_key, compressed_keyset) = keys.clone().get_compressed();
-    let (_pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+    let (client_key, compressed_keyset, pk) = keys.clone().get_compressed();
+    let (decompressed_pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
     check_conformance(server_key, client_key);
+
+    // The stored CompactPublicKey must match the one obtained by decompressing the
+    // keyset for a fresh (non-migration) keygen. CompactPublicKey has no PartialEq, so
+    // compare via domain-separated digests (same pattern as the centralized test).
+    let stored_pk_digest = crate::engine::base::safe_serialize_hash_element_versioned(
+        &crate::engine::base::DSEP_PUBDATA_KEY,
+        &pk,
+    )
+    .unwrap();
+    let decompressed_pk_digest = crate::engine::base::safe_serialize_hash_element_versioned(
+        &crate::engine::base::DSEP_PUBDATA_KEY,
+        &decompressed_pk,
+    )
+    .unwrap();
+    assert_eq!(
+        stored_pk_digest, decompressed_pk_digest,
+        "stored CompactPublicKey must equal the one derived from the compressed keyset"
+    );
 
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
@@ -687,7 +715,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_1, compressed_keyset_1) = keys1.get_compressed();
+    let (client_key_1, compressed_keyset_1, _public_key_1) = keys1.get_compressed();
     let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
     if !insecure {
@@ -719,7 +747,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_2, _compressed_keyset_2) = keys2.get_compressed();
+    let (client_key_2, _compressed_keyset_2, _public_key_2) = keys2.get_compressed();
 
     // We always need to run preproc for the last keygen
     run_preproc(
@@ -780,8 +808,8 @@ pub(crate) async fn preproc_and_keygen(
 ) {
     fn validate_keyset(keyset: TestKeyGenResult, key_id: &RequestId, compressed: bool) {
         let (client_key, public_key, server_key) = if compressed {
-            let (client_key, keyset) = keyset.get_compressed();
-            let (public_key, server_key) = keyset.decompress().unwrap().into_raw_parts();
+            let (client_key, keyset, public_key) = keyset.get_compressed();
+            let (_derived_pk, server_key) = keyset.decompress().unwrap().into_raw_parts();
             (client_key, public_key, server_key)
         } else {
             keyset.get_standard()
@@ -1345,7 +1373,10 @@ fn try_reconstruct_shares(
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 enum RetrievedKeysForVerification {
     Standard(tfhe::ServerKey, tfhe::CompactPublicKey),
-    Compressed(tfhe::xof_key_set::CompressedXofKeySet),
+    Compressed(
+        tfhe::xof_key_set::CompressedXofKeySet,
+        tfhe::CompactPublicKey,
+    ),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -1357,7 +1388,11 @@ impl RetrievedKeysForVerification {
                 bc2wrap::serialize(pk).unwrap(),
             ]
             .concat(),
-            RetrievedKeysForVerification::Compressed(keyset) => bc2wrap::serialize(keyset).unwrap(),
+            RetrievedKeysForVerification::Compressed(keyset, pk) => [
+                bc2wrap::serialize(keyset).unwrap(),
+                bc2wrap::serialize(pk).unwrap(),
+            ]
+            .concat(),
         }
     }
 }
@@ -1390,13 +1425,21 @@ pub(crate) async fn verify_keygen_responses(
             FileStorage::new(data_root_path, StorageType::PUB, pub_prefix.as_deref()).unwrap();
 
         let keys = if compressed {
-            let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = internal_client
-                .retrieve_key_no_verification(&kg_res, PubDataType::CompressedXofKeySet, &storage)
+            let (compressed_keyset, stored_public_key) = internal_client
+                .retrieve_compressed_keyset(
+                    req_preproc,
+                    req_get_keygen,
+                    &kg_res,
+                    domain,
+                    vec![],
+                    &storage,
+                )
                 .await
+                .inspect_err(|e| tracing::error!("error retrieving compressed keyset: {e}"))
                 .unwrap()
                 .unwrap();
 
-            RetrievedKeysForVerification::Compressed(compressed_keyset)
+            RetrievedKeysForVerification::Compressed(compressed_keyset, stored_public_key)
         } else {
             let (server_key, public_key) = internal_client
                 .retrieve_server_key_and_public_key(
@@ -1467,8 +1510,8 @@ pub(crate) async fn verify_keygen_responses(
         RetrievedKeysForVerification::Standard(server_key, public_key) => {
             TestKeyGenResult::Standard((client_key, public_key, server_key))
         }
-        RetrievedKeysForVerification::Compressed(keyset) => {
-            TestKeyGenResult::Compressed((client_key, keyset))
+        RetrievedKeysForVerification::Compressed(keyset, pk) => {
+            TestKeyGenResult::Compressed((client_key, keyset, pk))
         }
     };
 

@@ -478,8 +478,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
-    let (keyset_config, keyset_added_info) =
-        keygen_config_from_existing(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
+    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true);
 
     threshold_key_gen_secure_isolated(
         clients,
@@ -723,7 +722,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     )
     .await
     .expect("keygen 1 verification failed");
-    let (client_key_1, compressed_keyset_1) = keys_1.get_compressed();
+    let (client_key_1, compressed_keyset_1, _public_key_1) = keys_1.get_compressed();
     let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
@@ -743,7 +742,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     )
     .await
     .expect("keygen 2 verification failed");
-    let (client_key_2, _compressed_keyset_2) = keys_2.get_compressed();
+    let (client_key_2, _compressed_keyset_2, _public_key_2) = keys_2.get_compressed();
 
     // Step 3: Generate decompression key (secure mode - required for decompression)
     let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;
@@ -807,7 +806,6 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 from_keyset_id_decompression_only: Some(key_id_1.into()),
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,
-                existing_epoch_id: None,
                 use_existing_key_tag: false,
             }),
             context_id: None,

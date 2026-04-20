@@ -615,9 +615,6 @@ pub struct SharedKeyGenParameters {
     /// instead of running full distributed keygen.
     #[clap(long)]
     pub existing_keyset_id: Option<RequestId>,
-    /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
-    #[clap(long)]
-    pub existing_epoch_id: Option<EpochId>,
     /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
     /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
