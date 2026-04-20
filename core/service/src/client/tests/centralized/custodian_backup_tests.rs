@@ -429,7 +429,8 @@ async fn test_keygen_backup_presence_central() {
         Some(env.temp_dir.path()),
     )
     .await;
-
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after keygen)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Verify FHE key material appears in backup immediately after keygen
     let key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         env.test_path(),
