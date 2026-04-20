@@ -1608,7 +1608,7 @@ mod tests {
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -1781,15 +1781,16 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_prep_ids, kg) = setup_key_generator::<
+        let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(2);
         // use a random prep ID and it should be not found
         {
             let key_id = RequestId::new_random(&mut rng);
             let bad_prep_id = RequestId::new_random(&mut rng);
+            assert!(!prep_ids.contains(&bad_prep_id));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
@@ -1812,6 +1813,7 @@ mod tests {
         {
             // the result is not found since it's a fresh key ID
             let key_id = RequestId::new_random(&mut rng);
+            assert!(!prep_ids.contains(&key_id));
             assert_eq!(
                 kg.get_result(tonic::Request::new(key_id.into()))
                     .await
