@@ -261,7 +261,7 @@ pub(crate) async fn do_new_epoch(
 
             let (party_confs_successful, is_compressed) = match fetch_public_elements(
                 &key_id.to_string(),
-                &[PubDataType::CompressedXofKeySet],
+                &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
                 cc_conf,
                 destination_prefix,
                 true,

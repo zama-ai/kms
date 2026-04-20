@@ -18,6 +18,53 @@ pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest misma
 pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
     "Compressed xof keyset digest mismatch";
 pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
+const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
+const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
+
+#[derive(Clone, Copy)]
+enum CurrentPublicMaterialLayout {
+    Standard,
+    Compressed,
+}
+
+fn classify_current_public_material(
+    pub_data_types: &HashSet<PubDataType>,
+) -> anyhow::Result<CurrentPublicMaterialLayout> {
+    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
+    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
+    let has_compressed_keyset = pub_data_types.contains(&PubDataType::CompressedXofKeySet);
+
+    match (
+        has_public_key,
+        has_server_key,
+        has_compressed_keyset,
+        pub_data_types.len(),
+    ) {
+        (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
+        (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
+        _ => anyhow::bail!(
+            "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
+             {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
+            pub_data_types
+        ),
+    }
+}
+
+fn validate_legacy_public_material_shape(
+    pub_data_types: &HashSet<PubDataType>,
+) -> anyhow::Result<()> {
+    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
+    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
+
+    if has_public_key && has_server_key && pub_data_types.len() == 2 {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "{ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE}: expected exactly {{PublicKey, ServerKey}}, got {:?}",
+        pub_data_types
+    );
+}
 
 /// Verify key digests using raw bytes from storage.
 /// This avoids re-serializing the keys, which would produce different bytes
@@ -90,73 +137,55 @@ async fn verify_digests<S: StorageReader + Sync>(
     id: &RequestId,
     key_digest_map: &HashMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<()> {
-    // TODO(dp): Why use contains_key here? Just look it up and do nothing if it's not there. Why even use a HashMap?
-    // This code is all weird.
-    if key_digest_map.contains_key(&PubDataType::PublicKey) {
-        let public_key_exists = storage
-            .data_exists(id, &PubDataType::PublicKey.to_string())
-            .await?;
-        let server_key_exists = storage
-            .data_exists(id, &PubDataType::ServerKey.to_string())
-            .await?;
+    let pub_data_types: HashSet<_> = key_digest_map.keys().cloned().collect();
+    match classify_current_public_material(&pub_data_types)? {
+        CurrentPublicMaterialLayout::Standard => {
+            let public_key_bytes = storage
+                .load_bytes(id, &PubDataType::PublicKey.to_string())
+                .await?;
+            // TODO(dp): this is potentially enormous. Figure out why we're doing this and if we can stop. Is `verify_digests` called from production code? Loading gigabytes of data
+            // and then hashing it is silly for tests. Let the tests fail instead.
+            let server_key_bytes = storage
+                .load_bytes(id, &PubDataType::ServerKey.to_string())
+                .await?;
 
-        if !(public_key_exists && server_key_exists)
-            && storage
-                .data_exists(id, &PubDataType::CompressedXofKeySet.to_string())
-                .await?
-        {
-            tracing::warn!(
-                "Public material for id={id} still references legacy PublicKey/ServerKey metadata, \
-                 but only CompressedXofKeySet is present. Falling back to compressed readability."
-            );
-            read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-                storage,
-                id,
-                &PubDataType::CompressedXofKeySet.to_string(),
+            let expected_server_key_digest = key_digest_map
+                .get(&PubDataType::ServerKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
+            let expected_public_key_digest = key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+
+            verify_key_digest_from_bytes(
+                &server_key_bytes,
+                &public_key_bytes,
+                expected_server_key_digest,
+                expected_public_key_digest,
             )
-            .await?;
-            // TODO(dp): this shortcutting is burried. Lift it.
-            return Ok(());
         }
+        CurrentPublicMaterialLayout::Compressed => {
+            let public_key_bytes = storage
+                .load_bytes(id, &PubDataType::PublicKey.to_string())
+                .await?;
+            let compressed_keyset_bytes = storage
+                .load_bytes(id, &PubDataType::CompressedXofKeySet.to_string())
+                .await?;
 
-        let public_key_bytes = storage
-            .load_bytes(id, &PubDataType::PublicKey.to_string())
-            .await?;
-        // TODO(dp): this is potentially enormous. Figure out why we're doing this and if we can stop. Is `verify_digests` called from production code? Loading gigabytes of data
-        // and then hashing it is silly for tests. Let the tests fail instead.
-        let server_key_bytes = storage
-            .load_bytes(id, &PubDataType::ServerKey.to_string())
-            .await?;
+            let expected_public_key_digest = key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+            let expected_compressed_keyset_digest = key_digest_map
+                .get(&PubDataType::CompressedXofKeySet)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("missing digest for compressed xof keyset, id={id}")
+                })?;
 
-        let expected_server_key_digest = key_digest_map
-            .get(&PubDataType::ServerKey)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
-        let expected_public_key_digest = key_digest_map
-            .get(&PubDataType::PublicKey)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
-
-        verify_key_digest_from_bytes(
-            &server_key_bytes,
-            &public_key_bytes,
-            expected_server_key_digest,
-            expected_public_key_digest,
-        )
-    } else if key_digest_map.contains_key(&PubDataType::CompressedXofKeySet) {
-        let compressed_keyset_bytes = storage
-            .load_bytes(id, &PubDataType::CompressedXofKeySet.to_string())
-            .await?;
-
-        let expected_digest = key_digest_map
-            .get(&PubDataType::CompressedXofKeySet)
-            .ok_or_else(|| anyhow::anyhow!("missing digest for compressed xof keyset, id={id}"))?;
-
-        verify_compressed_key_digest_from_bytes(&compressed_keyset_bytes, expected_digest)
-    } else {
-        anyhow::bail!(
-            "Inconsistent storage state for id={id}: pub data types {:?} \
-             contains neither PublicKey nor CompressedXofKeySet",
-            key_digest_map.keys().collect::<Vec<_>>()
-        );
+            verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
+            verify_compressed_key_digest_from_bytes(
+                &compressed_keyset_bytes,
+                expected_compressed_keyset_digest,
+            )
+        }
     }
 }
 
@@ -167,58 +196,21 @@ async fn check_readability<S: StorageReader + Sync>(
     id: &RequestId,
     pub_data_types: &HashSet<PubDataType>,
 ) -> anyhow::Result<()> {
-    if pub_data_types.contains(&PubDataType::PublicKey) {
-        let public_key_exists = storage
-            .data_exists(id, &PubDataType::PublicKey.to_string())
-            .await?;
-        let server_key_exists = storage
-            .data_exists(id, &PubDataType::ServerKey.to_string())
-            .await?;
+    validate_legacy_public_material_shape(pub_data_types)?;
 
-        if !(public_key_exists && server_key_exists)
-            && storage
-                .data_exists(id, &PubDataType::CompressedXofKeySet.to_string())
-                .await?
-        {
-            tracing::warn!(
-                "Legacy public metadata for id={id} points to PublicKey/ServerKey, \
-                 but only CompressedXofKeySet is present. Falling back to compressed readability."
-            );
-            read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-                storage,
-                id,
-                &PubDataType::CompressedXofKeySet.to_string(),
-            )
-            .await?;
-            return Ok(());
-        }
+    read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
+        storage,
+        id,
+        &PubDataType::PublicKey.to_string(),
+    )
+    .await?;
+    read_versioned_at_request_id::<_, tfhe::ServerKey>(
+        storage,
+        id,
+        &PubDataType::ServerKey.to_string(),
+    )
+    .await?;
 
-        read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
-            storage,
-            id,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await?;
-        read_versioned_at_request_id::<_, tfhe::ServerKey>(
-            storage,
-            id,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await?;
-    } else if pub_data_types.contains(&PubDataType::CompressedXofKeySet) {
-        read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-            storage,
-            id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
-    } else {
-        anyhow::bail!(
-            "Inconsistent storage state for id={id}: pub data types {:?} \
-             contains neither PublicKey nor CompressedXofKeySet",
-            pub_data_types
-        );
-    }
     Ok(())
 }
 
@@ -523,9 +515,9 @@ mod tests {
     use crate::engine::base::{KeyGenMetadataInner, safe_serialize_hash_element_versioned};
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::store_versioned_at_request_id;
+    use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
     use rand::SeedableRng;
     use std::collections::HashMap;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
@@ -582,23 +574,61 @@ mod tests {
         assert!(status.message().contains("test_no_drop"));
     }
 
+    #[derive(Clone)]
+    struct TestStoredMaterial {
+        key_id: RequestId,
+        preproc_id: RequestId,
+        key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    }
+
+    impl TestStoredMaterial {
+        fn current_metadata(&self) -> KeyGenMetadata {
+            KeyGenMetadata::Current(KeyGenMetadataInner {
+                key_id: self.key_id,
+                preprocessing_id: self.preproc_id,
+                key_digest_map: self.key_digest_map.clone(),
+                external_signature: vec![],
+            })
+        }
+
+        fn legacy_standard_metadata(&self) -> KeyGenMetadata {
+            KeyGenMetadata::LegacyV0(HashMap::from_iter([
+                (
+                    PubDataType::PublicKey,
+                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+                ),
+                (
+                    PubDataType::ServerKey,
+                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+                ),
+            ]))
+        }
+
+        fn current_metadata_with_types(&self, pub_data_types: &[PubDataType]) -> KeyGenMetadata {
+            let key_digest_map = pub_data_types
+                .iter()
+                .filter_map(|data_type| {
+                    self.key_digest_map
+                        .get(data_type)
+                        .cloned()
+                        .map(|digest| (*data_type, digest))
+                })
+                .collect();
+            KeyGenMetadata::Current(KeyGenMetadataInner {
+                key_id: self.key_id,
+                preprocessing_id: self.preproc_id,
+                key_digest_map,
+                external_signature: vec![],
+            })
+        }
+    }
+
     #[tokio::test]
     async fn sanity_check_current_standard_keys_valid_digests() {
-        let mut rng = AesRng::seed_from_u64(69);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 69).await;
 
-        let digests = setup_standard_keys(&mut storage, &key_id).await;
-
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         sanity_check_public_materials(&storage, &entries)
             .await
             .expect("valid digests should pass");
@@ -606,25 +636,13 @@ mod tests {
 
     #[tokio::test]
     async fn sanity_check_current_standard_keys_invalid_digest() {
-        let mut rng = AesRng::seed_from_u64(69);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-
-        let mut digests = setup_standard_keys(&mut storage, &key_id).await;
-        // Corrupt the server key digest
-        if let Some(digest) = digests.get_mut(&PubDataType::ServerKey) {
+        let mut material = setup_standard_keys(&mut storage, 70).await;
+        if let Some(digest) = material.key_digest_map.get_mut(&PubDataType::ServerKey) {
             digest[0] ^= 0xFF;
         }
 
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         let err = sanity_check_public_materials(&storage, &entries)
             .await
             .unwrap_err();
@@ -636,47 +654,45 @@ mod tests {
 
     #[tokio::test]
     async fn sanity_check_current_compressed_keys_valid_digests() {
-        let mut rng = AesRng::seed_from_u64(44);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 44).await;
 
-        let digests = setup_compressed_keys(&mut storage, &key_id).await;
-
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
-
-        let entries = vec![(key_id, metadata)];
+        let entries = vec![(material.key_id, material.current_metadata())];
         sanity_check_public_materials(&storage, &entries)
             .await
             .expect("valid digests should pass");
     }
 
     #[tokio::test]
-    async fn sanity_check_current_compressed_keys_invalid_digest() {
-        let mut rng = AesRng::seed_from_u64(45);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
+    async fn sanity_check_current_compressed_keys_invalid_public_key_digest() {
         let mut storage = RamStorage::new();
-
-        let mut digests = setup_compressed_keys(&mut storage, &key_id).await;
-        // Corrupt the digest
-        if let Some(digest) = digests.get_mut(&PubDataType::CompressedXofKeySet) {
+        let mut material = setup_compressed_keys(&mut storage, 45).await;
+        if let Some(digest) = material.key_digest_map.get_mut(&PubDataType::PublicKey) {
             digest[0] ^= 0xFF;
         }
 
-        let metadata = KeyGenMetadata::Current(KeyGenMetadataInner {
-            key_id,
-            preprocessing_id: preproc_id,
-            key_digest_map: digests,
-            external_signature: vec![],
-        });
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH),
+            "expected public key digest mismatch, got: {err}"
+        );
+    }
 
-        let entries = vec![(key_id, metadata)];
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keys_invalid_compressed_keyset_digest() {
+        let mut storage = RamStorage::new();
+        let mut material = setup_compressed_keys(&mut storage, 46).await;
+        if let Some(digest) = material
+            .key_digest_map
+            .get_mut(&PubDataType::CompressedXofKeySet)
+        {
+            digest[0] ^= 0xFF;
+        }
+
+        let entries = vec![(material.key_id, material.current_metadata())];
         let err = sanity_check_public_materials(&storage, &entries)
             .await
             .unwrap_err();
@@ -688,32 +704,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sanity_check_legacy_metadata_readability_only() {
-        let mut rng = AesRng::seed_from_u64(46);
-        let key_id = RequestId::new_random(&mut rng);
+    async fn sanity_check_current_compressed_keys_missing_public_key_fails() {
         let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 47).await;
+        delete_data(&mut storage, &material.key_id, PubDataType::PublicKey).await;
 
-        // Set up standard keys (we won't use the digests — legacy has no digest info)
-        let _digests = setup_standard_keys(&mut storage, &key_id).await;
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&PubDataType::PublicKey.to_string()),
+            "expected missing public key error, got: {err}"
+        );
+    }
 
-        // Create legacy metadata with empty handles — we just need the keys present
-        use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-        let legacy_map: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::from_iter([
+    #[tokio::test]
+    async fn sanity_check_current_compressed_keyset_without_public_key_fails_as_inconsistent() {
+        let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 48).await;
+        let metadata = material.current_metadata_with_types(&[PubDataType::CompressedXofKeySet]);
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE),
+            "expected invalid current shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_standard_metadata_readability_only() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 49).await;
+
+        let entries = vec![(material.key_id, material.legacy_standard_metadata())];
+        sanity_check_public_materials(&storage, &entries)
+            .await
+            .expect("legacy readability check should pass");
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_compressed_keyset_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_compressed_keys(&mut storage, 50).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([
             (
                 PubDataType::PublicKey,
                 SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
             ),
             (
-                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet,
                 SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
             ),
-        ]);
-        let metadata = KeyGenMetadata::LegacyV0(legacy_map);
+        ]));
 
-        let entries = vec![(key_id, metadata)];
-        sanity_check_public_materials(&storage, &entries)
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
             .await
-            .expect("legacy readability check should pass");
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_only_public_key_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 51).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
+            PubDataType::PublicKey,
+            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+        )]));
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanity_check_legacy_metadata_with_only_server_key_fails() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 52).await;
+        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
+            PubDataType::ServerKey,
+            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+        )]));
+
+        let entries = vec![(material.key_id, metadata)];
+        let err = sanity_check_public_materials(&storage, &entries)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+            "expected invalid legacy shape error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -783,10 +881,10 @@ mod tests {
             .expect("legacy CRS readability check should pass");
     }
 
-    async fn setup_standard_keys(
-        storage: &mut RamStorage,
-        key_id: &RequestId,
-    ) -> HashMap<PubDataType, Vec<u8>> {
+    async fn setup_standard_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let pbs_params: ClassicPBSParameters = params
             .get_params_basics_handle()
@@ -809,7 +907,7 @@ mod tests {
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &public_key,
             &PubDataType::PublicKey.to_string(),
         )
@@ -818,23 +916,27 @@ mod tests {
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await
         .unwrap();
 
-        HashMap::from_iter([
-            (PubDataType::ServerKey, server_key_digest),
-            (PubDataType::PublicKey, public_key_digest),
-        ])
+        TestStoredMaterial {
+            key_id,
+            preproc_id,
+            key_digest_map: HashMap::from_iter([
+                (PubDataType::ServerKey, server_key_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+        }
     }
 
-    async fn setup_compressed_keys(
-        storage: &mut RamStorage,
-        key_id: &RequestId,
-    ) -> HashMap<PubDataType, Vec<u8>> {
+    async fn setup_compressed_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let params = crate::consts::TEST_PARAM;
         let config = params.to_tfhe_config();
         let max_norm_hwt = params
@@ -853,23 +955,56 @@ mod tests {
             tag,
         )
         .unwrap();
+        let compact_public_key = compressed_keyset
+            .clone()
+            .decompress()
+            .unwrap()
+            .into_raw_parts()
+            .0;
 
-        let digest = safe_serialize_hash_element_versioned(
+        let compressed_keyset_digest = safe_serialize_hash_element_versioned(
             &crate::engine::base::DSEP_PUBDATA_KEY,
             &compressed_keyset,
+        )
+        .unwrap();
+        let public_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &compact_public_key,
         )
         .unwrap();
 
         store_versioned_at_request_id(
             storage,
-            key_id,
+            &key_id,
             &compressed_keyset,
             &PubDataType::CompressedXofKeySet.to_string(),
         )
         .await
         .unwrap();
 
-        HashMap::from_iter([(PubDataType::CompressedXofKeySet, digest)])
+        store_versioned_at_request_id(
+            storage,
+            &key_id,
+            &compact_public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        TestStoredMaterial {
+            key_id,
+            preproc_id,
+            key_digest_map: HashMap::from_iter([
+                (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+                (PubDataType::PublicKey, public_key_digest),
+            ]),
+        }
+    }
+
+    async fn delete_data(storage: &mut RamStorage, key_id: &RequestId, data_type: PubDataType) {
+        delete_at_request_id(storage, key_id, &data_type.to_string())
+            .await
+            .unwrap();
     }
 
     async fn setup_crs(

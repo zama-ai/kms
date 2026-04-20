@@ -204,8 +204,8 @@ where
     /// Check if FHE keys exist (for central server).
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
-    /// This checks for both standard keys (PublicKey) and compressed keys (CompressedXofKeySet),
-    /// since compressed keygen only stores CompressedXofKeySet publicly.
+    /// This checks for both standard keys (`PublicKey` + `ServerKey`) and the current
+    /// compressed layout (`CompressedXofKeySet` + `PublicKey`).
     pub async fn fhe_keys_exist(
         &self,
         key_id: &RequestId,
@@ -226,11 +226,14 @@ where
         if standard {
             return Ok(true);
         }
-        // Fallback: check for compressed keys
+        // Fallback: check for the current compressed layout.
         self.data_exists_at_epoch(
             key_id,
             epoch_id,
-            &[PubDataType::CompressedXofKeySet.to_string()],
+            &[
+                PubDataType::CompressedXofKeySet.to_string(),
+                PubDataType::PublicKey.to_string(),
+            ],
             &priv_types,
         )
         .await
@@ -435,7 +438,20 @@ where
             if let Err(e) = &server_key_result {
                 tracing::warn!("Failed to delete server key for request {}: {}", req_id, e);
             }
-            pk_result.is_err() || server_key_result.is_err()
+            let compressed_keyset_result = delete_at_request_id(
+                &mut (*pub_storage),
+                req_id,
+                &PubDataType::CompressedXofKeySet.to_string(),
+            )
+            .await;
+            if let Err(e) = &compressed_keyset_result {
+                tracing::warn!(
+                    "Failed to delete compressed xof keyset for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            pk_result.is_err() || server_key_result.is_err() || compressed_keyset_result.is_err()
         };
         let f2 = async {
             let result = match kms_type {
