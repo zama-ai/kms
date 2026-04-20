@@ -183,7 +183,7 @@ async fn write_crs() {
         )
         .await;
     let err = result.unwrap_err().to_string();
-    // Successful pruging since there is actually nothing to purge
+    // Successful purging since there is actually nothing to purge
     assert!(
         err.contains("successfully purged dangling CRS material and updated meta store"),
         "expected underlying storage failure, got: {err}"
