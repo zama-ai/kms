@@ -580,7 +580,7 @@ where
 
     /// Tries to delete all the types of CRS material related to a specific [RequestId].
     /// Returns true if the purge is successful, false otherwise.
-    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
+    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should only be used as cleanup after a failed CRS generation.
     pub async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
