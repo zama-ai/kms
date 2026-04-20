@@ -401,12 +401,11 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config
-          # Intentional word-splitting on both CMD_ENV (expands into separate
-          # env-var tokens) and ARGS_TESTS (expands into separate cargo flags).
+          # Intentional word-splitting on CMD_ENV and ARGS_TESTS.
           # shellcheck disable=SC2086
           echo "EXECUTING: ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
