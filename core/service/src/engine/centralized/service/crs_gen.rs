@@ -197,7 +197,7 @@ pub async fn abort_crs_gen_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
-    // Handle abort request. In the centralized case we don't actually abort the background task, we just mark the request as aborted in the meta store in case it might actually be running
+    // Handle abort request. In the centralized case we don't actually abort the background task
     let request_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
         .map_err(|e| MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
 

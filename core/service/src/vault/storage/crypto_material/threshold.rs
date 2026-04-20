@@ -3,6 +3,7 @@
 //! This module provides the storage implementation for cryptographic material
 //! used in the threshold KMS variant.
 
+use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
@@ -105,8 +106,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 let _ = update_err_req_in_meta_store(
                     &mut guarded_meta_store,
                     crs_id,
-                    "Failed to write CRS to storage for epoch change to {epoch_id}".to_string(),
-                    "resharing_crs_write",
+                    format!("Failed to write CRS to storage for epoch change to {epoch_id}"),
+                    OP_NEW_EPOCH,
                 );
             } else {
                 // Failure in purging data
@@ -115,7 +116,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     &mut guarded_meta_store,
                     crs_id,
                     "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}".to_string(),
-                    "resharing_crs_write",
+                    OP_NEW_EPOCH,
                 );
             }
             false

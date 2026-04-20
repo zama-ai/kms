@@ -36,6 +36,8 @@ pub trait KeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`KeyGenPreprocessor`]
     async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 
@@ -50,6 +52,8 @@ pub trait InsecureKeyGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError>;
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`KeyGenPreprocessor`]
     async fn abort_key_gen(&self, preproc_id: kms_grpc::RequestId) -> Status;
 }
 

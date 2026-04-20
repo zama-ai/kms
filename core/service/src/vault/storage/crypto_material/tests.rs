@@ -82,11 +82,9 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("request is missing"),
-        "expected meta-store update failure when empty, got: {err}"
-    );
-    assert!(
-        err.contains("Error while updating meta store"),
+        err.contains(&format!(
+            "Error while updating meta store for {req_id}: request is missing"
+        )),
         "expected meta-store update failure when empty, got: {err}"
     );
     {

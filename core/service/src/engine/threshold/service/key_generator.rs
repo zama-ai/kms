@@ -369,7 +369,7 @@ impl<
         };
 
         let keygen_background = async move {
-            // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
+            // Remove the preprocessing material
             match &preproc_handle_w_mode {
                 PreprocHandleWithMode::Secure((preproc_id, _)) => {
                     tracing::info!(
@@ -453,6 +453,7 @@ impl<
                                     format!("Key generation background with preprocessing id {} failed since the task got cancelled", preproc_id),
                                 );
                         let guarded_meta_store = meta_store_cancelled.write().await;
+                        // Note that the meta store gets updated in the helper method
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
                     },
                 }
@@ -544,7 +545,7 @@ impl<
     }
 
     async fn inner_abort_key_gen(&self, preproc_id: RequestId) -> Status {
-        match self.ongoing.lock().await.get(&preproc_id) {
+        match self.ongoing.lock().await.remove(&preproc_id) {
             Some(cancellation_token) => {
                 // Observe that the cancellation arm handles the abortion and clean-up
                 cancellation_token.cancel();
@@ -2040,5 +2041,8 @@ mod tests {
         // The slow DKG is still running — abort should cancel it
         let status = kg.abort_key_gen(prep_id).await;
         assert_eq!(status.code(), tonic::Code::Ok);
+        // Check that seconds abort returns NotFound
+        let status = kg.abort_key_gen(prep_id).await;
+        assert_eq!(status.code(), tonic::Code::NotFound);
     }
 }
