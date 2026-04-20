@@ -159,7 +159,7 @@ pub async fn run_crs(
         .crs_gen_request(crs_req_id, None, None, max_bits, Some(parameter), &domain)
         .unwrap();
 
-    let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
+    let responses = launch_crs(&crs_req, kms_clients, insecure).await;
     for response in responses {
         response.unwrap();
     }
@@ -175,40 +175,38 @@ pub async fn run_crs(
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 async fn launch_crs(
-    reqs: &[CrsGenRequest],
+    req: &CrsGenRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     insecure: bool,
 ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
-    for req in reqs {
-        for i in 1..=amount_parties as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            tasks_gen.spawn(async move {
-                if insecure {
-                    #[cfg(feature = "insecure")]
-                    {
-                        cur_client
-                            .insecure_crs_gen(tonic::Request::new(req_clone))
-                            .await
-                    }
-                    #[cfg(not(feature = "insecure"))]
-                    {
-                        panic!("Asked for insecure crs gen but feature 'insecure' is not active.")
-                    }
-                } else {
-                    cur_client.crs_gen(tonic::Request::new(req_clone)).await
+    for i in 1..=amount_parties as u32 {
+        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+        let req_clone = req.clone();
+        tasks_gen.spawn(async move {
+            if insecure {
+                #[cfg(feature = "insecure")]
+                {
+                    cur_client
+                        .insecure_crs_gen(tonic::Request::new(req_clone))
+                        .await
                 }
-            });
-        }
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!("Asked for insecure crs gen but feature 'insecure' is not active.")
+                }
+            } else {
+                cur_client.crs_gen(tonic::Request::new(req_clone)).await
+            }
+        });
     }
     let mut responses_gen = Vec::new();
     while let Some(inner) = tasks_gen.join_next().await {
         let resp = inner.unwrap();
         responses_gen.push(resp);
     }
-    assert_eq!(responses_gen.len(), amount_parties * reqs.len());
+    assert_eq!(responses_gen.len(), amount_parties);
     responses_gen
 }
 
