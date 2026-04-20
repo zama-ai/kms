@@ -226,7 +226,7 @@ impl<
                             Some(req_id),
                             anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
                         );
-                        let del_res = crypto_storage_cancelled.purge_crs_material(&req_id, &epoch_id).await;
+                        let del_res = crypto_storage_cancelled.inner.purge_crs_material(&req_id, &epoch_id).await;
                         {
                             let mut guarded_meta_store = meta_store_cancelled.write().await;
                             let msg = if del_res {

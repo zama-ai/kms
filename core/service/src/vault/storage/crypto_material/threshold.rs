@@ -134,7 +134,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // Ignore any failure to delete something since it might
             // be because the data did not get created
             // In any case, we can't do much.
-            if self.purge_crs_material(crs_id, epoch_id).await {
+            if self.inner.purge_crs_material(crs_id, epoch_id).await {
                 // Successfully purged dangling data, now update meta store with error
                 let mut guarded_meta_store = meta_store.write().await;
                 let _ = update_err_req_in_meta_store(
@@ -556,13 +556,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner
             .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
             .await
-    }
-
-    /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    /// Returns true if the purge is successful, false otherwise.
-    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
-    pub async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        self.inner.purge_crs_material(req_id, epoch_id).await
     }
 
     /// Note that we're not storing a shortint decompression key
