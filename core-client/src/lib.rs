@@ -1842,8 +1842,11 @@ pub async fn execute_cmd(
         }
         CCCommand::AbortKeyGen(AbortParameters { request_id }) => {
             tracing::info!("Aborting key generation with request ID {}.", request_id);
-            do_abort_key_gen(&core_endpoints_req, *request_id, max_iter, num_parties).await?;
-            vec![(Some(*request_id), "keygen aborted".to_string())]
+            let res =
+                do_abort_key_gen(&core_endpoints_req, *request_id, max_iter, num_parties).await?;
+            res.iter()
+                .map(|cur_resp| (Some(*request_id), cur_resp.clone()))
+                .collect::<Vec<(Option<RequestId>, String)>>()
         }
         CCCommand::CrsGen(CrsParameters {
             max_num_bits,

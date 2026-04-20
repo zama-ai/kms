@@ -415,7 +415,7 @@ pub(crate) async fn do_abort_key_gen(
     request_id: RequestId,
     max_iter: usize,
     num_expected_responses: usize,
-) -> anyhow::Result<Vec<Code>> {
+) -> anyhow::Result<Vec<String>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
@@ -456,12 +456,13 @@ pub(crate) async fn do_abort_key_gen(
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
+        println!("Got response for abort_key_gen: {:?}", resp);
         match resp {
             Ok(Ok(_)) => {
-                resp_response_vec.push(Code::Ok);
+                resp_response_vec.push(Code::Ok.description().to_string());
             }
             Ok(Err(code)) => {
-                resp_response_vec.push(code);
+                resp_response_vec.push(code.description().to_string());
             }
             Err(e) => {
                 tracing::warn!("Join error in abort key gen response: {e}");
