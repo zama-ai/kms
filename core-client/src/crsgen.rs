@@ -16,6 +16,7 @@ use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 use tokio::task::JoinSet;
+use tonic::Code;
 use tonic::transport::Channel;
 
 #[allow(clippy::too_many_arguments)]
@@ -336,6 +337,79 @@ fn check_crsgen_ext_signature(
             "External signature verification failed for crsgen as it does not contain the right address!"
         ))
     }
+}
+
+pub(crate) async fn do_abort_crs_gen(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    request_id: RequestId,
+    max_iter: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<Code>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (_core_conf, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete decryption
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = cur_client
+                .abort_crs_gen(tonic::Request::new(request_id.into()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    return Err(Code::Unavailable);
+                }
+                ctr += 1;
+                response = cur_client
+                    .abort_crs_gen(tonic::Request::new(request_id.into()))
+                    .await;
+                tracing::info!("Got response for abort_crs_gen: {:?}", response);
+            }
+            response.map_err(|e| e.code())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        match resp {
+            Ok(Ok(_)) => {
+                resp_response_vec.push(Code::Ok);
+            }
+            Ok(Err(code)) => {
+                resp_response_vec.push(code);
+            }
+            Err(e) => {
+                tracing::warn!("Join error in abort CRS gen response: {e}");
+            }
+        }
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} abort CRS gen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
+    }
+    Ok(resp_response_vec)
 }
 
 #[cfg(test)]
