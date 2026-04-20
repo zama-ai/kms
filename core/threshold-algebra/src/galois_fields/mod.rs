@@ -1,5 +1,4 @@
 /// Map from evaluation points to their precomputed Lagrange polynomials.
-
 #[cfg(any(
     feature = "extension_degree_3",
     feature = "extension_degree_4",

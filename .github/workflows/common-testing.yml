@@ -368,19 +368,23 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
           RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
-          # Set NEXTEST_TEST_THREADS only if a value was provided
+          # Build the env-var prefix for the nextest invocation so the printed
+          # `EXECUTING:` line below is exactly what gets run (no implicit
+          # exported state). Copy-paste the echoed command and it reproduces CI.
+          CMD_ENV="RUST_BACKTRACE=full"
+
           if [ -n "${NEXTEST_TEST_THREADS_INPUT}" ]; then
-            export NEXTEST_TEST_THREADS="${NEXTEST_TEST_THREADS_INPUT}"
-            echo "NEXTEST_TEST_THREADS set to: ${NEXTEST_TEST_THREADS}"
+            CMD_ENV="${CMD_ENV} NEXTEST_TEST_THREADS=${NEXTEST_TEST_THREADS_INPUT}"
+            echo "NEXTEST_TEST_THREADS set to: ${NEXTEST_TEST_THREADS_INPUT}"
           else
             echo "NEXTEST_TEST_THREADS not set (using nextest default)"
           fi
 
-          # Enable shared test material mode if requested to save disk space
-          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1)
-          # Shared mode uses material in-place without copying to temp directories
+          # Enable shared test material mode if requested to save disk space.
+          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1).
+          # Shared mode uses material in-place without copying to temp directories.
           if [[ "${ENABLE_SHARED_MATERIAL}" == "true" ]]; then
-            export KMS_TEST_SHARED_MATERIAL=1
+            CMD_ENV="${CMD_ENV} KMS_TEST_SHARED_MATERIAL=1"
             echo "KMS_TEST_SHARED_MATERIAL=1 (using shared material in-place, no copying)"
             echo "This saves ~80GB+ disk space by avoiding material duplication"
           else
@@ -396,8 +400,13 @@ jobs:
           echo "output=json" >> ~/.aws/config &&
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
-          cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          cat ~/.aws/config
+          # Intentional word-splitting on both CMD_ENV (expands into separate
+          # env-var tokens) and ARGS_TESTS (expands into separate cargo flags).
+          # shellcheck disable=SC2086
+          echo "EXECUTING: ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
+          # shellcheck disable=SC2086
+          ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
