@@ -709,6 +709,11 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         req_id.into(),
     )
     .unwrap();
+    let (compact_pk, _sk) = compressed_keyset
+        .clone()
+        .decompress()
+        .unwrap()
+        .into_raw_parts();
     threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
@@ -718,6 +723,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
             &epoch_id,
             threshold_fhe_keys,
             &compressed_keyset,
+            &compact_pk,
             meta_store,
         )
         .await;

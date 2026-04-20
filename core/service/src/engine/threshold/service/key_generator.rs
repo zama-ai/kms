@@ -14,6 +14,7 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
+    rpc_types::PubDataType,
 };
 use observability::{
     metrics,
@@ -59,7 +60,7 @@ use crate::{
             },
             traits::KeyGenerator,
         },
-        utils::MetricedError,
+        utils::{MetricedError, verify_public_key_digest_from_bytes},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_key_gen_request,
@@ -350,6 +351,36 @@ impl<
             None
         };
 
+        // For compressed keygen that recycles an existing private keyset, load the OLD
+        // CompactPublicKey so we can sign and store it instead of the new one derived from
+        // the newly-generated CompressedXofKeySet. Keeps the externally-visible public key
+        // stable for clients that already cached it. The digest of the loaded pk is
+        // verified against the old ThresholdFheKeys.meta_data; generation from existing
+        // shares stays within the same epoch, so the current epoch_id is used.
+        let existing_compact_pk: Option<tfhe::CompactPublicKey> =
+            match internal_keyset_config.keyset_config() {
+                ddec_keyset_config::KeySetConfig::Standard(inner)
+                    if matches!(
+                        inner.secret_key_config,
+                        ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
+                    ) && matches!(
+                        inner.compressed_key_config,
+                        ddec_keyset_config::CompressedKeyConfig::All
+                    ) =>
+                {
+                    let existing_keyset_id = internal_keyset_config.get_existing_keyset_id()?;
+                    Some(
+                        Self::read_existing_compact_public_key(
+                            &crypto_storage,
+                            &existing_keyset_id,
+                            &epoch_id,
+                        )
+                        .await?,
+                    )
+                }
+                _ => None,
+            };
+
         let keygen_background = async move {
             // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
             match &preproc_handle_w_mode {
@@ -395,6 +426,7 @@ impl<
                         permit,
                         op_tag,
                         existing_key_tag,
+                        existing_compact_pk,
                     )
                     .await
                 }
@@ -1123,6 +1155,7 @@ impl<
         permit: OwnedSemaphorePermit,
         op_tag: &'static str,
         existing_key_tag: Option<tfhe::Tag>,
+        existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
         let _permit = permit;
         let start = Instant::now();
@@ -1357,6 +1390,28 @@ impl<
                 }
             }
             ThresholdKeyGenResult::Compressed(compressed_keyset, private_keys) => {
+                // When migrating from an existing keyset (UseExisting), preserve the OLD
+                // CompactPublicKey so that signatures and stored bytes stay stable for
+                // clients that already hold it. For a fresh keygen, use the public key
+                // derived from the newly generated compressed keyset.
+                let compact_pk = match existing_compact_pk {
+                    Some(old_pk) => old_pk,
+                    None => match compressed_keyset.clone().decompress() {
+                        Ok(ks) => ks.into_raw_parts().0,
+                        Err(e) => {
+                            update_err_req_in_meta_store(
+                                &mut meta_store.write().await,
+                                req_id,
+                                format!(
+                                    "Failed to decompress freshly generated compressed keyset: {e}"
+                                ),
+                                op_tag,
+                            );
+                            return;
+                        }
+                    },
+                };
+
                 //Compute info for compressed keygen
                 let info = match compute_info_compressed_keygen(
                     &sk,
@@ -1364,6 +1419,7 @@ impl<
                     &prep_id,
                     req_id,
                     &compressed_keyset,
+                    &compact_pk,
                     &eip712_domain,
                     extra_data,
                 ) {
@@ -1393,6 +1449,7 @@ impl<
                         epoch_id,
                         threshold_fhe_keys,
                         &compressed_keyset,
+                        &compact_pk,
                         meta_store,
                     )
                     .await
@@ -1444,6 +1501,80 @@ impl<
         };
 
         res.map_err(|e| anyhow::anyhow!("{}: {e}", ERR_FAILED_TO_READ_EXISTING_TAG))
+    }
+
+    /// Reads the CompactPublicKey of an existing keyset in public storage and verifies its
+    /// digest against the old `ThresholdFheKeys.meta_data`. Generating a
+    /// `CompressedXofKeySet` from existing shares stays within the same epoch, so
+    /// `epoch_id` must be the current epoch.
+    ///
+    /// The digest is computed over the raw bytes loaded from storage (never from a
+    /// re-serialized value) so version upgrades of the serialized form do not cause a
+    /// spurious mismatch.
+    ///
+    /// Errors out if the old `meta_data` has no `PubDataType::PublicKey` entry (e.g. a
+    /// pre-dual-storage compressed keyset) or if the digests do not match.
+    async fn read_existing_compact_public_key(
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        existing_keyset_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<tfhe::CompactPublicKey> {
+        let expected_digest = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys(existing_keyset_id, epoch_id)
+                .await?;
+            match &threshold_keys.meta_data {
+                KeyGenMetadata::Current(inner) => inner
+                    .key_digest_map
+                    .get(&PubDataType::PublicKey)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Old ThresholdFheKeys for keyset {existing_keyset_id} has no \
+                             PubDataType::PublicKey digest; cannot preserve the old compact \
+                             public key during UseExisting keygen."
+                        )
+                    })?,
+                KeyGenMetadata::LegacyV0(_) => {
+                    anyhow::bail!(
+                        "Old ThresholdFheKeys for keyset {existing_keyset_id} uses legacy \
+                         metadata format; cannot verify the old compact public key digest."
+                    );
+                }
+            }
+        };
+
+        let public_key_bytes = {
+            let pub_storage = crypto_storage.inner.public_storage.lock().await;
+            pub_storage
+                .load_bytes(existing_keyset_id, &PubDataType::PublicKey.to_string())
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to load raw PublicKey bytes for keyset {existing_keyset_id}: {e}"
+                    )
+                })?
+        };
+
+        verify_public_key_digest_from_bytes(&public_key_bytes, &expected_digest).map_err(|e| {
+            anyhow::anyhow!(
+                "PublicKey digest mismatch for keyset {existing_keyset_id} (epoch {epoch_id}): \
+                 {e}; expected={}, stored-bytes-hash={}",
+                hex::encode(&expected_digest),
+                hex::encode(hashing::hash_element(&DSEP_PUBDATA_KEY, &public_key_bytes)),
+            )
+        })?;
+
+        tfhe::safe_serialization::safe_deserialize::<tfhe::CompactPublicKey>(
+            std::io::Cursor::new(&public_key_bytes),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize verified PublicKey bytes for keyset \
+                 {existing_keyset_id}: {e}"
+            )
+        })
     }
 }
 
