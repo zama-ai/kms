@@ -168,7 +168,8 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         Some(env.temp_dir.path()),
     )
     .await;
-
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after generation)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the new CRS was backed up
     let crss = read_custodian_backup_files_with_epoch(
         env.test_path(),
