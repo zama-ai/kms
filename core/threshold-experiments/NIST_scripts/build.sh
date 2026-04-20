@@ -15,8 +15,8 @@
 
 set -e
 
-# Create a swap partition such that RAM + swap = 48GB (to avoid OOM issues during build)
-sudo fallocate -l $(expr 48000 - $(free -m | awk '/^Mem:/{print $2}'))M /swapfile
+# Create a swap partition such that RAM + swap = 64GB (to avoid OOM issues during build)
+sudo fallocate -l $(expr 64000 - $(free -m | awk '/^Mem:/{print $2}'))M /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile

@@ -13,17 +13,17 @@ use tfhe_csprng::generators::SoftwareRandomGenerator;
 use threshold_execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
 use threshold_experiments::utils::check_hash;
 
-const CLIENT_KEY_PATH: &str = "client_key.bin";
-const SERVER_KEY_PATH: &str = "server_key.bin";
+const CLIENT_KEY_LABEL: &str = "CLIENT_KEY";
+const SERVER_KEY_LABEL: &str = "SERVER_KEY";
 const EXPECTED_HASH_CLIENT_KEY: &str =
     "e632247063e3712eb6de0244fdf08bede700dc7052d018fbc9420e60cfceb36b";
 const EXPECTED_HASH_SERVER_KEY: &str =
     "9580a04fc3277c52842ea23b52a45a1ae787d27533f57f4aba8812c64dbdb531";
 
-const CIPHERTEXT43_PATH: &str = "ciphertext_43.bin";
-const CIPHERTEXT4445_PATH: &str = "ciphertext_4445.bin";
-const CIPHERTEXT_ADD_PATH: &str = "ciphertext_add.bin";
-const CIPHERTEXT_MULT_PATH: &str = "ciphertext_mult.bin";
+const CIPHERTEXT43_LABEL: &str = "CIPHERTEXT_43";
+const CIPHERTEXT4445_LABEL: &str = "CIPHERTEXT_4445";
+const CIPHERTEXT_ADD_LABEL: &str = "CIPHERTEXT_ADD";
+const CIPHERTEXT_MULT_LABEL: &str = "CIPHERTEXT_MULT";
 const EXPECTED_HASH_CTXT_43: &str =
     "55d217ab5f970299619a3a08c7388eb74887c0f7830aa0b60d5ee50a467b4498";
 const EXPECTED_HASH_CTXT_4445: &str =
@@ -53,13 +53,13 @@ fn generate_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let serialized_sk = bc2wrap::serialize(&(params, &compressed_server_key)).unwrap();
 
     check_hash(
-        CLIENT_KEY_PATH,
+        CLIENT_KEY_LABEL,
         &serialized_ck,
         EXPECTED_HASH_CLIENT_KEY,
         false,
     );
     check_hash(
-        SERVER_KEY_PATH,
+        SERVER_KEY_LABEL,
         &serialized_sk,
         EXPECTED_HASH_SERVER_KEY,
         false,
@@ -81,13 +81,13 @@ fn generate_ciphertexts(client_key: &ClientKey) -> (FheUint64, FheUint64, FheUin
     let serialized_ct_mult = bc2wrap::serialize(&ciphertext_mult).unwrap();
 
     check_hash(
-        CIPHERTEXT43_PATH,
+        CIPHERTEXT43_LABEL,
         &serialized_ct_43,
         EXPECTED_HASH_CTXT_43,
         false,
     );
     check_hash(
-        CIPHERTEXT4445_PATH,
+        CIPHERTEXT4445_LABEL,
         &serialized_ct_4445,
         EXPECTED_HASH_CTXT_4445,
         false,
@@ -97,13 +97,13 @@ fn generate_ciphertexts(client_key: &ClientKey) -> (FheUint64, FheUint64, FheUin
         "NOTE: Hashes for addition and multiplication ciphertexts are CPU dependent due to FFT and may vary across machines"
     );
     check_hash(
-        CIPHERTEXT_ADD_PATH,
+        CIPHERTEXT_ADD_LABEL,
         &serialized_ct_add,
         EXPECTED_HASH_CTXT_ADD,
         true,
     );
     check_hash(
-        CIPHERTEXT_MULT_PATH,
+        CIPHERTEXT_MULT_LABEL,
         &serialized_ct_mult,
         EXPECTED_HASH_CTXT_MUL,
         true,

@@ -6,8 +6,8 @@ use threshold_experiments::{
     zk_utils::{nist_gen_crs, nist_gen_proof, nist_gen_proof_inputs, nist_run_verify},
 };
 
-const CRS_PATH: &str = "crs.bin";
-const PROOF_PATH: &str = "proof.bin";
+const CRS_LABEL: &str = "CRS";
+const PROOF_LABEL: &str = "PROOF";
 const EXPECTED_HASH_CRS: &str = "e7133c99195bdd0d8d00800b86e54f5d11d348da8954604d02cacb424d011e78";
 const EXPECTED_HASH_PROOF: &str =
     "05491c9c547814cb7b2ad15f8218915e11d1639015c25bdec00702d19a0fa990";
@@ -16,7 +16,7 @@ fn generate_crs(params: DKGParams) -> PublicParams<Bls12_446> {
     let crs = nist_gen_crs(params);
 
     let bytes = bc2wrap::serialize(&crs).unwrap();
-    check_hash(CRS_PATH, &bytes, EXPECTED_HASH_CRS, false);
+    check_hash(CRS_LABEL, &bytes, EXPECTED_HASH_CRS, false);
 
     crs
 }
@@ -32,7 +32,7 @@ fn generate_proof(crs: &PublicParams<Bls12_446>, params: DKGParams) -> ProofV2<B
     );
 
     let bytes = bc2wrap::serialize(&proof).unwrap();
-    check_hash(PROOF_PATH, &bytes, EXPECTED_HASH_PROOF, false);
+    check_hash(PROOF_LABEL, &bytes, EXPECTED_HASH_PROOF, false);
 
     proof
 }
