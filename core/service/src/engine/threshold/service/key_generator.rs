@@ -2048,7 +2048,7 @@ mod tests {
         // The slow DKG is still running — abort should cancel it
         let status = kg.abort_key_gen(prep_id).await;
         assert_eq!(status.code(), tonic::Code::Ok);
-        // Check that seconds abort returns NotFound
+        // Check that a second abort returns NotFound
         let status = kg.abort_key_gen(prep_id).await;
         assert_eq!(status.code(), tonic::Code::NotFound);
     }

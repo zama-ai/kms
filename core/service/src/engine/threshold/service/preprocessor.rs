@@ -422,7 +422,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             tracing::info!("Cancelled preprocessing {}", preproc_id);
             Ok(Response::new(Empty {}))
         } else {
-            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existsed
+            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existed
             // Regardless set the bucket handle to be canceled if it exists
             let mut buckets: tokio::sync::RwLockWriteGuard<'_, MetaStore<BucketMetaStore>> =
                 self.preproc_buckets.write().await;
@@ -435,7 +435,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 );
                 Ok(Response::new(Empty {}))
             } else {
-                // Bucket either never existed or has already been consumed by key gen, ragardless return keg gen abort result
+                // Bucket either never existed or has already been consumed by key gen, regardless return key gen abort result
                 if key_gen_cancel_res.code() == tonic::Code::Ok {
                     // Existed and had been consumed by key gen, but key gen was able to cancel successfully
                     Ok(Response::new(Empty {}))

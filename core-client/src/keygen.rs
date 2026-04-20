@@ -317,13 +317,11 @@ pub(crate) async fn get_keygen_responses(
 ) -> anyhow::Result<Vec<KeyGenResult>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
             tokio::time::sleep(tokio::time::Duration::from_millis(
                 SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
@@ -418,12 +416,10 @@ pub(crate) async fn do_abort_key_gen(
 ) -> anyhow::Result<Vec<String>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (_core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
             tokio::time::sleep(tokio::time::Duration::from_millis(
                 SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
@@ -708,7 +704,6 @@ pub(crate) async fn get_preproc_keygen_responses(
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
         let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block

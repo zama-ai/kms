@@ -471,7 +471,6 @@ where
     /// Write the CRS to the storage backend as well as the cache,
     /// and update the [meta_store] to "Done" if the procedure is successful.
     /// In case of an error, update the meta-store with the relevant error information and storage data is purged.
-    /// Returns true if the write is successful, false otherwise.
     ///
     /// When calling this function more than once, the same [meta_store]
     /// must be used, otherwise the storage state may become inconsistent.

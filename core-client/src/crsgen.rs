@@ -219,7 +219,6 @@ pub(crate) async fn get_crsgen_responses(
 ) -> anyhow::Result<Vec<CrsGenResult>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_conf = core_conf.clone();
@@ -347,7 +346,6 @@ pub(crate) async fn do_abort_crs_gen(
 ) -> anyhow::Result<Vec<String>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (_core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
 
