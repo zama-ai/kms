@@ -41,6 +41,20 @@ pub(crate) fn verify_key_digest_from_bytes(
     Ok(())
 }
 
+/// Verify a standalone public key digest using raw bytes from storage.
+/// This avoids re-serializing the key, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+pub(crate) fn verify_public_key_digest_from_bytes(
+    public_key_bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
+    if actual_digest != expected_digest {
+        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
+    }
+    Ok(())
+}
+
 /// Verify compressed key digest using raw bytes from storage.
 /// This avoids re-serializing the keys, which would produce different bytes
 /// if there was a version upgrade since the original digest was computed.
