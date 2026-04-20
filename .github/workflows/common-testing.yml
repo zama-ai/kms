@@ -199,17 +199,6 @@ jobs:
           password: ${{ secrets.CGR_PASSWORD }}
 
       ############################################################################
-      # Initialize Docker Buildx for multi-platform builds.
-      # TODO(dp): is this step still in use? No caller in this repo passes
-      # anything that matches 'simulator' — looks like dead code.
-      - name: Set up Docker Buildx
-        if: inputs.package-name == 'simulator'
-        uses: ./.github/actions/docker-setup-buildx
-        with:
-          platforms: linux/amd64,linux/arm64
-          buildkitd-flags: --debug
-
-      ############################################################################
       # Rust toolchain setup
       #
       - name: Set up Rust and Protoc
