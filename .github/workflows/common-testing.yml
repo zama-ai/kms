@@ -282,6 +282,7 @@ jobs:
         env:
           PACKAGE_NAME: ${{inputs.package-name}}
         run: |
+          echo "EXECUTING: cargo clippy --all-targets --all-features ${PACKAGE_NAME} -- -D warnings"
           # shellcheck disable=SC2086  # intentional word-splitting: PACKAGE_NAME is a flag list like `-p a -p b`
           cargo clippy --all-targets --all-features ${PACKAGE_NAME} -- -D warnings
 
@@ -313,6 +314,7 @@ jobs:
         working-directory: .
         run: |
           echo "Generating testing material..."
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose testing"
           cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
       # Generate default material when explicitly requested or for slow_tests,
@@ -322,12 +324,15 @@ jobs:
         working-directory: .
         run: |
           echo "Generating default test material..."
+          echo "EXECUTING: cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default"
           cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
-        run: cargo build --package kms --bin kms-custodian
+        run: |
+          echo "EXECUTING: cargo build --package kms --bin kms-custodian"
+          cargo build --package kms --bin kms-custodian
 
       # Test execution
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
