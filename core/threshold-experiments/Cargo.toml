@@ -70,7 +70,6 @@ serial_test.workspace = true
 thread-handles.workspace = true
 test-utils.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-threshold-experiments = { workspace = true, features = ["measure_memory"] }
 
 [lib]
 crate-type = ["lib", "cdylib"]

@@ -7691,7 +7691,6 @@ dependencies = [
  "threshold-algebra",
  "threshold-execution",
  "threshold-experimental",
- "threshold-experiments",
  "threshold-networking",
  "threshold-types",
  "tokio",
