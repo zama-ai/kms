@@ -149,14 +149,14 @@ where
         RecoveryValidationMaterial,
         HashMap<Role, InternalCustodianRecoveryOutput>,
     )> {
-        let context_id = parse_optional_grpc_request_id(
+        let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
         let recovery_material = {
             load_recovery_validation_material(
                 &self.crypto_storage.get_public_storage(),
-                &context_id,
+                &custodian_context_id,
                 &self.base_kms.verf_key(),
             )
             .await?
@@ -182,7 +182,11 @@ where
             ));
         }
 
-        Ok((context_id, recovery_material, parsed_custodian_rec))
+        Ok((
+            custodian_context_id,
+            recovery_material,
+            parsed_custodian_rec,
+        ))
     }
 }
 
@@ -517,17 +521,20 @@ where
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
-    context_id: &RequestId,
-    verf_key: &PublicSigKey,
+    custodian_context_id: &RequestId,
+    verf_key: &Arc<PublicSigKey>,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,
 {
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
-        .read_data(context_id, &PubDataType::RecoveryMaterial.to_string())
+        .read_data(
+            custodian_context_id,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
         .await?;
-    if &recovery_material.custodian_context().context_id != context_id {
+    if &recovery_material.custodian_context().context_id != custodian_context_id {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
     if !recovery_material.validate(verf_key) {
@@ -976,101 +983,6 @@ where
     Ok(())
 }
 
-impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-{
-    pub async fn update_backup_vault(&self, overwrite: bool) -> anyhow::Result<()> {
-        match self.crypto_storage.backup_vault {
-            Some(ref backup_vault) => {
-                let private_storage = self.crypto_storage.get_private_storage().clone();
-                let private_storage = private_storage.lock().await;
-                let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
-                    backup_vault.lock().await;
-                if !keychain_initialized(&backup_vault).await {
-                    tracing::warn!(
-                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
-                    );
-                    return Ok(());
-                }
-                for cur_type in PrivDataType::iter() {
-                    match cur_type {
-                        // These types might have epoch-specific data
-                        PrivDataType::FheKeyInfo => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        // Non epoched types
-                        PrivDataType::PrssSetupCombined => {
-                            update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        #[expect(deprecated)]
-                        PrivDataType::PrssSetup => {
-                            update_legacy_prss_13_4::<PrivS>(
-                                &private_storage,
-                                &mut backup_vault,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::SigningKey => {
-                            // TODO(#2862) will eventually be epoched
-                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::CrsInfo => {
-                            update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                        PrivDataType::ContextInfo => {
-                            update_specific_backup_vault::<PrivS, ContextInfo>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                                overwrite,
-                            )
-                            .await?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            None => Ok(()),
-        }
-    }
-}
-
 // *WARNING* this function only works with n=13, t=4
 #[allow(deprecated)]
 pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
@@ -1206,7 +1118,9 @@ async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     Ok(())
 }
 
-async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>) -> bool {
+pub(crate) async fn keychain_initialized(
+    backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>,
+) -> bool {
     if let Some(KeychainProxy::SecretSharing(ssk)) = &backup_vault_guard.keychain {
         // If the backup key is not there, then it is not initialized
         if ssk.get_backup_enc_key().is_err() {
@@ -1220,6 +1134,7 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 mod tests {
     use super::*;
     use crate::backup::error::{BackupError, RecoverySkipReason};
+    use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
@@ -1292,7 +1207,7 @@ mod tests {
         };
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
-            context_id: Some(backup_id.into()),
+            custodian_context_id: Some(backup_id.into()),
             threshold,
         };
         let internal_custodian_context =
@@ -1308,9 +1223,14 @@ mod tests {
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
-        let rec_material =
-            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
-                .unwrap();
+        let rec_material = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &sig_key,
+            *DEFAULT_MPC_CONTEXT,
+        )
+        .unwrap();
         (rec_material, verf_key, dec_key, enc_key)
     }
 
@@ -1328,6 +1248,7 @@ mod tests {
                 pke_type: 0,
                 signing_type: 0,
             }),
+            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
         }
     }
 
@@ -1352,7 +1273,8 @@ mod tests {
         let cus_2 = CustodianRecoveryOutput {
             custodian_role: 2,
             operator_verification_key: bc2wrap::serialize(&verf_key).unwrap(),
-            backup_output: None,
+            backup_output: None, // Missing backup output for custodian role 2
+            mpc_context_id: Some(kms_grpc::RequestId::from_bytes([7u8; 32]).into()),
         };
         outputs.push(cus_2);
         let result =

@@ -43,7 +43,7 @@ pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>)
 /// Returns a keygen config explicitly requesting uncompressed keys.
 ///
 /// Use this when a test specifically needs uncompressed keys.
-#[cfg(feature = "slow_tests")]
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {

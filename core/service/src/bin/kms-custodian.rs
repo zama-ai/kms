@@ -1,6 +1,7 @@
 use aes_prng::AesRng;
 use clap::Parser;
 use hashing::{DomainSep, hash_element};
+use kms_grpc::ContextId;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::{
@@ -63,6 +64,9 @@ pub struct DecryptParams {
     /// Public verification key of the operator who requested the recovery
     #[clap(long, short = 'v', required = true)]
     pub operator_verf_key: PathBuf,
+    /// The MPC context ID for which the recovery is being done.
+    #[clap(long, short = 'm', required = true)]
+    pub mpc_context_id: String,
     /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
     pub recovery_request_path: PathBuf,
@@ -107,11 +111,12 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut rng = get_rng(params.randomness.as_ref());
             tracing::info!("Generating custodian keys...");
             let role = Role::indexed_from_one(params.custodian_role);
-            let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-            let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role).unwrap();
+            let mnemonic = seed_phrase_from_rng(&mut rng)?;
+            let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)
+                .map_err(|e| anyhow::anyhow!("Failed to recover custodian keys: {e}"))?;
             let setup_msg = custodian
                 .generate_setup_message(&mut rng, params.custodian_name)
-                .unwrap();
+                .map_err(|e| anyhow::anyhow!("Failed to generate custodian setup message: {e}"))?;
             safe_write_element_versioned(&params.path, &setup_msg).await?;
             tracing::info!(
                 "Custodian keys generated successfully in {}! Mnemonic will now be printed:",
@@ -128,8 +133,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let setup_msg: InternalCustodianSetupMessage =
                 safe_read_element_versioned(&params.path).await?;
             let recovered_keys =
-                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)
-                    .expect("Failed to recover keys");
+                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)?;
             if setup_msg.public_verf_key != recovered_keys.verification_key() {
                 tracing::warn!(
                     "Verification failed: Public verification key does not match the generated key!"
@@ -159,6 +163,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
+            let mpc_context_id_str = params.mpc_context_id;
+            let mpc_context_id = ContextId::try_from(&mpc_context_id_str).map_err(|e| anyhow::anyhow!(
+                "Invalid MPC context ID: {}. Expected a hex string representing the MPC context ID: {e}.",
+                mpc_context_id_str
+            ))?;
             let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
@@ -167,22 +176,22 @@ async fn main() -> Result<(), anyhow::Error> {
             let custodian = custodian_from_seed_phrase(
                 &params.seed_phrase,
                 Role::indexed_from_one(params.custodian_role),
-            )
-            .expect("Failed to reconstruct custodians");
+            )?;
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
                         "No ciphertext found for custodian role: {}",
                         custodian.role()
                     )
-                });
+                })?;
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
+                mpc_context_id.into(),
                 &operator_verf_key,
                 recovery_request.backup_enc_key(),
                 recovery_request.backup_id(),

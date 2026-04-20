@@ -676,6 +676,9 @@ pub struct NewCustodianContextParameters {
     pub threshold: u32,
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
+    /// The MPC context ID for which the custodian context is being created.
+    #[clap(long, short = 'c')]
+    pub mpc_context_id: String,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -2148,11 +2151,22 @@ pub async fn execute_cmd(
                     safe_read_element_versioned(cur_path).await?;
                 setup_msgs.push(cur_setup);
             }
+            let mpc_context_id = ContextId::try_from(
+                &new_custodian_context_parameters.mpc_context_id,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Invalid MPC context ID '{}': {}",
+                    new_custodian_context_parameters.mpc_context_id,
+                    e
+                )
+            })?;
             let context_id = do_new_custodian_context(
                 &core_endpoints_req,
                 &mut rng,
                 new_custodian_context_parameters.threshold,
                 setup_msgs,
+                mpc_context_id,
             )
             .await?;
             vec![(

@@ -22,6 +22,7 @@ pub struct CoreMetrics {
     // Counters
     request_counter: IntCounterVec,
     error_counter: IntCounterVec,
+    backup_error_counter: IntCounterVec, // Keeps track of errors when making a backup. These MUST be handled as it means some party may not have everything backed up properly
     network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
 
@@ -103,6 +104,17 @@ impl CoreMetrics {
         .expect("failed to create error counter");
         prometheus::register(Box::new(error_counter.clone()))
             .expect("failed to register error counter");
+
+        let backup_error_counter = IntCounterVec::new(
+            Opts::new(
+                format!("{prefix}_backup_errors_total"),
+                "Total number of backup errors",
+            ),
+            &["operation", "error"],
+        )
+        .expect("failed to create backup error counter");
+        prometheus::register(Box::new(backup_error_counter.clone()))
+            .expect("failed to register backup error counter");
 
         let network_rx_counter = IntCounter::with_opts(Opts::new(
             format!("{prefix}_network_rx_bytes_total"),
@@ -283,6 +295,7 @@ impl CoreMetrics {
         Self {
             request_counter,
             error_counter,
+            backup_error_counter,
             network_rx_counter,
             network_tx_counter,
             duration_histogram,
@@ -324,6 +337,16 @@ impl CoreMetrics {
 
     pub fn increment_error_counter(&self, operation: impl AsRef<str>, error: impl AsRef<str>) {
         self.error_counter
+            .with_label_values(&[operation.as_ref(), error.as_ref()])
+            .inc();
+    }
+
+    pub fn increment_backup_error_counter(
+        &self,
+        operation: impl AsRef<str>,
+        error: impl AsRef<str>,
+    ) {
+        self.backup_error_counter
             .with_label_values(&[operation.as_ref(), error.as_ref()])
             .inc();
     }
@@ -613,6 +636,7 @@ mod tests {
         // Seed Vec-type metrics so they appear in gather()
         METRICS.increment_request_counter("_test");
         METRICS.increment_error_counter("_test", "_test");
+        METRICS.increment_backup_error_counter("_test", "_test");
         METRICS.observe_duration("_test", Duration::from_millis(0));
         METRICS.observe_size("_test", 1.0);
 
@@ -624,6 +648,7 @@ mod tests {
         #[allow(unused_mut)]
         let mut expected_metrics = vec![
             "kms_active_sessions",
+            "kms_backup_errors_total",
             "kms_cpu_load",
             "kms_file_descriptors",
             "kms_inactive_sessions",
