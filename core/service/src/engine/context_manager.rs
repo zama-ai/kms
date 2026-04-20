@@ -5,14 +5,8 @@ use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::engine::backup_operator::{
-    update_legacy_prss_13_4, update_specific_backup_vault,
-    update_specific_backup_vault_for_all_epochs,
-};
-use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
-use crate::engine::threshold::service::ThresholdFheKeys;
-use crate::engine::threshold::service::session::{PRSSSetupCombined, SessionMaker};
+use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
@@ -42,7 +36,6 @@ use observability::metrics_names::{
 };
 use std::collections::HashSet;
 use std::sync::Arc;
-use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
 use tokio::sync::RwLock;
@@ -293,106 +286,42 @@ where
 
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            let lock_acquired_time = lock_start.elapsed();
-            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
-            let mut guarded_backup_vault = backup_vault.lock().await;
-            // First update the backup vault's context ID
-            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
-                guarded_backup_vault.keychain.as_mut()
+        let lock_start = std::time::Instant::now();
+        let mut guarded_backup_vault = backup_vault.lock().await;
+        // First update the backup vault's context ID
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+            guarded_backup_vault.keychain.as_mut()
+        {
+            if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
+                && cur_backup_id == inner_context.context_id
             {
-                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id()
-                    && cur_backup_id == inner_context.context_id
-                {
-                    anyhow::bail!(
-                        "A custodian context with the same context ID already exists in the backup vault!"
-                    );
-                }
-                secret_share_keychain
-                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
-            } else {
-                return Err(anyhow_error_and_log(
-                    "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
-                ));
+                anyhow::bail!(
+                    "A custodian context with the same context ID already exists in the backup vault!"
+                );
             }
-            for cur_type in PrivDataType::iter() {
-                match cur_type {
-                    // These types might have epoch-specific data
-                    PrivDataType::FheKeyInfo => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FhePrivateKey => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    // Non epoched types
-                    PrivDataType::PrssSetupCombined => {
-                        update_specific_backup_vault::<PrivS, PRSSSetupCombined>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    #[expect(deprecated)]
-                    PrivDataType::PrssSetup => {
-                        update_legacy_prss_13_4::<PrivS>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::SigningKey => {
-                        // TODO(#2862) will eventually be epoched
-                        update_specific_backup_vault::<PrivS, PrivateSigKey>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::CrsInfo => {
-                        update_specific_backup_vault_for_all_epochs::<PrivS, CrsGenMetadata>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                    PrivDataType::ContextInfo => {
-                        update_specific_backup_vault::<PrivS, ContextInfo>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                            true, // We MUST overwrite existing data in the backup vault
-                        )
-                        .await?;
-                    }
-                }
-            }
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
+            secret_share_keychain
+                .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
+        } else {
+            return Err(anyhow_error_and_log(
+                "A secret sharing keychain is not configured! It is not possible to use custodian contexts",
+            ));
         };
+        // Ensure we free the lock on backup vault before performing the new backup!
+        drop(guarded_backup_vault);
+        // Now redo the backup and handle potential failures by incrementing backup errors in the metrics
+        // Observe that overwriting is needed here since the backup vault keys are updated in connection with a new custodian context
+        // Hence we do a complete failure of the method if this fails
+        if !self
+            .crypto_storage
+            .update_backup_vault(true, OP_NEW_CUSTODIAN_CONTEXT)
+            .await
+        {
+            return Err(anyhow_error_and_log("Failed to update backup vault"));
+        }
+        let total_lock_time = lock_start.elapsed();
         tracing::info!(
-            "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            "New context storage - context_id={}, total_lock_held={:?}",
             inner_context.context_id,
-            lock_acquired_time,
             total_lock_time
         );
         // Then store the results
@@ -668,6 +597,12 @@ where
             )
         })?;
 
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        self.inner
+            .crypto_storage
+            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
+            .await;
+
         Ok(Response::new(Empty {}))
     }
 
@@ -919,6 +854,12 @@ where
                 tonic::Code::Internal,
             )
         })?;
+
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        self.inner
+            .crypto_storage
+            .update_backup_vault(false, OP_NEW_MPC_CONTEXT)
+            .await;
 
         Ok(Response::new(Empty {}))
     }
@@ -1860,6 +1801,83 @@ mod tests {
             internal_rec_req
                 .is_valid(Role::indexed_from_one(1), &unsign_key)
                 .unwrap()
+        );
+    }
+
+    /// Verify that `inner_new_custodian_context` returns an error when
+    /// `update_backup_vault` fails. We trigger this by storing corrupt bytes
+    /// in private storage under `ContextInfo` — when the backup logic tries
+    /// to deserialize them, it fails, causing the whole custodian context
+    /// creation to fail.
+    #[tokio::test]
+    async fn test_custodian_context_fails_on_backup_update_failure() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+
+        // Store corrupt data in private storage under ContextInfo type.
+        {
+            use crate::vault::storage::Storage;
+            let mut priv_storage = crypto_storage.private_storage.lock().await;
+            let corrupt_req_id = RequestId::from_bytes([99u8; 32]);
+            priv_storage
+                .store_bytes(
+                    b"corrupt_data",
+                    &corrupt_req_id,
+                    &PrivDataType::ContextInfo.to_string(),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Generate custodian keys
+        let threshold = 1;
+        let amount_custodians = 2 * threshold + 1;
+        let mut setup_msgs = Vec::new();
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        for custodian_index in 1..=amount_custodians {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
+            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let cur_msg = InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(custodian_index),
+                name: format!("Custodian-{}", custodian_index),
+                random_value: [2u8; 32],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                public_enc_key: pk_enc_key,
+                public_verf_key: verf_key,
+            };
+            setup_msgs.push(cur_msg.try_into().unwrap());
+        }
+
+        let context_id = RequestId::from_bytes([4u8; 32]);
+        let context = CustodianContext {
+            custodian_nodes: setup_msgs,
+            custodian_context_id: Some(context_id.into()),
+            threshold: threshold as u32,
+        };
+        let request = Request::new(NewCustodianContextRequest {
+            new_custodian_context: Some(context),
+            mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        });
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            session_maker,
+        );
+
+        // The custodian context creation should fail because backup update fails
+        let response = context_manager.new_custodian_context(request).await;
+        assert!(
+            response.is_err(),
+            "Expected custodian context creation to fail when backup update fails"
         );
     }
 

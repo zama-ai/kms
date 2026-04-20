@@ -279,6 +279,11 @@ pub(crate) async fn crs_gen_background<
         tracing::error!("Failed to write CRS to storage: {e}");
         return;
     }
+    // Update the backup and handle potential failures by incrementing backup errors in the metrics
+    crypto_storage
+        .inner
+        .update_backup_vault(false, op_tag)
+        .await;
 
     tracing::info!(
         "⏱️ Core Event Time for CRS-gen request id {}: {:?}",

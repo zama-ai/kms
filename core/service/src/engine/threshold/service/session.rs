@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     engine::{context::ContextInfo, utils::MetricedError},
-    vault::storage::{Storage, StorageExt, crypto_material::CryptoMaterialStorage},
+    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
@@ -91,7 +91,7 @@ impl SessionMaker {
         PrivS: StorageExt + Sync + Send + 'static,
     >(
         my_id: Option<Role>,
-        crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
@@ -110,7 +110,7 @@ impl SessionMaker {
                 epoch_id
             );
         }
-        let mpc_contexts = crypto_storage.read_all_context_info().await?;
+        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
         if mpc_contexts.is_empty() {
             tracing::warn!(
                 "No MPC context found in storage! There should at a minimum be a default context!"

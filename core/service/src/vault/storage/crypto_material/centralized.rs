@@ -97,12 +97,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
         let f1 = async {
             let mut priv_storage = self.inner.private_storage.lock().await;
-            // can't map() because async closures aren't stable in Rust
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
-            let store_result_1 = store_versioned_at_request_and_epoch_id(
+            let store_result = store_versioned_at_request_and_epoch_id(
                 &mut (*priv_storage),
                 key_id,
                 epoch_id,
@@ -110,37 +105,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await;
-            if let Err(e) = &store_result_1 {
+            if let Err(e) = &store_result {
                 tracing::error!(
                     "Failed to store FHE key info to private storage for request {}: {}",
                     key_id,
                     e
                 );
             }
-            let store_err_1 = store_result_1.is_err();
-
-            let store_err_2 = match back_vault {
-                Some(mut x) => {
-                    let result = store_versioned_at_request_and_epoch_id(
-                        &mut (*x),
-                        key_id,
-                        epoch_id,
-                        &key_info,
-                        &PrivDataType::FhePrivateKey.to_string(),
-                    )
-                    .await;
-                    if let Err(e) = &result {
-                        tracing::error!(
-                            "Failed to store FHE key info to backup storage for request {}: {}",
-                            key_id,
-                            e
-                        );
-                    }
-                    result.is_err()
-                }
-                None => false,
-            };
-            !(store_err_1 || store_err_2)
+            store_result.is_ok()
         };
 
         let f2 = async {
