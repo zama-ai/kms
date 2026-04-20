@@ -22,7 +22,7 @@ use kms_lib::engine::base::derive_request_id;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use serial_test::serial;
-use std::fs::create_dir_all;
+use std::fs::{create_dir_all, remove_file};
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1707,7 +1707,6 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
                 epoch_id: Some(epoch_id_2),
                 uncompressed: false,
                 existing_keyset_id: None,
-                existing_epoch_id: None,
                 use_existing_key_tag: false,
                 extra_data: None,
             },
@@ -1805,10 +1804,39 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         .build()
         .init_conf()
         .unwrap();
+    let clear_local_public_key_cache = |cc_conf: &CoreClientConfig, key_id: &str| {
+        for core in &cc_conf.cores {
+            let path = test_path
+                .join(&core.object_folder)
+                .join(PubDataType::PublicKey.to_string())
+                .join(key_id);
+            if path.exists() {
+                remove_file(&path).unwrap();
+            }
+            assert!(
+                !path.exists(),
+                "expected no cached PublicKey at {:?} before exercising fresh download",
+                path
+            );
+        }
+    };
+    let assert_some_public_key_cached = |cc_conf: &CoreClientConfig, key_id: &str| {
+        assert!(
+            cc_conf.cores.iter().any(|core| {
+                test_path
+                    .join(&core.object_folder)
+                    .join(PubDataType::PublicKey.to_string())
+                    .join(key_id)
+                    .exists()
+            }),
+            "expected at least one PublicKey artifact to be downloaded for key {}",
+            key_id
+        );
+    };
 
     let party_confs = fetch_public_elements(
         &key_id,
-        &[PubDataType::CompressedXofKeySet],
+        &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
         &cc_conf,
         test_path,
         false,
@@ -1846,6 +1874,8 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     .await;
     let crs_digest =
         hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap());
+
+    clear_local_public_key_cache(&cc_conf, &key_id.to_string());
 
     // create and store second mpc context
     // create and store mpc context
@@ -1898,6 +1928,15 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     };
     let result = execute_cmd(&epoch_config, test_path).await.unwrap();
     println!("Resharing completed successfully {:?}", result);
+    assert_some_public_key_cached(&cc_conf, &key_id.to_string());
+
+    let cc_conf_set_2: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path_set_2.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()
+        .unwrap();
+    clear_local_public_key_cache(&cc_conf_set_2, &key_id.to_string());
 
     // Try and do a decrypt with the new set and new epoch
     let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1928,6 +1967,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     let result = execute_cmd(&ddec_config, test_path).await.unwrap();
     println!("Decrypt in reshared context succeeded : {:?}", result);
+    assert_some_public_key_cached(&cc_conf_set_2, &key_id.to_string());
 
     // Delete the old epoch and verify it's gone
     println!("Destroying old epoch");
@@ -1942,7 +1982,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             epoch_id: Some(epoch_id_set_1),
             uncompressed: false,
             existing_keyset_id: None,
-            existing_epoch_id: None,
             use_existing_key_tag: false,
             extra_data: None,
         },

@@ -35,6 +35,7 @@ use crate::{
         crypto_material::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
+        delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
         store_versioned_at_request_id,
     },
@@ -761,6 +762,93 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
     assert!(
         cache_read.is_err(),
         "compressed threshold cache should not retain failed writes"
+    );
+}
+
+#[tokio::test]
+async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
+    let req_id =
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key_epoch")
+            .unwrap()
+            .into();
+
+    let crypto_storage = CentralizedCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+    );
+
+    let params = TEST_PARAM;
+    let config = params.to_tfhe_config();
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+    let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
+        config,
+        vec![50, 51, 52, 53],
+        params.get_params_basics_handle().get_sec() as u32,
+        max_norm_hwt,
+        req_id.into(),
+    )
+    .unwrap();
+    let (compact_pk, _server_key) = compressed_keyset
+        .clone()
+        .decompress()
+        .unwrap()
+        .into_raw_parts();
+    let key_info = KmsFheKeyHandles {
+        client_key,
+        decompression_key: None,
+        public_key_info: dummy_info(),
+    };
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_id).unwrap();
+    }
+
+    crypto_storage
+        .write_centralized_compressed_keys_with_meta_store(
+            &req_id,
+            &epoch_id,
+            key_info,
+            &compressed_keyset,
+            &compact_pk,
+            meta_store,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        crypto_storage
+            .inner
+            .fhe_keys_exist(&req_id, &epoch_id)
+            .await
+            .unwrap(),
+        "sanity check: complete compressed layout should be considered present"
+    );
+
+    {
+        let mut guard = crypto_storage.inner.public_storage.lock().await;
+        delete_at_request_id(&mut *guard, &req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+    }
+
+    assert!(
+        !crypto_storage
+            .inner
+            .fhe_keys_exist(&req_id, &epoch_id)
+            .await
+            .unwrap(),
+        "compressed keys should be treated as missing when the standalone PublicKey is absent"
     );
 }
 
