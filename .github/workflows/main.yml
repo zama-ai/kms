@@ -778,7 +778,7 @@ jobs:
             crates: '-p kms-health-check -p generate-test-material'
     uses: ./.github/workflows/common-testing.yml
     with:
-      args-tests: ${{ matrix.crates }}
+      args-tests: '--all-features ${{ matrix.crates }}'
       package-name: ${{ matrix.crates }}
       app-cache-dir: 'workspace-crates-${{ matrix.group }}'
       skip-test-material: true
