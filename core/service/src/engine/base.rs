@@ -175,6 +175,7 @@ impl KmsFheKeyHandles {
         key_id: &RequestId,
         preproc_id: &RequestId,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
@@ -185,6 +186,7 @@ impl KmsFheKeyHandles {
             preproc_id,
             key_id,
             compressed_keyset,
+            compact_public_key,
             eip712_domain,
             extra_data,
         )?;
@@ -339,27 +341,33 @@ pub(crate) fn compute_info_decompression_keygen(
 
 /// Computes key generation metadata for compressed keygen.
 /// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen(
     sk: &PrivateSigKey,
     domain_separator: &DomainSep,
     prep_id: &RequestId,
     key_id: &RequestId,
     compressed_keyset: &CompressedXofKeySet,
+    compact_public_key: &tfhe::CompactPublicKey,
     domain: &alloy_sol_types::Eip712Domain,
     _extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
     let compressed_keyset_digest =
         safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
+    let public_key_digest =
+        safe_serialize_hash_element_versioned(domain_separator, compact_public_key)?;
 
     tracing::info!(
-        "Computed xof keyset digest: {}",
+        "Computed xof keyset digest: {} and public key digest: {}",
         hex::encode(&compressed_keyset_digest),
+        hex::encode(&public_key_digest),
     );
 
     let sol_type = KeygenVerification::new_compressed(
         prep_id,
         key_id,
         compressed_keyset_digest.clone(),
+        public_key_digest.clone(),
         // TODO: reenable for RFC005
         // extra_data,
     );
@@ -368,7 +376,10 @@ pub(crate) fn compute_info_compressed_keygen(
     Ok(KeyGenMetadata::new(
         *key_id,
         *prep_id,
-        HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
+        HashMap::from([
+            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
         external_signature,
     ))
 }

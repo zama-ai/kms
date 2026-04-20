@@ -194,12 +194,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ///
     /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
     /// Instead of storing separate public_key and server_key, we store the compressed keyset.
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_centralized_compressed_keys_with_meta_store(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
         key_info: KmsFheKeyHandles,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
         self.inner
@@ -209,6 +211,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 key_info,
                 PrivDataType::FhePrivateKey,
                 compressed_keyset,
+                compact_public_key,
                 meta_store,
                 Arc::clone(&self.fhe_keys),
             )
