@@ -397,7 +397,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
+      runs-on: '64cpu-linux-x64'
     secrets: inherit
 
   ############################################################################
