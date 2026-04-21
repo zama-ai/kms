@@ -252,7 +252,7 @@ impl Client {
             ));
         }
 
-        let sol_type = KeygenVerification::new_standard(
+        let sol_type = KeygenVerification::new_uncompressed(
             preproc_id,
             key_id,
             server_key_digest,
@@ -269,9 +269,15 @@ impl Client {
         Ok((server_key, public_key))
     }
 
-    /// Retrieve a compressed keyset based on the result from storage.
-    /// This method retrieves the `CompressedXofKeySet`, verifies its digest matches
-    /// the one in `key_gen_result.key_digests`, and verifies the EIP712 signature.
+    /// Retrieve a compressed keyset and its associated CompactPublicKey from storage.
+    /// This method retrieves the `CompressedXofKeySet` and the `CompactPublicKey`, verifies
+    /// that both digests match those in `key_gen_result.key_digests`, and verifies the
+    /// EIP712 signature over both digests.
+    ///
+    /// Note: when the compressed keyset was produced by a migration keygen (UseExisting),
+    /// the stored CompactPublicKey is the OLD one from the prior keyset rather than the one
+    /// obtained by decompressing the new compressed keyset. Callers that want the signed
+    /// public key should use the one returned here, not one derived from the keyset.
     pub async fn retrieve_compressed_keyset<R: StorageReader>(
         &self,
         preproc_id: &RequestId,
@@ -280,7 +286,7 @@ impl Client {
         domain: &Eip712Domain,
         _extra_data: Vec<u8>,
         storage: &R,
-    ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
+    ) -> anyhow::Result<Option<(tfhe::xof_key_set::CompressedXofKeySet, CompactPublicKey)>> {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
             .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
             .await?
@@ -295,10 +301,26 @@ impl Client {
             }
         };
 
+        let compact_public_key: CompactPublicKey = match self
+            .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
+            .await?
+        {
+            Some(pk) => pk,
+            None => {
+                tracing::warn!(
+                    "Compact public key not found with request ID {:?}",
+                    key_gen_result.request_id
+                );
+                return Ok(None);
+            }
+        };
+
         let compressed_keyset_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
+        let public_key_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key)?;
 
-        let expected_digest = key_gen_result
+        let expected_keyset_digest = key_gen_result
             .key_digests
             .iter()
             .find(|kd| kd.key_type == PubDataType::CompressedXofKeySet.to_string())
@@ -309,11 +331,30 @@ impl Client {
                 )
             })?;
 
-        if compressed_keyset_digest != *expected_digest.digest {
+        if compressed_keyset_digest != *expected_keyset_digest.digest {
             return Err(anyhow::anyhow!(
                 "Computed compressed keyset digest {} does not match expected digest {}",
                 hex::encode(&compressed_keyset_digest),
-                hex::encode(&expected_digest.digest),
+                hex::encode(&expected_keyset_digest.digest),
+            ));
+        }
+
+        let expected_public_key_digest = key_gen_result
+            .key_digests
+            .iter()
+            .find(|kd| kd.key_type == PubDataType::PublicKey.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Public key digest not found in key generation result for key ID {}",
+                    key_id
+                )
+            })?;
+
+        if public_key_digest != *expected_public_key_digest.digest {
+            return Err(anyhow::anyhow!(
+                "Computed public key digest {} does not match expected digest {}",
+                hex::encode(&public_key_digest),
+                hex::encode(&expected_public_key_digest.digest),
             ));
         }
 
@@ -345,13 +386,14 @@ impl Client {
             preproc_id,
             key_id,
             compressed_keyset_digest,
+            public_key_digest,
             // TODO: reenable for RFC005
             // extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
-        Ok(Some(compressed_keyset))
+        Ok(Some((compressed_keyset, compact_public_key)))
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.

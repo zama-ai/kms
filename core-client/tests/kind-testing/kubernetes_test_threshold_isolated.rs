@@ -192,7 +192,7 @@ impl K8sTestContext {
             parallel_requests: 1,
             ciphertext_output_path: Some(cipher_path.clone()),
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: None,
         }))
         .await;

@@ -264,6 +264,7 @@ where
         private_keys_or_shares: T,
         private_keys_or_shares_type: PrivDataType,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         fhe_keys_cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
     ) -> anyhow::Result<()>
@@ -313,8 +314,8 @@ where
             };
 
             let f2 = async {
-                // Store compressed xof key set
-                let server_result = store_versioned_at_request_id(
+                // Store compressed xof key set and the compact public key derived from it.
+                let keyset_result = store_versioned_at_request_id(
                     &mut (*pub_storage),
                     key_id,
                     compressed_keyset,
@@ -322,7 +323,7 @@ where
                 )
                 .await;
 
-                if let Err(e) = &server_result {
+                if let Err(e) = &keyset_result {
                     tracing::error!(
                         "Failed to store compressed server key for request {}: {}",
                         key_id,
@@ -337,7 +338,28 @@ where
                         true,
                     );
                 }
-                server_result.is_ok()
+
+                let pk_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    compact_public_key,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &pk_result {
+                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::PublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+
+                keyset_result.is_ok() && pk_result.is_ok()
             };
             tokio::join!(f1, f2)
         };
@@ -905,21 +927,6 @@ where
         req_id: &RequestId,
     ) -> anyhow::Result<CompactPublicKey> {
         Self::read_cloned_crypto_material::<CompactPublicKey, _>(
-            Arc::new(RwLock::new(HashMap::new())),
-            req_id,
-            self.public_storage.clone(),
-        )
-        .await
-    }
-
-    /// Read the server key
-    /// from the public storage backend.
-    #[cfg(test)]
-    pub(crate) async fn read_cloned_server_key(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<tfhe::ServerKey> {
-        Self::read_cloned_crypto_material::<tfhe::ServerKey, _>(
             Arc::new(RwLock::new(HashMap::new())),
             req_id,
             self.public_storage.clone(),

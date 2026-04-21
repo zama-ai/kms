@@ -64,7 +64,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -93,7 +93,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg_isolated() -> Result<()> {
     // Use Default material spec for production-like keys
-    let spec = TestMaterialSpec::threshold_default(4);
+    let spec = TestMaterialSpec::threshold_default_no_prss(4);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")
@@ -124,7 +124,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -187,7 +187,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -436,7 +436,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<()> {
-    use crate::client::tests::common::compressed_from_existing_keygen_config;
+    use crate::client::tests::common::keygen_config_from_existing;
     use crate::consts::DEFAULT_EPOCH_ID;
 
     let env = ThresholdTestEnv::builder()
@@ -478,8 +478,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
-    let (keyset_config, keyset_added_info) =
-        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
+    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true);
 
     threshold_key_gen_secure_isolated(
         clients,
@@ -522,8 +521,12 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
         );
     }
 
-    // Verify tag propagation: keys from keygen_id_2 should carry keygen_id_1's tag
+    // Verify tag propagation: keys from keygen_id_2 should carry keygen_id_1's tag.
+    // Additionally verify that the stored CompactPublicKey for keygen_id_2 is the OLD one
+    // from keygen_id_1 (migration semantics), not the one obtained by decompressing the
+    // newly-generated CompressedXofKeySet.
     {
+        use crate::engine::base::{DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
         use crate::vault::storage::crypto_material::CryptoMaterialReader;
         use tfhe::prelude::Tagged;
         let expected_tag: tfhe::Tag = keygen_id_1.into();
@@ -531,7 +534,11 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
-            let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (pk, server_key) = compressed_keyset
+                .clone()
+                .decompress()
+                .unwrap()
+                .into_raw_parts();
             assert_eq!(
                 pk.tag(),
                 &expected_tag,
@@ -542,6 +549,67 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
                 &expected_tag,
                 "Server key for party {party_id} should have tag propagated from existing keyset"
             );
+
+            // Read the standalone CompactPublicKey stored for keygen_id_2 (migration output).
+            let stored_pk_new: tfhe::CompactPublicKey =
+                CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
+            // Read the standalone CompactPublicKey from keygen_id_1 (the OLD keyset).
+            let stored_pk_old: tfhe::CompactPublicKey =
+                CryptoMaterialReader::read_from_storage(storage, &keygen_id_1).await?;
+
+            // CompactPublicKey does not implement PartialEq, so compare via digests.
+            let digest_stored_new =
+                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_new).unwrap();
+            let digest_stored_old =
+                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &stored_pk_old).unwrap();
+            let digest_derived_from_new_keyset =
+                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &pk).unwrap();
+
+            assert_eq!(
+                digest_stored_new, digest_stored_old,
+                "Party {party_id}: migration must store the OLD CompactPublicKey for keygen_id_2"
+            );
+            assert_ne!(
+                digest_stored_new, digest_derived_from_new_keyset,
+                "Party {party_id}: stored CompactPublicKey must differ from the one derived from the new compressed keyset"
+            );
+
+            // The digest of the stored (old) CompactPublicKey must appear in the signed
+            // KeyGenMetadata for keygen_id_2 under PubDataType::PublicKey.
+            use crate::engine::base::KeyGenMetadata;
+            use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+            use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+            let priv_storage = crate::vault::storage::file::FileStorage::new(
+                Some(material_path),
+                crate::vault::storage::StorageType::PRIV,
+                crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[(party_id as usize) - 1]
+                    .as_deref(),
+            )?;
+            let threshold_keys: crate::engine::threshold::service::ThresholdFheKeys =
+                read_versioned_at_request_and_epoch_id(
+                    &priv_storage,
+                    &keygen_id_2,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+            match &threshold_keys.meta_data {
+                KeyGenMetadata::Current(inner) => {
+                    let signed_pk_digest = inner
+                        .key_digest_map
+                        .get(&PubDataType::PublicKey)
+                        .expect("PublicKey digest must be present in signed metadata");
+                    assert_eq!(
+                        *signed_pk_digest, digest_stored_old,
+                        "Party {party_id}: signed PublicKey digest must match the OLD CompactPublicKey"
+                    );
+                }
+                KeyGenMetadata::LegacyV0(_) => {
+                    panic!(
+                        "Party {party_id}: unexpected LegacyV0 KeyGenMetadata for freshly generated key"
+                    );
+                }
+            }
         }
     }
 
@@ -571,7 +639,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
         None,
         1,
         Some(material_path),
-        true,
+        false,
     )
     .await;
 
@@ -593,7 +661,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
         None,
         1,
         Some(material_path),
-        false, // we do not used compressed_keys since that was the old public key
+        false, // pre-generated test material uses compressed keys
     )
     .await;
 
@@ -650,11 +718,12 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // default is compressed
     )
     .await
     .expect("keygen 1 verification failed");
-    let (client_key_1, _, server_key_1) = keys_1.get_standard();
+    let (client_key_1, compressed_keyset_1, _public_key_1) = keys_1.get_compressed();
+    let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
@@ -669,11 +738,11 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // default is compressed
     )
     .await
     .expect("keygen 2 verification failed");
-    let (client_key_2, _, _) = keys_2.get_standard();
+    let (client_key_2, _compressed_keyset_2, _public_key_2) = keys_2.get_compressed();
 
     // Step 3: Generate decompression key (secure mode - required for decompression)
     let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;
@@ -737,8 +806,8 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
                 from_keyset_id_decompression_only: Some(key_id_1.into()),
                 to_keyset_id_decompression_only: Some(key_id_2.into()),
                 existing_keyset_id: None,
-                existing_epoch_id: None,
                 use_existing_key_tag: false,
+                copy_compressed_key_to_original: false,
             }),
             context_id: None,
             epoch_id: None,

@@ -336,19 +336,9 @@ pub async fn compute_cipher_from_stored_key(
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let (pk, server_key) = if compressed_keys {
-        // Load compressed keys and decompress them
-        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
-            pub_path,
-            key_id,
-            PubDataType::CompressedXofKeySet,
-            storage_prefix,
-        )
-        .await;
-        xof_keyset.decompress().unwrap().into_raw_parts()
-    } else {
+    let (pk, server_key) = if uncompressed_keys {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
             pub_path,
@@ -358,6 +348,16 @@ pub async fn compute_cipher_from_stored_key(
         )
         .await;
         (pk, server_key)
+    } else {
+        // Load the default compressed keyset and decompress it for test encryption.
+        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::CompressedXofKeySet,
+            storage_prefix,
+        )
+        .await;
+        xof_keyset.decompress().unwrap().into_raw_parts()
     };
 
     // compute_cipher can take a long time since it may do SnS

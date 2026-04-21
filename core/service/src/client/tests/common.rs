@@ -22,14 +22,11 @@ use tonic::transport::Channel;
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
 
-/// Returns standard keygen config (no compression, no decompression)
-pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
-    (None, None)
-}
-
-/// Returns compressed keygen config with `CompressedKeyConfig::CompressedAll`
+/// Returns the default keygen config.
+///
+/// The default is compressed public key material.
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+pub(crate) fn keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
             keyset_type: KeySetType::Standard.into(),
@@ -43,11 +40,28 @@ pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySet
     )
 }
 
+/// Returns a keygen config explicitly requesting uncompressed keys.
+///
+/// Use this when a test specifically needs uncompressed keys.
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+pub(crate) fn uncompressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+                compute_key_type: 0,
+                secret_key_config: 0,
+                compressed_key_config: CompressedKeyConfig::CompressedNone.into(),
+            }),
+        }),
+        None,
+    )
+}
+
 /// Returns compressed keygen config that reuses existing secret key shares
 #[cfg(feature = "slow_tests")]
-pub(crate) fn compressed_from_existing_keygen_config(
+pub(crate) fn keygen_config_from_existing(
     existing_keyset_id: &RequestId,
-    existing_epoch_id: &kms_grpc::identifiers::EpochId,
     use_existing_key_tag: bool,
 ) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
@@ -63,8 +77,8 @@ pub(crate) fn compressed_from_existing_keygen_config(
             from_keyset_id_decompression_only: None,
             to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
-            existing_epoch_id: Some((*existing_epoch_id).into()),
             use_existing_key_tag,
+            copy_compressed_key_to_original: false,
         }),
     )
 }
@@ -84,8 +98,8 @@ pub(crate) fn decompression_keygen_config(
             from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
             existing_keyset_id: None,
-            existing_epoch_id: None,
             use_existing_key_tag: false,
+            copy_compressed_key_to_original: false,
         }),
     )
 }
@@ -98,11 +112,15 @@ pub(crate) trait OptKeySetConfigAccessor {
 
 impl OptKeySetConfigAccessor for Option<KeySetConfig> {
     fn is_compressed(&self) -> bool {
-        self.as_ref().is_some_and(|c| {
-            c.standard_keyset_config.as_ref().is_some_and(|sc| {
-                sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32
-            })
-        })
+        match self.as_ref() {
+            // No config provided: server defaults to compressed
+            None => true,
+            Some(c) => match c.standard_keyset_config.as_ref() {
+                // Standard type with no inner config: server defaults to compressed
+                None => true,
+                Some(sc) => sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32,
+            },
+        }
     }
 
     fn is_decompression_only(&self) -> bool {
@@ -140,7 +158,7 @@ pub(crate) async fn send_dec_reqs(
                 compression: true,
                 precompute_sns: false,
             },
-            false, // compressed_keys
+            false, // use the default compressed keyset
         )
         .await;
         let ctt = TypedCiphertext {

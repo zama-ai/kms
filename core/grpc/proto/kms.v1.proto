@@ -54,16 +54,22 @@ message KeySetAddedInfo {
   // Must be set if KeyGenSecretKeyConfig::UseExisting is used
   RequestId existing_keyset_id = 3;
 
-  // Can be set if KeyGenSecretKeyConfig::UseExisting is used,
-  // if it's not set then the epoch ID from the KeyGenRequest is used.
-  RequestId existing_epoch_id = 4;
-
   // If true, use the tag from the existing keyset's PublicKeyMaterial
   // instead of deriving the tag from the new request ID.
   //
   // This option is only used when KeyGenSecretKeyConfig::UseExisting is used.
   // Otherwise it is ignored.
   bool use_existing_key_tag = 5;
+
+  // If true, after a compressed keygen from existing shares
+  // (UseExisting + CompressedKeyConfig::All), copy the resulting
+  // CompressedXofKeySet to the original key ID and replace the original
+  // ThresholdFheKeys with the migrated one. The CompactPublicKey is
+  // preserved at both the original and the new key ID.
+  //
+  // Only used when KeyGenSecretKeyConfig::UseExisting is used with
+  // CompressedKeyConfig::All. Otherwise it is ignored.
+  bool copy_compressed_key_to_original = 4;
 }
 
 // The keyset configuration message.
@@ -129,11 +135,13 @@ enum KeyGenSecretKeyConfig {
 // Configuration for whether to generate compressed or uncompressed keys.
 // Compressed keys use XOF-seeded compression and are smaller but need
 // decompression before use.
+// TODO: @reviewers This is breaking!
+// The enum discriminants changed so the proto default maps to compressed keys.
 enum CompressedKeyConfig {
-  // Do not generate compressed keys (default).
-  CompressedNone = 0;
-  // Generate compressed keys for the full keyset.
-  CompressedAll = 1;
+  // Generate compressed keys for the full keyset (default).
+  CompressedAll = 0;
+  // Do not generate compressed keys.
+  CompressedNone = 1;
 }
 
 // This message is returned if keygen has completed.
