@@ -790,33 +790,57 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
+    secrets: inherit
     if: >-
       needs.check-changes.outputs.changes-workspace-crates == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
       github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
-      # A somewhat arbitrary grouping of crates aiming at a reasonable number of
-      # workers (4) executing somewhat similarly-sized work.
+      # Groups aim at similarly-sized work. `runtime-slow` is split
+      # out because enabling `slow_tests` on threshold-experimental unlocks
+      # multi-hour BGV DKG tests that need a bigger runner + tighter
+      # parallelism.
       matrix:
         include:
-          - group: threshold-foundations
+          - group: foundational
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra'
-          - group: threshold-runtime
+            features: '--all-features'
+            threads: ''
+            runs-on: '8cpu-linux-x64'
+          - group: runtime
             crates: '-p threshold-execution -p threshold-networking -p threshold-experimental'
+            # Default features only
+            features: ''
+            threads: ''
+            runs-on: '64cpu-linux-x64'
+          - group: runtime-slow
+            crates: '-p threshold-execution -p threshold-networking -p threshold-experimental'
+            # Enable `slow_tests` explicitly on the crates that have it.
+            # TODO(dp): Keeps `choreographer` off (it pulls in even heavier code paths?). Figure out what to do.
+            features: '-F threshold-execution/slow_tests -F threshold-experimental/slow_tests'
+            # Cap parallelism: slow_tests are RAM-heavy
+            threads: '4'
+            runs-on: '64cpu-linux-x64'
           - group: workspace-utils
             crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+            features: '--all-features'
+            threads: ''
+            runs-on: '8cpu-linux-x64'
           - group: tools
             crates: '-p kms-health-check -p generate-test-material'
+            features: '--all-features'
+            threads: ''
+            runs-on: '8cpu-linux-x64'
     uses: ./.github/workflows/common-testing.yml
     with:
-      # --no-tests=pass: no tests is not an error
-      args-tests: '--no-tests=pass --all-features ${{ matrix.crates }}'
+      # --no-tests=pass: no tests is not an error, but to nexttest it is and this is the fix.
+      args-tests: '--no-tests=pass ${{ matrix.features }} ${{ matrix.crates }}'
       package-name: ${{ matrix.crates }}
+      nextest-test-threads: ${{ matrix.threads }}
       app-cache-dir: 'workspace-crates-${{ matrix.group }}'
       skip-test-material: true
-      runs-on: '32cpu-linux-x64'
-    secrets: inherit
+      runs-on: ${{ matrix.runs-on }}
 
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
