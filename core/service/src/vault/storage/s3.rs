@@ -625,7 +625,7 @@ pub async fn build_s3_client(
                         .with_native_roots()
                         .https_only()
                         // Overrides the hostname checked during the TLS handshake
-                        .with_server_name(format!("s3.{region}.amazonaws.com"))
+                        // .with_server_name(format!("s3.{region}.amazonaws.com"))
                         .enable_http1()
                         .build();
                     let http_client = HyperClientBuilder::new().build(https_connector);

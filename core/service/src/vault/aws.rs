@@ -23,7 +23,7 @@ pub async fn build_aws_sdk_config(
                 .with_native_roots()
                 .https_only()
                 // Overrides the hostname checked during the TLS handshake
-                .with_server_name(format!("sts.{}.amazonaws.com", aws_region.clone()))
+                // .with_server_name(format!("sts.{}.amazonaws.com", aws_region.clone()))
                 .enable_http1()
                 .build();
             let http_client = HyperClientBuilder::new().build(https_connector);
