@@ -391,7 +391,7 @@ impl Storage for S3Storage {
         }
         let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
+        tracing::info!("Storing bytes in bucket {} under key {}", &self.bucket, key);
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 

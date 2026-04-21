@@ -250,9 +250,10 @@ impl StorageExt for RamStorage {
             .await?
         {
             tracing::warn!(
-                "The data {}-{} already exists. Keeping the data without overwriting",
+                "The data {}-{} at epoch {} already exists. Keeping the data without overwriting",
                 data_id,
-                data_type
+                data_type,
+                epoch_id
             );
             return Ok(StoreWriteOutcome::SkippedExisting);
         }
@@ -261,10 +262,6 @@ impl StorageExt for RamStorage {
         self.internal_storage.insert(
             ((*data_id, Some(*epoch_id)), data_type.to_string()),
             serialized,
-        );
-        println!(
-            "Stored data at epoch: ({}, {}, {})",
-            data_id, epoch_id, data_type
         );
         Ok(StoreWriteOutcome::Created)
     }
