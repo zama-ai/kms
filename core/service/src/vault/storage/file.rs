@@ -59,7 +59,7 @@ impl FileStorage {
         })
     }
 
-    // Check if a path already exists and create it if not.
+    /// Check if a path already exists and create it if not.
     pub async fn setup_dirs(&self, url_path: &Path) -> anyhow::Result<()> {
         if url_path.try_exists().is_ok_and(|res| res) {
             // If the path exists, then trace a warning
