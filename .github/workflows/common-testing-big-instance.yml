@@ -29,7 +29,7 @@ on:
         type: string
         required: false
         default: "-F wasm_tests"
-      package-name:
+      crate-names:
         type: string
         required: true
       test-coverage:
@@ -48,9 +48,6 @@ on:
         type: string
         required: false
         default: "big-instance"
-      app-cache-dir:
-        type: string
-        required: true
       nextest-profile:
         type: string
         required: false
@@ -141,11 +138,10 @@ jobs:
       run-minio: ${{ inputs.run-minio }}
       run-redis: ${{ inputs.run-redis }}
       run-wasm: ${{ inputs.run-wasm }}
-      package-name: ${{ inputs.package-name }}
+      crate-names: ${{ inputs.crate-names }}
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
-      app-cache-dir: ${{ inputs.app-cache-dir }}
       nextest-profile: ${{ inputs.nextest-profile }}
       nextest-test-threads: ${{ inputs.nextest-test-threads }}
 

@@ -43,12 +43,10 @@ on:
         type: string
         required: false
         default: '-F wasm_tests'
-      package-name:
-        # A list of packages forwarded to cargo to run, e.g.
-        # `-p abc -p def -p ghi`. Injected verbatim into `cargo clippy`
-        # (and effectively into nextest via `args-tests`).
-        # TODO(dp): rename to `crate-names` (plural) — it's a list and
-        # we call them crates, not packages.
+      crate-names:
+        # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
+        # Injected verbatim into `cargo clippy` (and effectively into nextest
+        # via `args-tests`). (Formerly named `package-name`.)
         type: string
         required: true
       skip-test-material:
@@ -70,12 +68,6 @@ on:
         type: boolean
         required: false
         default: false
-      app-cache-dir:
-        # TODO(dp): unused — not referenced in any step in this workflow.
-        # Remove it here, in common-testing-big-instance.yml, and from all
-        # callers in main.yml.
-        type: string
-        required: true
       nextest-profile:
         type: string
         required: false
@@ -273,18 +265,18 @@ jobs:
 
       # - name: Linting default features
       #   env:
-      #     PACKAGE_NAME: ${{inputs.package-name}}
-      #   run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+      #     CRATE_NAMES: ${{inputs.crate-names}}
+      #   run: cargo clippy --all-targets --package "${CRATE_NAMES}" -- -D warnings
 
       # TODO(dp): Clippy is cheap; replace per-crate clippy with a single workspace-level
       # `cargo clippy --workspace --all-targets --all-features` job.
       - name: Linting All features
         env:
-          PACKAGE_NAME: ${{inputs.package-name}}
+          CRATE_NAMES: ${{inputs.crate-names}}
         run: |
-          echo "EXECUTING: cargo clippy --all-targets --all-features ${PACKAGE_NAME} -- -D warnings"
+          echo "EXECUTING: cargo clippy --all-targets --all-features ${CRATE_NAMES} -- -D warnings"
           # shellcheck disable=SC2086  # intentional word-splitting: PACKAGE_NAME is a flag list like `-p a -p b`
-          cargo clippy --all-targets --all-features ${PACKAGE_NAME} -- -D warnings
+          cargo clippy --all-targets --all-features ${CRATE_NAMES} -- -D warnings
 
       - name: Linting dylint
         run: cargo dylint --all
@@ -479,9 +471,9 @@ jobs:
         if: always()
         id: logs-label
         env:
-          PACKAGE_NAME: ${{ inputs.package-name }}
+          CRATE_NAMES: ${{ inputs.crate-names }}
         shell: bash
-        run: echo "value=$(echo "${PACKAGE_NAME}" | sed -E 's/-p +//g' | tr ' ' '_')" >> "$GITHUB_OUTPUT"
+        run: echo "value=$(echo "${CRATE_NAMES}" | sed -E 's/-p +//g' | tr ' ' '_')" >> "$GITHUB_OUTPUT"
 
       - name: Archive integration test trace logs
         if: always()

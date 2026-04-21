@@ -5,7 +5,9 @@ rules:
       - workflow-pr-dockerfile.yml:61
   secrets-inherit:
     ignore:
-      - main.yml:760
+      # main.yml uses `secrets: inherit` consistently for all reusable-
+      # workflow calls (migrated away from explicit-block style).
+      - main.yml
       - performance-testing.yml:210
       - performance-testing.yml:211
       - kind-testing.yml:260
