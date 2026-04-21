@@ -974,7 +974,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn abort_sunshine() {
+    async fn abort_during_crs_gen() {
         let mut rng = AesRng::seed_from_u64(123);
         // SlowCeremony keeps the background task running long enough for abort to land
         let crs_gen = make_crs_gen::<SlowCeremony>(&mut rng).await;
@@ -1004,5 +1004,11 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+        // Try to get the result and see it has been aborted
+        let err = crs_gen
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

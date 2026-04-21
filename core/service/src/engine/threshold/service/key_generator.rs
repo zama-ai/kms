@@ -447,14 +447,18 @@ impl<
                         ongoing.lock().await.remove(&preproc_id);
                     },
                     () = token.cancelled() => {
-                         MetricedError::handle_unreturnable_error(
-                                    OP_KEYGEN_REQUEST,
-                                    Some(req_id),
-                                    format!("Key generation background with preprocessing id {} failed since the task got cancelled", preproc_id),
-                                );
-                        let guarded_meta_store = meta_store_cancelled.write().await;
-                        // Note that the meta store gets updated in the helper method
+                        MetricedError::handle_unreturnable_error(
+                            OP_KEYGEN_REQUEST,
+                            Some(req_id),
+                            format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
+                        );
+                        tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
+                        let mut guarded_meta_store = meta_store_cancelled.write().await;
+                        let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
+                        // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem. 
+                        // In connection with this the meta store update should be moved to AFTER the purging
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
+
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -549,7 +553,7 @@ impl<
             Some(cancellation_token) => {
                 // Observe that the cancellation arm handles the abortion and clean-up
                 cancellation_token.cancel();
-                tracing::info!("Cancelled key generation with preprocessing {}", preproc_id);
+                tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
             }
             None => {
                 // No keygen consumed this preprocessing — nothing to cancel
@@ -558,7 +562,7 @@ impl<
                 );
             }
         }
-        Status::ok("Key gen cancelled successfully")
+        Status::ok("Key gen aborted successfully")
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
@@ -2051,5 +2055,11 @@ mod tests {
         // Check that a second abort returns NotFound
         let status = kg.abort_key_gen(prep_id).await;
         assert_eq!(status.code(), tonic::Code::NotFound);
+        // Try to get the result and see it has been aborted
+        let err = kg
+            .get_result(Request::new(key_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

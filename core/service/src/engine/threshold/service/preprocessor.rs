@@ -9,10 +9,9 @@ use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
 };
 use observability::{
-    metrics::{self, DurationGuard, METRICS},
+    metrics::{DurationGuard, METRICS},
     metrics_names::{
-        ERR_CANCELLED, OP_KEYGEN_ABORT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        TAG_PARTY_ID,
+        OP_KEYGEN_ABORT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -151,10 +150,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     },
                     () = token.cancelled() => {
                         // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.
-                        tracing::error!("Preprocessing of request {} exiting before completion because of a cancellation event.", &request_id);
+                        tracing::error!("Preprocessing of request {} exiting before completion because of an abort request.", &request_id);
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
-                        let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was cancelled".to_string()));
-                        metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_CANCELLED);
+                        let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was aborted".to_string()));
+                        MetricedError::handle_unreturnable_error(
+                            OP_KEYGEN_PREPROC_REQUEST,
+                            Some(request_id),
+                            format!("Preprocessing background with preprocessing id {} failed since the task got aborted", request_id),
+                        );
                     },
                 }
             }
@@ -402,7 +405,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 timer,
                 permit,
             #[cfg(feature = "insecure")] partial_params
-        ).await.map_err(|e| MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, Some(request_id), anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), tonic::Code::Internal))?;
+        ).await.map_err(|e|
+            MetricedError::new(OP_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), 
+                tonic::Code::Internal)
+            )?;
         Ok(Response::new(Empty {}))
     }
 }
@@ -890,21 +898,36 @@ mod tests {
             .await
             .unwrap();
 
-        // No key generation is running, so the outer endpoint would abort alright
+        // No key generation is running
         let key_gen_cancel_res = Status::not_found("no keygen running");
+        // Abort while preprocessing is running
         assert!(
-            prep.abort_key_gen_preproc(req_id, key_gen_cancel_res)
+            prep.abort_key_gen_preproc(req_id, key_gen_cancel_res.clone())
                 .await
                 .is_ok()
         );
-
+        // Second call should fail since it has already been cancelled
+        // Should return the `key_gen_cancel_res` status
+        let status = prep
+            .abort_key_gen_preproc(req_id, key_gen_cancel_res)
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), tonic::Code::NotFound);
         // Retrieving the result must now surface an error (the bucket was updated to aborted)
         assert_eq!(
             prep.get_result(tonic::Request::new(req_id.into()))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::Internal
+            tonic::Code::Aborted
         );
+
+        // Finally try to assume that key gen was aborted correctly
+        // to validate that this also returns ok when aborting preprocessing
+        assert!(
+            prep.abort_key_gen_preproc(req_id, Status::ok("keygen aborted successfully"))
+                .await
+                .is_ok()
+        )
     }
 }
