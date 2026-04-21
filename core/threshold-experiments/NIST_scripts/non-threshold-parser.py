@@ -34,11 +34,11 @@ EXPERIMENTS_MAP = {
 
 # Maps parameter-set name to the ZK CSV file it should produce.
 ZK_PARAMS_MAP = {
-    "NIST_PARAMS_P32_SNS_FGLWE": "ZK_PoK_NIST_PARAMS_P32_SNS_FGLWE.csv",
-    "NIST_PARAMS_P32_SNS_LWE":   "ZK_PoK_NIST_PARAMS_P32_SNS_LWE.csv",
-    "NIST_PARAMS_P8_SNS_FGLWE":  "ZK_PoK_NIST_PARAMS_P8_SNS_FGLWE.csv",
-    "NIST_PARAMS_P8_SNS_LWE":    "ZK_PoK_NIST_PARAMS_P8_SNS_LWE.csv",
-    "BC_PARAMS_SNS":              "ZK_PoK_BC_PARAMS_SNS.csv",
+    "NIST_PARAMS_P32_SNS_FGLWE": "ZKPoK_P32_FGLWE.csv",
+    "NIST_PARAMS_P32_SNS_LWE":   "ZKPoK_P32_LWE.csv",
+    "NIST_PARAMS_P8_SNS_FGLWE":  "ZKPoK_P8_FGLWE.csv",
+    "NIST_PARAMS_P8_SNS_LWE":    "ZKPoK_P8_LWE.csv",
+    "BC_PARAMS_SNS":              "ZKPoK_BC_FGLWE.csv",
 }
 
 # Internal operation key → CSV row label.
