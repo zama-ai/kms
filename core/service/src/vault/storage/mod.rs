@@ -63,7 +63,8 @@ pub trait StorageReader {
     /// Return all data IDs stored for a specific data type.
     ///
     /// This function does not consider data types that are stored under different epochs,
-    /// use [StorageReaderExt::all_data_ids_at_epoch] instead.
+    /// use [StorageReaderExt::all_data_ids_at_epoch] or
+    /// [StorageReaderExt::all_data_ids_from_all_epochs] instead.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
     /// Output some information on the storage instance.
@@ -287,8 +288,9 @@ where
         .map(|_| ())
 }
 
-// Helper method for storing text under a request ID.
-// An error will be returned if the data already exists.
+/// Helper method for storing text under a request ID.
+/// If the object with `request_id` and `data_type` already exists, it will not be overwritten
+/// and a warning is logged; the call still succeeds (the outcome is discarded).
 pub async fn store_text_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
@@ -300,14 +302,15 @@ pub async fn store_text_at_request_id<S: Storage>(
         .await
         .map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not store data with ID {request_id} and type {data_type}: {e}"
+                "Could not store text with ID {request_id} and type {data_type}: {e}"
             ))
         })
         .map(|_| ())
 }
 
-// Helper method for reading text under a request ID.
-// An error will be returned if the data already exists.
+/// Helper method for reading text under a request ID.
+/// Returns an error if no data is stored at `request_id`/`data_type`, or if the stored
+/// bytes are not valid UTF-8.
 pub async fn read_text_at_request_id<S: StorageReader>(
     storage: &S,
     request_id: &RequestId,
@@ -319,7 +322,7 @@ pub async fn read_text_at_request_id<S: StorageReader>(
             .await
             .map_err(|e| {
                 anyhow_error_and_log(format!(
-                    "Could not read data with ID {request_id} and type {data_type}: {e}"
+                    "Could not read text with ID {request_id} and type {data_type}: {e}"
                 ))
             })?,
     )
@@ -410,7 +413,7 @@ pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
     }
 }
 
-/// Helper method to remove data based on a data type and request ID.
+/// Helper method to remove public key given a request ID.
 pub async fn delete_pk_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
