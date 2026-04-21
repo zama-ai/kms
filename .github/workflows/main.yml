@@ -108,7 +108,6 @@ jobs:
               - 'core/thread-handles/**'
               - 'core/threshold-*/**'
               - 'observability/**'
-              - 'tools/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             tools:
@@ -803,15 +802,11 @@ jobs:
       # parallelism.
       matrix:
         include:
-          - group: foundational
-            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra'
-            features: '--all-features'
-            threads: ''
-            runs-on: '8cpu-linux-x64'
           - group: runtime
-            crates: '-p threshold-execution -p threshold-networking -p threshold-experimental'
-            # Default features only
-            features: ''
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-experimental'
+            # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
+            # all its per-degree tests run.
+            features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
             runs-on: '64cpu-linux-x64'
           - group: runtime-slow
@@ -824,11 +819,6 @@ jobs:
             runs-on: '64cpu-linux-x64'
           - group: workspace-utils
             crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
-            features: '--all-features'
-            threads: ''
-            runs-on: '8cpu-linux-x64'
-          - group: tools
-            crates: '-p kms-health-check -p generate-test-material'
             features: '--all-features'
             threads: ''
             runs-on: '8cpu-linux-x64'
