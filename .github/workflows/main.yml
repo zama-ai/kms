@@ -125,7 +125,9 @@ jobs:
   ############################################################################
   docker-build:
     name: docker-build
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    if: false
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
@@ -158,12 +160,14 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-helm-chart == 'true' &&
+    #   (github.event_name != 'schedule' ||
+    #   github.event_name == 'pull_request' ||
+    #   github.ref == 'refs/heads/main' ||
+    #   startsWith(github.ref, 'refs/heads/release/'))
+    if: false
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
@@ -175,12 +179,14 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-helm-chart == 'true' &&
+    #   (github.event_name != 'schedule' ||
+    #   github.event_name == 'pull_request' ||
+    #   github.ref == 'refs/heads/main' ||
+    #   startsWith(github.ref, 'refs/heads/release/'))
+    if: false
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
@@ -191,11 +197,13 @@ jobs:
       id-token: write # Required for OIDC token generation
       packages: write # Required to publish packages
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' && github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-helm-chart == 'true' &&
+    #   (github.event_name != 'schedule' && github.event_name != 'pull_request' &&
+    #   github.ref == 'refs/heads/main' ||
+    #   startsWith(github.ref, 'refs/heads/release/'))
+    if: false
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
@@ -213,7 +221,9 @@ jobs:
       id-token: write # Required for OIDC token generation
       pull-requests: read # Required to read pull request information
     needs: check-changes
-    if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
+    if: false
     runs-on: ubuntu-latest
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
@@ -242,14 +252,16 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   needs.check-changes.outputs.changes-core-threshold == 'true' ||
+    #   needs.check-changes.outputs.changes-core-grpc == 'true' ||
+    #   needs.check-changes.outputs.changes-ci == 'true' ||
+    #   needs.check-changes.outputs.changes-tools == 'true' ||
+    #   github.ref == 'refs/heads/main'
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/service'
@@ -292,14 +304,16 @@ jobs:
   prepare-core-client-matrix:
     name: main/prepare-core-client-matrix
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-core-client == 'true' ||
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   needs.check-changes.outputs.changes-core-threshold == 'true' ||
+    #   needs.check-changes.outputs.changes-core-grpc == 'true' ||
+    #   needs.check-changes.outputs.changes-ci == 'true' ||
+    #   needs.check-changes.outputs.changes-tools == 'true' ||
+    #   github.ref == 'refs/heads/main'
+    if: false
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -332,14 +346,16 @@ jobs:
     needs:
       - prepare-core-client-matrix
       - check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-core-client == 'true' ||
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   needs.check-changes.outputs.changes-core-threshold == 'true' ||
+    #   needs.check-changes.outputs.changes-core-grpc == 'true' ||
+    #   needs.check-changes.outputs.changes-ci == 'true' ||
+    #   needs.check-changes.outputs.changes-tools == 'true' ||
+    #   github.ref == 'refs/heads/main'
+    if: false
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
@@ -383,9 +399,11 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   github.event_name == 'schedule' ||
+    #   (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
@@ -421,7 +439,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-client == 'true'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-core-client == 'true'
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
@@ -470,7 +490,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/grpc'
@@ -521,10 +543,12 @@ jobs:
   prepare-matrix:
     name: main/prepare-matrix
     needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   github.ref == 'refs/heads/main' ||
+    #   needs.check-changes.outputs.changes-ci == 'true'
+    if: false
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -561,10 +585,12 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   github.ref == 'refs/heads/main' ||
+    #   needs.check-changes.outputs.changes-ci == 'true'
+    if: false
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
@@ -627,7 +653,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
@@ -673,7 +701,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
@@ -719,7 +749,9 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
+    if: false
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
@@ -790,7 +822,9 @@ jobs:
   # Only runs on pull requests to generate test reports
   test-reporter:
     name: main/test-reporter
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: ${{ always() && github.event_name == 'pull_request' }}
+    if: false
     needs:
       - test-backward-compatibility
       - test-core-client
@@ -827,9 +861,11 @@ jobs:
       contents: read # Required to checkout repository code
     needs:
       - check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+    # TEMP: focus test-workspace-crates — restore original `if:` below.
+    # if: >-
+    #   needs.check-changes.outputs.changes-core-service == 'true' ||
+    #   needs.check-changes.outputs.changes-ci == 'true'
+    if: false
     uses: ./.github/workflows/wasm-testing.yml
     with:
       working-directory: './core/service'
