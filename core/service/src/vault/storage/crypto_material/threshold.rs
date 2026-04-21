@@ -107,7 +107,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Write the CRS to the storage backend.
-    /// On failure, the meta_store is used to purge dangling data.
+    /// Fails fast if CRS data already exists for this `crs_id`/`epoch_id`.
+    /// On write failure, the meta_store is used to purge dangling data.
     /// On success, the meta_store is NOT updated; the caller is responsible for that.
     pub(crate) async fn inner_write_crs<T: Clone>(
         &self,

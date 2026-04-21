@@ -26,8 +26,9 @@ use crate::{
         storage::{
             Storage, StorageExt, StorageReaderExt,
             crypto_material::{
-                check_data_exists, check_data_exists_at_epoch, log_storage_success,
-                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
+                check_data_exists, check_data_exists_at_epoch, data_exists, data_exists_at_epoch,
+                log_storage_success, log_storage_success_optional_variant,
+                traits::PrivateCryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
@@ -284,6 +285,41 @@ where
             let mut pub_storage = self.public_storage.lock().await;
             let mut priv_storage = self.private_storage.lock().await;
 
+            // Fail-fast: refuse to write if any relevant data already exists
+            // for this key_id/epoch_id. This avoids a later failure-path purge
+            // ever touching pre-existing data.
+            let priv_existed = data_exists_at_epoch(
+                &*priv_storage,
+                key_id,
+                epoch_id,
+                &private_keys_or_shares_type.to_string(),
+            )
+            .await
+            .unwrap_or(false);
+            let pk_existed =
+                data_exists(&*pub_storage, key_id, &PubDataType::PublicKey.to_string())
+                    .await
+                    .unwrap_or(false);
+            let sk_existed =
+                data_exists(&*pub_storage, key_id, &PubDataType::ServerKey.to_string())
+                    .await
+                    .unwrap_or(false);
+            let compressed_existed = data_exists(
+                &*pub_storage,
+                key_id,
+                &PubDataType::CompressedXofKeySet.to_string(),
+            )
+            .await
+            .unwrap_or(false);
+            if priv_existed || pk_existed || sk_existed || compressed_existed {
+                let err_msg = format!(
+                    "Refusing to write compressed {kms_type} key {key_id}: data already exists for this key_id/epoch_id"
+                );
+                tracing::warn!("{err_msg}");
+                let _ = guarded_meta_storage.update(key_id, Err(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
                     &mut (*priv_storage),
@@ -468,9 +504,13 @@ where
     }
 
     /// Write the CRS to the storage backend.
-    /// On failure, the meta_store is used to purge dangling data.
+    /// Fails fast: if CRS data already exists for this `crs_id`/`epoch_id`,
+    /// the write is refused, the meta store is updated with an error, and
+    /// `false` is returned. In this case no existing data is touched.
+    /// On write failure, the meta_store is used to purge dangling data.
     /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    /// Returns `true` if the write succeeded, `false` if any sub-operation failed.
+    /// Returns `true` if the write succeeded, `false` if data pre-existed or
+    /// the write failed.
     pub(crate) async fn inner_write_crs<T: Clone>(
         &self,
         crs_id: &RequestId,
@@ -483,6 +523,28 @@ where
             // Enforce locking order for internal types
             let mut pub_storage = self.public_storage.lock().await;
             let mut priv_storage = self.private_storage.lock().await;
+
+            // Fail-fast: if CRS data already exists for this crs_id/epoch_id,
+            // refuse to write so a failure-path purge never destroys it.
+            let priv_existed = data_exists_at_epoch(
+                &*priv_storage,
+                crs_id,
+                epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap_or(false);
+            let pub_existed = data_exists(&*pub_storage, crs_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap_or(false);
+            if priv_existed || pub_existed {
+                let err_msg = format!(
+                    "Refusing to write CRS {crs_id}: data already exists for this crs_id/epoch_id"
+                );
+                tracing::warn!("{err_msg}");
+                let _ = meta_store.write().await.update(crs_id, Err(err_msg));
+                return false;
+            }
 
             let f1 = async {
                 let result = store_versioned_at_request_and_epoch_id(
@@ -523,12 +585,6 @@ where
         };
 
         if !(r1 && r2) {
-            // Some store op failed, we need to purge any potentially
-            // dangling data and update the meta store accordingly.
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might
-            // be because the data did not get created
-            // In any case, we can't do much.
             let guarded_meta_store = meta_store.write().await;
             self.purge_crs_material(crs_id, epoch_id, guarded_meta_store)
                 .await;
@@ -679,6 +735,26 @@ where
         let pub_res = {
             // Lock the storage needed in correct order to avoid deadlocks.
             let mut public_storage_guard = self.public_storage.lock().await;
+
+            // Fail-fast: if recovery material already exists for this req_id,
+            // refuse to write so a failure-path purge never destroys it.
+            let data_existed_before = data_exists(
+                &*public_storage_guard,
+                &req_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap_or(false);
+            if data_existed_before {
+                let err_msg = format!(
+                    "Refusing to write backup material for {req_id}: data already exists"
+                );
+                tracing::warn!("{err_msg}");
+                // Ensure there is a meta entry to record the failure in.
+                let _ = guarded_meta_store.insert(&req_id);
+                let _ = guarded_meta_store.update(&req_id, Err(err_msg));
+                return;
+            }
 
             let pub_storage_future = async {
                 let store_result = store_versioned_at_request_id(
@@ -848,8 +924,27 @@ where
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
 
-        let f1 = async {
+        let store_ok = {
             let mut pub_storage = self.public_storage.lock().await;
+
+            // Fail-fast: if a decompression key already exists for this req_id,
+            // refuse to write so a failure-path delete never destroys it.
+            let data_existed_before = data_exists(
+                &*pub_storage,
+                req_id,
+                &PubDataType::DecompressionKey.to_string(),
+            )
+            .await
+            .unwrap_or(false);
+            if data_existed_before {
+                let err_msg = format!(
+                    "Refusing to write decompression key for {req_id}: data already exists"
+                );
+                tracing::warn!("{err_msg}");
+                let _ = guarded_meta_store.update(req_id, Err(err_msg));
+                return;
+            }
+
             let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
                 req_id,
@@ -866,7 +961,7 @@ where
             }
             result.is_ok()
         };
-        if f1.await
+        if store_ok
             && guarded_meta_store
                 .update(req_id, Ok(info))
                 .inspect_err(|e| {
