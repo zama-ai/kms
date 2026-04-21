@@ -1,16 +1,13 @@
 name: dependencies_analysis
 
 on:
-  # TEMP: disabled for focused test-workspace-crates iteration. Restore the
-  # push/pull_request triggers and delete the workflow_dispatch line when done.
-  # push:
-  #   branches:
-  #     - main
-  #     - test
-  #
-  # pull_request:
-  #   branches: ['*']
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - test
+
+  pull_request:
+    branches: ['*']
 
 concurrency:
   group: deps-analysis-${{ github.ref }}
