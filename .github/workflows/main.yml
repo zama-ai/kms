@@ -764,13 +764,12 @@ jobs:
       github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
-      # Groups aim at similarly-sized work. `runtime-slow` is split
-      # out because enabling `slow_tests` on threshold-experimental unlocks
-      # multi-hour BGV DKG tests that need a bigger runner + tighter
-      # parallelism.
+      # Groups aim at similarly-sized work. `runtime-slow` is split out because enabling `slow_tests` takes a long time.
       matrix:
         include:
-          - group: runtime
+
+          # Most "normal" crates should be added here; runs with default features only.
+          - group: crates-normies
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-experimental'
             # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
             # all its per-degree tests run.
@@ -778,21 +777,24 @@ jobs:
             threads: ''
             runs-on: '64cpu-linux-x64'
 
-          # Enable `slow_tests` on this group for the crates that have it.
-          - group: runtime-slow-execution
-            crates: '-p threshold-execution -p threshold-networking'
+          # Slow/heavy tests, 1/2. Big iron, lots of RAM.
+          - group: crates-heavy-1
+            crates: '-p threshold-execution'
             # TODO(dp): `choreographer` is off (it pulls in even heavier code paths?). Figure out what to do.
             features: '-F threshold-execution/slow_tests'
             # Cap parallelism: slow_tests are RAM-heavy
+            # TODO(dp): tweak this. Could 8 work? 6?
             threads: '4'
             runs-on: '64cpu-linux-x64'
 
+          # Slow/heavy tests, 2/2. Big iron, lots of RAM.
           # The `threshold-experimental` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
-          - group: runtime-slow-experimental
-            crates: '-p threshold-experimental'
+          - group: crates-heavy-2
+            crates: '-p threshold-experimental -p threshold-networking'
             features: '-F threshold-experimental/slow_tests'
-            # Cap parallelism: slow_tests are RAM-heavy
+            # Cap parallelism: slow_tests are RAM-heavy.
+            # TODO(dp): tweak this. Could 8 work? 6?
             threads: '4'
             runs-on: '64cpu-linux-x64'
 
