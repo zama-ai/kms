@@ -408,49 +408,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         ).await.map_err(|e| MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, Some(request_id), anyhow::anyhow!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}: {e}"), tonic::Code::Internal))?;
         Ok(Response::new(Empty {}))
     }
-
-    async fn inner_abort_key_gen_preproc(
-        &self,
-        preproc_id: RequestId,
-        key_gen_cancel_res: Status,
-    ) -> Result<Response<Empty>, MetricedError> {
-        // Step 1: If preprocessing is still running — cancel it
-        let mut ongoing = self.ongoing.lock().await;
-        if let Some(token) = ongoing.remove(&preproc_id) {
-            // Observe that the cancellation arm handles the abortion and clean-up
-            token.cancel();
-            tracing::info!("Cancelled preprocessing {}", preproc_id);
-            Ok(Response::new(Empty {}))
-        } else {
-            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existed
-            // Regardless set the bucket handle to be canceled if it exists
-            let mut buckets: tokio::sync::RwLockWriteGuard<'_, MetaStore<BucketMetaStore>> =
-                self.preproc_buckets.write().await;
-            if buckets.exists(&preproc_id) {
-                update_err_req_in_meta_store(
-                    &mut buckets,
-                    &preproc_id,
-                    "Preprocessing aborted!".to_string(),
-                    OP_KEYGEN_ABORT,
-                );
-                Ok(Response::new(Empty {}))
-            } else {
-                // Bucket either never existed or has already been consumed by key gen, regardless return key gen abort result
-                if key_gen_cancel_res.code() == tonic::Code::Ok {
-                    // Existed and had been consumed by key gen, but key gen was able to cancel successfully
-                    Ok(Response::new(Empty {}))
-                } else {
-                    // Either did not exist or something went wrong with key gen cancellation
-                    Err(MetricedError::new(
-                        OP_KEYGEN_ABORT,
-                        Some(preproc_id),
-                        key_gen_cancel_res.message().to_string(),
-                        key_gen_cancel_res.code(),
-                    ))
-                }
-            }
-        }
-    }
 }
 
 #[tonic::async_trait]
@@ -542,8 +499,42 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         preproc_id: RequestId,
         key_gen_cancel_res: Status,
     ) -> Result<Response<Empty>, MetricedError> {
-        self.inner_abort_key_gen_preproc(preproc_id, key_gen_cancel_res)
-            .await
+        // Step 1: If preprocessing is still running — cancel it
+        let mut ongoing = self.ongoing.lock().await;
+        if let Some(token) = ongoing.remove(&preproc_id) {
+            // Observe that the cancellation arm handles the abortion and clean-up
+            token.cancel();
+            tracing::info!("Cancelled preprocessing {}", preproc_id);
+            Ok(Response::new(Empty {}))
+        } else {
+            // Step 2: If the cancellation token does not exist it is because preprocessing was completed or the request never existed
+            // Regardless set the bucket handle to be canceled if it exists
+            let mut buckets: tokio::sync::RwLockWriteGuard<'_, MetaStore<BucketMetaStore>> =
+                self.preproc_buckets.write().await;
+            if buckets.exists(&preproc_id) {
+                update_err_req_in_meta_store(
+                    &mut buckets,
+                    &preproc_id,
+                    "Preprocessing aborted!".to_string(),
+                    OP_KEYGEN_ABORT,
+                );
+                Ok(Response::new(Empty {}))
+            } else {
+                // Bucket either never existed or has already been consumed by key gen, regardless return key gen abort result
+                if key_gen_cancel_res.code() == tonic::Code::Ok {
+                    // Existed and had been consumed by key gen, but key gen was able to cancel successfully
+                    Ok(Response::new(Empty {}))
+                } else {
+                    // Either did not exist or something went wrong with key gen cancellation
+                    Err(MetricedError::new(
+                        OP_KEYGEN_ABORT,
+                        Some(preproc_id),
+                        key_gen_cancel_res.message().to_string(),
+                        key_gen_cancel_res.code(),
+                    ))
+                }
+            }
+        }
     }
 
     async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
