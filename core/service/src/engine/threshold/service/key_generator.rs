@@ -345,6 +345,8 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
+                    // NOTE that using a static preprocessing ID for the insecure keygen
+                    // This means that concurrent calls to the insecure keygen are not allowed!
                     *INSECURE_PREPROCESSING_ID
                 }
             }
