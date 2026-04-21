@@ -2,7 +2,10 @@
 name: ci_lint
 
 on:
-  pull_request:
+  # TEMP: disabled for focused test-workspace-crates iteration. Restore the
+  # pull_request trigger and delete the workflow_dispatch line when done.
+  # pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-lint-${{ github.ref }}

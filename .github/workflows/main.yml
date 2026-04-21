@@ -815,7 +815,7 @@ jobs:
       package-name: ${{ matrix.crates }}
       app-cache-dir: 'workspace-crates-${{ matrix.group }}'
       skip-test-material: true
-      runs-on: '8cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets: inherit
 
   # Test reporting job that runs after all tests complete
