@@ -184,7 +184,7 @@ impl StorageReader for FileStorage {
         let path = self.item_path(data_id, data_type);
         tokio::fs::read(&path).await.map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not read from path {}: {}",
+                "Could not load bytes from path {}: {}",
                 path.display(),
                 e
             ))

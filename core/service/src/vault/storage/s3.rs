@@ -205,7 +205,7 @@ impl StorageReader for S3Storage {
         let key = &self.item_key(data_id, data_type);
 
         tracing::info!(
-            "Reading text from bucket {} under key {}",
+            "Reading bytes from bucket {} under key {}",
             &self.bucket,
             key
         );
