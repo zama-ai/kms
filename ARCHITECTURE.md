@@ -93,7 +93,8 @@ The service crate is the main surface area. Key subdirectories under
   keys and key-encryption logic live in
   [vault/keychain/](core/service/src/vault/keychain/).
 - [backup/](core/service/src/backup/) — custodian-based secret-sharing backup
-  of long-term signing / root keys, used for disaster recovery.
+  of long-term signing / root keys, used for disaster recovery. See
+  [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
   chain verification).
@@ -164,6 +165,75 @@ sensitive operation. Parties reach each other over gRPC via
 `kms-gen-tls-certs`). Preprocessing runs asynchronously and produces material
 consumed by the online phase.
 
+## Backup and recovery
+
+Long-term private material held by a KMS node — signing keys, FHE secret-key
+shares, custodian / MPC context state — is automatically backed up so that a
+node whose local storage is lost can be rebuilt without reconstructing the
+whole cluster. Secrets are wrapped into versioned `BackupCiphertext`s
+(tagged by `RequestId` and `PrivDataType`) and written to the configured
+backup vault, typically S3.
+
+The payload-wrapping key is protected by one of two **keychains**, selected
+in server config and unified behind `KeychainProxy`
+([core/service/src/vault/keychain/](core/service/src/vault/keychain/)):
+
+- **`AwsKms`** — wrapping key is an AWS KMS CMK. Default and bootstrap path.
+- **`SecretSharing`** — wrapping key is Shamir-shared across a set of
+  **custodians**, offline entities who each hold a key share plus a BIP39
+  seed phrase. A custodian context must already be installed before a node
+  can be switched to this mode; the usual flow is to boot on the AWS KMS
+  keychain, provision custodians, then restart against the secret-sharing
+  keychain.
+
+Custodian workflows are driven through the
+[kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
+`NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
+/ `CustodianBackupRecovery` RPCs defined in
+[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). A separate
+`RestoreFromBackup` RPC completes restoration on the node and also covers
+the no-custodian AWS-KMS path.
+
+Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
+end-to-end tests live at
+[core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
+and
+[core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+
+## Backward compatibility
+
+The KMS must read material produced by earlier releases: a fresh binary
+pointed at an existing vault has to load and use whatever is already there.
+Compatibility is enforced at two levels.
+
+**Versioning trait.** Every type written to disk or sent over the wire uses
+[`tfhe-versionable`](https://crates.io/crates/tfhe-versionable): it derives
+`Versionize` / `VersionsDispatch`, implements `Named`, and is wrapped in an
+enum whose variants are its historical layouts (`V0`, `V1`, …).
+`Unversionize` dispatches to the right variant by tag on read. On-disk and
+on-wire encoding goes through the pinned-`bincode` wrapper
+[bc2wrap](bc2wrap/) so the binary layout is deterministic. Examples of
+versioned types: `BackupCiphertextVersioned`,
+`InternalCustodianContextVersioned`, `AppKeyBlobVersioned`.
+
+**Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
+is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
+— because each pinned historical version drags in a conflicting dependency
+graph). Per-version `generate-vX.Y.Z/` crates serialize a catalogue of types
+using that release's dependencies; the artifacts land under
+[backward-compatibility/data/](backward-compatibility/data/) (Git-LFS-tracked)
+indexed by per-module `.ron` manifests. The loader in
+[backward-compatibility/src/](backward-compatibility/src/) replays every
+entry through the current-version `Unversionize` and asserts the expected
+metadata.
+
+To add support for a new release, follow
+[backward-compatibility/ADDING_NEW_VERSIONS.md](backward-compatibility/ADDING_NEW_VERSIONS.md).
+The top-level [Makefile](Makefile) exposes `test-backward-compatibility`
+(run the loader against stored LFS vectors),
+`test-backward-compatibility-local` (against locally regenerated vectors),
+and `generate-backward-compatibility-*` targets to refresh vectors.
+
 ## External dependencies
 
 - **FHE** — `tfhe` (TFHE-rs), `tfhe-versionable`, `tfhe-zk-pok`.
@@ -186,7 +256,9 @@ consumed by the online phase.
   `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
 - **Backward-compatibility tests** live under
   [backward-compatibility/](backward-compatibility/); per-version generator
-  crates produce frozen test vectors that current-version loaders must accept.
+  crates produce frozen test vectors that current-version loaders must
+  accept. See [Backward compatibility](#backward-compatibility) for the full
+  picture.
 - **Docker-compose harness** — see [docker-compose.md](docker-compose.md) and
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
@@ -200,7 +272,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust edition 2024, MSRV 1.86. `protoc`, `pkgconfig`, and
+- **Toolchain** — Latest stable version of Rust. `protoc`, `pkgconfig`, and
   `openssl` are required at build time; Docker is required for the test
   harness.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,

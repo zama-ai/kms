@@ -1,0 +1,35 @@
+{
+    "sandbox": {
+        "enabled": true
+    },
+    "ignoreFiles": [
+        ".env",
+        ".env.*",
+        "*.pem",
+        "*.key",
+        "*.cert",
+        "*.p12",
+        "*.pfx",
+        "secrets.*",
+        "credentials.*"
+    ],
+    "ignoreDirectories": [
+        ".git",
+        ".github/secrets",
+        ".ssh",
+        "node_modules",
+        "build",
+        "target",
+        "out",
+        "temp",
+        "keys"
+    ],
+    "sensitivePatterns": [
+        "API_KEY",
+        "SECRET_KEY",
+        "ACCESS_TOKEN",
+        "PRIVATE_KEY",
+        "PASSWORD",
+        "DATABASE_URL"
+    ]
+}
