@@ -809,14 +809,26 @@ jobs:
             features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
             runs-on: '64cpu-linux-x64'
-          - group: runtime-slow
-            crates: '-p threshold-execution -p threshold-networking -p threshold-experimental'
-            # Enable `slow_tests` explicitly on the crates that have it.
-            # TODO(dp): Keeps `choreographer` off (it pulls in even heavier code paths?). Figure out what to do.
-            features: '-F threshold-execution/slow_tests -F threshold-experimental/slow_tests'
+
+          # Enable `slow_tests` on this group for the crates that have it.
+          - group: runtime-slow-execution
+            crates: '-p threshold-execution -p threshold-networking'
+            # TODO(dp): `choreographer` is off (it pulls in even heavier code paths?). Figure out what to do.
+            features: '-F threshold-execution/slow_tests'
             # Cap parallelism: slow_tests are RAM-heavy
             threads: '4'
             runs-on: '64cpu-linux-x64'
+
+          # The `threshold-experimental` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
+          # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
+          - group: runtime-slow-experimental
+            crates: '-p threshold-experimental'
+            features: '-F threshold-experimental/slow_tests'
+            # Cap parallelism: slow_tests are RAM-heavy
+            threads: '4'
+            runs-on: '64cpu-linux-x64'
+
+          # Small and light utility crates. Quick to run.
           - group: workspace-utils
             crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
             features: '--all-features'
