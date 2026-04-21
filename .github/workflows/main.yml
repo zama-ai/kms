@@ -672,11 +672,10 @@ jobs:
           # Slow/heavy tests, 1/2. Big iron, lots of RAM.
           - group: crates-heavy-1
             crates: '-p threshold-execution'
-            # TODO(dp): `choreographer` is off (it pulls in even heavier code paths?). Figure out what to do.
             features: '-F threshold-execution/slow_tests'
-            # Cap parallelism: slow_tests are RAM-heavy
-            # TODO(dp): tweak this. Could 8 work? 6?
-            threads: '4'
+            # Cap parallelism: slow_tests are RAM-heavy. Empirical: 4 worked
+            # at ~89min; trying 8 to halve wall-clock. Back off if OOM.
+            threads: '8'
             runs-on: '64cpu-linux-x64'
 
           # Slow/heavy tests, 2/2. Big iron, lots of RAM.
@@ -685,9 +684,7 @@ jobs:
           - group: crates-heavy-2
             crates: '-p threshold-experimental -p threshold-networking'
             features: '-F threshold-experimental/slow_tests'
-            # Cap parallelism: slow_tests are RAM-heavy.
-            # TODO(dp): tweak this. Could 8 work? 6?
-            threads: '4'
+            threads: '8'
             runs-on: '64cpu-linux-x64'
 
           # Small and light utility crates. Quick to run.
