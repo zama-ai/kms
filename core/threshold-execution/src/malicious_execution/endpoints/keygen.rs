@@ -1,7 +1,8 @@
 use aes_prng::AesRng;
 use rand::SeedableRng;
-use std::time::Duration;
+use std::sync::{LazyLock, Mutex};
 use tfhe::xof_key_set::CompressedXofKeySet;
+use tokio::sync::oneshot;
 
 use crate::{
     endpoints::keygen::OnlineDistributedKeyGen,
@@ -174,14 +175,32 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
     }
 }
 
-/// Online DKG that delays completion long enough (10 seconds) to be reliably aborted mid-execution.
-/// All variants just sleep and then bail — the tests using this keygen expect the task
-/// to be cancelled before any return value is produced.
+/// Online DKG that pretends to be ongoing via a oneshot channel that never fires.
+/// The first call to any of the keygen variants takes the receiver and awaits it
+/// until the surrounding task is aborted. Subsequent calls find the receiver gone
+/// and return an error immediately.
 pub struct SlowOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
+// The sender is kept alive in the static so the receiver never resolves; it is intentionally unused.
+static SLOW_KEYGEN_CHANNEL: LazyLock<(oneshot::Sender<()>, Mutex<Option<oneshot::Receiver<()>>>)> =
+    LazyLock::new(|| {
+        let (tx, rx) = oneshot::channel();
+        (tx, Mutex::new(Some(rx)))
+    });
+
 async fn slow_abort_bail<T>() -> anyhow::Result<T> {
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    anyhow::bail!("SlowOnlineDistributedKeyGen128 should have been aborted before completing")
+    let rx = SLOW_KEYGEN_CHANNEL.1.lock().unwrap().take();
+    match rx {
+        Some(rx) => {
+            let _ = rx.await;
+            anyhow::bail!(
+                "SlowOnlineDistributedKeyGen128 should have been aborted before completing"
+            )
+        }
+        None => anyhow::bail!(
+            "SlowOnlineDistributedKeyGen128: channel already consumed by a previous call"
+        ),
+    }
 }
 
 #[tonic::async_trait]
