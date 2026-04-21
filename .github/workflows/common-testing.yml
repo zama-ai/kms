@@ -197,7 +197,7 @@ jobs:
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          rust-components: llvm-tools-preview, llvm-tools
           rust-cache: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -251,35 +251,6 @@ jobs:
           mc alias set "${MINIO_ALIAS}" http://127.0.0.1:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
           mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
-
-      - name: Setup cargo dylint
-        run: |
-          cargo install cargo-dylint dylint-link --force
-
-      - name: clippy and rustfmt versions
-        run: |
-          cargo clippy -V && cargo fmt --version
-
-      - name: Formatting
-        run: cargo fmt --all -- --check
-
-      # - name: Linting default features
-      #   env:
-      #     CRATE_NAMES: ${{inputs.crate-names}}
-      #   run: cargo clippy --all-targets --package "${CRATE_NAMES}" -- -D warnings
-
-      # TODO(dp): Clippy is cheap; replace per-crate clippy with a single workspace-level
-      # `cargo clippy --workspace --all-targets --all-features` job.
-      - name: Linting All features
-        env:
-          CRATE_NAMES: ${{inputs.crate-names}}
-        run: |
-          echo "EXECUTING: cargo clippy --all-targets --all-features ${CRATE_NAMES} -- -D warnings"
-          # shellcheck disable=SC2086  # intentional word-splitting: PACKAGE_NAME is a flag list like `-p a -p b`
-          cargo clippy --all-targets --all-features ${CRATE_NAMES} -- -D warnings
-
-      - name: Linting dylint
-        run: cargo dylint --all
 
       # Download pre-generated default test material if available (for slow_tests jobs)
       - name: Download Test Material (Default)
