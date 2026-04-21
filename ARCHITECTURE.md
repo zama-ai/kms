@@ -3,7 +3,7 @@
 This document describes the architecture of the Zama KMS: a key-management
 service for fully homomorphic encryption facilitated by [TFHE-rs](https://github.com/zama-ai/tfhe-rs).
 The system supports key generation, CRS generation and decryption in both a single-party centralized service or as an `n`-party threshold MPC cluster.
-Input and output happens through gRPC and  is designed to be triggered and consumed by [FHEVM](https://github.com/zama-ai/fhevm).
+Input and output happen through gRPC and is designed to be triggered and consumed by [FHEVM](https://github.com/zama-ai/fhevm).
 
 The underlying MPC protocol is maliciously secure and robust; see
 [Noah's Ark (eprint 2023/815)](https://eprint.iacr.org/2023/815) for the formal
