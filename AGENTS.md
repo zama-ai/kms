@@ -43,6 +43,7 @@ Start by skimming these — they orient the rest of your work:
 ## Folders to ignore
 
 Do not read folders named `target`, `keys`, or `temp`; their contents are generated and not useful to you. Likewise, build artifacts under `backward-compatibility/target/` and LFS-tracked binaries under `backward-compatibility/data/*.bincode` are not human-readable and should not be opened.
+The only exception is if explcitiely asked, or just to check for existence of specific files as part of debugging. 
 
 ## Editing Rules
 - Modify the smallest amount of code necessary.
