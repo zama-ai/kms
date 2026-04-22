@@ -168,6 +168,11 @@ jobs:
     runs-on: ${{ matrix.runner-label }}
 
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -182,9 +187,6 @@ jobs:
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Setup HOME
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # ==========================================================================
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
@@ -195,8 +197,7 @@ jobs:
         run: |
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
-          # Pull LFS files after installation
+          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
           git lfs pull
 
       # ==========================================================================
