@@ -52,7 +52,7 @@ The only exception is if explcitiely asked, or just to check for existence of sp
 - Preserve existing comments unless they are incorrect.
 - Sanity-check comments adjacent to code you modify, and update them if they would otherwise become inaccurate.
 - Every new public (`pub`) item must have a rustdoc comment.
-- Do not remove working features or functions. Instead, notify your human about potentially dead code.
+- If removing working features or functions make sure to explicitely notify your human about this.
 - Always preserve backward compatibility. Any data persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](ARCHITECTURE.md).
 - When changing the KMS service API, or changing data returned by any gRPC call, also update the `core-client` crate and mark the change as breaking.
 
@@ -84,7 +84,7 @@ Branch names for new PRs must take the form:
 ```
 where `<type>` is the conventional-commit type, `<issue-number>` is the GitHub issue number, and `<issue description>` is a short description. Example: `tore/feat/423/zk-grpc-handles`.
 
-Commit messages use the form:
+Commit messages and PR titles must use the form:
 ```
 <type>(<component>): <short summary>
 ```
