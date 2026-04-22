@@ -757,7 +757,6 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    secrets: inherit
     if: >-
       needs.check-changes.outputs.changes-workspace-crates == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
@@ -813,6 +812,16 @@ jobs:
       app-cache-dir: 'workspace-crates-${{ matrix.group }}'
       skip-test-material: true
       runs-on: ${{ matrix.runs-on }}
+    secrets:
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}      
 
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
