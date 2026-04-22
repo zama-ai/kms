@@ -1,2 +1,2 @@
 Before doing anything read [this AGENTS file](AGENTS.md)! 
-It is absolutely essential you read that file in full! Do not ever start on a task without having read AGENTS.md, no matter how simpler the task might seem. 
+It is absolutely essential you read that file in full! Do not ever start on a task without having read AGENTS.md, no matter how simple the task might seem. 
