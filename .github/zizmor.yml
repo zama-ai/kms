@@ -10,6 +10,9 @@ rules:
       - performance-testing.yml:211
       - kind-testing.yml:260
       - kind-testing.yml:261
+      - performance-testing.yml:100
+      - performance-testing.yml:149
+      - performance-testing.yml:199
       - pr-preview-deploy.yml:100
       - pr-preview-deploy.yml:101
       - rolling-upgrade-testing.yml:126
