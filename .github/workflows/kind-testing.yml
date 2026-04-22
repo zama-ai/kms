@@ -149,7 +149,7 @@ jobs:
           - name: threshold
             deployment-type: threshold
             num-parties: 4
-            runner-label: "runs-on=${{ github.run_id }}/runner=96cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
+            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             # runner-label: ${{ needs.start-runner-threshold.outputs.label }}
             enable-tls: true
           - name: centralized
@@ -161,10 +161,10 @@ jobs:
       # - start-runner-cargo
       # - start-runner-threshold
       # - start-runner-centralized
-      - docker-build
-    if: |
-      always() && !cancelled() &&
-      (inputs.image_tag != '' || needs.docker-build.result == 'success')
+      # - docker-build
+    # if: |
+    #   always() && !cancelled() &&
+    #   (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
 
     steps:
@@ -221,11 +221,10 @@ jobs:
             echo "kubectl checksum does not match"
             exit 1
           fi
-          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-          chmod +x kubectl
-          mkdir -p ~/.local/bin
-          mv ./kubectl ~/.local/bin/kubectl
-          export PATH=$PATH:~/.local/bin
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 kubectl "$HOME/.local/bin/kubectl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           kubectl version --client
 
       - name: Install KIND
