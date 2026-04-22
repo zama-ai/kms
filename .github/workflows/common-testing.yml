@@ -46,7 +46,7 @@ on:
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
         # Injected verbatim into `cargo clippy` (and effectively into nextest
-        # via `args-tests`). (Formerly named `package-name`.)
+        # via `args-tests`).
         type: string
         required: true
       skip-test-material:
