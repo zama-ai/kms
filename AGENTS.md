@@ -95,7 +95,7 @@ Append `!` after `<type>` to flag a breaking change. Example: `feat!(grpc): chan
 When reviewing changes — whether a single commit or an entire branch — perform the following steps:
 
 - Verify every rule in this file is satisfied.
-- Validate that every item on the [pull-request template](https://github.com/zama-ai/kms/blob/main/.github/PULL_REQUEST_TEMPLATE.md) can be checked off. Alert your human of any changes that you cannot personally verify.
+- Validate that every item on the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) can be checked off. Alert your human of any changes that you cannot personally verify.
 - Check for code that is now dead and can be removed.
 - Check that variable names and comments are consistent with the surrounding code — identical semantic concepts should share names across the files touched.
 - For functions with changed signatures or logic, check whether sibling functions need matching changes. Examples: a change to `purge_crs_data` probably implies a change to `purge_key_data`; a change to a `*_threshold` function usually has a matching `*_central` / `*_centralized` function.
@@ -112,12 +112,4 @@ We have strict rules about dependencies, mostly for security reasons.
 - Do not add new dependencies without discussing with the team.
 - When a new dependency is added, document in `Cargo.toml` why it is needed and why it is considered trusted.
 
-To judge whether a dependency or a dependency update is trusted, consider the questions below. For the addition or update to count as trusted, the answer to most of these must be "no":
-
-- Has ownership changed significantly since the last update, or is the owner suspicious (e.g. a small group of individuals or a small company in a jurisdiction that raises concern)?
-- Is the crate not particularly popular?
-- Is there an unusual jump in package versions?
-- Is documentation lacking?
-- Is there no CI enabled on the project's repository?
-- Do the owners make no statements about security or responsible disclosure?
-- Is there a significant change in the crate's size?
+To judge whether a dependency or a dependency update is trusted, read the section "Dependency Update Questionnaire (only if deps changed or added)" in the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md).
