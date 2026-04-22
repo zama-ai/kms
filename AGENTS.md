@@ -59,7 +59,7 @@ The only exception is if explcitiely asked, or just to check for existence of sp
 ## Testing
 - If tests exist, update or add tests when changing behavior.
 - Never break existing tests intentionally.
-- Run tests before suggesting that work is complete. Specifically run tests that are not gated by `slow_tests` in the files you have modified, along with the unit tests by running `cargo test -F testing --lib`.
+- Run tests before suggesting that work is complete. Specifically run tests that are not gated by `slow_tests` in the files you have modified.
 - Every public (`pub`) item must have at least one positive ("sunshine") unit test.
 - Every public (`pub`) item should also have negative tests.
 - Changes to production code must not reduce test coverage.
