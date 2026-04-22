@@ -70,7 +70,7 @@ jobs:
               - 'core-client/src/**'
               - 'core-client/config/**'
               - 'core-client/tests-utils/**'
-              - 'core-client/tests-utils-cc/**'
+              - 'core-client/test-utils-cc/**'
               - 'observability/**'
               - 'core/thread-handles/**'
               - 'Cargo.toml'
@@ -110,8 +110,6 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-            tools:
-              - 'tools/**'
             docs:
               - 'docs/**'
             helm-chart:
