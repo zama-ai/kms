@@ -18,6 +18,8 @@ path = "src/main.rs"
 # all of `kms` to generate keys.
 # Core KMS dependencies
 kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
+# This shouldn't be needed but without it the wasm-build breaks because features.
+threshold-fhe = { workspace = true, features = ["testing"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

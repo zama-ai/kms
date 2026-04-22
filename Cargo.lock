@@ -3342,6 +3342,7 @@ dependencies = [
  "clap",
  "kms",
  "path-absolutize",
+ "threshold-fhe",
  "tokio",
  "tracing",
  "tracing-subscriber",
