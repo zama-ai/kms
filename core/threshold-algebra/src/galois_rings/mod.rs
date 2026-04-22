@@ -1,7 +1,13 @@
-use std::collections::HashMap;
-
 /// Map from (index, degree) to precomputed exceptional set powers.
-pub(crate) type ExceptionalSetMap<T> = HashMap<(usize, usize), Vec<T>>;
+#[cfg(any(
+    feature = "extension_degree_3",
+    feature = "extension_degree_4",
+    feature = "extension_degree_5",
+    feature = "extension_degree_6",
+    feature = "extension_degree_7",
+    feature = "extension_degree_8",
+))]
+pub(crate) type ExceptionalSetMap<T> = std::collections::HashMap<(usize, usize), Vec<T>>;
 
 pub mod common;
 #[cfg(feature = "extension_degree_3")]
