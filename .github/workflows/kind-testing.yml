@@ -161,10 +161,10 @@ jobs:
       # - start-runner-cargo
       # - start-runner-threshold
       # - start-runner-centralized
-      # - docker-build
-    # if: |
-    #   always() && !cancelled() &&
-    #   (inputs.image_tag != '' || needs.docker-build.result == 'success')
+      - docker-build
+    if: |
+      always() && !cancelled() &&
+      (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
 
     steps:
