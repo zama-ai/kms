@@ -61,16 +61,11 @@ The repository is a Cargo workspace. The members are declared in
 | `error-utils` | [core/error-utils/](core/error-utils/) | Shared error types and helpers |
 | `thread-handles` | [core/thread-handles/](core/thread-handles/) | Rayon thread-pool management |
 
-### Tools and test infrastructure
-
-- [core/test-utils/](core/test-utils/) — shared test fixtures.
-- [tools/kms-health-check/](tools/kms-health-check/) — gRPC health probe.
-- [tools/generate-test-material/](tools/generate-test-material/) — reproducible
-  crypto test vectors.
-- [backward-compatibility/](backward-compatibility/) — excluded from the main
-  workspace (see the comment in [Cargo.toml](Cargo.toml)); contains
-  per-version generator crates plus tests that load data from older KMS
-  releases and assert it still decodes.
+Auxiliary tools live under [tools/](tools/): `kms-health-check` is a gRPC
+health probe and `generate-test-material` produces reproducible crypto test
+vectors. Shared test fixtures are in [core/test-utils/](core/test-utils/).
+The [backward-compatibility/](backward-compatibility/) crate is a separate
+Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
 ## The service crate (`core/service`)
 
