@@ -18,7 +18,8 @@
 //! - Enable: `cargo nextest run --features threshold_tests`
 //! - This flag only gates code/tests; it does NOT generate key material.
 //! - For Default-param tests: pre-generated PRSS required in `test-material/default`
-//!   (run `make generate-test-material-default`); missing PRSS is a hard error.
+//!   (run `generate-test-material --profile secure --parties 4,10,13`);
+//!   missing PRSS is a hard error.
 //! - Context init/switch/reshare tests generate PRSS live via `new_prss_isolated`
 //!   and do NOT require pre-generated startup PRSS.
 //!
@@ -706,7 +707,8 @@ async fn setup_isolated_threshold_cli_test_default(
 /// Uses `ensure_default_prss=true` with `FheParameter::Default`.
 ///
 /// Requires pre-generated Default PRSS material in `test-material/default`
-/// (for example via `make generate-test-material-default`), otherwise setup fails fast.
+/// (for example via `generate-test-material --profile secure --parties 4,10,13`),
+/// otherwise setup fails fast.
 #[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
@@ -2829,7 +2831,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// Full generation test - threshold sequential preprocessing and keygen with Default params.
 ///
 /// Requires pre-generated material in the test-material/default directory
-/// (produced by `generate-test-material --features slow_tests -- default`):
+/// (produced by `generate-test-material --profile secure --parties 4,10,13`):
 /// - **PRSS**: loaded at server startup (`ensure_default_prss=true`); fast to generate but must exist before the test runs.
 /// - **Keygen preprocessing** (offline DKG phase): run live by this test; takes hours with Default params.
 ///

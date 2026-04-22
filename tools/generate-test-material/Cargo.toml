@@ -14,18 +14,16 @@ name = "generate-test-material"
 path = "src/main.rs"
 
 [dependencies]
+# TODO: once `vault` is its own crate and we have sorted out the `non-wasm` mess, this tool should not need to compile
+# all of `kms` to generate keys.
 # Core KMS dependencies
 kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
-kms-grpc = { path = "../../core/grpc" }
-threshold-fhe = { workspace = true, features = ["testing"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
 # CLI and configuration
 clap = { workspace = true, features = ["derive"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
@@ -34,12 +32,5 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # Error handling
 anyhow = { workspace = true }
 
-# File system operations
-tempfile = { workspace = true }
-
 # Path utilities
 path-absolutize = "3.0"
-
-[features]
-default = []
-slow_tests = ["kms/slow_tests"]

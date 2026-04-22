@@ -23,7 +23,8 @@ mod user_decryption_tests;
 //
 // Run isolated tests with: cargo test --lib --features insecure,testing <test_name>
 //
-// Note: Pre-generated material (`make generate-test-material-testing`) is optional
+// Note: Pre-generated material (`generate-test-material --profile insecure --parties 4,10`)
+// is optional
 // and speeds up test startup. PRSS is generated at runtime when `.with_prss()` is used.
 
 #[cfg(any(feature = "testing", feature = "insecure"))]

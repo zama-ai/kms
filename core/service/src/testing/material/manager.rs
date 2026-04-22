@@ -3,13 +3,11 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
+use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
-    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P,
-    DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
-    DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID,
-    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
-    TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
+    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
+    OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
@@ -137,12 +135,7 @@ impl TestMaterialManager {
             .ok_or_else(|| anyhow!("Source path must be configured for shared material mode"))?;
 
         // Determine subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            super::spec::MaterialType::Testing => "testing",
-            super::spec::MaterialType::Default => "default",
-        };
-
-        let material_path = source_path.join(material_subdir);
+        let material_path = source_path.join(material_subdir(spec.material_type));
 
         tracing::debug!(
             "Using shared test material for '{}' (type: {:?}) from: {}",
@@ -210,23 +203,21 @@ impl TestMaterialManager {
         };
 
         // Determine subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            MaterialType::Testing => "testing",
-            MaterialType::Default => "default",
-        };
-
-        let material_path = source_path.join(material_subdir);
+        let material_path = source_path.join(material_subdir(spec.material_type));
 
         if !material_path.exists() {
+            let generation_hint = match spec.material_type {
+                MaterialType::Testing => "generate-test-material --profile insecure --parties 4,10",
+                MaterialType::Default => {
+                    "generate-test-material --profile secure --parties 4,10,13"
+                }
+            };
             return Err(anyhow!(
                 "Material not found for {:?} at: {}\n\
-                 Run: make generate-test-material-{}",
+                 Run: {}",
                 spec.material_type,
                 material_path.display(),
-                match spec.material_type {
-                    MaterialType::Testing => "testing",
-                    MaterialType::Default => "all",
-                }
+                generation_hint
             ));
         }
 
@@ -286,12 +277,10 @@ impl TestMaterialManager {
     #[cfg(any(test, feature = "testing"))]
     async fn copy_material(&self, temp_dir: &TempDir, spec: &TestMaterialSpec) -> Result<()> {
         // Determine source subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            MaterialType::Testing => "testing",
-            MaterialType::Default => "default",
-        };
-
-        let source_base = self.source_path.as_ref().map(|p| p.join(material_subdir));
+        let source_base = self
+            .source_path
+            .as_ref()
+            .map(|p| p.join(material_subdir(spec.material_type)));
         let source_base_ref = source_base.as_deref();
         let dest_base = temp_dir.path();
 
@@ -742,19 +731,11 @@ impl TestMaterialManager {
                         TEST_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_TEST_ID.to_string(),
                     ],
-                    4 => vec![TEST_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![TEST_THRESHOLD_KEY_ID_10P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Testing material: {n}. Supported: 1 (centralized), 4, 10"
-                    ),
+                    n => vec![threshold_key_id_name(MaterialType::Testing, n)],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
-                    4 => vec![TEST_THRESHOLD_CRS_ID_4P.to_string()],
-                    10 => vec![TEST_THRESHOLD_CRS_ID_10P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Testing CRS: {n}. Supported: 1 (centralized), 4, 10"
-                    ),
+                    n => vec![threshold_crs_id_name(MaterialType::Testing, n)],
                 },
             },
             MaterialType::Default => KeyIds {
@@ -763,21 +744,11 @@ impl TestMaterialManager {
                         DEFAULT_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_DEFAULT_ID.to_string(),
                     ],
-                    4 => vec![DEFAULT_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![DEFAULT_THRESHOLD_KEY_ID_10P.to_string()],
-                    13 => vec![DEFAULT_THRESHOLD_KEY_ID_13P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Default material: {n}. Supported: 1 (centralized), 4, 10, 13"
-                    ),
+                    n => vec![threshold_key_id_name(MaterialType::Default, n)],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
-                    4 => vec![DEFAULT_THRESHOLD_CRS_ID_4P.to_string()],
-                    10 => vec![DEFAULT_THRESHOLD_CRS_ID_10P.to_string()],
-                    13 => vec![DEFAULT_THRESHOLD_CRS_ID_13P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Default CRS: {n}. Supported: 1 (centralized), 4, 10, 13"
-                    ),
+                    n => vec![threshold_crs_id_name(MaterialType::Default, n)],
                 },
             },
         }

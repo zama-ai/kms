@@ -155,7 +155,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 
 [features]
 default = ["non-wasm"]
-testing = ["dep:tempfile"]
+testing = ["dep:tempfile", "threshold-execution/testing"]
 non-wasm = [
     "kms-grpc/non-wasm",
     "dep:threshold-networking",

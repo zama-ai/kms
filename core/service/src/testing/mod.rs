@@ -39,9 +39,9 @@
 //!
 //! ## Test Material
 //!
-//! Test material is pre-generated using `make generate-test-material-testing` and stored
-//! in the workspace `test-material/` directory. Tests copy only the required material
-//! into isolated temporary directories.
+//! Test material is pre-generated using `generate-test-material --profile ... --parties ...`
+//! and stored in the workspace `test-material/` directory. Tests copy only the required
+//! material into isolated temporary directories.
 //!
 //! ## Test Environments
 //!
