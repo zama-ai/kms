@@ -154,6 +154,7 @@ impl S3Storage {
         Ok(())
     }
 
+    /// Deletes the object at the given key, if it exists. Does not fail if the object does not exist or if the deletion fails.
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -205,7 +206,7 @@ impl StorageReader for S3Storage {
         let key = &self.item_key(data_id, data_type);
 
         tracing::info!(
-            "Reading text from bucket {} under key {}",
+            "Reading bytes from bucket {} under key {}",
             &self.bucket,
             key
         );
@@ -391,7 +392,7 @@ impl Storage for S3Storage {
         }
         let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
+        tracing::info!("Storing bytes in bucket {} under key {}", &self.bucket, key);
 
         s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
 
