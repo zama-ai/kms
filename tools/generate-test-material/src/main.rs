@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use kms_lib::testing::material::{MaterialType, TestMaterialSpec, material_subdir};
+use kms_lib::testing::material::{MaterialType, material_subdir};
 use kms_lib::testing::utils::setup::generate_material_to_path;
 use kms_lib::vault::storage::StorageType;
 use path_absolutize::Absolutize;
@@ -66,12 +66,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate material for specific test specifications
-    Custom {
-        /// JSON file containing test material specifications
-        #[arg(short, long)]
-        spec_file: PathBuf,
-    },
     /// Validate existing test material
     Validate,
     /// Clean existing test material
@@ -111,9 +105,6 @@ async fn main() -> Result<()> {
         })?;
 
     match cli.command {
-        Some(Commands::Custom { spec_file }) => {
-            generate_custom_material(&output_dir, &spec_file, cli.force).await?;
-        }
         Some(Commands::Validate) => {
             validate_material(&output_dir).await?;
         }
@@ -179,66 +170,6 @@ async fn generate_profile_material(
         profile,
         profile_dir.display()
     );
-    Ok(())
-}
-
-async fn generate_custom_material(output_dir: &Path, spec_file: &Path, force: bool) -> Result<()> {
-    info!("Generating custom material from: {}", spec_file.display());
-
-    let spec_content = tokio::fs::read_to_string(spec_file)
-        .await
-        .with_context(|| format!("Failed to read spec file: {}", spec_file.display()))?;
-
-    let specs: Vec<TestMaterialSpec> = serde_json::from_str(&spec_content)
-        .with_context(|| format!("Failed to parse spec file: {}", spec_file.display()))?;
-
-    info!("Found {} test material specifications", specs.len());
-
-    for (i, spec) in specs.iter().enumerate() {
-        info!(
-            "Generating material for specification {} of {}",
-            i + 1,
-            specs.len()
-        );
-        generate_material_for_spec(output_dir, spec, force).await?;
-    }
-
-    info!("Custom material generated successfully");
-    Ok(())
-}
-
-async fn generate_material_for_spec(
-    output_dir: &Path,
-    spec: &TestMaterialSpec,
-    force: bool,
-) -> Result<()> {
-    info!("Generating material for spec: {:?}", spec);
-
-    let spec_dir = output_dir.join(format!(
-        "{:?}_{}_parties",
-        spec.material_type,
-        spec.party_count()
-    ));
-
-    if force && spec_dir.exists() {
-        tokio::fs::remove_dir_all(&spec_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to remove existing custom material directory: {}",
-                    spec_dir.display()
-                )
-            })?;
-    }
-
-    tokio::fs::create_dir_all(&spec_dir).await?;
-    let parties = if spec.is_threshold() {
-        vec![spec.party_count()]
-    } else {
-        Vec::new()
-    };
-    generate_material_to_path(spec.material_type, Some(&spec_dir), &parties).await?;
-
     Ok(())
 }
 
