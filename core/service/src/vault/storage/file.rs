@@ -59,33 +59,6 @@ impl FileStorage {
         })
     }
 
-    // Check if a path already exists and create it if not.
-    pub async fn setup_dirs(&self, url_path: &Path) -> anyhow::Result<()> {
-        if url_path.try_exists().is_ok_and(|res| res) {
-            // If the path exists, then trace a warning
-            tracing::warn!(
-                "The path {} already exists. Keeping the data without overwriting",
-                url_path
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("Could not convert path to string"))?
-            );
-            return Ok(());
-        }
-        // Create the directory
-        tokio::fs::create_dir_all(self.root_dir())
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    "Could not create directory {}: {}",
-                    self.root_dir().display(),
-                    e
-                );
-                e
-            })?;
-
-        Ok(())
-    }
-
     fn item_path(&self, data_id: &RequestId, data_type: &str) -> PathBuf {
         self.root_dir().join(data_type).join(data_id.to_string())
     }
@@ -184,7 +157,7 @@ impl StorageReader for FileStorage {
         let path = self.item_path(data_id, data_type);
         tokio::fs::read(&path).await.map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not read from path {}: {}",
+                "Could not load bytes from path {}: {}",
                 path.display(),
                 e
             ))
@@ -265,7 +238,7 @@ impl StorageReaderExt for FileStorage {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
         tokio::fs::read(&path).await.map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not read from path {}: {}",
+                "Could not load bytes from path {}: {}",
                 path.display(),
                 e
             ))
@@ -282,7 +255,6 @@ impl Storage for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path(data_id, data_type);
-        self.setup_dirs(&path).await?;
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The path {} already exists. Keeping the data without overwriting",
@@ -307,7 +279,6 @@ impl Storage for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path(data_id, data_type);
-        self.setup_dirs(&path).await?;
         if self.data_exists(data_id, data_type).await? {
             tracing::warn!(
                 "The path {} already exists. Keeping the data without overwriting",
@@ -337,7 +308,6 @@ impl StorageExt for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
-        self.setup_dirs(&path).await?;
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
@@ -371,7 +341,6 @@ impl StorageExt for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
-        self.setup_dirs(&path).await?;
         if self
             .data_exists_at_epoch(data_id, epoch_id, data_type)
             .await?
