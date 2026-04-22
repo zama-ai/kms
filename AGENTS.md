@@ -112,4 +112,4 @@ We have strict rules about dependencies, mostly for security reasons.
 - Do not add new dependencies without discussing with the team.
 - When a new dependency is added, document in `Cargo.toml` why it is needed and why it is considered trusted.
 
-To judge whether a dependency or a dependency update is trusted, read the section "Dependency Update Questionnaire (only if deps changed or added)" in the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md).
+To judge whether a dependency or a dependency update is trusted, read the section "Dependency Update Questionnaire (only if deps changed or added)" in the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) and evaluate the questions asked there to make a judgement.
