@@ -270,25 +270,23 @@ jobs:
           rm test-material-default.tar.gz
           ls -la ./test-material/
 
-      # Generate testing material (always needed, small and fast to generate)
-      # Must run from workspace root, not working-directory
-      - name: Generate Test Material (Testing)
-        if: ${{ ! inputs.skip-test-material }}
+      # Generate test material. Subcommand is `all` (testing + default) when
+      # the job uses slow_tests or explicitly requests default; otherwise
+      # `testing` only. Must run from workspace root, not working-directory.
+      - name: Generate Test Material
+        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
         working-directory: .
+        env:
+          GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
+          ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
-          echo "Generating testing material..."
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose testing"
-          cargo run -p generate-test-material -- --output ./test-material --verbose testing
-
-      # Generate default material when explicitly requested or for slow_tests,
-      # and only when not using pre-generated artifacts.
-      - name: Generate Test Material (Default)
-        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
-        working-directory: .
-        run: |
-          echo "Generating default test material..."
-          echo "EXECUTING: cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default"
-          cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
+          if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
+            SUBCOMMAND=all
+          else
+            SUBCOMMAND=testing
+          fi
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
+          cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
