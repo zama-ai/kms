@@ -237,6 +237,10 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
+      #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
+      #   centralized : central testing only (no threshold material)
       - name: Set matrix
         id: set-matrix
         run: |
@@ -320,7 +324,8 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
-  # Core client unit tests
+  # Core client unit tests. Integration filters below skip everything that
+  # consumes kms test material, so `skip-test-material: true` is safe.
   test-core-client-unit:
     name: main/test-core-client-unit
     # job permissions
@@ -337,6 +342,7 @@ jobs:
     with:
       working-directory: './core-client'
       crate-names: '-p kms-core-client'
+      skip-test-material: true
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
       # Also skip isolated_test_example which requires pre-generated test material
       # Must include features to compile test code that uses feature-gated functions
@@ -359,6 +365,7 @@ jobs:
   # - Changes to core/grpc/**
   # - Changes to workflow file
   ############################################################################
+  # kms-grpc tests don't consume kms test material.
   test-grpc:
     name: main/test-grpc
     # job permissions
@@ -376,6 +383,7 @@ jobs:
       working-directory: './core/grpc'
       args-tests: '--all-features'
       crate-names: '-p kms-grpc'
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -420,6 +428,21 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # per-entry specs instead of regenerating everything. Concrete needs:
+      #   entry 1 (`-F testing --lib`)
+      #     : 4P testing, aka "insecure"
+      #   entry 2 (`slow_tests ... default_user_decryption_threshold --skip nightly`)
+      #     : 4P testing + 4P default (aka 4P insecure/4P secure)
+      #       (all surviving cases pin DEFAULT_THRESHOLD_KEY_ID_4P)
+      #   entry 3 (`slow_tests ... threshold --skip default_user_decryption_threshold --skip nightly`)
+      #     : 4P + 10P testing + 4P default + 13P testing
+      #       (10P from 2 public_decryption cases;
+      #        13P via TEST_THRESHOLD_KEY_ID alias in misc_tests)
+      #   entry 4 (`slow_tests ... -- --skip threshold --skip nightly`)
+      #     : 4P testing + 4P default (centralized only)
+      #   schedule
+      #     : all (nightly runs 10P user_decryption + 13P default)
       - name: Set matrix
         id: set-matrix
         run: |
@@ -494,6 +517,7 @@ jobs:
 
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
+  # threshold-fhe tests don't consume kms test material.
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
     # job permissions
@@ -514,6 +538,7 @@ jobs:
       args-tests: '-F slow_tests --lib'
       crate-names: '-p threshold-fhe'
       nextest-test-threads: 4
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -529,6 +554,7 @@ jobs:
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
+  # threshold-fhe tests don't consume kms test material.
   test-core-threshold-main:
     name: main/test-core-threshold-main
     # job permissions
@@ -550,6 +576,7 @@ jobs:
       run-redis: true
       crate-names: '-p threshold-fhe'
       nextest-test-threads: 4
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -565,6 +592,7 @@ jobs:
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
+  # threshold-fhe tests don't consume kms test material.
   build-dependabot:
     name: main/build-dependabot
     # job permissions
@@ -582,6 +610,7 @@ jobs:
       working-directory: './core/threshold'
       args-tests: '--lib'
       crate-names: '-p threshold-fhe'
+      skip-test-material: true
     secrets: inherit
 
   ############################################################################
