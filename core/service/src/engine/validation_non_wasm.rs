@@ -240,6 +240,8 @@ fn unpack_user_decrypt_req(
         None => *DEFAULT_EPOCH_ID,
     };
 
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
