@@ -29,8 +29,6 @@
             "Bash(git push --force*)",
             "Bash(git push *--force*)",
             "Bash(git reset --hard*)",
-            "Bash(gps --force*)",
-            "Bash(gps *--force*)",
             "Edit(~/.bashrc)",
             "Edit(~/.zshrc)",
             "Edit(~/.ssh/**)",
