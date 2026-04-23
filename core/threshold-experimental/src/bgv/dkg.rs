@@ -286,6 +286,11 @@ mod tests {
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
+    // TODO(dp): this test runs a full-scale BGV DKG (N=65536) and takes very long
+    // It's only unlocked by the `slow_tests` feature but still likely too slow.
+    // Maybe rename to `nightly_test_dkg_with_offline` and `--skip nightly`
+    // it in PR runs, or add a dedicated `nightly_tests` sub-feature and
+    // gate this test on it?
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_with_offline() {
         let parties = 5;
