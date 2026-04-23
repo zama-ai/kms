@@ -1,129 +1,122 @@
-// DEPRECATED: Isolated equivalents in `misc_tests_isolated.rs`
-// - test_threshold_health_endpoint_availability → test_threshold_health_endpoint_availability_isolated
-// - test_threshold_close_after_drop → test_threshold_close_after_drop_isolated
-// - test_threshold_shutdown → test_threshold_shutdown_isolated
-// - test_ratelimiter → test_ratelimiter_isolated
-// - nightly_test_complete_session_notification → nightly_test_complete_session_notification_isolated
-// TODO: Remove after migration complete.
+//! Threshold misc tests.
+//!
+//! These tests use the consolidated testing module and run in isolated
+//! temporary directories with pre-generated cryptographic material.
 
-use crate::client::test_tools::{
-    await_server_ready, check_port_is_closed, get_health_client, get_status,
-};
+use crate::client::test_tools::{await_server_ready, check_port_is_closed};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
-use crate::consts::{
-    DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-    TEST_PARAM, TEST_THRESHOLD_KEY_ID,
-};
+use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::engine::threshold::service::RealThresholdKms;
-use crate::util::key_setup::test_tools::purge;
+use crate::testing::prelude::*;
+use crate::testing::utils::{get_health_client, get_status};
 use crate::vault::storage::file::FileStorage;
-cfg_if::cfg_if! {
-    if #[cfg(feature = "slow_tests")] {
-        use std::env;
-        use kms_grpc::kms::v1::{FheParameter, TypedCiphertext};
-        use crate::util::key_setup::max_threshold;
-        use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-        use crate::dummy_domain;
-        use crate::engine::base::derive_request_id;
-        use crate::util::rate_limiter::RateLimiterConfig;
-        use crate::util::key_setup::test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext};
-    }
-}
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-// use serial_test::serial;  // TEMP: round3 probe
+#[cfg(feature = "slow_tests")]
+use serial_test::serial;
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;
 
-/// Test that the health endpoint is available for the threshold service only *after* they have been initialized.
-/// Also check that shutdown of the servers triggers the health endpoint to stop serving as expected.
-/// This tests validates the availability of both the core service but also the internal service between the MPC parties.
-///
-/// The crux of the test is based on the fact that the MPC servers serve immediately but the core server only serves after
-/// the PRSS initialization has been completed.
-#[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_threshold_health_endpoint_availability() {
+/// Boots servers WITHOUT PRSS, sends decryption requests
+/// (verifies they are accepted but results fail), checks both core + MPC health,
+/// initializes PRSS via new_mpc_epoch, then shuts down and verifies NotServing.
+#[tokio::test]
+async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    // make sure the store does not contain any PRSS info
-    let epoch_id = *DEFAULT_EPOCH_ID;
-    purge(
-        None,
-        None,
-        &epoch_id.into(),
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
-    // DON'T setup PRSS in order to ensure the server is not ready yet
-    let (kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, false, None, None).await;
+    // Boot servers WITHOUT PRSS and without pre-generated PRSS material,
+    // so decryption requests fail (no epoch initialized). FHE keys are still
+    // needed so send_dec_reqs can encrypt ciphertexts for the request.
+    let spec = {
+        use crate::testing::material::KeyType;
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::FheKeys);
+        s
+    };
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("health_endpoint")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .force_isolated() // Must use isolated material: shared mode includes PRSS data
+        // which would cause the epoch to load, making decrypt succeed
+        // instead of returning NotFound.
+        .build()
+        .await?;
 
-    // Validate that the core server is not ready
+    // Create internal client before destructuring env
+    let pub_storage_prefixes =
+        &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let mut internal_client = env
+        .create_internal_client(&crate::consts::TEST_PARAM, None)
+        .await?;
+    let material_path = env.material_dir.path().to_path_buf();
+    let _material_dir = env.material_dir; // keep alive for temp dir cleanup
+    let clients = env.clients;
+    let servers = env.servers;
+
+    // Wait for all core servers to be ready before sending requests
+    let core_service_name = <CoreServiceEndpointServer<
+        RealThresholdKms<FileStorage, FileStorage>,
+    > as NamedService>::NAME;
+    for cur_handle in servers.values() {
+        await_server_ready(core_service_name, cur_handle.service_port).await;
+    }
+
+    // Validate that the send itself fails since there is no PRSS (no epoch initialized)
     let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         1,
-        &TEST_THRESHOLD_KEY_ID,
+        &TEST_THRESHOLD_KEY_ID_4P,
         None,
-        &kms_clients,
+        &clients,
         &mut internal_client,
         pub_storage_prefixes,
-        None,
+        Some(&material_path),
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
-    // Check the server will fail since it cannot find the PRSS info
     assert!(
         dec_res
             .iter()
             .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound)
     );
 
-    // Get health client for main server 1
-    let mut main_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+    // Check core service health for server 1
+    let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
         .await
         .expect("Failed to get core health client");
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
     let status = get_status(&mut main_health_client, core_service_name)
         .await
         .unwrap();
-    // Check that the main server is serving since it should be running
     assert_eq!(
         status,
         ServingStatus::Serving as i32,
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
-    // Get health client for main server 1
-    let mut threshold_health_client =
-        get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
-            .await
-            .expect("Failed to get threshold health client");
+
+    // Check MPC threshold health for server 1
+    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
+        .await
+        .expect("Failed to get threshold health client");
     let threshold_service_name = <GrpcServer as NamedService>::NAME;
     let status = get_status(&mut threshold_health_client, threshold_service_name)
         .await
         .unwrap();
-    // Threshold servers will start serving as soon as they boot
     assert_eq!(
         status,
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
 
-    // Now initialize and check that the server is serving
+    // Initialize PRSS via new_mpc_epoch on all parties
     let mut req_tasks = JoinSet::new();
-    for i in 1..=4 {
-        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+    for i in 1..=amount_parties as u32 {
+        let mut cur_client = clients.get(&i).unwrap().clone();
         req_tasks.spawn(async move {
-            let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
+            let req_id: RequestId = (*crate::consts::DEFAULT_EPOCH_ID).into();
             cur_client
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     epoch_id: Some(req_id.into()),
@@ -143,38 +136,49 @@ async fn test_threshold_health_endpoint_availability() {
             Err(e) => panic!("Init request failed: {e}"),
         }
     }
-    // Shutdown the servers and check that the health endpoint is no longer serving
-    for (_, server) in kms_servers {
-        // Shut down MPC servers triggers a shutdown of the core server
+
+    // Shutdown the servers and check that the threshold health endpoint is no longer serving
+    for (_, server) in servers {
         server.assert_shutdown().await;
     }
-    // The MPC servers should be closed at this point
     let status = get_status(&mut threshold_health_client, threshold_service_name).await;
     assert!(status.is_err());
+
+    Ok(())
 }
 
-/// Validate that dropping the server signal triggers the server to shut down
-#[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_threshold_close_after_drop() {
+/// Boots servers with PRSS, checks both core + MPC health,
+/// drops server 1, sleeps 300ms, verifies both services are unreachable.
+#[tokio::test]
+async fn test_threshold_close_after_drop() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, _kms_clients, _internal_client) =
-        threshold_handles(TEST_PARAM, 4, true, None, None).await;
 
-    // Get health client for main server 1
-    let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("close_after_drop")
+        .with_party_count(4)
+        .with_threshold(1)
+        .with_prss()
+        .force_isolated() // Prevent writing PRSS data to the shared test-material source
+        .build()
+        .await?;
+
+    let mut servers = env.servers;
+
+    // Get health client for core service on server 1
+    let mut core_health_client = get_health_client(servers.get(&1).unwrap().service_port)
         .await
         .expect("Failed to get core health client");
     let core_service_name = <CoreServiceEndpointServer<
         RealThresholdKms<FileStorage, FileStorage>,
     > as NamedService>::NAME;
-    // Get health client for main server 1
-    let mut threshold_health_client =
-        get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
-            .await
-            .expect("Failed to get threshold health client");
+
+    // Get health client for MPC threshold service on server 1
+    let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
+        .await
+        .expect("Failed to get threshold health client");
     let threshold_service_name = <GrpcServer as NamedService>::NAME;
-    // Check things are working
+
+    // Check both services are serving
     let status = get_status(&mut core_health_client, core_service_name)
         .await
         .unwrap();
@@ -191,12 +195,15 @@ async fn test_threshold_close_after_drop() {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
-    let res = kms_servers.remove(&1).unwrap();
-    // Trigger the shutdown
+
+    // Drop server 1 to trigger shutdown
+    let res = servers.remove(&1).unwrap();
     drop(res);
-    // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
+
+    // Sleep to allow completion of the shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-    // Check the server is no longer there
+
+    // Check both services are no longer reachable
     assert!(
         get_status(&mut core_health_client, core_service_name)
             .await
@@ -207,33 +214,54 @@ async fn test_threshold_close_after_drop() {
             .await
             .is_err()
     );
+
+    Ok(())
 }
 
-/// Validate that shutdown signals work
-#[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_threshold_shutdown() {
+/// Boots servers with PRSS, awaits ready, sends 3 decryption
+/// requests to keep server busy, shuts down server 1 via service_shutdown_tx,
+/// verifies NotServing status, then verifies ports are closed.
+#[tokio::test]
+async fn test_threshold_shutdown() -> Result<()> {
     let amount_parties = 4;
-    let storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let pub_storage_prefixes =
+        &crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("shutdown")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_prss()
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
+        .build()
+        .await?;
+
+    // Create internal client before destructuring env
+    let mut internal_client = env
+        .create_internal_client(&crate::consts::TEST_PARAM, None)
+        .await?;
+    let material_path = env.material_dir.path().to_path_buf();
+    let _material_dir = env.material_dir; // keep alive for temp dir cleanup
+    let clients = env.clients;
+    let mut servers = env.servers;
+
     // Ensure that the servers are ready
-    for cur_handle in kms_servers.values() {
-        let service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
-        await_server_ready(service_name, cur_handle.service_port).await;
-    }
-    let mpc_port = kms_servers.get(&1).unwrap().mpc_port.unwrap();
-    let service_port = kms_servers.get(&1).unwrap().service_port;
-    // Get health client for main server 1
-    let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
-        .await
-        .expect("Failed to get core health client");
     let core_service_name = <CoreServiceEndpointServer<
         RealThresholdKms<FileStorage, FileStorage>,
     > as NamedService>::NAME;
+    for cur_handle in servers.values() {
+        await_server_ready(core_service_name, cur_handle.service_port).await;
+    }
+
+    let mpc_port = servers.get(&1).unwrap().mpc_port.unwrap();
+    let service_port = servers.get(&1).unwrap().service_port;
+
+    // Get health clients for server 1
+    let mut core_health_client = get_health_client(service_port)
+        .await
+        .expect("Failed to get core health client");
     let status = get_status(&mut core_health_client, core_service_name)
         .await
         .unwrap();
@@ -242,7 +270,7 @@ async fn test_threshold_shutdown() {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
-    // Get health client for main server 1
+
     let mut threshold_health_client = get_health_client(mpc_port)
         .await
         .expect("Failed to get threshold health client");
@@ -255,116 +283,141 @@ async fn test_threshold_shutdown() {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
-    // Keep the server occupied so it won't shut down immidiately after dropping the handle
+
+    // Keep the server occupied so it won't shut down immediately after dropping the handle
     let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         3,
-        &TEST_THRESHOLD_KEY_ID,
+        &TEST_THRESHOLD_KEY_ID_4P,
         None,
-        &kms_clients,
+        &clients,
         &mut internal_client,
-        storage_prefixes,
-        None,
+        pub_storage_prefixes,
+        Some(&material_path),
     )
     .await;
     let dec_res = tasks.join_all().await;
     assert!(dec_res.iter().all(|res| res.is_ok()));
-    let server_handle = kms_servers.remove(&1).unwrap();
+
+    let server_handle = servers.remove(&1).unwrap();
     // Shut down the Core server (which also shuts down the MPC server)
     server_handle.service_shutdown_tx.send(()).unwrap();
-    // Get status and validate that it is not serving
-    // Observe that the server should already have set status to net serving while it is finishing the decryption requests.
-    // Sleep to give the server some time to set the health reporter to not serving. To fix we need to add shutdown that takes care of thread_group is finished before finishing
+
+    // Sleep to give the server some time to set the health reporter to not serving
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     let status = get_status(&mut core_health_client, core_service_name)
         .await
         .unwrap();
-    // Threshold servers will start serving as soon as they boot
-    // WARNING there is a risk this check fails if the server is shut down before was can complete the status check
     assert_eq!(
         status,
         ServingStatus::NotServing as i32,
         "Service is not in NOT SERVING status. Got status: {status}"
     );
+
     let shutdown_handle = server_handle.server.shutdown().unwrap();
     shutdown_handle.await.unwrap();
     check_port_is_closed(mpc_port).await;
     check_port_is_closed(service_port).await;
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
+/// Validates that the rate limiter correctly rejects requests when the bucket is exhausted.
+#[tokio::test]
 #[cfg(feature = "slow_tests")]
-// #[serial]  // TEMP: round3 probe
-async fn test_ratelimiter() {
-    let amount_parties = 4;
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
-    let domain = dummy_domain();
-    purge(
-        None,
-        None,
-        &req_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
+async fn test_ratelimiter() -> Result<()> {
+    use crate::consts::TEST_PARAM;
+    use crate::dummy_domain;
+    use crate::engine::base::derive_request_id;
+    use crate::util::rate_limiter::RateLimiterConfig;
+    use kms_grpc::kms::v1::FheParameter;
+
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,
         user_decrypt: 1,
-        crsgen: 100,
+        crsgen: 100, // Consume entire bucket on first request
         preproc: 1,
         keygen: 1,
         new_epoch: 1,
     };
-    let (_kms_servers, kms_clients, internal_client) = threshold_handles(
-        TEST_PARAM,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        None,
-    )
-    .await;
 
-    let req_id = derive_request_id("test rate limiter 1").unwrap();
-    let req = internal_client
-        .crs_gen_request(
-            &req_id,
-            None,
-            None,
-            Some(16),
-            Some(FheParameter::Test),
-            &domain,
-        )
-        .unwrap();
-    let mut cur_client = kms_clients.get(&1).unwrap().clone();
-    let res = cur_client.crs_gen(req).await;
-    // Check that first request is ok and accepted
-    assert!(res.is_ok());
-    // Try to do another request during preproc,
-    // the request should be rejected due to rate limiter.
-    // This should be done after the requests above start being
-    // processed in the kms.
-    let req_id_2 = derive_request_id("test rate limiter2").unwrap();
-    let req_2 = internal_client
-        .crs_gen_request(
-            &req_id_2,
-            None,
-            None,
-            Some(1),
-            Some(FheParameter::Test),
-            &domain,
-        )
-        .unwrap();
-    let res = cur_client.crs_gen(req_2).await;
-    assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("ratelimiter")
+        .with_party_count(4)
+        .with_threshold(1)
+        .with_prss() // Need PRSS for CRS gen
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
+        .with_rate_limiter(rate_limiter_conf)
+        .build()
+        .await?;
+
+    let domain = dummy_domain();
+
+    // Create internal client using the helper method
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+
+    // First request should succeed
+    let req_id_1 = derive_request_id("test_ratelimiter_1")?;
+    let req = internal_client.crs_gen_request(
+        &req_id_1,
+        None,
+        None,
+        Some(16),
+        Some(FheParameter::Test),
+        &domain,
+    )?;
+
+    let mut client = env.clients.get(&1).expect("Client 1 should exist").clone();
+    let res = client.crs_gen(req).await;
+    assert!(res.is_ok(), "First CRS gen request should succeed");
+
+    // Second request should be rejected due to rate limiter
+    let req_id_2 = derive_request_id("test_ratelimiter_2")?;
+    let req_2 = internal_client.crs_gen_request(
+        &req_id_2,
+        None,
+        None,
+        Some(1),
+        Some(FheParameter::Test),
+        &domain,
+    )?;
+    let res_2 = client.crs_gen(req_2).await;
+
+    assert!(res_2.is_err(), "Second CRS gen request should be rejected");
+    assert_eq!(
+        res_2.unwrap_err().code(),
+        tonic::Code::ResourceExhausted,
+        "Should get ResourceExhausted error from rate limiter"
+    );
+
+    Ok(())
 }
 
-/// Validates the fix that ensures that a party is notified if it starts a session the others consider completed.
+/// Validates the fix that ensures that a party is notified
+/// if it starts a session the others consider completed.
+///
+/// The test:
+/// 1. Sets up 4 threshold parties with PRSS
+/// 2. Encrypts messages using stored keys
+/// 3. Sends decrypt requests to all parties except party 3 (simulating a skipped party)
+/// 4. Verifies the other 3 parties complete successfully
+/// 5. Waits for session timeout, then sends the request to party 3
+/// 6. Verifies party 3 gets an Internal error (session already completed by others)
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-// #[serial]  // TEMP: round3 probe
-async fn nightly_test_complete_session_notification() {
+#[serial]
+async fn nightly_test_complete_session_notification() -> Result<()> {
+    use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
+    use crate::dummy_domain;
+    use crate::engine::base::derive_request_id;
+    use crate::util::key_setup::max_threshold;
+    use crate::util::key_setup::test_tools::{
+        EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
+    };
+    use kms_grpc::kms::v1::TypedCiphertext;
+    use std::env;
+    use tokio::task::JoinSet;
+
     let amount_parties = 4;
     let key_id = &TEST_THRESHOLD_KEY_ID_4P;
     let enc_config = EncryptionConfig {
@@ -393,15 +446,23 @@ async fn nightly_test_complete_session_notification() {
         );
     }
 
-    let (kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    assert_eq!(kms_clients.len(), kms_servers.len());
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("complete_session_notification")
+        .with_party_count(amount_parties)
+        .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
+        .with_prss()
+        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
+        .build()
+        .await?;
+
+    let mut internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+
     let mut msgs = Vec::new();
     let mut cts = Vec::new();
     for i in 0_usize..msg_amount {
         let msg = TestingPlaintext::U64(i as u64);
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-            None,
+            Some(env.material_dir.path()),
             msg,
             key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
@@ -419,14 +480,13 @@ async fn nightly_test_complete_session_notification() {
         cts.push(ctt);
         msgs.push(msg);
     }
+
     for j in 1..=parallel_reqs {
         // make parallel requests by calling [decrypt] in a thread
         let mut req_tasks = JoinSet::new();
 
-        // Make it unique wrt key_id as well do be sure there's no clash when running
+        // Make it unique wrt key_id as well to be sure there's no clash when running
         // the dec test with multiple keys.
-        // Also, make it depend on the messages because we may use the same function
-        // to decrypt multiple messages.
         let request_id = derive_request_id(&format!("TEST_COMPLETE_SESSION{j}")).unwrap();
 
         let req = internal_client
@@ -441,14 +501,13 @@ async fn nightly_test_complete_session_notification() {
             )
             .unwrap();
 
-        // Either send the request, or skip the party if it's in
-        // party_ids_to_skip
+        // Either send the request, or skip the party if it's in party_ids_to_skip
         let party_ids_to_skip = [3];
-        let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
+        let kms_servers_keys: Vec<u32> = env.servers.keys().copied().collect();
         for i in kms_servers_keys.iter() {
             if !party_ids_to_skip.contains(&(*i as usize)) {
                 let req_clone = req.clone();
-                let mut cur_client = kms_clients.get(i).unwrap().clone();
+                let mut cur_client = env.clients.get(i).unwrap().clone();
                 req_tasks.spawn(async move {
                     cur_client
                         .public_decrypt(tonic::Request::new(req_clone))
@@ -463,16 +522,17 @@ async fn nightly_test_complete_session_notification() {
         }
         assert_eq!(
             req_response_vec.len(),
-            kms_clients.len() - party_ids_to_skip.len()
+            env.clients.len() - party_ids_to_skip.len()
         );
-        println!("Reqests received by server");
+        println!("Requests received by server");
+
         // get all responses
         let mut resp_tasks = JoinSet::new();
         for i in kms_servers_keys.iter() {
             if party_ids_to_skip.contains(&(*i as usize)) {
                 continue;
             }
-            let mut cur_client = kms_clients.get(i).unwrap().clone();
+            let mut cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
                 let mut response = cur_client
@@ -481,7 +541,6 @@ async fn nightly_test_complete_session_notification() {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     response = cur_client
                         .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
@@ -518,12 +577,13 @@ async fn nightly_test_complete_session_notification() {
             crate::client::tests::common::assert_plaintext(&msgs[i], &received_plaintexts[i]);
         }
 
-        // Now decrypt with the party that skipped the session. Ensure we sleep longer than the update interval s.t. the active session gets processed
+        // Now decrypt with the party that skipped the session.
+        // Ensure we sleep longer than the update interval s.t. the active session gets processed
         tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 4)).await;
         println!("Starting decryption for the party that skipped the session");
         for i in kms_servers_keys.iter() {
             if party_ids_to_skip.contains(&(*i as usize)) {
-                let mut cur_client = kms_clients.get(i).unwrap().clone();
+                let mut cur_client = env.clients.get(i).unwrap().clone();
                 let req_clone = req.clone();
                 req_tasks.spawn(async move {
                     cur_client
@@ -538,13 +598,14 @@ async fn nightly_test_complete_session_notification() {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), party_ids_to_skip.len());
+
         // get all responses
         let mut resp_tasks = JoinSet::new();
         for i in kms_servers_keys.iter() {
             if !party_ids_to_skip.contains(&(*i as usize)) {
                 continue;
             }
-            let mut cur_client = kms_clients.get(i).unwrap().clone();
+            let mut cur_client = env.clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
                 let mut response = cur_client
@@ -553,7 +614,6 @@ async fn nightly_test_complete_session_notification() {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     response = cur_client
                         .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
@@ -564,11 +624,12 @@ async fn nightly_test_complete_session_notification() {
             });
         }
 
-        // let mut resp_response_vec = Vec::new();
         while let Some(resp) = resp_tasks.join_next().await {
             // Check for an internal failure since the other servers have already completed the session
             // The test will fail if the session basically stalls instead of aborting
             assert_eq!(resp.unwrap().1, tonic::Code::Internal); // TODO in theory Aborted should be returned but it is a mess to propagate this through the threshold library
         }
     }
+
+    Ok(())
 }
