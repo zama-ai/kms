@@ -14,4 +14,3 @@ mod public_decryption_tests;
 #[cfg(any(feature = "testing", feature = "insecure"))]
 mod restore_from_backup_tests;
 mod user_decryption_tests;
-

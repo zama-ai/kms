@@ -38,25 +38,25 @@ cfg_if::cfg_if! {
 use crate::client::tests::common::compressed_keygen_config;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::{TIME_TO_SLEEP_MS, decompression_keygen_config};
+#[cfg(feature = "insecure")]
+use crate::client::tests::threshold::common::threshold_insecure_key_gen;
+#[cfg(feature = "slow_tests")]
+use crate::client::tests::threshold::common::threshold_key_gen_secure;
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::consts::TEST_PARAM;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 #[cfg(feature = "slow_tests")]
+use crate::testing::helpers::domain_to_msg;
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::material::TestMaterialSpec;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::setup::threshold::ThresholdTestEnv;
+#[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::common::threshold_insecure_key_gen;
-#[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::common::threshold_key_gen_secure;
-#[cfg(any(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::setup::threshold::ThresholdTestEnv;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::material::TestMaterialSpec;
-#[cfg(feature = "slow_tests")]
-use crate::testing::helpers::domain_to_msg;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(feature = "slow_tests")]
@@ -1348,8 +1348,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
     let key_id = derive_request_id("test_insecure_dkg")?;
 
     // Generate key using insecure mode
-    let responses =
-        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test).await?;
+    let responses = threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
@@ -2054,8 +2053,11 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
 
     // Step 4: Retrieve the decompression key from public storage (party 1's storage)
     let pub_prefix = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0];
-    let pub_storage =
-        FileStorage::new(Some(&material_path), StorageType::PUB, pub_prefix.as_deref())?;
+    let pub_storage = FileStorage::new(
+        Some(&material_path),
+        StorageType::PUB,
+        pub_prefix.as_deref(),
+    )?;
     let decompression_key = internal_client
         .retrieve_decompression_key(&keygen_result_3.unwrap(), &pub_storage)
         .await?
