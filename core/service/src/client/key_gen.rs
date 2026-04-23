@@ -172,7 +172,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<(ServerKey, CompactPublicKey)> {
         let req_id = parse_optional_grpc_request_id(
@@ -257,8 +257,7 @@ impl Client {
             key_id,
             server_key_digest,
             public_key_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
@@ -278,7 +277,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
@@ -345,8 +344,7 @@ impl Client {
             preproc_id,
             key_id,
             compressed_keyset_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;

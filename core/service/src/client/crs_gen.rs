@@ -73,7 +73,7 @@ impl Client {
         request_id: &RequestId,
         res_storage: Vec<(CrsGenResult, S)>,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
@@ -129,8 +129,7 @@ impl Client {
                     request_id,
                     max_num_bits,
                     actual_digest.clone(),
-                    // TODO: reenable for RFC005
-                    // extra_data.clone(),
+                    extra_data.clone(),
                 ),
                 domain,
                 &result.external_signature,
@@ -199,7 +198,7 @@ impl Client {
         &self,
         crs_gen_result: &CrsGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<CompactPkeCrs>> {
         let request_id = parse_optional_grpc_request_id(
@@ -226,8 +225,7 @@ impl Client {
                     &request_id,
                     max_num_bits,
                     actual_digest.clone(),
-                    // TODO: reenable for RFC005
-                    // extra_data.clone(),
+                    extra_data.clone(),
                 ),
                 domain,
                 &crs_gen_result.external_signature,
