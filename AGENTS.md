@@ -14,7 +14,7 @@ Start by skimming these — they orient the rest of your work:
 - [TESTING.md](./ai-docs/TESTING.md) - rules and guidelines for managing tests.
 - [GIT.md](./ai-docs/GIT.md) - rules and guidelines for using Git.
 - [REVIEW.md](./ai-docs/REVIEW.md) - rules and guidelines for how to review your work, or an entire branch/pull request
-- [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md) - rules and guidelines for how to review your work, or an entire branch/pull request.
+- [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md) - rules and guidelines for adding or updating dependencies.
 
 ## General Principles
 
@@ -23,8 +23,8 @@ Start by skimming these — they orient the rest of your work:
 - Always explain major changes before implementing them.
 - When uncertain about requirements, ask clarifying questions. Do not guess.
 - If you make changes that affect the architecture or protocol flows, alert your human that a parallel PR must be opened in the tech-spec repo documenting these changes.
-- Do not introduce new dependencies without explicit confirmation by your human. See [Dependencies](#dependencies).
-- Dependency updates must be handled in a separate PR that contains no code changes beyond what is strictly necessary to absorb the update. See [Dependencies](#dependencies).
+- Do not introduce new dependencies without explicit confirmation by your human. See [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md).
+- Dependency updates must be handled in a separate PR that contains no code changes beyond what is strictly necessary to absorb the update. See [DEPENDENCIES.md](./ai-docs/DEPENDENCIES.md).
 - Error handling:
     - Validate potential errors (e.g. malformed data) as early as possible; do not defer checks.
     - Errors caused by bad input or adversarial behavior must not panic. Log them with enough detail that the log line alone identifies where and why the error occurred.
@@ -39,8 +39,8 @@ Start by skimming these — they orient the rest of your work:
 - For gRPC endpoints, any modification, removal, or data-format change of existing fields is a breaking change. You MUST alert your human so that infra and downstream teams can be notified and tracking issues opened.
 - Always ensure your branch is up to date with `main` before making changes.
 - Do NOT force-push after your PR has received an initial human review.
-- When finishing any task, update all affected documentation — function doc comments, markdown files, deployment configs, and the relevant sections of [ARCHITECTURE.md](ARCHITECTURE.md).
-- Always review your changes — see [Review](#review).
+- When finishing any task, update all affected documentation — function doc comments, markdown files, deployment configs, and the relevant sections of [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md).
+- Always review your changes — see [REVIEW.md](./ai-docs/REVIEW.md).
 - If you find errors or incorrect information in any documentation or markdown file you read in this project, notify your human.
 
 
@@ -57,7 +57,7 @@ The only exception is if explcitiely asked, or just to check for existence of sp
 - Sanity-check comments adjacent to code you modify, and update them if they would otherwise become inaccurate.
 - Every new public (`pub`) item must have a rustdoc comment.
 - If removing working features or functions make sure to explicitely notify your human about this.
-- Always preserve backward compatibility. Any data persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](ARCHITECTURE.md).
+- Always preserve backward compatibility. Any data persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md).
 - When changing the KMS service API, or changing data returned by any gRPC call, also update the `core-client` crate and mark the change as breaking.
 
 ## Architecture
