@@ -1022,9 +1022,9 @@ pub(crate) mod tests {
         dummy_domain,
         engine::{
             base::{
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_signature_preprocessing,
-                compute_info_standard_keygen, compute_public_decryption_message,
-                safe_serialize_hash_element_versioned,
+                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_pt_signature,
+                compute_external_signature_preprocessing, compute_info_standard_keygen,
+                compute_public_decryption_message, safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
