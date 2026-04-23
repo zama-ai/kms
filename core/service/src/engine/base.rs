@@ -1789,6 +1789,205 @@ pub(crate) mod tests {
         );
     }
 
+    /// Asserts that the EIP-712 signature produced for a key-gen result is bound to the
+    /// `extra_data` that was supplied at signing time: verifying the same signature with any
+    /// other `extra_data` must *not* recover the signer's address.
+    ///
+    /// The signature is produced via the production [`KeygenVerification::new_standard`] SolStruct
+    /// used by `compute_info_standard_keygen`, so this directly exercises the bytes that go into
+    /// the hash. Synthetic digests are used so the test does not pay the cost of FHE keygen.
+    #[test]
+    fn test_keygen_signature_binds_extra_data() {
+        use crate::cryptography::signatures::compute_eip712_signature;
+
+        let mut rng = AesRng::seed_from_u64(321);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = pk.address();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let domain = dummy_domain();
+        let server_key_digest = vec![0xAAu8; 32];
+        let public_key_digest = vec![0xBBu8; 32];
+        let extra_data = vec![0x01u8, 0x02, 0x03, 0x04];
+
+        let signed_struct = KeygenVerification::new_standard(
+            &prep_id,
+            &key_id,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
+            extra_data.clone(),
+        );
+        let sig = compute_eip712_signature(&sk, &signed_struct, &domain).unwrap();
+
+        // Happy path — same extra_data at verification recovers the signer.
+        assert_eq!(
+            recover_address_from_ext_signature(&signed_struct, &domain, &sig).unwrap(),
+            actual_address,
+            "verification with the original extra_data must recover the signer's address"
+        );
+
+        // Flipping a single byte must break verification.
+        let mut tampered = extra_data.clone();
+        tampered[0] ^= 0xFF;
+        let bad_flipped = KeygenVerification::new_standard(
+            &prep_id,
+            &key_id,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
+            tampered,
+        );
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_flipped, &domain, &sig).unwrap(),
+            actual_address,
+            "flipping a byte in extra_data must NOT recover the signer's address"
+        );
+
+        // Appending a byte (same prefix, different length) must also break verification.
+        let longer = [extra_data.as_slice(), &[0xEE]].concat();
+        let bad_longer = KeygenVerification::new_standard(
+            &prep_id,
+            &key_id,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
+            longer,
+        );
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_longer, &domain, &sig).unwrap(),
+            actual_address,
+            "appending to extra_data must NOT recover the signer's address"
+        );
+
+        // Using empty extra_data when signer used non-empty must also break verification.
+        let bad_empty = KeygenVerification::new_standard(
+            &prep_id,
+            &key_id,
+            server_key_digest,
+            public_key_digest,
+            vec![],
+        );
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_empty, &domain, &sig).unwrap(),
+            actual_address,
+            "empty extra_data at verification must NOT recover when signer used non-empty"
+        );
+    }
+
+    /// Asserts that the EIP-712 signature produced for a CRS-gen result is bound to the
+    /// `extra_data` that was supplied at signing time: verifying the same signature with any
+    /// other `extra_data` must *not* recover the signer's address.
+    #[test]
+    fn test_crsgen_signature_binds_extra_data() {
+        use crate::cryptography::signatures::compute_eip712_signature;
+
+        let mut rng = AesRng::seed_from_u64(654);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = pk.address();
+        let crs_id = RequestId::new_random(&mut rng);
+        let domain = dummy_domain();
+        let max_num_bits = 64usize;
+        let crs_digest = vec![0xCCu8; 32];
+        let extra_data = vec![0x10u8, 0x20, 0x30];
+
+        let signed_struct =
+            CrsgenVerification::new(&crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
+        let sig = compute_eip712_signature(&sk, &signed_struct, &domain).unwrap();
+
+        // Happy path.
+        assert_eq!(
+            recover_address_from_ext_signature(&signed_struct, &domain, &sig).unwrap(),
+            actual_address,
+            "verification with the original extra_data must recover the signer's address"
+        );
+
+        // Flipping a byte in extra_data must break verification.
+        let mut tampered = extra_data.clone();
+        tampered[1] ^= 0x5A;
+        let bad_flipped =
+            CrsgenVerification::new(&crs_id, max_num_bits, crs_digest.clone(), tampered);
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_flipped, &domain, &sig).unwrap(),
+            actual_address,
+            "flipping a byte in extra_data must NOT recover the signer's address"
+        );
+
+        // Truncating extra_data must break verification.
+        let shorter = extra_data[..extra_data.len() - 1].to_vec();
+        let bad_shorter =
+            CrsgenVerification::new(&crs_id, max_num_bits, crs_digest.clone(), shorter);
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_shorter, &domain, &sig).unwrap(),
+            actual_address,
+            "truncating extra_data must NOT recover the signer's address"
+        );
+
+        // Empty extra_data at verification when signer used non-empty must also fail.
+        let bad_empty = CrsgenVerification::new(&crs_id, max_num_bits, crs_digest, vec![]);
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_empty, &domain, &sig).unwrap(),
+            actual_address,
+            "empty extra_data at verification must NOT recover when signer used non-empty"
+        );
+    }
+
+    /// Asserts that the EIP-712 signature produced by the production
+    /// [`compute_external_pt_signature`] helper (public decryption) is bound to the `extra_data`
+    /// that was supplied at signing time: rebuilding the message with any other `extra_data` must
+    /// *not* recover the signer's address.
+    #[test]
+    fn test_public_decrypt_signature_binds_extra_data() {
+        use super::compute_external_pt_signature;
+
+        let mut rng = AesRng::seed_from_u64(987);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = pk.address();
+        let domain = dummy_domain();
+
+        let handles = vec![vec![0xAAu8; 32], vec![0xBBu8; 32]];
+        let pts = vec![
+            TypedPlaintext::from_u16(16),
+            TypedPlaintext::from_bool(true),
+        ];
+        let extra_data = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+
+        let sig = compute_external_pt_signature(&sk, &handles, &pts, &extra_data, &domain).unwrap();
+
+        // Happy path — same extra_data at verification recovers the signer.
+        let signed_message = compute_public_decryption_message(&handles, &pts, &extra_data)
+            .expect("message computation should succeed");
+        assert_eq!(
+            recover_address_from_ext_signature(&signed_message, &domain, &sig).unwrap(),
+            actual_address,
+            "verification with the original extra_data must recover the signer's address"
+        );
+
+        // Flipping a byte must break verification.
+        let mut tampered = extra_data.clone();
+        tampered[2] ^= 0x5A;
+        let bad_flipped = compute_public_decryption_message(&handles, &pts, &tampered).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_flipped, &domain, &sig).unwrap(),
+            actual_address,
+            "flipping a byte in extra_data must NOT recover the signer's address"
+        );
+
+        // Empty extra_data at verification when signer used non-empty must fail.
+        let bad_empty = compute_public_decryption_message(&handles, &pts, &[]).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_empty, &domain, &sig).unwrap(),
+            actual_address,
+            "empty extra_data at verification must NOT recover when signer used non-empty"
+        );
+
+        // Appending to extra_data must break verification.
+        let longer = [extra_data.as_slice(), &[0x01u8]].concat();
+        let bad_longer = compute_public_decryption_message(&handles, &pts, &longer).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_longer, &domain, &sig).unwrap(),
+            actual_address,
+            "appending to extra_data must NOT recover the signer's address"
+        );
+    }
+
     #[test]
     fn test_compute_external_signature_preproc() {
         let mut rng = AesRng::seed_from_u64(123);
