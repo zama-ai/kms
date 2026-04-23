@@ -8,16 +8,16 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
-  contents: read
-  actions: read
+  contents: read # Required to checkout repository code
+  actions: read # Required to read workflow run information
 
 jobs:
   rust-lint:
     name: rust-lint/workspace
     permissions:
-      contents: read
-      actions: read
-      id-token: write
+      contents: read # Required to checkout repository code
+      actions: read # Required to read workflow run information
+      id-token: write # Required for OIDC token generation
     runs-on: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
     steps:
       - name: Checkout Project
