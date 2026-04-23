@@ -131,6 +131,7 @@ impl Client {
         &self,
         to_context_id: &ContextId,
         to_epoch_id: &EpochId,
+        to_extra_data: &[u8],
         previous_epoch: Option<PreviousEpochInfo>,
         domain: Option<&Eip712Domain>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
@@ -139,6 +140,7 @@ impl Client {
             epoch_id: Some((*to_epoch_id).into()),
             previous_epoch,
             domain: domain.map(alloy_to_protobuf_domain).transpose()?,
+            extra_data: to_extra_data.to_vec(),
         })
     }
 

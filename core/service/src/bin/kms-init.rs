@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 epoch_id: Some(req_id.clone()),
                 context_id: None,
                 previous_epoch: None,
+                extra_data: Vec::new(),
                 // WARNING: domain is set to None here, as this CLI currently only supports
                 // initializing the KMS for the first epoch.
                 domain: None,

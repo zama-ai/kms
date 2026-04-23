@@ -818,6 +818,10 @@ pub struct NewEpochParameters {
     #[clap(long)]
     pub new_context_id: ContextId,
 
+    /// Extra data (hex-encoded) to include in the request for creating the new epoch.
+    #[clap(long)]
+    pub extra_data: String,
+
     /// Optional parameters for resharing keys from a previous epoch in the new epoch.
     /// Format is:
     ///

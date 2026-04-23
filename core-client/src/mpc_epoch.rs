@@ -89,8 +89,6 @@ impl PreviousEpochParameters {
             epoch_id: Some(self.epoch_id.into()),
             keys_info,
             crs_info,
-            extra_data: hex::decode(&self.extra_data)
-                .map_err(|e| anyhow::anyhow!("Could not parse extra_data: {e}"))?,
         };
 
         println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
@@ -132,6 +130,8 @@ pub(crate) async fn do_new_epoch(
     let request = internal_client.new_epoch_request(
         &new_context_id,
         &new_epoch_id,
+        &hex::decode(&new_epoch_params.extra_data)
+            .map_err(|e| anyhow::anyhow!("Could not decode extra_data: {:?}", e))?,
         previous_epoch_grpc.clone(),
         domain.as_ref(),
     )?;
@@ -317,10 +317,6 @@ pub(crate) async fn do_new_epoch(
                     })?
                     .external_signature
                     .clone();
-                let extra_data = previous_epoch_grpc
-                    .as_ref()
-                    .map(|e| e.extra_data.clone())
-                    .ok_or_else(|| anyhow::anyhow!("No extra data included"))?;
                 check_standard_keyset_ext_signature(
                     &public_key,
                     &server_key,
@@ -328,7 +324,7 @@ pub(crate) async fn do_new_epoch(
                     &key_id,
                     &signature,
                     &dummy_domain(),
-                    extra_data,
+                    request.extra_data.clone(),
                     kms_addrs,
                 )?;
             }

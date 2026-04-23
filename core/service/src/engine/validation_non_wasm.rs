@@ -932,6 +932,7 @@ pub(crate) struct ResharingParams {
 pub(crate) struct VerifiedNewMpcEpochRequest {
     pub context_id: ContextId,
     pub epoch_id: EpochId,
+    pub extra_data: Vec<u8>,
     pub resharing: Option<ResharingParams>,
 }
 
@@ -955,6 +956,8 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     };
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     let resharing = match req.previous_epoch {
         Some(previous_epoch) => {
             let signing_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
@@ -968,6 +971,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     Ok(VerifiedNewMpcEpochRequest {
         context_id,
         epoch_id,
+        extra_data,
         resharing,
     })
 }

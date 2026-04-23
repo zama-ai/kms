@@ -80,7 +80,7 @@ use crate::{
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
         traits::EpochManager,
-        utils::{MetricedError, sanity_check_extra_data},
+        utils::MetricedError,
         validation::{
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
             parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
@@ -139,8 +139,6 @@ struct VerifiedPreviousEpochInfo {
     pub context_id: ContextId,
     /// epochId we reshare the shares from.
     pub epoch_id: EpochId,
-    /// The extra data to use in the new signatures on key and CRS material.
-    pub extra_data: Vec<u8>,
     pub keys_info: Vec<VerifiedKeyInfo>,
     pub crs_info: Vec<VerifiedCrsInfo>,
 }
@@ -165,8 +163,6 @@ fn verify_epoch_info(
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&previous_epoch.epoch_id, RequestIdParsingErr::Epoch)
             .map_err(make_metriced_err)?;
-    let extra_data = previous_epoch.extra_data.clone();
-    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
 
     let keys_info = previous_epoch
         .keys_info
@@ -236,7 +232,6 @@ fn verify_epoch_info(
         epoch_id,
         keys_info,
         crs_info,
-        extra_data,
     })
 }
 
@@ -606,6 +601,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
         verified_materials: Vec<VerifiedPublicMaterial>,
         new_private_keysets: Vec<PrivateKeySet<4>>,
@@ -634,7 +630,7 @@ impl<
                         &key_info.key_id,
                         &fhe_pubkeys,
                         eip712_domain,
-                        verified_previous_epoch.extra_data.clone(),
+                        new_extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -676,7 +672,7 @@ impl<
                         &key_info.key_id,
                         &compressed_keyset,
                         eip712_domain,
-                        verified_previous_epoch.extra_data.clone(),
+                        new_extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -729,7 +725,7 @@ impl<
                 &crs_info.crs_id,
                 &crs,
                 eip712_domain,
-                verified_previous_epoch.extra_data.clone(),
+                new_extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
@@ -759,11 +755,13 @@ impl<
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reshare_as_set_2(
         &self,
         two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
@@ -845,6 +843,7 @@ impl<
                 meta_store,
                 &sk,
                 new_epoch_id,
+                new_extra_data,
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
@@ -857,11 +856,13 @@ impl<
         Ok(task)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reshare_as_both_sets(
         &self,
         two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
@@ -972,6 +973,7 @@ impl<
                 meta_store,
                 &sk,
                 new_epoch_id,
+                new_extra_data,
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
@@ -1081,6 +1083,7 @@ impl<
         &self,
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
+        new_extra_data: &[u8],
         previous_epoch: PreviousEpochInfo,
         eip712_domain: Eip712Domain,
     ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
@@ -1147,6 +1150,7 @@ impl<
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
+                    new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
                     crs_info,
@@ -1158,6 +1162,7 @@ impl<
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
+                    new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
                     crs_info,
@@ -1189,6 +1194,7 @@ impl<
         let VerifiedNewMpcEpochRequest {
             context_id,
             epoch_id,
+            extra_data,
             resharing: resharing_params,
         } = validate_new_mpc_epoch_request(inner)?;
 
@@ -1209,6 +1215,7 @@ impl<
                 self.initiate_resharing_and_crs_resign(
                     &context_id,
                     &epoch_id,
+                    &extra_data,
                     previous_epoch,
                     signing_domain,
                 )
