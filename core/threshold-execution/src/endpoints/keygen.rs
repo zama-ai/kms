@@ -36,14 +36,10 @@ use error_utils::anyhow_error_and_log;
 use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
-    core_crypto::{
-        entities::LweBootstrapKey,
-        prelude::{SeededLweBootstrapKey, UnsignedInteger},
-    },
+    core_crypto::prelude::{SeededLweBootstrapKey, UnsignedInteger},
     shortint::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
-        parameters::LweCiphertextCount,
         server_key::CompressedModulusSwitchConfiguration,
     },
     xof_key_set::CompressedXofKeySet,
