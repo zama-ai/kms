@@ -217,12 +217,14 @@ pub(crate) async fn generate_compressed_bootstrap_key<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let my_role = session.my_role();
+    // Snapshot the XOF generator state before any mask bytes are consumed so
+    // the stored CompressionSeed faithfully describes the starting point.
+    let compression_seed = mpc_encryption_rng.current_compression_seed();
     let bk_share = generate_bootstrap_key_share(
         glwe_secret_key_share,
         lwe_secret_key_share,
@@ -236,7 +238,7 @@ where
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
     //Open the bk and cast it to TFHE-rs type
     let bk = bk_share
-        .open_to_tfhers_seeded_type::<Scalar, _>(seed, session)
+        .open_to_tfhers_seeded_type::<Scalar, _>(compression_seed, session)
         .await?;
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
     Ok(bk)
@@ -287,7 +289,6 @@ mod tests {
         },
         tfhe_internals::{
             glwe_key::GlweSecretKeyShare,
-            lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
             lwe_key::LweSecretKeyShare,
             parameters::{EncryptionType, TUniformBound},
             randomness::{
@@ -365,6 +366,9 @@ mod tests {
                 },
             };
 
+            // Snapshot the compression seed before any mask bytes are consumed.
+            let compression_seed = mpc_encryption_rng.current_compression_seed();
+
             //Generate the bk
             let bk_share = allocate_and_generate_lwe_bootstrap_key(
                 &lwe_secret_key_share,
@@ -385,17 +389,27 @@ mod tests {
                 .await
                 .unwrap();
             let bk_compressed = bk_share
-                .open_to_tfhers_seeded_type(seed, &session)
+                .open_to_tfhers_seeded_type::<u128, _>(compression_seed, &session)
                 .await
                 .unwrap();
 
-            assert_eq!(
-                bk,
-                par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-                    _,
-                    SoftwareRandomGenerator,
-                >(bk_compressed.clone(), xof_seed.domain_separator())
+            let mut decompressed = tfhe::core_crypto::prelude::LweBootstrapKey::new(
+                0u128,
+                bk_compressed.glwe_size(),
+                bk_compressed.polynomial_size(),
+                bk_compressed.decomposition_base_log(),
+                bk_compressed.decomposition_level_count(),
+                bk_compressed.input_lwe_dimension(),
+                bk_compressed.ciphertext_modulus(),
             );
+            tfhe::core_crypto::prelude::par_decompress_seeded_lwe_bootstrap_key::<
+                _,
+                _,
+                _,
+                SoftwareRandomGenerator,
+            >(&mut decompressed, &bk_compressed);
+
+            assert_eq!(bk, decompressed);
 
             (
                 session.my_role(),
