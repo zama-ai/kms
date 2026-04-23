@@ -13,7 +13,6 @@ use crate::{
             generate_compressed_decompression_keys, generate_decompression_keys,
         },
         glwe_key::GlweSecretKeyShare,
-        lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
         lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
@@ -53,7 +52,7 @@ use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
 
 pub(crate) const DSEP_KG: DomainSep = *b"TFHE_GEN";
-pub(crate) const DSEP_PRF_KG: DomainSep = *b"PRF_KGEN";
+pub(crate) const DSEP_PRF_KG: DomainSep = *b"OPRF_GEN";
 
 ///Sample the random but public seed
 async fn sample_seed<
@@ -517,6 +516,8 @@ where
     // Then open LWE public key (compressed/seeded variant)
     // This needs to be the first step in this function because XOF ordering needs to be preserved
     let lwe_public_key = {
+        // Snapshot the XOF generator state before any mask bytes are consumed.
+        let compression_seed = mpc_encryption_rng.current_compression_seed();
         let lwe_pk_share = generate_lwe_public_key_shared(
             &params,
             mpc_encryption_rng,
@@ -526,7 +527,7 @@ where
         )
         .await?;
         lwe_pk_share
-            .open_to_tfhers_seeded_type(seed, session)
+            .open_to_tfhers_seeded_type(compression_seed, session)
             .await?
     };
 
@@ -558,7 +559,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -576,7 +576,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
@@ -588,7 +587,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -603,7 +601,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -626,7 +623,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?;
 
@@ -640,7 +636,6 @@ where
                             mpc_encryption_rng,
                             session,
                             preprocessing,
-                            seed,
                         )
                         .await?,
                     )
@@ -670,7 +665,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -684,7 +678,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -713,7 +706,6 @@ where
                         mpc_encryption_rng,
                         session,
                         preprocessing,
-                        seed,
                     )
                     .await?,
                 ))
@@ -742,7 +734,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -844,33 +835,8 @@ where
         &mut mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await
-}
-
-/// Correctly decompresses a CompressedDecompressionKey standalone generated from the XOF
-/// and outputs a the raw elements of a [`DecompressionKey`] __BEFORE__ the fourrier transform.
-pub fn decompress_compressed_standalone_decompression_key_from_xof(
-    compressed_decompression_key: CompressedDecompressionKey,
-) -> (LweBootstrapKey<Vec<u64>>, LweCiphertextCount) {
-    let (key, count) = compressed_decompression_key.into_raw_parts();
-
-    let bsk = match key {
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::Classic {
-            bsk,
-            modulus_switch_noise_reduction_key: _,
-        } => bsk,
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::MultiBit {
-            seeded_bsk: _,
-            deterministic_execution: _,
-        } => panic!("MultiBit compressed decompression keys are not supported yet"),
-    };
-    let decompressed_key = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-        _,
-        SoftwareRandomGenerator,
-    >(bsk, DSEP_KG);
-    (decompressed_key, count)
 }
 
 /// Generates a compressed bootstrapping key (BSK) for the homomorphic PRF.
@@ -929,7 +895,6 @@ where
         &mut mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -2851,7 +2816,6 @@ pub mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn homprf_bsk_gen_and_oprf_correctness_f4() {
-        use crate::tfhe_internals::lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof;
         use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
         use crate::tfhe_internals::test_feature::{
             gen_key_set, keygen_all_party_shares_from_keyset,
@@ -2977,11 +2941,24 @@ pub mod tests {
             reconstruct_bit_vec::<Z128, 4>(glwe_shares, glwe_total, threshold as usize);
         let reconstructed_glwe_sk = GlweSecretKey::from_container(glwe_key_bits, polynomial_size);
 
-        // Decompress the seeded PRF BSK using the PRF-specific XOF DSEP.
-        let decompressed_prf_bsk = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-            u64,
+        // Decompress the seeded PRF BSK. The seeded key carries its own
+        // CompressionSeed with the XOF seed and captured TableIndex, so
+        // standard decompression reproduces the same mask bytes.
+        let mut decompressed_prf_bsk = tfhe::core_crypto::prelude::LweBootstrapKey::new(
+            0u64,
+            bsk_ref.glwe_size(),
+            bsk_ref.polynomial_size(),
+            bsk_ref.decomposition_base_log(),
+            bsk_ref.decomposition_level_count(),
+            bsk_ref.input_lwe_dimension(),
+            bsk_ref.ciphertext_modulus(),
+        );
+        tfhe::core_crypto::prelude::par_decompress_seeded_lwe_bootstrap_key::<
+            _,
+            _,
+            _,
             SoftwareRandomGenerator,
-        >(bsk_ref, super::DSEP_PRF_KG);
+        >(&mut decompressed_prf_bsk, &bsk_ref);
 
         // Convert to Fourier form for the shortint server key.
         let mut fourier_prf_bsk = FourierLweBootstrapKey::new(

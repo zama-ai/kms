@@ -1,7 +1,6 @@
 use itertools::Itertools;
 use std::slice::IterMut;
 use tfhe::{
-    Seed,
     core_crypto::{
         commons::{math::random::CompressionSeed, parameters::LweSize},
         entities::LweKeyswitchKeyOwned,
@@ -74,7 +73,7 @@ where
 {
     pub async fn open_to_tfhers_seeded_type<S: BaseSessionHandles>(
         self,
-        seed: u128,
+        compression_seed: CompressionSeed,
         session: &S,
     ) -> anyhow::Result<SeededLweKeyswitchKeyOwned<u64>> {
         let my_role = session.my_role();
@@ -97,7 +96,7 @@ where
             self.decomp_level_count,
             input_key_lwe_dimension,
             self.output_lwe_size.to_lwe_dimension(),
-            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+            compression_seed,
             CiphertextModulus::new_native(),
         );
 

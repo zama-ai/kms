@@ -1,7 +1,7 @@
 use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 use tfhe::{
-    Seed, Versionize,
+    Versionize,
     core_crypto::{
         commons::{math::random::CompressionSeed, traits::ParallelByteRandomGenerator},
         entities::LweCompactPublicKeyOwned,
@@ -133,7 +133,7 @@ where
 
     pub async fn open_to_tfhers_seeded_type<S: BaseSessionHandles>(
         self,
-        seed: u128,
+        compression_seed: CompressionSeed,
         session: &S,
     ) -> anyhow::Result<SeededLweCompactPublicKeyOwned<u64>> {
         let lwe_dimension = LweDimension(self.glwe_ciphertext_share.polynomial_size.0);
@@ -154,7 +154,7 @@ where
         let mut pk = SeededLweCompactPublicKeyOwned::new(
             0_u64,
             lwe_dimension,
-            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+            compression_seed,
             CiphertextModulus::new_native(),
         );
 
@@ -325,7 +325,6 @@ mod tests {
     use rand::SeedableRng;
     use std::collections::HashMap;
     use tfhe::{
-        Seed,
         core_crypto::{
             algorithms::{
                 decrypt_lwe_ciphertext, encrypt_lwe_ciphertext_with_compact_public_key,
@@ -333,7 +332,7 @@ mod tests {
             },
             commons::{
                 generators::EncryptionRandomGenerator,
-                math::random::{DefaultRandomGenerator, RandomGenerator, TUniform},
+                math::random::{DefaultRandomGenerator, TUniform},
             },
             entities::{LweCiphertext, LweSecretKeyOwned, Plaintext},
             seeders::new_seeder,
@@ -341,7 +340,7 @@ mod tests {
         integer::parameters::DynamicDistribution,
         shortint::{CiphertextModulus, parameters::LweDimension},
     };
-    use tfhe_csprng::generators::SoftwareRandomGenerator;
+    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
     use crate::{
@@ -396,9 +395,10 @@ mod tests {
                 data: vec_shared_bits,
             };
 
-            let mpc_mask_generator = MPCMaskRandomGenerator {
-                generator: RandomGenerator::<SoftwareRandomGenerator>::new(Seed(seed)),
-            };
+            let mpc_mask_generator =
+                MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(
+                    XofSeed::new_u128(seed as u128, *b"TEST_GEN"),
+                );
 
             let vec_tuniform_noise = RealSecretDistributions::t_uniform(
                 lwe_dimension,
