@@ -9,6 +9,7 @@ use crate::consts::{
     OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
     TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
 };
+use crate::engine::base::derive_request_id;
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -731,11 +732,19 @@ impl TestMaterialManager {
                         TEST_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_TEST_ID.to_string(),
                     ],
-                    n => vec![threshold_key_id_name(MaterialType::Testing, n)],
+                    n => vec![
+                        derive_request_id(&threshold_key_id_name(MaterialType::Testing, n))
+                            .expect("threshold testing key fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
-                    n => vec![threshold_crs_id_name(MaterialType::Testing, n)],
+                    n => vec![
+                        derive_request_id(&threshold_crs_id_name(MaterialType::Testing, n))
+                            .expect("threshold testing CRS fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
             },
             MaterialType::Default => KeyIds {
@@ -744,11 +753,19 @@ impl TestMaterialManager {
                         DEFAULT_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_DEFAULT_ID.to_string(),
                     ],
-                    n => vec![threshold_key_id_name(MaterialType::Default, n)],
+                    n => vec![
+                        derive_request_id(&threshold_key_id_name(MaterialType::Default, n))
+                            .expect("threshold default key fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
-                    n => vec![threshold_crs_id_name(MaterialType::Default, n)],
+                    n => vec![
+                        derive_request_id(&threshold_crs_id_name(MaterialType::Default, n))
+                            .expect("threshold default CRS fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
             },
         }
@@ -805,5 +822,25 @@ mod tests {
             assert!(pub_path.exists());
             assert!(priv_path.exists());
         }
+
+        let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))
+            .unwrap()
+            .to_string();
+        assert!(
+            base_path
+                .join("PUB-p1")
+                .join(PubDataType::PublicKey.to_string())
+                .join(&key_id)
+                .exists(),
+            "expected copied threshold public key for key id {key_id}"
+        );
+        assert!(
+            base_path
+                .join("PUB-p1")
+                .join(PubDataType::ServerKey.to_string())
+                .join(&key_id)
+                .exists(),
+            "expected copied threshold server key for key id {key_id}"
+        );
     }
 }
