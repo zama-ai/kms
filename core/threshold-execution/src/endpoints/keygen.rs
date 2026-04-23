@@ -2119,7 +2119,7 @@ pub mod tests {
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let (integer_server_key, _, _, _, ck, _, _, _) = pk.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pk.server_key);
@@ -2264,7 +2264,7 @@ pub mod tests {
 
         set_server_key(pk.server_key.clone());
         let (shortint_pk, tag) = {
-            let (shorint_pk, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
+            let (shorint_pk, _, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
             (shorint_pk.into_raw_parts(), tag)
         };
         for _ in 0..100 {
@@ -2274,6 +2274,7 @@ pub mod tests {
         if with_compact {
             let tfhe_sk = tfhe::ClientKey::from_raw_parts(
                 shortint_sk.into(),
+                None,
                 None,
                 None,
                 None,
@@ -2343,6 +2344,7 @@ pub mod tests {
         // encrypt/decrypt. We only compress and decompress which doesn't require this key.
         let tfhe_sk = tfhe::ClientKey::from_raw_parts(
             shortint_sk.into(),
+            None,
             None,
             None,
             None,

@@ -164,13 +164,13 @@ where
         .await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset2_id, epoch_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset1_id, epoch_id)
         .await?
         .client_key
@@ -320,6 +320,7 @@ pub fn generate_uncompressed_fhe_keys(
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {

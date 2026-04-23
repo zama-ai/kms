@@ -314,11 +314,17 @@ pub fn par_decompress_into_lwe_bootstrap_key_generated_from_xof<
     xof_dsep: [u8; 8],
 ) -> LweBootstrapKeyOwned<Scalar> {
     //Init the XOF
-    let seed = seeded_key_generate_with_xof
+    let seed = match &seeded_key_generate_with_xof
         .deref()
         .compression_seed()
+        .inner
         .seed
-        .0;
+    {
+        tfhe_csprng::seeders::SeedKind::Ctr(seed) => seed.0,
+        tfhe_csprng::seeders::SeedKind::Xof(_) => {
+            panic!("expected Ctr seed kind for XOF-generated bootstrap key")
+        }
+    };
     let mut rng = MaskRandomGenerator::<Gen>::new(XofSeed::new_u128(seed, xof_dsep));
 
     let mut decompressed_bsk = LweBootstrapKeyOwned::new(

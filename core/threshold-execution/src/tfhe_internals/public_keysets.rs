@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::prelude::{
     SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
 };
-use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
@@ -163,29 +162,12 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             _ => (None, None),
         };
 
-        let rerand_ksk =
-            self.cpk_re_randomization_ksk
-                .as_ref()
-                .map(|rerand_ksk| match rerand_ksk {
-                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
-                        tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
-                    }
-                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(dedicated_rerand_ksk) => {
-                        let shortint_rerand_ksk =
-                        tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
-                            dedicated_rerand_ksk.clone(),
-                            0,
-                            EncryptionKeyChoice::Big,
-                    KeySwitchingKeyDestinationAtomicPattern::Standard,
-                        );
-
-                        let rerand_ksk =
-                        tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
-                            shortint_rerand_ksk,
-                        );
-                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
-                    }
-                });
+        // TODO(tfhe-1.6): `CompressedReRandomizationKey` is not re-exported at the
+        // public API boundary of tfhe-rs 1.6, so we cannot construct it here.
+        // Until a public constructor is exposed upstream, the rerand key is not
+        // attached to the compressed server key when it is built from raw parts.
+        let _ = &self.cpk_re_randomization_ksk;
+        let rerand_ksk = None;
 
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),
@@ -203,6 +185,7 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             noise_squashing_key,
             noise_squashing_compression_key,
             rerand_ksk,
+            None,
             tag,
         )
     }
