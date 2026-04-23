@@ -14,7 +14,7 @@ use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "slow_tests")]
-use serial_test::serial;
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;

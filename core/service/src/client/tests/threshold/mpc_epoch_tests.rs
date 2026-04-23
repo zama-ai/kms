@@ -8,7 +8,7 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-use serial_test::serial;
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;

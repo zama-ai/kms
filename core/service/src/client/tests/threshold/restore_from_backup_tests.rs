@@ -24,7 +24,7 @@ use kms_grpc::{
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
 };
-use serial_test::serial;
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use tokio::task::JoinSet;
 

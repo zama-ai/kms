@@ -237,7 +237,7 @@ use kms_lib::consts::{
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
-use serial_test::serial;
+// use serial_test::serial; // TEMP: round3 probe
 use std::collections::HashMap;
 use std::fs::write;
 use std::path::{Path, PathBuf};

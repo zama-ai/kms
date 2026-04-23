@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     use kms_grpc::kms::v1::CrsInfo;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::RequestId;
-    use serial_test::serial;
+    // use serial_test::serial;  // TEMP: round3 probe
     use std::collections::HashMap;
     use std::path::Path;
     use std::sync::Arc;

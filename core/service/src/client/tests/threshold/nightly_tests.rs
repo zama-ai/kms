@@ -9,7 +9,7 @@ use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use kms_grpc::{RequestId, kms::v1::FheParameter};
-use serial_test::serial;
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_types::role::Role;
 
 #[rstest::rstest]

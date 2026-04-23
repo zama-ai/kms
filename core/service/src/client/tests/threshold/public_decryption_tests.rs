@@ -24,7 +24,7 @@ use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use serial_test::serial;
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
