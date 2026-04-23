@@ -51,7 +51,7 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_new_epoch_with_reshare() {
     new_epoch_with_reshare_and_crs(4, 3, 2, FheParameter::Test, None).await;
 }

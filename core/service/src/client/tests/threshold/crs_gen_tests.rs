@@ -25,7 +25,7 @@ cfg_if::cfg_if! {
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_crs_gen_threshold() {
     crs_gen(
         4,
@@ -40,14 +40,14 @@ async fn test_insecure_crs_gen_threshold() {
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_crs() {
     crs_gen(4, FheParameter::Default, Some(2048), false, 1, false).await;
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_crs_gen_threshold() {
     crs_gen(4, FheParameter::Test, Some(2048), false, 1, false).await;
 }

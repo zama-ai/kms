@@ -6,3 +6,11 @@ self-hosted-runner:
     - large_ubuntu_32
     - runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     - runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
+
+# TEMP: round3 probe — suppress constant-`if:` warnings so we can disable
+# jobs with `if: false` while probing. Remove this section when the probe
+# ends.
+paths:
+  ".github/workflows/main.yml":
+    ignore:
+      - 'constant expression "false"'

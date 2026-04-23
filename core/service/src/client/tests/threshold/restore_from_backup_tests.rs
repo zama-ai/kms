@@ -29,7 +29,7 @@ use threshold_execution::endpoints::decryption::DecryptionMode;
 use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn nightly_test_insecure_threshold_dkg_backup() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
@@ -168,7 +168,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
@@ -253,7 +253,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_threshold_crs_backup() {
     let amount_parties = 4;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];

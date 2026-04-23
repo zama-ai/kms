@@ -35,7 +35,7 @@ use tonic::transport::Channel;
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_decryption_threshold_no_decompression(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -66,7 +66,7 @@ async fn test_decryption_threshold_no_decompression(
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_decryption_threshold(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -95,7 +95,7 @@ async fn test_decryption_threshold(
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_decryption_threshold_precompute_sns(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -126,7 +126,7 @@ async fn test_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -153,7 +153,7 @@ async fn default_decryption_threshold(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn default_decryption_threshold_precompute_sns(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -181,7 +181,7 @@ async fn default_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn default_decryption_threshold_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,

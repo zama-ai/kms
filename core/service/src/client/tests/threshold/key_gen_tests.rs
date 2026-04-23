@@ -133,7 +133,7 @@ impl TestKeyGenResult {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_dkg(#[case] amount_parties: usize) {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -179,7 +179,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -227,7 +227,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn default_insecure_dkg(#[case] amount_parties: usize) {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB
@@ -278,7 +278,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
 
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_threshold_decompression_keygen() {
     // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
     run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
@@ -286,7 +286,7 @@ async fn test_insecure_threshold_decompression_keygen() {
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_keygen_test() {
     preproc_and_keygen(
         4,
@@ -304,7 +304,7 @@ async fn secure_threshold_keygen_test() {
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_keygen_test_crash_online() {
     preproc_and_keygen(
         4,
@@ -322,7 +322,7 @@ async fn secure_threshold_keygen_test_crash_online() {
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_keygen_test_crash_preprocessing() {
     preproc_and_keygen(
         4,
@@ -343,7 +343,7 @@ async fn secure_threshold_keygen_test_crash_preprocessing() {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(
         4,

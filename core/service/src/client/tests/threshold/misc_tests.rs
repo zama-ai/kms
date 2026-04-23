@@ -46,7 +46,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 /// The crux of the test is based on the fact that the MPC servers serve immediately but the core server only serves after
 /// the PRSS initialization has been completed.
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_threshold_health_endpoint_availability() {
     let amount_parties = 4;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -155,7 +155,7 @@ async fn test_threshold_health_endpoint_availability() {
 
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, _kms_clients, _internal_client) =
@@ -211,7 +211,7 @@ async fn test_threshold_close_after_drop() {
 
 /// Validate that shutdown signals work
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_threshold_shutdown() {
     let amount_parties = 4;
     let storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -293,7 +293,7 @@ async fn test_threshold_shutdown() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "slow_tests")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_ratelimiter() {
     let amount_parties = 4;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -363,7 +363,7 @@ async fn test_ratelimiter() {
 /// Validates the fix that ensures that a party is notified if it starts a session the others consider completed.
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn nightly_test_complete_session_notification() {
     let amount_parties = 4;
     let key_id = &TEST_THRESHOLD_KEY_ID_4P;

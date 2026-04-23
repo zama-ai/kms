@@ -413,7 +413,7 @@ async fn test_ratelimiter_isolated() -> Result<()> {
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn nightly_test_complete_session_notification_isolated() -> Result<()> {
     use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
