@@ -11,9 +11,9 @@
 //! - Automatic cleanup via RAII (Drop trait)
 
 #[cfg(feature = "insecure")]
-use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
+use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::threshold::common::threshold_key_gen_secure_isolated;
+use crate::client::tests::threshold::common::threshold_key_gen_secure;
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::client::tests::threshold::key_gen_tests::verify_keygen_responses;
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
@@ -34,10 +34,9 @@ use kms_grpc::kms::v1::FheParameter;
 /// verifies key generation succeeded on all parties.
 ///
 /// **Requires:** `insecure` feature flag
-/// **Run with:** `cargo test --lib --features insecure,testing test_insecure_dkg_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
-async fn test_insecure_dkg_isolated() -> Result<()> {
+async fn test_insecure_dkg() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("insecure_dkg")
         .with_party_count(4)
@@ -47,11 +46,11 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         .build()
         .await?;
 
-    let key_id = derive_request_id("test_insecure_dkg_isolated")?;
+    let key_id = derive_request_id("test_insecure_dkg")?;
 
     // Generate key using insecure mode
     let responses =
-        threshold_insecure_key_gen_isolated(&env.clients, &key_id, FheParameter::Test).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Test).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
@@ -87,11 +86,9 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 /// - `insecure` feature flag
 /// - `slow_tests` feature flag (for default material generation)
 /// - Pre-generated default material: `make generate-test-material-all`
-///
-/// **Run with:** `cargo test --lib --features insecure,testing,slow_tests default_insecure_dkg_isolated`
 #[tokio::test]
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
-async fn default_insecure_dkg_isolated() -> Result<()> {
+async fn default_insecure_dkg() -> Result<()> {
     // Use Default material spec for production-like keys
     let spec = TestMaterialSpec::threshold_default(4);
 
@@ -105,11 +102,11 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         .build()
         .await?;
 
-    let key_id = derive_request_id("default_insecure_dkg_isolated")?;
+    let key_id = derive_request_id("default_insecure_dkg")?;
 
     // Use FheParameter::Default to match MaterialType::Default
     let responses =
-        threshold_insecure_key_gen_isolated(&env.clients, &key_id, FheParameter::Default).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id, FheParameter::Default).await?;
 
     // Reconstruct ClientKey from shares and run encrypt/decrypt sanity check
     let internal_client = env
@@ -146,11 +143,9 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
 /// - `slow_tests` feature flag (PRSS generation at runtime)
 ///
 /// **Note:** PRSS material is generated at runtime by `.with_prss()`
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_isolated`
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_keygen_isolated() -> Result<()> {
+async fn secure_threshold_keygen() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_threshold_keygen")
         .with_party_count(4)
@@ -164,7 +159,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
     let keygen_id = derive_request_id("secure_threshold_keygen")?;
 
     // Run secure key generation with preprocessing
-    let responses = threshold_key_gen_secure_isolated(
+    let responses = threshold_key_gen_secure(
         &env.clients,
         &preproc_id,
         &keygen_id,
@@ -207,11 +202,9 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
 /// **IMPORTANT:** Tests crash recovery - party 2 excluded from keygen.
 /// **Requires:**
 /// - `slow_tests` feature flag (PRSS generation at runtime)
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_online_isolated`
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
+async fn secure_threshold_keygen_crash_online() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_keygen_crash_online")
         .with_party_count(4)
@@ -318,11 +311,9 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
 /// **IMPORTANT:** Tests crash recovery - party 3 excluded from preprocessing and keygen.
 /// **Requires:**
 /// - `slow_tests` feature flag (PRSS generation at runtime)
-///
-/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_preprocessing_isolated`
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
+async fn secure_threshold_keygen_crash_preprocessing() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_keygen_crash_preproc")
         .with_party_count(4)
@@ -435,7 +426,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 /// 4. Verify both keygens completed on all parties using ddec
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<()> {
+async fn secure_threshold_compressed_keygen_from_existing() -> Result<()> {
     use crate::client::tests::common::compressed_from_existing_keygen_config;
     use crate::consts::DEFAULT_EPOCH_ID;
 
@@ -453,7 +444,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let preproc_id_1 = derive_request_id("compressed_existing_preproc_1")?;
     let keygen_id_1 = derive_request_id("compressed_existing_keygen_1")?;
 
-    threshold_key_gen_secure_isolated(
+    threshold_key_gen_secure(
         clients,
         &preproc_id_1,
         &keygen_id_1,
@@ -481,7 +472,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let (keyset_config, keyset_added_info) =
         compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
 
-    threshold_key_gen_secure_isolated(
+    threshold_key_gen_secure(
         clients,
         &preproc_id_2,
         &keygen_id_2,
@@ -619,7 +610,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
 /// 5. Run run_decompression_test to validate key compatibility (mirrors non-isolated verification)
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
+async fn test_insecure_threshold_decompression_keygen() -> Result<()> {
     use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
     use crate::vault::storage::StorageType;
     use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetConfig, KeySetType};
@@ -640,7 +631,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     // Step 1: Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey
     let key_id_1 = derive_request_id("decom_dkg_key_1")?;
     let responses_1 =
-        threshold_insecure_key_gen_isolated(&env.clients, &key_id_1, FheParameter::Test).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id_1, FheParameter::Test).await?;
     let (keys_1, _) = verify_keygen_responses(
         responses_1,
         Some(&material_path),
@@ -659,7 +650,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
     let responses_2 =
-        threshold_insecure_key_gen_isolated(&env.clients, &key_id_2, FheParameter::Test).await?;
+        threshold_insecure_key_gen(&env.clients, &key_id_2, FheParameter::Test).await?;
     let (keys_2, _) = verify_keygen_responses(
         responses_2,
         Some(&material_path),

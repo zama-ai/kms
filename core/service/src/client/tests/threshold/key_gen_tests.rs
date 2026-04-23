@@ -1,16 +1,15 @@
-// DEPRECATED: Isolated equivalents in `key_gen_tests_isolated.rs`
-// - test_insecure_dkg → test_insecure_dkg_isolated
-// - test_insecure_threshold_decompression_keygen → test_insecure_threshold_decompression_keygen_isolated
-// TODO: Remove after migration complete.
-
+cfg_if::cfg_if! {
+   if #[cfg(feature = "slow_tests")] {
+    use crate::client::tests::common::standard_keygen_config;
+    use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+}}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
-    use crate::client::tests::common::{OptKeySetConfigAccessor, standard_keygen_config};
+    use crate::client::tests::common::{OptKeySetConfigAccessor};
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::consts::DEFAULT_EPOCH_ID;
-    use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
@@ -129,49 +128,6 @@ impl TestKeyGenResult {
     }
 }
 
-#[cfg(feature = "insecure")]
-#[rstest::rstest]
-#[case(4)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let key_id: RequestId = derive_request_id(&format!(
-        "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
-    let keys = run_threshold_keygen(
-        FheParameter::Test,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id,
-        keyset_config,
-        keyset_added_info,
-        true,
-        None,
-        0,
-    )
-    .await
-    .0;
-    _ = keys.clone().get_standard();
-
-    let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
-    assert!(panic_res.is_err());
-}
-
 /// Test insecure compressed keygen with Test parameters.
 /// This tests the insecure `initialize_compressed_key_material` code path where
 /// party 1 generates compressed keys locally and shares private key shares with other parties.
@@ -221,121 +177,6 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
-}
-
-#[cfg(feature = "insecure")]
-#[rstest::rstest]
-#[case(4)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_insecure_dkg(#[case] amount_parties: usize) {
-    // NOTE: amount_parties must not be too high
-    // because every party will load all the keys and each ServerKey is 1.5 GB
-    // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-
-    let param = FheParameter::Default;
-    let dkg_param: WrappedDKGParams = param.into();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-
-    let key_id: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_key_{amount_parties}_{param:?}",
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
-    let keys = run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id,
-        keyset_config,
-        keyset_added_info,
-        true,
-        None,
-        0,
-    )
-    .await
-    .0;
-
-    // check that we have the new mod switch key
-    let (client_key, _, server_key) = keys.clone().get_standard();
-    crate::client::key_gen::tests::check_conformance(server_key, client_key);
-
-    let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
-    assert!(panic_res.is_err());
-}
-
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_threshold_decompression_keygen() {
-    // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
-    run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_online() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        None,
-        Some(vec![2]),
-        None,
-        false,
-    )
-    .await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_preprocessing() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        Some(vec![3]),
-        None,
-        None,
-        false,
-    )
-    .await;
 }
 
 /// Test compressed keygen with test parameters and 4 parties.
