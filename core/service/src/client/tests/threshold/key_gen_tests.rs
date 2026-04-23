@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
-    use serial_test::serial;
+    // use serial_test::serial;  // TEMP: round3 probe
     use std::collections::HashMap;
     use std::str::FromStr;
     use tfhe::integer::compression_keys::DecompressionKey;
@@ -145,7 +145,7 @@ impl TestKeyGenResult {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -194,7 +194,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(
         4,

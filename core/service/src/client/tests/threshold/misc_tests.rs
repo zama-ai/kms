@@ -13,8 +13,8 @@ use crate::vault::storage::file::FileStorage;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-#[cfg(feature = "slow_tests")]
-use serial_test::serial;
+// #[cfg(feature = "slow_tests")]  // TEMP: round3 probe
+// use serial_test::serial;  // TEMP: round3 probe
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
@@ -405,7 +405,7 @@ async fn test_ratelimiter() -> Result<()> {
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-#[serial]
+// #[serial]  // TEMP: round3 probe
 async fn nightly_test_complete_session_notification() -> Result<()> {
     use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
