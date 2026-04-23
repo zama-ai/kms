@@ -2,7 +2,7 @@
 mod utilities;
 
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_experimental::{
+use threshold_bgv::{
     algebra::{
         levels::{LevelEll, LevelKsw},
         ntt::*,

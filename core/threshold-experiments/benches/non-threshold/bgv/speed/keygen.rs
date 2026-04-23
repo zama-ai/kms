@@ -4,11 +4,11 @@ mod utilities;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_experimental::algebra::ntt::*;
-use threshold_experimental::bgv::basics::*;
-use threshold_experimental::bgv::utils::XofWrapper;
-use threshold_experimental::constants::*;
+use threshold_bgv::algebra::levels::{LevelEll, LevelKsw};
+use threshold_bgv::algebra::ntt::*;
+use threshold_bgv::bgv::basics::*;
+use threshold_bgv::bgv::utils::XofWrapper;
+use threshold_bgv::constants::*;
 
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>) {
     let mut seeder = new_seeder();

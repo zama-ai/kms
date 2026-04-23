@@ -767,7 +767,7 @@ jobs:
 
           # Most "normal" crates should be added here; runs with default features only.
           - group: crates-normies
-            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-experimental'
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv'
             # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
             # all its per-degree tests run.
             features: '-F threshold-algebra/all_extension_degrees'
@@ -785,11 +785,11 @@ jobs:
             runs-on: '64cpu-linux-x64'
 
           # Slow/heavy tests, 2/2. Big iron, lots of RAM.
-          # The `threshold-experimental` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
+          # The `threshold-bgv` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
           - group: crates-heavy-2
-            crates: '-p threshold-experimental -p threshold-networking'
-            features: '-F threshold-experimental/slow_tests'
+            crates: '-p threshold-bgv -p threshold-networking'
+            features: '-F threshold-bgv/slow_tests'
             # Cap parallelism: slow_tests are RAM-heavy.
             # TODO(dp): tweak this. Could 8 work? 6?
             threads: '4'

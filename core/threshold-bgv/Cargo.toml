@@ -1,5 +1,5 @@
 [package]
-name = "threshold-experimental"
+name = "threshold-bgv"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

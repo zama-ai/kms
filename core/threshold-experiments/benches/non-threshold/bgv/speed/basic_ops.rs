@@ -11,11 +11,11 @@ use criterion::{BenchmarkGroup, Criterion};
 use rand::RngCore;
 use std::hint::black_box;
 use tfhe::core_crypto::seeders::new_seeder;
-use threshold_experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_experimental::algebra::ntt::*;
-use threshold_experimental::bgv::basics::*;
-use threshold_experimental::bgv::utils::XofWrapper;
-use threshold_experimental::constants::*;
+use threshold_bgv::algebra::levels::{LevelEll, LevelKsw};
+use threshold_bgv::algebra::ntt::*;
+use threshold_bgv::bgv::basics::*;
+use threshold_bgv::bgv::utils::XofWrapper;
+use threshold_bgv::constants::*;
 
 pub fn bench_bgv(
     bench_group: &mut BenchmarkGroup<'_, WallTime>,

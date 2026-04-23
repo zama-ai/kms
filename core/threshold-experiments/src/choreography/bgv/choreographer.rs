@@ -1,9 +1,9 @@
 //! Choreographer is the client of the grpc choreography service.
 //! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
 //! as this is meant for testing and benchmarking, and definitely not for production use.
-use threshold_experimental::algebra::levels::{LevelEll, LevelKsw};
-use threshold_experimental::algebra::ntt::N65536;
-use threshold_experimental::bgv::basics::{LevelEllCiphertext, PublicKey};
+use threshold_bgv::algebra::levels::{LevelEll, LevelKsw};
+use threshold_bgv::algebra::ntt::N65536;
+use threshold_bgv::bgv::basics::{LevelEllCiphertext, PublicKey};
 
 use crate::choreography::client_utils::ChoreoRuntime;
 use std::collections::HashMap;

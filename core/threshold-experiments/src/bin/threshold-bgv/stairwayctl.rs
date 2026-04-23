@@ -11,7 +11,7 @@ use observability::{
     telemetry::init_tracing,
 };
 use rand::{RngCore, SeedableRng, random};
-use threshold_experimental::{
+use threshold_bgv::{
     algebra::{
         levels::{LevelEll, LevelKsw},
         ntt::{Const, N65536},

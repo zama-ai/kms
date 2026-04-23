@@ -16,7 +16,7 @@ use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
-use threshold_experimental::algebra::levels::LevelOne;
+use threshold_bgv::algebra::levels::LevelOne;
 use threshold_types::role::Role;
 
 fn bench_decode_z2(c: &mut Criterion) {

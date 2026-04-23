@@ -7580,6 +7580,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "threshold-bgv"
+version = "0.13.20-0"
+dependencies = [
+ "aes-prng",
+ "anyhow",
+ "bc2wrap",
+ "crypto-bigint 0.6.1",
+ "error-utils",
+ "itertools 0.14.0",
+ "num-integer",
+ "paste",
+ "rand 0.8.5",
+ "rayon",
+ "serde",
+ "tfhe",
+ "tfhe-csprng",
+ "thread-handles",
+ "threshold-algebra",
+ "threshold-execution",
+ "threshold-hashing",
+ "threshold-networking",
+ "threshold-types",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "threshold-execution"
 version = "0.13.20-0"
 dependencies = [
@@ -7628,34 +7656,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "threshold-experimental"
-version = "0.13.20-0"
-dependencies = [
- "aes-prng",
- "anyhow",
- "bc2wrap",
- "crypto-bigint 0.6.1",
- "error-utils",
- "itertools 0.14.0",
- "num-integer",
- "paste",
- "rand 0.8.5",
- "rayon",
- "serde",
- "tfhe",
- "tfhe-csprng",
- "thread-handles",
- "threshold-algebra",
- "threshold-execution",
- "threshold-hashing",
- "threshold-networking",
- "threshold-types",
- "tokio",
- "tonic",
- "tracing",
-]
-
-[[package]]
 name = "threshold-experiments"
 version = "0.13.20-0"
 dependencies = [
@@ -7689,8 +7689,8 @@ dependencies = [
  "tfhe-zk-pok",
  "thread-handles",
  "threshold-algebra",
+ "threshold-bgv",
  "threshold-execution",
- "threshold-experimental",
  "threshold-networking",
  "threshold-types",
  "tokio",
