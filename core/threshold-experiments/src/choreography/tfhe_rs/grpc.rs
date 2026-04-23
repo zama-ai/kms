@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
@@ -582,6 +583,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -649,7 +651,8 @@ where
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly128 Done.");
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -677,7 +680,8 @@ where
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly64 Done.");
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -698,6 +702,7 @@ where
         &self,
         request: tonic::Request<PreprocKeyGenRequest>,
     ) -> Result<tonic::Response<PreprocKeyGenResponse>, tonic::Status> {
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -784,7 +789,8 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -815,7 +821,8 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -855,7 +862,8 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -884,7 +892,8 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -916,6 +925,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         // should match what is in [self.threshold_key_gen_result]
@@ -1000,7 +1010,8 @@ where
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
                     );
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1024,7 +1035,8 @@ where
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
                     );
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1064,7 +1076,8 @@ where
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
                     );
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1088,7 +1101,8 @@ where
                         session_id,
                         Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
                     );
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1214,6 +1228,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1324,7 +1339,8 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1407,7 +1423,8 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions).await;
+                    fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1467,8 +1484,11 @@ where
                             store.insert(session_id, vec![preproc]);
                         }
                     }
-                    fill_network_memory_info_single_session(small_session.session.into_inner())
-                        .await;
+                    fill_network_memory_info_single_session(
+                        small_session.session.into_inner(),
+                        Some(start.elapsed()),
+                    )
+                    .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1518,8 +1538,11 @@ where
                         };
                     }
 
-                    fill_network_memory_info_single_session(large_session.session.into_inner())
-                        .await;
+                    fill_network_memory_info_single_session(
+                        large_session.session.into_inner(),
+                        Some(start.elapsed()),
+                    )
+                    .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1551,6 +1574,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -1774,7 +1798,11 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
+                        fill_network_memory_info_multiple_sessions(
+                            vec_base_sessions,
+                            Some(start.elapsed()),
+                        )
+                        .await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-NoiseFloodSmall",
@@ -1963,7 +1991,11 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
+                        fill_network_memory_info_multiple_sessions(
+                            vec_base_sessions,
+                            Some(start.elapsed()),
+                        )
+                        .await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-BitDecSmall",
@@ -2147,7 +2179,8 @@ where
                             .collect_vec();
 
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_multiple_sessions(sessions).await;
+                        fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed()))
+                            .await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2245,7 +2278,11 @@ where
                             )
                         }
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_single_session(base_session).await;
+                        fill_network_memory_info_single_session(
+                            base_session,
+                            Some(start.elapsed()),
+                        )
+                        .await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2315,6 +2352,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -2371,7 +2409,7 @@ where
                 .await
                 .unwrap();
             crs_store.insert(session_id, pp.inner);
-            fill_network_memory_info_single_session(base_session).await;
+            fill_network_memory_info_single_session(base_session, Some(start.elapsed())).await;
         };
 
         self.data.status_store.insert(
@@ -2475,6 +2513,7 @@ where
         #[cfg(feature = "measure_memory")]
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
 
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -2658,7 +2697,7 @@ where
             );
             let mut sessions = sessions.into_iter().collect_vec();
             sessions.push(reshare_base_session);
-            fill_network_memory_info_multiple_sessions(sessions).await;
+            fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed())).await;
         };
 
         self.data.status_store.insert(

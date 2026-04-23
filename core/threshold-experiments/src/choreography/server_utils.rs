@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::time::Duration;
+
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
@@ -18,7 +21,10 @@ use threshold_types::session_id::SessionId;
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
+pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
+    sessions: Vec<B>,
+    duration: Option<Duration>,
+) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
@@ -64,10 +70,43 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(s
 
     #[cfg(feature = "measure_memory")]
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
+
+    // Write to file (as it's much easier to parse than tracing logs)
+    // but contains a bit less info (doesn't have exact params etc for example)
+    let role = sessions[0].my_role();
+    let file_name = format!("session_stats_{role}.txt");
+    let stats_line = format!(
+        "\nname={},role={},num_sessions={},num_rounds={},network_sent(B)={},network_received(B)={},time_active(ms)={}",
+        span.metadata()
+            .map(|m| m.name())
+            .unwrap_or("unknown_span_name"),
+        role,
+        sessions.len(),
+        num_rounds,
+        total_num_byte_sent,
+        total_num_byte_received,
+        duration.map(|d| d.as_millis()).unwrap_or(0),
+    );
+    #[cfg(feature = "measure_memory")]
+    let stats_line = format!(
+        "{},peak_mem(B)={}",
+        stats_line,
+        MEM_ALLOCATOR.get().unwrap().peak_usage()
+    );
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file_name)
+        .unwrap()
+        .write_all(stats_line.as_bytes())
+        .unwrap();
 }
 
-pub async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
-    fill_network_memory_info_multiple_sessions(vec![session]).await;
+pub async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(
+    session: B,
+    duration: Option<Duration>,
+) {
+    fill_network_memory_info_multiple_sessions(vec![session], duration).await;
 }
 
 /// Fills up the 96 MSBs with randomness and fills the 32 LSBs with the given sid

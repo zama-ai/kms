@@ -19,6 +19,10 @@ pub struct Cli {
     /// Config file with the party's configuration.
     #[clap(short, long)]
     conf_file: Option<String>,
+
+    /// Disable telemetry (tracing and metrics).
+    #[clap(long)]
+    no_telemetry: bool,
 }
 
 // Below we set EXTENSION_DEGREE to be the highest available from the compilation flags
@@ -91,7 +95,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
     });
 
-    let tracer_provider = init_tracing(&telemetry_config).await?;
+    let tracer_provider = if args.no_telemetry {
+        None
+    } else {
+        Some(init_tracing(&telemetry_config).await?)
+    };
 
     // Run the server and get the result
     let result =
@@ -102,7 +110,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
     // Explicitly shut down telemetry
-    if let Err(e) = tracer_provider.shutdown() {
+    if let Some(provider) = tracer_provider
+        && let Err(e) = provider.shutdown()
+    {
         eprintln!("Error shutting down tracer provider: {e}");
     }
 

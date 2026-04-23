@@ -103,12 +103,19 @@ fn main() {
         _ => panic!("Unsupported protocol: {protocol}"),
     };
 
+    let protocol = match protocol.as_str() {
+        "bgv" => "stairway",
+        "tfhe" => "moby",
+        _ => panic!("Unsupported protocol: {protocol}"),
+    };
+
     let context = context!(
         n_parties => args.n_parties,
         threshold => args.threshold,
         experiment_name => args.experiment_name,
         witness_dim => args.witness_dim,
         image_name => image_name,
+        protocol => protocol,
         moby_strategy => args.moby_strategy,
     );
 

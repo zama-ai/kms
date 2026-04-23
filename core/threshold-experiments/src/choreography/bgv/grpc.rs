@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::Arc;
+use std::time::Instant;
 use threshold_execution::online::preprocessing::PreprocessorFactory;
 use threshold_execution::online::preprocessing::dummy::DummyPreprocessing;
 use threshold_execution::runtime::sessions::base_session::BaseSession;
@@ -267,6 +268,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<PrssInitRequest>,
     ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
+        let start = Instant::now();
         let request = request.into_inner();
 
         //Useless for now, need to integrate large threshold decrypt to grpc
@@ -326,7 +328,8 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelOne(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelOne Done.");
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -344,7 +347,8 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelKsw(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelKsw Done.");
-                    fill_network_memory_info_single_session(base_session).await;
+                    fill_network_memory_info_single_session(base_session, Some(start.elapsed()))
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -365,6 +369,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<PreprocKeyGenRequest>,
     ) -> Result<tonic::Response<PreprocKeyGenResponse>, tonic::Status> {
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -440,7 +445,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .instrument(tracing::info_span!("orchestrate"))
                 .await
                 .unwrap();
-            fill_network_memory_info_multiple_sessions(sessions).await;
+            fill_network_memory_info_multiple_sessions(sessions, Some(start.elapsed())).await;
             store.insert(start_sid, preproc);
         };
         self.data.status_store.insert(
@@ -468,6 +473,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<ThresholdKeyGenRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResponse>, tonic::Status> {
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -530,7 +536,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
-                fill_network_memory_info_single_session(base_session).await;
+                fill_network_memory_info_single_session(base_session, Some(start.elapsed())).await;
             };
             self.data.status_store.insert(
                 session_id,
@@ -563,7 +569,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
-                fill_network_memory_info_single_session(small_session).await;
+                fill_network_memory_info_single_session(small_session, Some(start.elapsed())).await;
             };
             self.data.status_store.insert(
                 session_id,
@@ -697,6 +703,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         &self,
         request: tonic::Request<ThresholdDecryptRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResponse>, tonic::Status> {
+        let start = Instant::now();
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
@@ -831,7 +838,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             let res = res.into_iter().map(|(_, r)| r).collect();
 
             res_store.insert(session_id, res);
-            fill_network_memory_info_multiple_sessions(small_sessions).await;
+            fill_network_memory_info_multiple_sessions(small_sessions, Some(start.elapsed())).await;
         };
         self.data.status_store.insert(
             session_id,
