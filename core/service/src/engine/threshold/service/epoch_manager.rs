@@ -80,7 +80,7 @@ use crate::{
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
         traits::EpochManager,
-        utils::MetricedError,
+        utils::{MetricedError, sanity_check_extra_data},
         validation::{
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
             parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
@@ -124,14 +124,12 @@ struct VerifiedKeyInfo {
     /// The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
-    pub extra_data: Vec<u8>,
 }
 
 #[derive(Debug)]
 struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
-    pub extra_data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -141,6 +139,8 @@ struct VerifiedPreviousEpochInfo {
     pub context_id: ContextId,
     /// epochId we reshare the shares from.
     pub epoch_id: EpochId,
+    /// The extra data to use in the new signatures on key and CRS material.
+    pub extra_data: Vec<u8>,
     pub keys_info: Vec<VerifiedKeyInfo>,
     pub crs_info: Vec<VerifiedCrsInfo>,
 }
@@ -165,6 +165,9 @@ fn verify_epoch_info(
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&previous_epoch.epoch_id, RequestIdParsingErr::Epoch)
             .map_err(make_metriced_err)?;
+    let extra_data = previous_epoch.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
+
     let keys_info = previous_epoch
         .keys_info
         .into_iter()
@@ -207,9 +210,6 @@ fn verify_epoch_info(
                 preproc_id,
                 key_parameters,
                 key_digests,
-                // TODO: for RFC005 add this field to request and here
-                // this will come externally, i.e., via KeyInfo
-                extra_data: vec![],
             })
         })
         .try_collect()?;
@@ -227,7 +227,6 @@ fn verify_epoch_info(
             Ok(VerifiedCrsInfo {
                 crs_id,
                 crs_digest: crs_info.crs_digest,
-                extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
         .try_collect()?;
@@ -237,6 +236,7 @@ fn verify_epoch_info(
         epoch_id,
         keys_info,
         crs_info,
+        extra_data,
     })
 }
 
@@ -634,7 +634,7 @@ impl<
                         &key_info.key_id,
                         &fhe_pubkeys,
                         eip712_domain,
-                        key_info.extra_data.clone(),
+                        verified_previous_epoch.extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -676,7 +676,7 @@ impl<
                         &key_info.key_id,
                         &compressed_keyset,
                         eip712_domain,
-                        key_info.extra_data.clone(),
+                        verified_previous_epoch.extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -729,7 +729,7 @@ impl<
                 &crs_info.crs_id,
                 &crs,
                 eip712_domain,
-                crs_info.extra_data.clone(),
+                verified_previous_epoch.extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
@@ -1841,6 +1841,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
 
@@ -1866,6 +1867,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1883,6 +1885,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1900,6 +1903,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1917,6 +1921,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1934,6 +1939,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1951,6 +1957,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1968,6 +1975,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1985,6 +1993,7 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -2002,6 +2011,7 @@ pub(crate) mod tests {
                 crs_id: Some(bad_req_id.clone()),
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -2019,6 +2029,7 @@ pub(crate) mod tests {
                 crs_id: None,
                 crs_digest: vec![],
             }],
+            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
     }

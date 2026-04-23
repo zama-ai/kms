@@ -800,6 +800,10 @@ pub struct PreviousEpochParameters {
     /// Information about the CRSes to re-sign in the new epoch.
     #[clap(long)]
     pub previous_crs: Vec<PreviousCrsInfo>,
+
+    /// Extra data (hex-encoded) to include in the request for creating the new epoch.
+    #[clap(long)]
+    pub extra_data: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -975,6 +979,7 @@ impl FromStr for PreviousEpochParameters {
         let mut epoch_id = None;
         let mut previous_keys = Vec::new();
         let mut previous_crs = Vec::new();
+        let mut extra_data = None;
 
         let mut string_iterator = s.split(";");
 
@@ -1086,6 +1091,10 @@ impl FromStr for PreviousEpochParameters {
                         previous_crs.push(crs_info_str.parse()?);
                     }
                 }
+                "extra_data" => {
+                    // The extra data is expected to be a single hex string, without the square brackets.
+                    extra_data = Some(value.to_string());
+                }
                 _ => return Err(format!("[PreviousEpochParameters] Unknown field: {}", key)),
             }
         }
@@ -1095,6 +1104,7 @@ impl FromStr for PreviousEpochParameters {
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
             previous_crs,
+            extra_data: extra_data.ok_or("Missing extra_data")?,
         })
     }
 }

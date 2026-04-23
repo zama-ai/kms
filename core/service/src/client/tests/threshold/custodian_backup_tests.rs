@@ -825,6 +825,7 @@ async fn test_backup_after_reshare_threshold() {
             crs_id: crs_info_item.crs_id.clone(),
             crs_digest: crs_info_item.crs_digest.clone(),
         }],
+        extra_data: vec![], // Should not produce a failure but at most warning logs
     };
 
     let epoch_request = env

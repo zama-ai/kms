@@ -797,6 +797,8 @@ message PreviousEpochInfo {
   repeated KeyInfo keys_info = 3;
   // Info about all CRS to be re-signed
   repeated CrsInfo crs_info = 4;
+  // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
+  bytes extra_data = 5;
 }
 
 message NewMpcEpochRequest {

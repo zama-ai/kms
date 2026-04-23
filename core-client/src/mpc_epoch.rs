@@ -89,6 +89,8 @@ impl PreviousEpochParameters {
             epoch_id: Some(self.epoch_id.into()),
             keys_info,
             crs_info,
+            extra_data: hex::decode(&self.extra_data)
+                .map_err(|e| anyhow::anyhow!("Could not parse extra_data: {e}"))?,
         };
 
         println!("Constructed PreviousEpochInfo for gRPC request: {:?}", resp);
@@ -323,7 +325,7 @@ pub(crate) async fn do_new_epoch(
                     &key_id,
                     &signature,
                     &dummy_domain(),
-                    vec![], // TODO RFC005, once extra data is added to request we need it here to verify the signature
+                    extra_data,
                     kms_addrs,
                 )?;
             }

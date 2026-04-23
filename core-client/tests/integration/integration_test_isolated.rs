@@ -1963,6 +1963,7 @@ async fn reshare_isolated(
                 epoch_id: ep_id,
                 previous_keys: previous_key_infos,
                 previous_crs: previous_crs_infos,
+                extra_data: "".to_string(), // Should not produce a failure but at most warning logs
             }),
         }),
         200,

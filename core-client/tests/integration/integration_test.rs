@@ -1883,6 +1883,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
                 crs_id,
                 digest: crs_digest,
             }],
+            extra_data: "".to_string(), // Should not produce a failure but at most warning logs
         }),
     });
 
