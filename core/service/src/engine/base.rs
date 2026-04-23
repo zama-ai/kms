@@ -1992,6 +1992,93 @@ pub(crate) mod tests {
         );
     }
 
+    /// Asserts that the EIP-712 signature produced by the production
+    /// [`compute_external_user_decrypt_signature`] helper (user decryption) is bound to the
+    /// `extra_data` that was supplied at signing time: rebuilding the message with any other
+    /// `extra_data` must *not* recover the signer's address.
+    #[test]
+    fn test_user_decrypt_signature_binds_extra_data() {
+        use crate::cryptography::{
+            compute_external_user_decrypt_signature, compute_user_decrypt_message,
+        };
+        use kms_grpc::kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponsePayload};
+
+        let mut rng = AesRng::seed_from_u64(741);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = pk.address();
+        let domain = dummy_domain();
+
+        // Synthetic payload — the signature/verification logic doesn't care that the
+        // signcrypted bytes are real, only that they're stable across signing and verification.
+        let payload = UserDecryptionResponsePayload {
+            verification_key: vec![0xAAu8; 33],
+            digest: vec![0xBBu8; 32],
+            signcrypted_ciphertexts: vec![
+                TypedSigncryptedCiphertext {
+                    fhe_type: 0,
+                    signcrypted_ciphertext: vec![0x11u8; 16],
+                    external_handle: vec![0xC1u8; 32],
+                    packing_factor: 1,
+                },
+                TypedSigncryptedCiphertext {
+                    fhe_type: 1,
+                    signcrypted_ciphertext: vec![0x22u8; 16],
+                    external_handle: vec![0xC2u8; 32],
+                    packing_factor: 1,
+                },
+            ],
+            party_id: 1,
+            degree: 0,
+        };
+        let user_pk_buf = vec![0xEEu8; 65];
+        let extra_data = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+
+        let sig = compute_external_user_decrypt_signature(
+            &sk,
+            &payload,
+            &domain,
+            &user_pk_buf,
+            &extra_data,
+        )
+        .unwrap();
+
+        // Happy path — same extra_data at verification recovers the signer.
+        let signed_message = compute_user_decrypt_message(&payload, &user_pk_buf, &extra_data)
+            .expect("message computation should succeed");
+        assert_eq!(
+            recover_address_from_ext_signature(&signed_message, &domain, &sig).unwrap(),
+            actual_address,
+            "verification with the original extra_data must recover the signer's address"
+        );
+
+        // Flipping a byte must break verification.
+        let mut tampered = extra_data.clone();
+        tampered[2] ^= 0x5A;
+        let bad_flipped = compute_user_decrypt_message(&payload, &user_pk_buf, &tampered).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_flipped, &domain, &sig).unwrap(),
+            actual_address,
+            "flipping a byte in extra_data must NOT recover the signer's address"
+        );
+
+        // Empty extra_data at verification when signer used non-empty must fail.
+        let bad_empty = compute_user_decrypt_message(&payload, &user_pk_buf, &[]).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_empty, &domain, &sig).unwrap(),
+            actual_address,
+            "empty extra_data at verification must NOT recover when signer used non-empty"
+        );
+
+        // Appending to extra_data must break verification.
+        let longer = [extra_data.as_slice(), &[0x01u8]].concat();
+        let bad_longer = compute_user_decrypt_message(&payload, &user_pk_buf, &longer).unwrap();
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_longer, &domain, &sig).unwrap(),
+            actual_address,
+            "appending to extra_data must NOT recover the signer's address"
+        );
+    }
+
     #[test]
     fn test_compute_external_signature_preproc() {
         let mut rng = AesRng::seed_from_u64(123);
