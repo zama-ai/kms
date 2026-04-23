@@ -20,6 +20,7 @@ Rules for changing code, configuration, or documentation in this repository.
 - Respect the existing folder structure (see [ARCHITECTURE.md](./ARCHITECTURE.md)).
 - Avoid introducing new patterns without justification.
 - Reuse existing utilities instead of duplicating logic. Check `util` (or similarly named) files for helpers before writing new ones.
+- Always try to preserve git history when possible, so prefer `git mv` to `mv` or rewriting code.
 
 ## Comments and docs
 
@@ -36,12 +37,12 @@ Rules for changing code, configuration, or documentation in this repository.
 - Validate potential errors (e.g. malformed data) as early as possible; do not defer checks.
 - Errors caused by bad input or adversarial behavior must not panic. Log them with enough detail that the log line alone identifies where and why the error occurred.
 - Errors that can only occur because of a bug should panic. For example: an out-of-bounds index on a vector of known size, or a `None` in a branch that should be unreachable.
-- Every `panic!`, `unwrap`, or `expect` must be accompanied by a comment explaining why the failure is a bug and cannot happen in correct execution — unless the reason is obvious in context.
-- Prefer `expect("...")` with a descriptive message over bare `unwrap()`.
+- Every `panic!` or `expect` must be accompanied by a comment explaining why the failure is a bug and cannot happen in correct execution — unless the reason is obvious in context.
+- Prefer `expect("...")` with a descriptive message over a bare `unwrap()` (the only exception is in tests, where unwrap is normally preferred for conciseness).
 
 ## Backward compatibility
 
-- Always preserve backward compatibility. Any data persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](./ARCHITECTURE.md).
+- Always preserve backward compatibility. Any data (that is not test data) persisted to public, private, or backup storage/vaults must be versioned using `tfhe-versionable`. Read [docs/developer/backward_compatibility.md](../docs/developer/backward_compatibility.md) before touching a persisted type, and follow the freeze-and-replay harness described in the "Backward compatibility" section of [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## gRPC and service API changes
 
@@ -54,7 +55,7 @@ Rules for changing code, configuration, or documentation in this repository.
 After any change, verify it compiles and lints cleanly:
 
 ```
-cargo fmt
+cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --all-features -- -D warnings
 ```

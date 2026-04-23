@@ -231,18 +231,7 @@ and `generate-backward-compatibility-*` targets to refresh vectors.
 
 ## External dependencies
 
-- **FHE** — `tfhe` (TFHE-rs), `tfhe-versionable`, `tfhe-zk-pok`.
-- **Blockchain / EIP-712** — the `alloy` family (`alloy-primitives`,
-  `alloy-signer`, `alloy-sol-types`, `alloy-dyn-abi`).
-- **gRPC / async** — `tonic`, `prost`, `tokio`.
-- **Storage** — AWS SDK (S3, KMS, Nitro NSM); optional Redis for distributed
-  threshold state; local filesystem for dev.
-- **Crypto** — RustCrypto (SHA-2/3, AES, k256, p384), `aws-lc-rs`, `rustls`,
-  `ml-kem` (PQ KEM).
-- **Observability** — `opentelemetry`, `prometheus`, OTLP export (Jaeger
-  compatible).
-- **Serialization** — `serde`, and the pinned `bincode` via
-  [bc2wrap](bc2wrap/).
+The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 
 ## Testing
 
@@ -267,9 +256,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Latest stable version of Rust. `protoc`, `pkgconfig`, and
-  `openssl` are required at build time; Docker is required for the test
-  harness.
+- **Toolchain** — Latest stable Rust (`rust-toolchain`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
