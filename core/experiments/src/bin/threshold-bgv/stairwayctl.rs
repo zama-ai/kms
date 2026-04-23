@@ -5,6 +5,13 @@ use tokio::time::{self, Duration};
 
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
+use experiments::{
+    choreography::{
+        bgv::{choreographer::BgvChoreoExt, requests::SupportedRing},
+        client_utils::ChoreoRuntime,
+    },
+    conf::choreo::ChoreoConf,
+};
 use itertools::Itertools;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -18,13 +25,6 @@ use threshold_bgv::{
     },
     bgv::basics::{PublicKey, bgv_pk_encrypt},
     constants::PLAINTEXT_MODULUS,
-};
-use experiments::{
-    choreography::{
-        bgv::{choreographer::BgvChoreoExt, requests::SupportedRing},
-        client_utils::ChoreoRuntime,
-    },
-    conf::choreo::ChoreoConf,
 };
 use threshold_types::session_id::SessionId;
 

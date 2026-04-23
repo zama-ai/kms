@@ -1,5 +1,16 @@
 //! CLI tool for interacting with a group of mobys
 use clap::{Args, Parser, Subcommand};
+use experiments::{
+    choreography::{
+        client_utils::ChoreoRuntime,
+        tfhe_rs::{
+            choreographer::KeySetMaybeCompressed,
+            grpc::SupportedRing,
+            requests::{SessionType, TfheType, ThroughtputParams},
+        },
+    },
+    conf::choreo::ChoreoConf,
+};
 use itertools::Itertools;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -13,17 +24,6 @@ use tfhe::{
 use threshold_execution::{
     endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
     tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
-};
-use experiments::{
-    choreography::{
-        client_utils::ChoreoRuntime,
-        tfhe_rs::{
-            choreographer::KeySetMaybeCompressed,
-            grpc::SupportedRing,
-            requests::{SessionType, TfheType, ThroughtputParams},
-        },
-    },
-    conf::choreo::ChoreoConf,
 };
 use threshold_types::session_id::SessionId;
 use tokio::time;

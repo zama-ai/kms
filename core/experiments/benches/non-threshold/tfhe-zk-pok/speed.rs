@@ -15,11 +15,11 @@ mod utilities;
 
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
-use threshold_execution::tfhe_internals::parameters::DKGParams;
 use experiments::zk_utils::{
     nist_gen_crs, nist_gen_crs_from_params, nist_gen_proof, nist_gen_proof_inputs,
     nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched, nist_verify_two_steps,
 };
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 use utilities::ALL_PARAMS;
 
 /// Benchmark CRS generation.

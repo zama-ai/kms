@@ -19,13 +19,13 @@ mod utilities;
 
 use utilities::{ALL_PARAMS, bench_memory};
 
-use tfhe_zk_pok::curve_api::Bls12_446;
-use tfhe_zk_pok::proofs::pke_v2::{PrivateCommit, Proof as ProofV2, PublicCommit, PublicParams};
 use experiments::zk_utils::{
     METADATA_LEN, PkeZkParams, nist_gen_crs, nist_gen_crs_from_params, nist_gen_proof,
     nist_gen_proof_inputs, nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched,
     nist_verify_two_steps,
 };
+use tfhe_zk_pok::curve_api::Bls12_446;
+use tfhe_zk_pok::proofs::pke_v2::{PrivateCommit, Proof as ProofV2, PublicCommit, PublicParams};
 
 #[global_allocator]
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;

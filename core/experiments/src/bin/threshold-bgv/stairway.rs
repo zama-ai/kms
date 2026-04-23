@@ -1,13 +1,13 @@
 //! MPC party binary for the BGV threshold network.
 //! Uses the experimental BGV/BFV choreography routing helper.
 use clap::Parser;
+use experiments::choreography;
+use experiments::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
+use experiments::conf::party::PartyConf;
 use observability::conf::{Settings, TelemetryConfig};
 use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
-use experiments::choreography;
-use experiments::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
-use experiments::conf::party::PartyConf;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]

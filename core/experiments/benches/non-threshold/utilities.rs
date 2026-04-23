@@ -1,3 +1,5 @@
+#[cfg(feature = "measure_memory")]
+use experiments::allocator::MEM_ALLOCATOR;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{FftAlgo, Method, Plan, setup_custom_fft_plan};
 use tfhe::{
     ClientKey, Tag,
@@ -9,8 +11,6 @@ use threshold_execution::tfhe_internals::parameters::{
     BC_PARAMS_SNS, NIST_PARAMS_P8_SNS_FGLWE, NIST_PARAMS_P8_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
     NIST_PARAMS_P32_SNS_LWE,
 };
-#[cfg(feature = "measure_memory")]
-use experiments::allocator::MEM_ALLOCATOR;
 
 #[cfg(feature = "measure_memory")]
 fn print_memory_usage(bench_name: String, results: Vec<usize>) {

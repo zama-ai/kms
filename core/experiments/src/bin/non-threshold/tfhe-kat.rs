@@ -1,3 +1,4 @@
+use experiments::utils::check_hash;
 use tfhe::Tag;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{FftAlgo, Method, Plan, setup_custom_fft_plan};
 use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
@@ -11,7 +12,6 @@ use tfhe::{
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use threshold_execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
-use experiments::utils::check_hash;
 
 const CLIENT_KEY_LABEL: &str = "CLIENT_KEY";
 const SERVER_KEY_LABEL: &str = "SERVER_KEY";

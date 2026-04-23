@@ -1,10 +1,10 @@
-use tfhe_zk_pok::curve_api::Bls12_446;
-use tfhe_zk_pok::proofs::pke_v2::{Proof as ProofV2, PublicParams};
-use threshold_execution::tfhe_internals::parameters::DKGParams;
 use experiments::{
     utils::check_hash,
     zk_utils::{nist_gen_crs, nist_gen_proof, nist_gen_proof_inputs, nist_run_verify},
 };
+use tfhe_zk_pok::curve_api::Bls12_446;
+use tfhe_zk_pok::proofs::pke_v2::{Proof as ProofV2, PublicParams};
+use threshold_execution::tfhe_internals::parameters::DKGParams;
 
 const CRS_LABEL: &str = "CRS";
 const PROOF_LABEL: &str = "PROOF";
