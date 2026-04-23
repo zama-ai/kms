@@ -1,10 +1,10 @@
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
 use hashing::hash_element;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
@@ -294,6 +294,69 @@ where
         preprocessing_ids,
         storage_info,
     })
+}
+
+/// Helper method to sanity check the content of the extra data field.
+///
+/// This method will never fail, but only print a warning if the content is not as expected.
+/// This is to ensure forward compatibility in case of the structure change on the sdk side.
+pub fn sanity_check_extra_data(extra_data: &[u8], epoch_id: &EpochId, context_id: &ContextId) {
+    if extra_data.is_empty() {
+        tracing::warn!("Extra data is empty, expected at least 1 byte to indicate the version");
+        return;
+    }
+
+    let version = extra_data[0];
+    match version {
+        1 => {
+            if extra_data.len() != 1 + 32 {
+                tracing::warn!(
+                    "Unexpected extra data length for version 1: {}, expected 33 bytes (1 byte for version and 32 bytes for epoch ID)",
+                    extra_data.len()
+                );
+                return;
+            }
+            if &extra_data[1..33] != epoch_id.as_bytes() {
+                tracing::warn!(
+                    "Epoch ID in extra data does not match expected epoch ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    epoch_id
+                );
+            }
+        }
+        2 => {
+            if extra_data.len() != 1 + 32 + 32 {
+                tracing::warn!(
+                    "Unexpected extra data length for version 2: {}, expected 65 bytes (1 byte for version and 32 bytes for epoch ID)",
+                    extra_data.len()
+                );
+                return;
+            }
+            if &extra_data[1..33] != epoch_id.as_bytes() {
+                tracing::warn!(
+                    "Epoch ID in extra data does not match expected epoch ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    epoch_id
+                );
+            }
+            if &extra_data[33..65] != &context_id.as_bytes()[..] {
+                tracing::warn!(
+                    "Context ID in extra data does not match expected context ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[33..65]),
+                    context_id
+                );
+            }
+        }
+        _ => {
+            tracing::warn!(
+                "Unknown extra data version: {}. Higest version understood is 2",
+                version
+            );
+        }
+    }
 }
 
 /// MetricedError wraps an internal error with additional context for metrics and logging.
