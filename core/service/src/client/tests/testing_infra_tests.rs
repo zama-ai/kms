@@ -7,8 +7,8 @@
 //! - `ThresholdTestEnv` - builder for threshold KMS test environments
 //!
 //! For examples of how to write isolated tests, see:
-//! - Centralized: `centralized/misc_tests_isolated.rs`
-//! - Threshold: `threshold/misc_tests_isolated.rs`
+//! - Centralized: `centralized/misc_tests.rs`
+//! - Threshold: `threshold/misc_tests.rs`
 
 use crate::testing::prelude::*;
 

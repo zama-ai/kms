@@ -22,11 +22,6 @@ path = "tests/integration/integration_test.rs"
 required-features = ["testing"]
 
 [[test]]
-name = "integration_test_isolated"
-path = "tests/integration/integration_test_isolated.rs"
-required-features = ["testing"]
-
-[[test]]
 name = "kubernetes_test_centralized"
 path = "tests/kind-testing/kubernetes_test_centralized.rs"
 required-features = ["kind_tests"]
@@ -99,7 +94,7 @@ tonic-prost-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
-# Enables threshold PRSS tests in `integration_test_isolated`.
+# Enables threshold PRSS tests in `integration_test`.
 # These are the threshold tests that require PRSS infrastructure:
 #   preproc+keygen, MPC context init/switch, reshare, full-gen preproc.
 # Un-ignores tests guarded with `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`.
@@ -110,7 +105,7 @@ ignored = ["kms", "strum"]
 # - Test params: missing PRSS can be initialized live at server startup.
 # - Default params: pre-generated PRSS is required in `test-material/default`
 #   (run `make generate-test-material-default`); missing PRSS is a hard error.
-# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss_isolated)
+# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss)
 #   and therefore do not require pre-generated startup PRSS.
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
 threshold_tests = ["testing"]
