@@ -32,18 +32,8 @@ path = "tests/kind-testing/kubernetes_test_centralized.rs"
 required-features = ["kind_tests"]
 
 [[test]]
-name = "kubernetes_test_centralized_isolated"
-path = "tests/kind-testing/kubernetes_test_centralized_isolated.rs"
-required-features = ["kind_tests"]
-
-[[test]]
 name = "kubernetes_test_threshold"
 path = "tests/kind-testing/kubernetes_test_threshold.rs"
-required-features = ["kind_tests"]
-
-[[test]]
-name = "kubernetes_test_threshold_isolated"
-path = "tests/kind-testing/kubernetes_test_threshold_isolated.rs"
 required-features = ["kind_tests"]
 
 [dependencies]
