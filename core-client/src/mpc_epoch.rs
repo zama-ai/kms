@@ -132,7 +132,7 @@ pub(crate) async fn do_new_epoch(
     let request = internal_client.new_epoch_request(
         &new_context_id,
         &new_epoch_id,
-        previous_epoch_grpc,
+        previous_epoch_grpc.clone(),
         domain.as_ref(),
     )?;
 
@@ -317,7 +317,10 @@ pub(crate) async fn do_new_epoch(
                     })?
                     .external_signature
                     .clone();
-
+                let extra_data = previous_epoch_grpc
+                    .as_ref()
+                    .map(|e| e.extra_data.clone())
+                    .ok_or_else(|| anyhow::anyhow!("No extra data included"))?;
                 check_standard_keyset_ext_signature(
                     &public_key,
                     &server_key,

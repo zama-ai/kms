@@ -802,6 +802,8 @@ pub struct PreviousEpochParameters {
     pub previous_crs: Vec<PreviousCrsInfo>,
 
     /// Extra data (hex-encoded) to include in the request for creating the new epoch.
+    /// Bound into the EIP712 signatures over the newly reshared keys and re-signed CRSs, so it must
+    /// match whatever the verifier expects. Required; pass an empty string (`extra_data:`) for no extra data.
     #[clap(long)]
     pub extra_data: String,
 }
@@ -820,10 +822,10 @@ pub struct NewEpochParameters {
     /// Format is:
     ///
     /// For compressed keyset
-    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
+    ///  `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,xof_key_digest=<key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...];extra_data:<hex_string>`
     ///
     /// For non-compressed keyset
-    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...]`
+    /// `--previous-epoch-params context_id:<context_id>;epoch_id:<epoch_id>;previous_keys:[key_id=<key_id>,preproc_id=<preproc_id>,server_key_digest=<server_key_digest>,public_key_digest=<public_key_digest>;...];previous_crs:[crs_id=<crs_id>,digest=<crs_digest>;...];extra_data:<hex_string>`
     #[clap(long)]
     pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
