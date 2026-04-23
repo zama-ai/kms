@@ -1013,7 +1013,12 @@ pub(crate) mod tests {
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
+        cryptography::{
+            compute_external_user_decrypt_signature, compute_user_decrypt_message,
+            signatures::{
+                compute_eip712_signature, gen_sig_keys, recover_address_from_ext_signature,
+            },
+        },
         dummy_domain,
         engine::{
             base::{
@@ -1031,8 +1036,11 @@ pub(crate) mod tests {
     use alloy_sol_types::SolStruct;
     use kms_grpc::{
         RequestId,
-        kms::v1::CiphertextFormat,
-        solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
+        kms::v1::{CiphertextFormat, TypedSigncryptedCiphertext, UserDecryptionResponsePayload},
+        solidity_types::{
+            CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification,
+            PrepKeygenVerification,
+        },
     };
     use rand::{RngCore, SeedableRng};
     use tfhe::{
@@ -1798,8 +1806,6 @@ pub(crate) mod tests {
     /// the hash. Synthetic digests are used so the test does not pay the cost of FHE keygen.
     #[test]
     fn test_keygen_signature_binds_extra_data() {
-        use crate::cryptography::signatures::compute_eip712_signature;
-
         let mut rng = AesRng::seed_from_u64(321);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let actual_address = pk.address();
@@ -1872,13 +1878,77 @@ pub(crate) mod tests {
         );
     }
 
+    /// Asserts that the EIP-712 signature produced for a decompression-keygen result (via the
+    /// production [`FheDecompressionUpgradeKey`] SolStruct used by
+    /// `compute_info_decompression_keygen`) is bound to the `extra_data` that was supplied at
+    /// signing time: verifying the same signature with any other `extra_data` must *not* recover
+    /// the signer's address.
+    ///
+    /// A synthetic key digest is used so the test does not pay the cost of FHE keygen.
+    #[test]
+    fn test_decompression_keygen_signature_binds_extra_data() {
+        let mut rng = AesRng::seed_from_u64(852);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = pk.address();
+        let domain = dummy_domain();
+        let key_digest = vec![0xDDu8; 32];
+        let extra_data = vec![0xBEu8, 0xEF, 0xFE, 0xED];
+
+        let signed_struct = FheDecompressionUpgradeKey {
+            decompressionUpgradeKeyDigest: key_digest.clone().into(),
+            extraData: extra_data.clone().into(),
+        };
+        let sig = compute_eip712_signature(&sk, &signed_struct, &domain).unwrap();
+
+        // Happy path — same extra_data at verification recovers the signer.
+        assert_eq!(
+            recover_address_from_ext_signature(&signed_struct, &domain, &sig).unwrap(),
+            actual_address,
+            "verification with the original extra_data must recover the signer's address"
+        );
+
+        // Flipping a byte in extra_data must break verification.
+        let mut tampered = extra_data.clone();
+        tampered[0] ^= 0xFF;
+        let bad_flipped = FheDecompressionUpgradeKey {
+            decompressionUpgradeKeyDigest: key_digest.clone().into(),
+            extraData: tampered.into(),
+        };
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_flipped, &domain, &sig).unwrap(),
+            actual_address,
+            "flipping a byte in extra_data must NOT recover the signer's address"
+        );
+
+        // Appending to extra_data must break verification.
+        let longer = [extra_data.as_slice(), &[0xAB]].concat();
+        let bad_longer = FheDecompressionUpgradeKey {
+            decompressionUpgradeKeyDigest: key_digest.clone().into(),
+            extraData: longer.into(),
+        };
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_longer, &domain, &sig).unwrap(),
+            actual_address,
+            "appending to extra_data must NOT recover the signer's address"
+        );
+
+        // Empty extra_data at verification when signer used non-empty must fail.
+        let bad_empty = FheDecompressionUpgradeKey {
+            decompressionUpgradeKeyDigest: key_digest.into(),
+            extraData: vec![].into(),
+        };
+        assert_ne!(
+            recover_address_from_ext_signature(&bad_empty, &domain, &sig).unwrap(),
+            actual_address,
+            "empty extra_data at verification must NOT recover when signer used non-empty"
+        );
+    }
+
     /// Asserts that the EIP-712 signature produced for a CRS-gen result is bound to the
     /// `extra_data` that was supplied at signing time: verifying the same signature with any
     /// other `extra_data` must *not* recover the signer's address.
     #[test]
     fn test_crsgen_signature_binds_extra_data() {
-        use crate::cryptography::signatures::compute_eip712_signature;
-
         let mut rng = AesRng::seed_from_u64(654);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let actual_address = pk.address();
@@ -1939,8 +2009,6 @@ pub(crate) mod tests {
     /// *not* recover the signer's address.
     #[test]
     fn test_public_decrypt_signature_binds_extra_data() {
-        use super::compute_external_pt_signature;
-
         let mut rng = AesRng::seed_from_u64(987);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let actual_address = pk.address();
@@ -1998,11 +2066,6 @@ pub(crate) mod tests {
     /// `extra_data` must *not* recover the signer's address.
     #[test]
     fn test_user_decrypt_signature_binds_extra_data() {
-        use crate::cryptography::{
-            compute_external_user_decrypt_signature, compute_user_decrypt_message,
-        };
-        use kms_grpc::kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponsePayload};
-
         let mut rng = AesRng::seed_from_u64(741);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let actual_address = pk.address();
