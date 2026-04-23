@@ -1888,8 +1888,12 @@ pub(crate) mod tests {
         let crs_digest = vec![0xCCu8; 32];
         let extra_data = vec![0x10u8, 0x20, 0x30];
 
-        let signed_struct =
-            CrsgenVerification::new(&crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
+        let signed_struct = CrsgenVerification::new(
+            &crs_id,
+            max_num_bits,
+            crs_digest.clone(),
+            extra_data.clone(),
+        );
         let sig = compute_eip712_signature(&sk, &signed_struct, &domain).unwrap();
 
         // Happy path.
