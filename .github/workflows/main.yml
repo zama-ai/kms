@@ -627,12 +627,12 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold-experiments'
+      working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
       args-tests: '--lib'
-      package-name: '-p threshold-experiments'
-      app-cache-dir: 'threshold-experiments'
+      package-name: '-p experiments'
+      app-cache-dir: 'experiments'
       nextest-test-threads: 4
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -673,13 +673,13 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold-experiments'
+      working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
       args-tests: '--lib'
       run-redis: true
-      package-name: '-p threshold-experiments'
-      app-cache-dir: 'threshold-experiments'
+      package-name: '-p experiments'
+      app-cache-dir: 'experiments'
       nextest-test-threads: 4
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -719,10 +719,10 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold-experiments'
+      working-directory: './core/experiments'
       args-tests: '--lib'
-      package-name: '-p threshold-experiments'
-      app-cache-dir: 'threshold-experiments'
+      package-name: '-p experiments'
+      app-cache-dir: 'experiments'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

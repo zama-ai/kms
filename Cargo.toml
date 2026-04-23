@@ -7,7 +7,7 @@ members = [
     "core/service",
     "core/test-utils",
     "core/thread-handles",
-    "core/threshold-experiments",
+    "core/experiments",
     "core/threshold-algebra",
     "core/threshold-execution",
     "core/threshold-bgv",
@@ -89,7 +89,7 @@ kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interf
 threshold-networking = { path = "./core/threshold-networking", default-features = false }
 observability = { path = "./observability" }  # Internal observability module
 test-utils = { path = "./core/test-utils" }
-threshold-experiments = { path = "./core/threshold-experiments/", default-features = false }  # Threshold FHE experiments
+experiments = { path = "./core/experiments/", default-features = false }  # Threshold FHE experiments
 threshold-types = { path = "./core/threshold-types" } # Types share across the KMS
 thread-handles = { path = "./core/thread-handles" }
 

@@ -263,7 +263,7 @@ Our CI uses intelligent change detection to only run tests for modified componen
 #### 🧪 PR Tests [`test-core-threshold-pr`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
-| 🔍 PR | ✅ | On core/threshold-experiments/** changes |
+| 🔍 PR | ✅ | On core/experiments/** changes |
 | 🎯 Main | ❌ | PR only |
 
 > **Config**: `-F slow_tests --lib` with 4 parallel test threads
@@ -272,7 +272,7 @@ Our CI uses intelligent change detection to only run tests for modified componen
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🔍 PR | ❌ | Never runs |
-| 🎯 Main | ✅ | On core/threshold-experiments/** changes |
+| 🎯 Main | ✅ | On core/experiments/** changes |
 
 > **Config**: `-F slow_tests --lib` with Redis integration and 4 parallel test threads
 
