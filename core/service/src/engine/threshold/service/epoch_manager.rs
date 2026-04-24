@@ -1442,8 +1442,11 @@ pub(crate) mod tests {
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
         },
         cryptography::signatures::gen_sig_keys,
-        engine::base::{BaseKmsStruct, derive_request_id},
-        engine::threshold::service::session::PRSSSetupCombined,
+        engine::{
+            base::{BaseKmsStruct, derive_request_id},
+            threshold::service::session::PRSSSetupCombined,
+            utils::make_extra_data,
+        },
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
             StorageType,
@@ -1696,6 +1699,7 @@ pub(crate) mod tests {
                 context_id: None,
                 previous_epoch: None,
                 domain: None,
+                extra_data: Vec::new(),
             }))
             .await
             .unwrap();
@@ -1722,6 +1726,7 @@ pub(crate) mod tests {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
+                    extra_data: Vec::new(),
                 }))
                 .await
                 .unwrap_err()
@@ -1747,6 +1752,7 @@ pub(crate) mod tests {
                         context_id: None,
                         previous_epoch: None,
                         domain: None,
+                        extra_data: Vec::new(),
                     }))
                     .await
                     .unwrap_err()
@@ -1762,6 +1768,7 @@ pub(crate) mod tests {
                         context_id: None,
                         previous_epoch: None,
                         domain: None,
+                        extra_data: Vec::new(),
                     }))
                     .await
                     .unwrap_err()
@@ -1784,6 +1791,7 @@ pub(crate) mod tests {
                 context_id: Some(context_id.into()),
                 previous_epoch: None,
                 domain: None,
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
             }))
             .await
             .unwrap_err();
@@ -1803,6 +1811,7 @@ pub(crate) mod tests {
                 context_id: None,
                 previous_epoch: None,
                 domain: None,
+                extra_data: Vec::new(),
             }))
             .await
             .unwrap();
@@ -1815,6 +1824,7 @@ pub(crate) mod tests {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
+                    extra_data: Vec::new(),
                 }))
                 .await
                 .unwrap_err()
@@ -1848,7 +1858,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
 
@@ -1874,7 +1883,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1892,7 +1900,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1910,7 +1917,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1928,7 +1934,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1946,7 +1951,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -1964,7 +1968,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -1982,7 +1985,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -2000,7 +2002,6 @@ pub(crate) mod tests {
                 crs_id: Some(crs_id.into()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
 
@@ -2018,7 +2019,6 @@ pub(crate) mod tests {
                 crs_id: Some(bad_req_id.clone()),
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
 
@@ -2036,7 +2036,6 @@ pub(crate) mod tests {
                 crs_id: None,
                 crs_digest: vec![],
             }],
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         };
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
     }

@@ -123,6 +123,7 @@ mod tests {
             epoch_id: Some(req_id.into()),
             previous_epoch: None,
             domain: None,
+            extra_data: Vec::new(),
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -140,6 +141,7 @@ mod tests {
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
             domain: None,
+            extra_data: Vec::new(),
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
@@ -150,6 +152,7 @@ mod tests {
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
             domain: None,
+            extra_data: Vec::new(),
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -165,6 +168,7 @@ mod tests {
             epoch_id: None,
             previous_epoch: None,
             domain: None,
+            extra_data: Vec::new(),
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();

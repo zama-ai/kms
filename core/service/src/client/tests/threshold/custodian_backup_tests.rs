@@ -33,6 +33,8 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::DEFAULT_EPOCH_ID;
+#[cfg(feature = "insecure")]
+use crate::consts::TEST_EXTRA_DATA_V2;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     SIGNING_KEY_ID,
@@ -825,7 +827,6 @@ async fn test_backup_after_reshare_threshold() {
             crs_id: crs_info_item.crs_id.clone(),
             crs_digest: crs_info_item.crs_digest.clone(),
         }],
-        extra_data: vec![], // Should not produce a failure but at most warning logs
     };
 
     let epoch_request = env
@@ -833,6 +834,7 @@ async fn test_backup_after_reshare_threshold() {
         .new_epoch_request(
             &DEFAULT_MPC_CONTEXT,
             &new_epoch_id,
+            &TEST_EXTRA_DATA_V2,
             Some(previous_epoch),
             Some(&crate::dummy_domain()),
         )

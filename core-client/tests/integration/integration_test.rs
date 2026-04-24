@@ -20,6 +20,7 @@ use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::engine::base::derive_request_id;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
+use kms_lib::engine::utils::make_extra_data;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
 use serial_test::serial;
@@ -692,6 +693,7 @@ async fn new_genesis_epoch(
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id,
         new_context_id: context_id,
+        extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
         previous_epoch_params: None,
     });
 
@@ -1760,6 +1762,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_1,
         new_context_id: context_id_set_1,
+        extra_data: make_extra_data(2, Some(&context_id_set_1), Some(&epoch_id_set_1)),
         previous_epoch_params: None,
     });
 
@@ -1871,6 +1874,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_2,
         new_context_id: context_id_set_2,
+        extra_data: make_extra_data(2, Some(&context_id_set_2), Some(&epoch_id_set_2)),
         previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,
@@ -1883,7 +1887,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
                 crs_id,
                 digest: crs_digest,
             }],
-            extra_data: "".to_string(), // Should not produce a failure but at most warning logs
         }),
     });
 

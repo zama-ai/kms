@@ -530,6 +530,39 @@ thread_local! {
 }
 
 #[cfg(test)]
+/// Helper methods for tests to make a correct extra_data field.
+/// While the KMS will not fails in case of unexpected extra_data content, it will still produce warning logs.
+/// Hence this helper can be used to prevent this.
+pub fn make_extra_data(
+    version: u8,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
+) -> Vec<u8> {
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+
+    let mut extra_data = vec![version];
+    if let Some(context_id) = context_id {
+        extra_data.extend_from_slice(context_id.as_bytes());
+    }
+    if let Some(epoch_id) = epoch_id {
+        extra_data.extend_from_slice(epoch_id.as_bytes());
+    }
+    if sanity_check_extra_data_helper(
+        &extra_data,
+        &epoch_id.unwrap_or(&DEFAULT_EPOCH_ID),
+        &context_id.unwrap_or(&DEFAULT_MPC_CONTEXT),
+    )
+    .is_some()
+    {
+        panic!(
+            "Generated extra_data does not pass sanity check: {:?}",
+            extra_data
+        );
+    }
+    extra_data
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;

@@ -234,6 +234,7 @@ use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
+use kms_lib::engine::utils::make_extra_data;
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -1893,6 +1894,7 @@ async fn new_prss_isolated(
         CCCommand::NewEpoch(NewEpochParameters {
             new_epoch_id: epoch_id,
             new_context_id: context_id,
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
             previous_epoch_params: None,
         }),
         200,

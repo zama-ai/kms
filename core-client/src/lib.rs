@@ -800,12 +800,6 @@ pub struct PreviousEpochParameters {
     /// Information about the CRSes to re-sign in the new epoch.
     #[clap(long)]
     pub previous_crs: Vec<PreviousCrsInfo>,
-
-    /// Extra data (hex-encoded) to include in the request for creating the new epoch.
-    /// Bound into the EIP712 signatures over the newly reshared keys and re-signed CRSs, so it must
-    /// match whatever the verifier expects. Required; pass an empty string (`extra_data:`) for no extra data.
-    #[clap(long)]
-    pub extra_data: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -985,7 +979,6 @@ impl FromStr for PreviousEpochParameters {
         let mut epoch_id = None;
         let mut previous_keys = Vec::new();
         let mut previous_crs = Vec::new();
-        let mut extra_data = None;
 
         let mut string_iterator = s.split(";");
 
@@ -1097,10 +1090,6 @@ impl FromStr for PreviousEpochParameters {
                         previous_crs.push(crs_info_str.parse()?);
                     }
                 }
-                "extra_data" => {
-                    // The extra data is expected to be a single hex string, without the square brackets.
-                    extra_data = Some(value.to_string());
-                }
                 _ => return Err(format!("[PreviousEpochParameters] Unknown field: {}", key)),
             }
         }
@@ -1110,7 +1099,6 @@ impl FromStr for PreviousEpochParameters {
             epoch_id: epoch_id.ok_or("Missing epoch_id")?,
             previous_keys,
             previous_crs,
-            extra_data: extra_data.ok_or("Missing extra_data")?,
         })
     }
 }
@@ -2362,6 +2350,8 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
 
 #[cfg(test)]
 mod tests {
+    use kms_lib::consts::TEST_EXTRA_DATA_V2;
+
     use super::*;
     use std::env;
 
@@ -2430,7 +2420,7 @@ mod tests {
         let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         // Test the FromStr impl of PreviousEpochParameters
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000];extra_data:{extra_data_hex}"
         );
         let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
 
