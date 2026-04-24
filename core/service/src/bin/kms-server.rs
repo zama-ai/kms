@@ -33,7 +33,7 @@ use kms_lib::{
         },
     },
 };
-use std::{net::ToSocketAddrs, sync::Arc, thread};
+use std::{net::ToSocketAddrs, num::NonZero, sync::Arc, thread};
 use thread_handles::init_rayon_thread_pool;
 use threshold_networking::tls::AttestedVerifier;
 use tokio::net::TcpListener;
