@@ -6,8 +6,8 @@ use crate::consts::{
     DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
 };
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
-use crate::vault::storage::{Storage, file::FileStorage};
-use anyhow::{Result, anyhow};
+use crate::vault::storage::{delete_at_request_id, file::FileStorage};
+use anyhow::Result;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 
 /// Create test material manager with workspace test-material path
@@ -94,22 +94,19 @@ pub async fn regenerate_central_keys(
     }
 
     // Delete all FHE key artifacts to force clean regeneration.
-    // `ensure_central_keys_exist short-circuits` on existing CompressedXofKeySet,
+    // `ensure_central_keys_exist` short-circuits on existing CompressedXofKeySet,
     // so we remove it plus any uncompressed artifacts and private keys.
+    // Use `delete_at_request_id` which is a no-op when the data is absent — since
+    // compressed keys are the default, the uncompressed artifacts may not exist.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        pub_storage
-            .delete_data(key_id, &PubDataType::CompressedXofKeySet.to_string())
-            .await
-            .map_err(|e| anyhow!("Failed to delete compressed key for {key_id}: {e}"))?;
-        // Also clean up uncompressed artifacts if present
-        pub_storage
-            .delete_data(key_id, &PubDataType::PublicKey.to_string())
-            .await
-            .map_err(|e| anyhow!("Failed to delete PublicKey for {key_id}: {e}"))?;
-        pub_storage
-            .delete_data(key_id, &PubDataType::ServerKey.to_string())
-            .await
-            .map_err(|e| anyhow!("Failed to delete ServerKey for {key_id}: {e}"))?;
+        delete_at_request_id(
+            pub_storage,
+            key_id,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await?;
+        delete_at_request_id(pub_storage, key_id, &PubDataType::PublicKey.to_string()).await?;
+        delete_at_request_id(pub_storage, key_id, &PubDataType::ServerKey.to_string()).await?;
     }
 
     remove_dir_if_exists(
