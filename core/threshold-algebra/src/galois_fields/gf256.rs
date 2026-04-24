@@ -1,14 +1,11 @@
-use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
-use error_utils::anyhow_error_and_log;
-use std::collections::HashMap;
-
 use crate::{
+    galois_fields::LagrangeMap,
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, OnceLock};
 
 g2p!(
     GF256,
@@ -87,32 +84,11 @@ impl RingWithExceptionalSequence for GF256 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF256>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+pub(crate) static LAGRANGE_STORE: OnceLock<LagrangeMap<GF256>> = OnceLock::new();
 
 impl Field for GF256 {
-    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-        if let Ok(lock_lagrange_store) = LAGRANGE_STORE.read() {
-            match lock_lagrange_store.get(points) {
-                Some(v) => Ok(v.clone()),
-                None => {
-                    drop(lock_lagrange_store);
-                    if let Ok(mut lock_lagrange_store) = LAGRANGE_STORE.write() {
-                        let lagrange_pols = lagrange_polynomials(points);
-                        lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                        Ok(lagrange_pols)
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error writing LAGRANGE_STORE".to_string(),
-                        ))
-                    }
-                }
-            }
-        } else {
-            Err(anyhow_error_and_log(
-                "Error reading LAGRANGE_STORE".to_string(),
-            ))
-        }
+    fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+        LAGRANGE_STORE.get()?.get(points).map(|v| v.as_slice())
     }
 }
 

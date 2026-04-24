@@ -1,7 +1,7 @@
 use algebra::{
     PRSSConversions,
     error_correction::error_correction,
-    poly::{Poly, lagrange_polynomials},
+    poly::Poly,
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         ErrorCorrect, Field, FromU128, Invert, One, Ring, RingWithExceptionalSequence, Sample,
@@ -21,11 +21,8 @@ use itertools::Itertools;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::sync::LazyLock;
-use std::sync::RwLock;
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
@@ -349,32 +346,11 @@ macro_rules! impl_field_level {
                 }
             }
 
-            static [<LAGRANGE_STORE_BGV_ $name:upper>]: LazyLock<RwLock<HashMap<Vec<$name>, Vec<Poly<$name>>>>> =
-                LazyLock::new(|| RwLock::new(HashMap::new()));
-
             impl Field for $name {
-                fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-                    if let Ok(lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].read() {
-                        match lock_lagrange_store.get(points) {
-                            Some(v) => Ok(v.clone()),
-                            None => {
-                                drop(lock_lagrange_store);
-                                if let Ok(mut lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].write() {
-                                    let lagrange_pols = lagrange_polynomials(points);
-                                    lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                                    Ok(lagrange_pols)
-                                } else {
-                                    Err(anyhow_error_and_log(
-                                        "Error writing LAGRANGE_STORE".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error reading LAGRANGE_STORE".to_string(),
-                        ))
-                    }
+                fn cached_lagrange_polys(_points: &[Self]) -> Option<&'static [Poly<Self>]> {
+                    // BGV level types are experimental; no pre-computed store.
+                    // Falls back to direct computation in lagrange_interpolation.
+                    None
                 }
 
                 fn invert(&self) -> Self {

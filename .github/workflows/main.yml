@@ -82,6 +82,7 @@ jobs:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
               - 'core/service/**'
+              - 'core/thread-handles/**'
               - 'core/threshold/**'
               - 'core/threshold-*/**'
               - 'core/test-utils/**'
