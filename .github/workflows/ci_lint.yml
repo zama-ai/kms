@@ -1,8 +1,9 @@
 # Lint and check CI
 name: ci_lint
 
+# TEMP: round3 probe — was `pull_request:`. Restore before merging.
 on:
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-lint-${{ github.ref }}
