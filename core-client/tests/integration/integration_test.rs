@@ -430,6 +430,60 @@ async fn real_preproc_and_keygen(
     (key_id.to_string(), preproc_id.unwrap().to_string())
 }
 
+async fn abort_key_gen<T: DockerComposeManager>(
+    ctx: &T,
+    test_path: &Path,
+    request_id: RequestId,
+) -> Vec<String> {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let config = CmdConfig {
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
+        command: CCCommand::AbortKeyGen(AbortParameters { request_id }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Aborting key-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path).await.unwrap();
+    println!("Abort key-gen done");
+    results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect()
+}
+
+async fn abort_crs_gen<T: DockerComposeManager>(
+    ctx: &T,
+    test_path: &Path,
+    request_id: RequestId,
+) -> Vec<String> {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let config = CmdConfig {
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
+        command: CCCommand::AbortCrsGen(AbortParameters { request_id }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Aborting CRS-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path).await.unwrap();
+    println!("Abort CRS-gen done");
+    results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect()
+}
+
 async fn restore_from_backup<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
@@ -1028,6 +1082,21 @@ async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
     assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
 
+#[test_context(DockerComposeCentralized)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized_abort_crs_gen(ctx: &DockerComposeCentralized) {
+    init_logging();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd02")
+            .unwrap();
+    let res = abort_crs_gen(ctx, keys_folder, request_id).await;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+}
+
 // Test restore without custodians
 #[test_context(DockerComposeCentralized)]
 #[tokio::test]
@@ -1487,6 +1556,21 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
     ])
     .await;
     assert_ne!(res[0], res[1]);
+}
+
+#[test_context(DockerComposeThresholdDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_abort_key_gen(ctx: &DockerComposeThresholdDefault) {
+    init_logging();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd11")
+            .unwrap();
+    let res = abort_key_gen(ctx, keys_folder, request_id).await;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
 }
 
 // Test restore without custodians
