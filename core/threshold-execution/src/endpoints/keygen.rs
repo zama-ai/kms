@@ -1140,7 +1140,7 @@ pub mod tests {
         try_tfhe_rerand(&client_key, &public_key);
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f8() {
@@ -1153,7 +1153,7 @@ pub mod tests {
         keygen_params32_no_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f3() {
@@ -1182,7 +1182,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f8() {
@@ -1195,7 +1195,7 @@ pub mod tests {
         keygen_params8_no_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f3() {
@@ -1224,7 +1224,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f8() {
@@ -1237,7 +1237,7 @@ pub mod tests {
         keygen_params32_no_sns_lwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f3() {
@@ -1266,7 +1266,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f8() {
@@ -1279,7 +1279,7 @@ pub mod tests {
         keygen_params8_no_sns_lwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f3() {
@@ -1308,7 +1308,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f8() {
@@ -1327,7 +1327,7 @@ pub mod tests {
         keygen_params_test_bk_sns::<4>(true).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f3() {
@@ -1442,7 +1442,7 @@ pub mod tests {
         run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f8() {
@@ -1455,7 +1455,7 @@ pub mod tests {
         keygen_params32_with_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f3() {
@@ -1484,7 +1484,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f8() {
@@ -1497,7 +1497,7 @@ pub mod tests {
         keygen_params8_with_sns_fglwe::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f3() {
@@ -1526,7 +1526,7 @@ pub mod tests {
         .await
     }
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f8() {
@@ -1539,7 +1539,7 @@ pub mod tests {
         keygen_params_blockchain_without_sns::<4>(false).await
     }
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f3() {

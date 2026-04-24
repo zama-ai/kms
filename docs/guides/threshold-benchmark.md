@@ -1,16 +1,16 @@
 # Benchmarking the threshold protocols
 
 <!--
-Remove the core/threshold reference below when we copy this file to threshold-fhe
-since core/threshold will be at the root.
+Remove the core/experiments reference below when we copy this file to experiments
+since core/experiments will be at the root.
 -->
-The code under `core/threshold` implements threshold multi-party computation protocols
+The code under `core/experiments` implements threshold multi-party computation protocols
 such as threshold key generation, threshold decryption
 and so on for TFHE, BFV and BGV.
 The protocols are designed to be both secure and robust when a fraction
 of the parties are malicious.
 This page describes how to run the benchmarks in a wide range of configurations on the threshold protocols.
-For the rest of this page, we assume the user is working under the `core/threshold` directory.
+For the rest of this page, we assume the user is working under the `core/experiments` directory.
 
 ## Directory overview
 
