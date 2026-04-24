@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
 use crate::client::make_extra_data;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_CRS;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
@@ -19,6 +20,12 @@ use tfhe::zk::CompactPkeCrs;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
+    /// `context_id` and `epoch_id` are optional: when the caller does not
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
+    /// — the same defaults the server resolves during validation — and bind
+    /// those resolved ids into the `extra_data` the KMS will sign. This is the
+    /// current desired behaviour so that the request and the EIP-712 signature
+    /// agree on the context/epoch regardless of whether the caller passed them.
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,
@@ -38,14 +45,17 @@ impl Client {
             )));
         }
 
+        let context_id = context_id.copied().unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.copied().unwrap_or(*DEFAULT_EPOCH_ID);
+
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
-            context_id: context_id.map(|id| (*id).into()),
-            epoch_id: epoch_id.map(|id| (*id).into()),
-            extra_data: make_extra_data(2, context_id, epoch_id)?,
+            context_id: Some(context_id.into()),
+            epoch_id: Some(epoch_id.into()),
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
         })
     }
 
