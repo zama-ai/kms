@@ -15,6 +15,7 @@
 //! - Native KMS servers spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
+use crate::client::tests::common::default_isolated_extra_data;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
 use crate::consts::{
@@ -344,7 +345,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),
             domain: Some(domain_msg.clone()),
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
             context_id: None,
             epoch_id: Some(epoch_id.into()),
         };

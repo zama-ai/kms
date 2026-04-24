@@ -4,7 +4,7 @@
 //! concepts and crypto work, but use isolated test material instead of shared storage.
 
 use crate::client::test_tools::{await_server_ready, check_port_is_closed};
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, default_isolated_extra_data};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::testing::prelude::*;
@@ -125,7 +125,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
-                    extra_data: Vec::new(),
+                    extra_data: default_isolated_extra_data(),
                 }))
                 .await
         });

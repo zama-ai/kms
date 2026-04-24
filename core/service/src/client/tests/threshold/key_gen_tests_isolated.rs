@@ -10,6 +10,8 @@
 //! - Native KMS servers spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::client::tests::common::default_isolated_extra_data;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
 #[cfg(feature = "slow_tests")]
@@ -62,7 +64,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         &crate::dummy_domain(),
-        vec![],
+        default_isolated_extra_data(),
         env.clients.len(),
         None,
         false,
@@ -123,7 +125,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         &crate::dummy_domain(),
-        vec![],
+        default_isolated_extra_data(),
         env.clients.len(),
         None,
         false,
@@ -187,7 +189,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
         &preproc_id,
         &keygen_id,
         &crate::dummy_domain(),
-        vec![],
+        default_isolated_extra_data(),
         env.clients.len(),
         None,
         false,
@@ -238,7 +240,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
             keyset_config: None,
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -282,7 +284,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
@@ -353,7 +355,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
             keyset_config: None,
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -394,7 +396,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
             keyset_added_info: None,
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
@@ -653,7 +655,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &crate::engine::base::INSECURE_PREPROCESSING_ID,
         &key_id_1,
         &dummy_domain(),
-        vec![],
+        default_isolated_extra_data(),
         env.clients.len(),
         None,
         false,
@@ -673,7 +675,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &crate::engine::base::INSECURE_PREPROCESSING_ID,
         &key_id_2,
         &dummy_domain(),
-        vec![],
+        default_isolated_extra_data(),
         env.clients.len(),
         None,
         false,
@@ -700,7 +702,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
             }),
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -750,7 +752,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
             }),
             context_id: None,
             epoch_id: None,
-            extra_data: vec![],
+            extra_data: default_isolated_extra_data(),
         };
         keygen_tasks
             .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
