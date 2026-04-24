@@ -182,7 +182,7 @@ impl<
         );
 
         let keys = fhe_keys;
-        let decomp_key = keys.get_decompression_key();
+        let decomp_key = keys.decompression_key();
         let low_level_ct = spawn_compute_bound(move || {
             deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
         })
@@ -202,9 +202,8 @@ impl<
 
                 Dec::decrypt(
                     &mut noiseflood_session,
-                    keys.get_integer_server_key(),
-                    keys.get_sns_key()
-                        .ok_or(anyhow::anyhow!("Missing sns key"))?,
+                    keys.integer_server_key(),
+                    keys.sns_key().ok_or(anyhow::anyhow!("Missing sns key"))?,
                     low_level_ct,
                     keys.private_keys.clone(),
                 )
@@ -221,7 +220,7 @@ impl<
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
-                    &keys.get_key_switching_key()?,
+                    &keys.key_switching_key()?,
                 )
                 .await
             }

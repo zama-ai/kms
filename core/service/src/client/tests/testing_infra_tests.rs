@@ -88,7 +88,6 @@ mod tests {
             KeyType::SigningKeys,
             KeyType::ServerSigningKeys,
             KeyType::FheKeys,
-            KeyType::PrssSetup,
         ];
 
         // Test centralized spec
