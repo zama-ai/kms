@@ -68,71 +68,6 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
-  # Start EC2 Runner Jobs
-  # Initializes self-hosted runners for running tests in parallel
-  # Only starts if we have images available (from input or docker-build)
-  ############################################################################
-  # start-runner-cargo:
-  #   name: kind-testing/start-runner (cargo)
-  #   runs-on: ubuntu-latest
-  #   needs:
-  #     - docker-build
-  #   if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-  #   outputs:
-  #     label: ${{ steps.start-ec2-runner.outputs.label }}
-  #   steps:
-  #     - name: Start EC2 runner
-  #       id: start-ec2-runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: start
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         backend: aws
-  #         profile: 'big-instance'
-
-  # start-runner-threshold:
-  #   name: kind-testing/start-runner (threshold)
-  #   runs-on: ubuntu-latest
-  #   needs:
-  #     - docker-build
-  #   if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-  #   outputs:
-  #     label: ${{ steps.start-ec2-runner.outputs.label }}
-  #   steps:
-  #     - name: Start EC2 runner
-  #       id: start-ec2-runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: start
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         backend: aws
-  #         profile: 'big-instance-kind'
-
-  # start-runner-centralized:
-  #   name: kind-testing/start-runner (centralized)
-  #   runs-on: ubuntu-latest
-  #   needs:
-  #     - docker-build
-  #   if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
-  #   outputs:
-  #     label: ${{ steps.start-ec2-runner.outputs.label }}
-  #   steps:
-  #     - name: Start EC2 runner
-  #       id: start-ec2-runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: start
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         backend: aws
-  #         profile: 'big-instance-service'
-
-  ############################################################################
   # Kind Testing Job
   # Main job that sets up a Kubernetes cluster using Kind and runs the tests
   ############################################################################
@@ -145,22 +80,16 @@ jobs:
           - name: cargo-check
             cargo-check: true
             runner-label: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            # runner-label: ${{ needs.start-runner-cargo.outputs.label }}
           - name: threshold
             deployment-type: threshold
             num-parties: 4
             runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            # runner-label: ${{ needs.start-runner-threshold.outputs.label }}
             enable-tls: true
           - name: centralized
             deployment-type: centralized
             num-parties: 1
             runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
-            # runner-label: ${{ needs.start-runner-centralized.outputs.label }}
     needs:
-      # - start-runner-cargo
-      # - start-runner-threshold
-      # - start-runner-centralized
       - docker-build
     if: |
       always() && !cancelled() &&
@@ -539,59 +468,3 @@ jobs:
       contents: read # Required to checkout repository code
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-  ############################################################################
-  ############################################################################
-  # Stop EC2 Runner Jobs
-  # Cleans up the EC2 runners after tests complete or fail
-  ############################################################################
-  # stop-runner-cargo:
-  #   name: kind-testing/stop-runner (cargo)
-  #   needs:
-  #     - start-runner-cargo
-  #     - kind-testing
-  #   runs-on: ubuntu-latest
-  #   if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
-  #   steps:
-  #     - name: Stop EC2 runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: stop
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         label: ${{ needs.start-runner-cargo.outputs.label }}
-
-  # stop-runner-threshold:
-  #   name: kind-testing/stop-runner (threshold)
-  #   needs:
-  #     - start-runner-threshold
-  #     - kind-testing
-  #   runs-on: ubuntu-latest
-  #   if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
-  #   steps:
-  #     - name: Stop EC2 runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: stop
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         label: ${{ needs.start-runner-threshold.outputs.label }}
-
-  # stop-runner-centralized:
-  #   name: kind-testing/stop-runner (centralized)
-  #   needs:
-  #     - start-runner-centralized
-  #     - kind-testing
-  #   runs-on: ubuntu-latest
-  #   if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
-  #   steps:
-  #     - name: Stop EC2 runner
-  #       uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
-  #       with:
-  #         mode: stop
-  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
-  #         job-secret: ${{ secrets.JOB_SECRET }}
-  #         label: ${{ needs.start-runner-centralized.outputs.label }}
