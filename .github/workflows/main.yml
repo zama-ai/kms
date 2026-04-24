@@ -486,9 +486,10 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
-      # TEMP: round3 probe — was "1" (serial-only). Try 4 to see if parallelism
-      # survives #[serial] and the shared-material mode, or OOMs.
-      nextest-test-threads: "4"
+      # TEMP NOTES: Previous 4-way: 22min test wall. Floor ~13min (slowest single test).
+      # Estimated CPU-time ~88min → 6-way wall ~14.7min (saves ~7min). Past
+      # 6, diminishing returns — the tail test dominates.
+      nextest-test-threads: "6"
       enable-shared-material: true  # Use shared material mode (no copying)
     secrets: inherit
 
