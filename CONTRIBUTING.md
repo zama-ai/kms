@@ -127,7 +127,7 @@ Before a pull request can be merged, several test suites run automatically.
 - pipeline is triggered by humans
 - review team is located in Paris timezone, pipeline launch will most likely happen during office hours
 - direct changes to CI related files are not allowed for external contributors
-- run `make pcc` to fix any build errors before pushing commits
+- run `make linting-all` to check for any syntax and lint problems before pushing commits
 {% endhint %}
 
 ## 9. Details on data versioning
