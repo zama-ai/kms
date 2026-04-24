@@ -73,12 +73,14 @@ impl Client {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
         param: Option<FheParameter>,
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
+        extra_data: Vec<u8>,
         keyset_config: Option<KeySetConfig>,
         domain: &Eip712Domain,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
@@ -97,6 +99,7 @@ impl Client {
             context_id: context_id.map(|id| (*id).into()),
             domain: Some(domain),
             epoch_id: epoch_id.map(|id| (*id).into()),
+            extra_data,
         })
     }
 
@@ -108,6 +111,7 @@ impl Client {
         param: Option<FheParameter>,
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
+        extra_data: Vec<u8>,
         keyset_config: Option<KeySetConfig>,
         domain: &Eip712Domain,
         partial_params: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
@@ -117,6 +121,7 @@ impl Client {
             param,
             context_id,
             epoch_id,
+            extra_data,
             keyset_config,
             domain,
         )?;
@@ -149,8 +154,9 @@ impl Client {
         preproc_id: &RequestId,
         domain: &Eip712Domain,
         resp: &KeyGenPreprocResult,
+        extra_data: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let sol_type = PrepKeygenVerification::new(preproc_id);
+        let sol_type = PrepKeygenVerification::new(preproc_id, extra_data);
         let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),

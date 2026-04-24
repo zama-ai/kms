@@ -22,6 +22,7 @@ use crate::testing::prelude::*;
 use crate::vault::storage::{StorageReader, StorageReaderExt, delete_all_at_request_id};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, FheParameter};
+use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use tonic::transport::Channel;
@@ -32,8 +33,6 @@ async fn key_gen_isolated(
     request_id: &RequestId,
     params: FheParameter,
 ) -> Result<()> {
-    use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
-
     // Preprocessing (required even for insecure mode)
     let preproc_id = derive_request_id(&format!("preproc-for-{:?}", request_id))?;
     let domain_msg = domain_to_msg(&dummy_domain());
@@ -44,6 +43,7 @@ async fn key_gen_isolated(
         domain: Some(domain_msg.clone()),
         context_id: None,
         epoch_id: None,
+        extra_data: vec![],
     };
 
     let preproc_resp = client

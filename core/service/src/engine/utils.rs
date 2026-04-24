@@ -529,7 +529,7 @@ thread_local! {
     static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 /// Helper methods for tests to make a correct extra_data field.
 /// While the KMS will not fails in case of unexpected extra_data content, it will still produce warning logs.
 /// Hence this helper can be used to prevent this.

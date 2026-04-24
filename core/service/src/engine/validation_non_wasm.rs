@@ -693,6 +693,7 @@ pub(crate) fn validate_preproc_request(
         DKGParams,
         KeySetConfig,
         Eip712Domain,
+        Vec<u8>,
     ),
     MetricedError,
 > {
@@ -716,6 +717,7 @@ fn unpack_preproc_request(
     DKGParams,
     KeySetConfig,
     Eip712Domain,
+    Vec<u8>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -736,6 +738,9 @@ fn unpack_preproc_request(
         None => *DEFAULT_EPOCH_ID,
     };
 
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
+
     let dkg_params = retrieve_parameters(Some(req.params))?;
     let keyset_config = preproc_proto_to_keyset_config(&req.keyset_config)?;
 
@@ -748,6 +753,7 @@ fn unpack_preproc_request(
         dkg_params,
         keyset_config,
         eip712_domain,
+        extra_data,
     ))
 }
 

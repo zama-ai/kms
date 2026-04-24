@@ -79,13 +79,16 @@ alloy_sol_types::sol! {
     struct PrepKeygenVerification {
         /// @notice The ID of the preprocessing keygen step.
         uint256 prepKeygenId;
+        /// @notice Extra data for client-specific context.
+        bytes extraData;
     }
 }
 
 impl PrepKeygenVerification {
-    pub fn new(preproc_id: &RequestId) -> Self {
+    pub fn new(preproc_id: &RequestId, extra_data: Vec<u8>) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            extraData: extra_data.into(),
         }
     }
 }

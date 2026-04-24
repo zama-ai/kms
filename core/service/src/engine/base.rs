@@ -261,8 +261,9 @@ pub(crate) fn compute_external_signature_preprocessing(
     sk: &PrivateSigKey,
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
-    let sol_type = PrepKeygenVerification::new(prep_id);
+    let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
     Ok(external_signature)
 }
@@ -2149,11 +2150,14 @@ pub(crate) mod tests {
         let actual_address = pk.address();
         let preproc_id = RequestId::new_random(&mut rng);
         let domain = dummy_domain();
-        let sig = compute_external_signature_preprocessing(&sk, &preproc_id, &domain).unwrap();
+        let extra_data = vec![0x0Au8, 0x0B, 0x0C];
+        let sig =
+            compute_external_signature_preprocessing(&sk, &preproc_id, &domain, extra_data.clone())
+                .unwrap();
 
         {
             // happy path
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
             assert_eq!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address
@@ -2162,7 +2166,7 @@ pub(crate) mod tests {
         {
             // wrong ID
             let bad_preproc_id = RequestId::new_random(&mut rng);
-            let sol_struct = PrepKeygenVerification::new(&bad_preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&bad_preproc_id, extra_data.clone());
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address
@@ -2176,7 +2180,7 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &bad_domain, &sig).unwrap(),
                 actual_address
@@ -2185,9 +2189,23 @@ pub(crate) mod tests {
         {
             // wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
-            let sig =
-                compute_external_signature_preprocessing(&bad_sk, &preproc_id, &domain).unwrap();
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sig = compute_external_signature_preprocessing(
+                &bad_sk,
+                &preproc_id,
+                &domain,
+                extra_data.clone(),
+            )
+            .unwrap();
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
+            assert_ne!(
+                recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
+                actual_address
+            );
+        }
+        {
+            // wrong extra data
+            let bad_extra_data = vec![0x0Bu8, 0x0A, 0x0D];
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, bad_extra_data);
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address

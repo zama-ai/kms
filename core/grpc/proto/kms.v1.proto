@@ -98,6 +98,9 @@ message KeyGenPreprocRequest {
 
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 6;
+
+  // Extra data used in the EIP712 signature - external_signature
+  bytes extra_data = 7;
 }
 
 message PartialKeyGenPreprocParams {

@@ -844,6 +844,10 @@ pub struct KeyGenPreprocParameters {
     /// Do preprocessing that's needed to generate a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub from_existing_shares: bool,
+    /// Optional extra data (hex-encoded) to include in the request for keygen preprocessing.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -858,6 +862,10 @@ pub struct PartialKeyGenPreprocParameters {
     /// Whether to store dummy preprocessing, needed to run online DKG if percentage is not 100
     #[clap(long, short = 's')]
     pub store_dummy_preprocessing: bool,
+    /// Optional extra data (hex-encoded) to include in the request for partial keygen preprocessing.
+    /// Can optionally have a "0x" prefix.
+    #[clap(long)]
+    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -1901,6 +1909,7 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
+            extra_data,
             compressed,
             from_existing_shares,
         }) => {
@@ -1917,6 +1926,7 @@ pub async fn execute_cmd(
                 fhe_params,
                 context_id.as_ref(),
                 epoch_id.as_ref(),
+                parse_extra_data(extra_data),
                 keyset_config,
             )
             .await?;
@@ -2350,8 +2360,6 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
 
 #[cfg(test)]
 mod tests {
-    use kms_lib::consts::TEST_EXTRA_DATA_V2;
-
     use super::*;
     use std::env;
 
@@ -2420,7 +2428,7 @@ mod tests {
         let wrong_id = "zz12030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         // Test the FromStr impl of PreviousEpochParameters
         let input_string = format!(
-            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000];extra_data:{extra_data_hex}"
+            "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={id7},digest=abc789;crs_id={id8},digest=abc000]"
         );
         let parsed = PreviousEpochParameters::from_str(&input_string).unwrap();
 

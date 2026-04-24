@@ -379,6 +379,7 @@ async fn real_preproc(
             epoch_id: shared_args.epoch_id,
             compressed: shared_args.compressed,
             from_existing_shares: shared_args.existing_keyset_id.is_some(),
+            extra_data: None,
         }),
         logs: true,
         max_iter,
@@ -693,7 +694,7 @@ async fn new_genesis_epoch(
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id,
         new_context_id: context_id,
-        extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
+        extra_data: hex::encode(make_extra_data(2, Some(&context_id), Some(&epoch_id))),
         previous_epoch_params: None,
     });
 
@@ -1762,7 +1763,11 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_1,
         new_context_id: context_id_set_1,
-        extra_data: make_extra_data(2, Some(&context_id_set_1), Some(&epoch_id_set_1)),
+        extra_data: hex::encode(make_extra_data(
+            2,
+            Some(&context_id_set_1),
+            Some(&epoch_id_set_1),
+        )),
         previous_epoch_params: None,
     });
 
@@ -1874,7 +1879,11 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_2,
         new_context_id: context_id_set_2,
-        extra_data: make_extra_data(2, Some(&context_id_set_2), Some(&epoch_id_set_2)),
+        extra_data: hex::encode(make_extra_data(
+            2,
+            Some(&context_id_set_2),
+            Some(&epoch_id_set_2),
+        )),
         previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,

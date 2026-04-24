@@ -1894,7 +1894,7 @@ async fn new_prss_isolated(
         CCCommand::NewEpoch(NewEpochParameters {
             new_epoch_id: epoch_id,
             new_context_id: context_id,
-            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
+            extra_data: hex::encode(make_extra_data(2, Some(&context_id), Some(&epoch_id))),
             previous_epoch_params: None,
         }),
         200,
@@ -1917,6 +1917,11 @@ async fn real_preproc_and_keygen_with_context_isolated(
             epoch_id,
             compressed: false,
             from_existing_shares: false,
+            extra_data: Some(hex::encode(make_extra_data(
+                2,
+                context_id.as_ref(),
+                epoch_id.as_ref(),
+            ))),
         }),
         200,
     );
