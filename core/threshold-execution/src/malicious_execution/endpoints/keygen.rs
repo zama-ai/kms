@@ -182,6 +182,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
 pub struct SlowOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
 // The sender is kept alive in the static so the receiver never resolves; it is intentionally unused.
+#[allow(clippy::type_complexity)]
 static SLOW_KEYGEN_CHANNEL: LazyLock<(oneshot::Sender<()>, Mutex<Option<oneshot::Receiver<()>>>)> =
     LazyLock::new(|| {
         let (tx, rx) = oneshot::channel();

@@ -352,7 +352,9 @@ impl<
             }
         };
         let token = CancellationToken::new();
-        self.ongoing.lock().await.insert(preproc_id, token.clone());
+        {
+            self.ongoing.lock().await.insert(preproc_id, token.clone());
+        }
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
@@ -460,7 +462,6 @@ impl<
                         // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem. 
                         // In connection with this the meta store update should be moved to AFTER the purging
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
-
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -556,15 +557,15 @@ impl<
                 // Observe that the cancellation arm handles the abortion and clean-up
                 cancellation_token.cancel();
                 tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
+                Status::ok("Key gen aborted successfully")
             }
             None => {
-                // No keygen consumed this preprocessing — nothing to cancel
-                return Status::not_found(
+                // No keygen happening — nothing to cancel
+                Status::not_found(
                     "No ongoing key generation found for the supplied preprocessing ID",
-                );
+                )
             }
         }
-        Status::ok("Key gen aborted successfully")
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.

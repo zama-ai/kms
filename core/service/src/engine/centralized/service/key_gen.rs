@@ -20,6 +20,7 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
@@ -29,6 +30,7 @@ use observability::metrics_names::{
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
+use tokio_util::sync::CancellationToken;
 
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
@@ -125,7 +127,6 @@ pub async fn key_gen_impl<
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
-    let crypto_storage = service.crypto_storage.clone();
     let sk = service
             .base_kms
             .sig_key()
@@ -138,39 +139,76 @@ pub async fn key_gen_impl<
         )
     })?;
 
+    let token = CancellationToken::new();
+    {
+        service
+            .ongoing_key_gen
+            .lock()
+            .await
+            .insert(preproc_id, token.clone());
+    }
+    let ongoing = Arc::clone(&service.ongoing_key_gen);
+    let crypto_storage = service.crypto_storage.clone();
+    let crypto_storage_cancel = service.crypto_storage.clone();
+
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
+    let preproc_meta_store_cancel = Arc::clone(&service.preprocessing_meta_store);
+    let keygen_background = async move {
+        // "Remove" the preprocessing material by deleting its entry from the meta store
+        tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
+        let handle = {
+            let mut meta_store_guard = preproc_meta_store.write().await;
+            meta_store_guard.delete(&preproc_id)
+        };
+        match handle_res(handle, &preproc_id).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
+                );
+            }
+            Err(e) => {
+                MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+            }
+        }
+        key_gen_background(
+            &req_id,
+            &preproc_id,
+            &epoch_id,
+            meta_store,
+            crypto_storage,
+            sk,
+            params,
+            internal_keyset_config,
+            eip712_domain,
+            extra_data,
+            op_tag,
+        )
+        .await;
+    };
     service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
-            // "Remove" the preprocessing material by deleting its entry from the meta store
-            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-            let handle = {
-                let mut meta_store_guard = preproc_meta_store.write().await;
-                meta_store_guard.delete(&preproc_id)
-            };
-            match handle_res(handle, &preproc_id).await {
-                Ok(_) => {
-                    tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
-                },
-                Err(e) => {
-                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+            tokio::select! {
+                () = keygen_background => {
+                        tracing::info!("Key generation of request {} with preproc id {} exiting normally.", req_id, preproc_id);
+                        // Remove cancellation token since generation is now done.
+                        ongoing.lock().await.remove(&preproc_id);
+                    },
+                    () = token.cancelled() => {
+                        MetricedError::handle_unreturnable_error(
+                            OP_KEYGEN_REQUEST,
+                            Some(req_id),
+                            format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
+                        );
+                        tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
+                        let mut guarded_meta_store = preproc_meta_store_cancel.write().await;
+                        let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
+                        // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem.
+                        // In connection with this the meta store update should be moved to AFTER the purging
+                        crypto_storage_cancel.inner.purge_key_material(&req_id, &epoch_id,KMSType::Centralized, guarded_meta_store).await;
+                    }
                 }
-            }
-            key_gen_background(
-                &req_id,
-                &preproc_id,
-                &epoch_id,
-                meta_store,
-                crypto_storage,
-                sk,
-                params,
-                internal_keyset_config,
-                eip712_domain,
-                extra_data,
-                op_tag,
-            )
-            .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -267,39 +305,24 @@ pub async fn abort_key_gen_impl<
     // Handle abort request. In the centralized case we don't actually abort the background task, we just check the preprocessing meta store to return an appropriate error
     let preproc_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenAbort)
         .map_err(|e| MetricedError::new(OP_KEYGEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
-
-    // If the preprocessing has been consumed by a key generation, the entry will no longer be in the preprocessing meta store
-    let guarded_meta_store = service.preprocessing_meta_store.read().await;
-    let status = guarded_meta_store.retrieve(&preproc_id);
-    match status {
-        Some(status) => {
-            if status.is_set() {
-                Err(MetricedError::new(
-                    OP_KEYGEN_ABORT,
-                    Some(preproc_id),
-                    anyhow::anyhow!(
-                        "Preprocessing already finished for the supplied preprocessing ID, cannot abort"
-                    ),
-                    tonic::Code::FailedPrecondition,
-                ))
-            } else {
-                // Process started but not finished, since it is so quick in the central case, for now we simply don't allow abort
-                Err(MetricedError::new(
-                    OP_KEYGEN_ABORT,
-                    Some(preproc_id),
-                    anyhow::anyhow!(
-                        "Preprocessing is almost finished for the supplied preprocessing ID, cannot abort"
-                    ),
-                    tonic::Code::FailedPrecondition,
-                ))
-            }
+    match service.ongoing_key_gen.lock().await.remove(&preproc_id) {
+        Some(cancellation_token) => {
+            // Observe that the cancellation arm handles the abortion and clean-up
+            cancellation_token.cancel();
+            tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
+            Ok(Response::new(Empty {}))
         }
-        None => Err(MetricedError::new(
-            OP_KEYGEN_ABORT,
-            Some(preproc_id),
-            anyhow::anyhow!("No ongoing key generation found for the supplied preprocessing ID"),
-            tonic::Code::NotFound,
-        )),
+        None => {
+            // No keygen happening; nothing to cancel
+            Err(MetricedError::new(
+                OP_KEYGEN_ABORT,
+                Some(preproc_id),
+                anyhow::anyhow!(
+                    "No ongoing key generation found for the supplied preprocessing ID"
+                ),
+                tonic::Code::NotFound,
+            ))
+        }
     }
 }
 
