@@ -642,7 +642,7 @@ impl<
                         }
                     };
 
-                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys {

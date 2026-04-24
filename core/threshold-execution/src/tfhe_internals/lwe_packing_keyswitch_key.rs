@@ -2,7 +2,6 @@ use itertools::Itertools;
 use num_traits::Zero;
 use std::slice::IterMut;
 use tfhe::{
-    Seed,
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
     },
@@ -92,7 +91,7 @@ where
         S: BaseSessionHandles,
     >(
         self,
-        seed: u128,
+        compression_seed: CompressionSeed,
         session: &S,
     ) -> anyhow::Result<SeededLwePackingKeyswitchKeyOwned<Scalar>> {
         let my_role = session.my_role();
@@ -122,7 +121,7 @@ where
             input_key_lwe_dimension,
             output_key_glwe_dimension,
             output_key_polynomial_size,
-            CompressionSeed::from(Seed(seed)), // NOTE: the key was generated using XOF so we need to use a custom decompression function
+            compression_seed,
             CiphertextModulus::new_native(),
         );
 

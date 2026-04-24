@@ -127,7 +127,7 @@ impl PublicKeyMaterial {
     ) -> anyhow::Result<Self> {
         let compressed_keyset_cloned = compressed_keyset.clone();
         let (_public_key, server_key) = compressed_keyset_cloned.decompress()?.into_raw_parts();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
             server_key.into_raw_parts();
         Ok(Self::Compressed {
             compressed_keyset: Arc::new(compressed_keyset),
@@ -807,6 +807,7 @@ mod tests {
                 sns_key,
                 _sns_compression_key,
                 _rerand_key,
+                _oprf_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
