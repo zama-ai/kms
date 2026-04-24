@@ -234,7 +234,6 @@ use kms_lib::client::test_tools::ServerHandle;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
 };
-use kms_lib::engine::utils::make_extra_data;
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -1362,7 +1361,6 @@ async fn crs_gen_isolated_with_params(
         max_num_bits,
         epoch_id: Some(epoch_id),
         context_id: Some(context_id),
-        extra_data: None,
     };
     let command = if insecure_crs_gen {
         CCCommand::InsecureCrsGen(crs_params)
@@ -1894,7 +1892,6 @@ async fn new_prss_isolated(
         CCCommand::NewEpoch(NewEpochParameters {
             new_epoch_id: epoch_id,
             new_context_id: context_id,
-            extra_data: hex::encode(make_extra_data(2, Some(&context_id), Some(&epoch_id))),
             previous_epoch_params: None,
         }),
         200,
@@ -1917,11 +1914,6 @@ async fn real_preproc_and_keygen_with_context_isolated(
             epoch_id,
             compressed: false,
             from_existing_shares: false,
-            extra_data: Some(hex::encode(make_extra_data(
-                2,
-                context_id.as_ref(),
-                epoch_id.as_ref(),
-            ))),
         }),
         200,
     );
@@ -1970,7 +1962,6 @@ async fn reshare_isolated(
                 epoch_id: ep_id,
                 previous_keys: previous_key_infos,
                 previous_crs: previous_crs_infos,
-                extra_data: "".to_string(), // Should not produce a failure but at most warning logs
             }),
         }),
         200,

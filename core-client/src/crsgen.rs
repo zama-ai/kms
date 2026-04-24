@@ -33,7 +33,6 @@ pub(crate) async fn do_crsgen(
     destination_prefix: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
-    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -46,12 +45,14 @@ pub(crate) async fn do_crsgen(
 
     let crs_req = internal_client.crs_gen_request(
         &req_id,
-        context_id,
-        epoch_id,
+        context_id.as_ref(),
+        epoch_id.as_ref(),
         max_num_bits,
         Some(param),
         &dummy_domain(),
     )?;
+    // The request builder computes extra_data; mirror it for signature verification.
+    let extra_data = crs_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands

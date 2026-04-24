@@ -130,9 +130,7 @@ pub(crate) async fn do_new_epoch(
     let request = internal_client.new_epoch_request(
         &new_context_id,
         &new_epoch_id,
-        &hex::decode(&new_epoch_params.extra_data)
-            .map_err(|e| anyhow::anyhow!("Could not decode extra_data: {:?}", e))?,
-        previous_epoch_grpc.clone(),
+        previous_epoch_grpc,
         domain.as_ref(),
     )?;
 

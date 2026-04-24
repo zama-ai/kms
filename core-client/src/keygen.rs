@@ -1,7 +1,7 @@
 use crate::s3_operations::fetch_public_elements;
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, PartialKeyGenPreprocParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain, parse_hex,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS, SharedKeyGenParameters, dummy_domain,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -65,7 +65,6 @@ pub(crate) async fn do_keygen(
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
-    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -99,6 +98,9 @@ pub(crate) async fn do_keygen(
         keyset_added_info,
         dummy_domain(),
     )?;
+    // Mirror the extra_data the request builder embedded, so signature verification uses
+    // the same bytes that the server signed.
+    let extra_data = dkg_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)KeyGenResult commands
@@ -494,7 +496,6 @@ pub(crate) async fn do_preproc(
     fhe_params: FheParameter,
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
-    extra_data: Vec<u8>,
     keyset_config: Option<kms_grpc::kms::v1::KeySetConfig>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
@@ -508,10 +509,12 @@ pub(crate) async fn do_preproc(
         Some(fhe_params),
         context_id,
         epoch_id,
-        extra_data.clone(),
         keyset_config,
         &domain,
     )?;
+    // Extra data is computed by the request builder; mirror it here so we verify the response
+    // signature against the same bytes the server signed.
+    let extra_data = pp_req.extra_data.clone();
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -575,18 +578,11 @@ pub(crate) async fn do_partial_preproc(
     // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
     // this function is only used for testing.
     let domain = dummy_domain();
-    let extra_data = preproc_params
-        .extra_data
-        .as_ref()
-        .map(|s| parse_hex(s))
-        .transpose()?
-        .unwrap_or_default();
     let pp_req = internal_client.partial_preproc_request(
         &req_id,
         Some(fhe_params),
         preproc_params.context_id.as_ref(),
         preproc_params.epoch_id.as_ref(),
-        extra_data.clone(),
         None,
         &domain,
         Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
@@ -594,6 +590,11 @@ pub(crate) async fn do_partial_preproc(
             store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
         }),
     )?;
+    let extra_data = pp_req
+        .base_request
+        .as_ref()
+        .map(|b| b.extra_data.clone())
+        .unwrap_or_default();
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();

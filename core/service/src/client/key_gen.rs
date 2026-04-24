@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
+use crate::client::make_extra_data;
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
@@ -69,18 +70,16 @@ impl Client {
             keyset_added_info,
             context_id: context_id.map(|id| (*id).into()),
             epoch_id: epoch_id.map(|id| (*id).into()),
-            extra_data: vec![],
+            extra_data: make_extra_data(2, context_id, epoch_id)?,
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
         param: Option<FheParameter>,
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
-        extra_data: Vec<u8>,
         keyset_config: Option<KeySetConfig>,
         domain: &Eip712Domain,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
@@ -99,7 +98,7 @@ impl Client {
             context_id: context_id.map(|id| (*id).into()),
             domain: Some(domain),
             epoch_id: epoch_id.map(|id| (*id).into()),
-            extra_data,
+            extra_data: make_extra_data(2, context_id, epoch_id)?,
         })
     }
 
@@ -111,7 +110,6 @@ impl Client {
         param: Option<FheParameter>,
         context_id: Option<&ContextId>,
         epoch_id: Option<&EpochId>,
-        extra_data: Vec<u8>,
         keyset_config: Option<KeySetConfig>,
         domain: &Eip712Domain,
         partial_params: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
@@ -121,7 +119,6 @@ impl Client {
             param,
             context_id,
             epoch_id,
-            extra_data,
             keyset_config,
             domain,
         )?;
@@ -136,7 +133,6 @@ impl Client {
         &self,
         to_context_id: &ContextId,
         to_epoch_id: &EpochId,
-        to_extra_data: &[u8],
         previous_epoch: Option<PreviousEpochInfo>,
         domain: Option<&Eip712Domain>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
@@ -145,7 +141,7 @@ impl Client {
             epoch_id: Some((*to_epoch_id).into()),
             previous_epoch,
             domain: domain.map(alloy_to_protobuf_domain).transpose()?,
-            extra_data: to_extra_data.to_vec(),
+            extra_data: make_extra_data(2, Some(to_context_id), Some(to_epoch_id))?,
         })
     }
 

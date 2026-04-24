@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
-use crate::consts::DEFAULT_EPOCH_ID;
-use crate::consts::DEFAULT_MPC_CONTEXT;
+use crate::client::make_extra_data;
 use crate::engine::base::DSEP_PUBDATA_CRS;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
@@ -23,8 +22,8 @@ impl Client {
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,
-        context_id: Option<ContextId>,
-        epoch_id: Option<EpochId>,
+        context_id: Option<&ContextId>,
+        epoch_id: Option<&EpochId>,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
         eip712_domain: &Eip712Domain,
@@ -39,24 +38,14 @@ impl Client {
             )));
         }
 
-        let epoch_id = match epoch_id {
-            Some(e) => Some(e.into()),
-            None => Some((*DEFAULT_EPOCH_ID).into()), // default epoch ID if not provided
-        };
-
-        let context_id = match context_id {
-            Some(c) => Some(c.into()),
-            None => Some((*DEFAULT_MPC_CONTEXT).into()), // context ID is optional, so we can leave it as None if not provided
-        };
-
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
-            context_id,
-            epoch_id,
-            extra_data: vec![],
+            context_id: context_id.map(|id| (*id).into()),
+            epoch_id: epoch_id.map(|id| (*id).into()),
+            extra_data: make_extra_data(2, context_id, epoch_id)?,
         })
     }
 

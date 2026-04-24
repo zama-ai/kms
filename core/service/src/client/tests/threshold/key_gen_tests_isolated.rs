@@ -235,6 +235,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
             keyset_config: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -349,6 +350,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
             keyset_config: None,
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -693,6 +695,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
             }),
             context_id: None,
             epoch_id: None,
+            extra_data: vec![],
         };
         preproc_tasks.spawn(async move {
             cur_client

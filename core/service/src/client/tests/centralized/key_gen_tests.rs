@@ -6,7 +6,6 @@ use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::engine::utils::make_extra_data;
 use crate::util::key_setup::test_tools::purge;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReaderExt;
@@ -129,7 +128,6 @@ async fn preproc_centralized(
             Some(params),
             context_id,
             epoch_id,
-            make_extra_data(2, context_id, epoch_id),
             keyset_config,
             domain,
         )

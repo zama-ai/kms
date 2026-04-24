@@ -243,7 +243,6 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             keys_info,
             crs_info,
-            extra_data: vec![], // Should not produce a failure but at most warning logs
         },
         signing_domain: dummy_domain(),
     });

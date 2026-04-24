@@ -1436,7 +1436,10 @@ pub(crate) mod tests {
     use super::*;
 
     use crate::{
-        client::test_tools::{self},
+        client::{
+            make_extra_data,
+            test_tools::{self},
+        },
         consts::{
             DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -1445,7 +1448,6 @@ pub(crate) mod tests {
         engine::{
             base::{BaseKmsStruct, derive_request_id},
             threshold::service::session::PRSSSetupCombined,
-            utils::make_extra_data,
         },
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
@@ -1791,7 +1793,7 @@ pub(crate) mod tests {
                 context_id: Some(context_id.into()),
                 previous_epoch: None,
                 domain: None,
-                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)),
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
             }))
             .await
             .unwrap_err();

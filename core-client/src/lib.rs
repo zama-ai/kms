@@ -624,10 +624,6 @@ pub struct SharedKeyGenParameters {
     pub use_existing_key_tag: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -653,10 +649,6 @@ pub struct CrsParameters {
     pub epoch_id: Option<EpochId>,
     #[clap(long)]
     pub context_id: Option<ContextId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 impl Default for CrsParameters {
@@ -665,7 +657,6 @@ impl Default for CrsParameters {
             max_num_bits: 2048,
             epoch_id: None,
             context_id: None,
-            extra_data: None,
         }
     }
 }
@@ -812,10 +803,6 @@ pub struct NewEpochParameters {
     #[clap(long)]
     pub new_context_id: ContextId,
 
-    /// Extra data (hex-encoded) to include in the request for creating the new epoch.
-    #[clap(long)]
-    pub extra_data: String,
-
     /// Optional parameters for resharing keys from a previous epoch in the new epoch.
     /// Format is:
     ///
@@ -844,10 +831,6 @@ pub struct KeyGenPreprocParameters {
     /// Do preprocessing that's needed to generate a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub from_existing_shares: bool,
-    /// Optional extra data (hex-encoded) to include in the request for keygen preprocessing.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -862,10 +845,6 @@ pub struct PartialKeyGenPreprocParameters {
     /// Whether to store dummy preprocessing, needed to run online DKG if percentage is not 100
     #[clap(long, short = 's')]
     pub store_dummy_preprocessing: bool,
-    /// Optional extra data (hex-encoded) to include in the request for partial keygen preprocessing.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -1812,7 +1791,6 @@ pub async fn execute_cmd(
                 false,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1838,7 +1816,6 @@ pub async fn execute_cmd(
                 true,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1848,7 +1825,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1870,7 +1846,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
@@ -1879,7 +1854,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1901,7 +1875,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
@@ -1909,7 +1882,6 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
-            extra_data,
             compressed,
             from_existing_shares,
         }) => {
@@ -1926,7 +1898,6 @@ pub async fn execute_cmd(
                 fhe_params,
                 context_id.as_ref(),
                 epoch_id.as_ref(),
-                parse_extra_data(extra_data),
                 keyset_config,
             )
             .await?;

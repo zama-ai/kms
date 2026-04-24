@@ -364,6 +364,7 @@ pub async fn threshold_key_gen_secure_isolated(
             keyset_config,
             context_id: context_id.clone(),
             epoch_id: epoch_id.clone(),
+            extra_data: vec![],
         };
         preproc_tasks.spawn(async move {
             cur_client

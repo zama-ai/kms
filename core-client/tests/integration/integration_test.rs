@@ -20,7 +20,6 @@ use kms_lib::engine::base::DSEP_PUBDATA_CRS;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::engine::base::derive_request_id;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
-use kms_lib::engine::utils::make_extra_data;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
 use serial_test::serial;
@@ -292,18 +291,11 @@ async fn crs_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     insecure_crs_gen: bool,
-    extra_data: Option<String>,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let command = match insecure_crs_gen {
-        true => CCCommand::InsecureCrsGen(CrsParameters {
-            extra_data,
-            ..Default::default()
-        }),
-        false => CCCommand::CrsGen(CrsParameters {
-            extra_data,
-            ..Default::default()
-        }),
+        true => CCCommand::InsecureCrsGen(CrsParameters::default()),
+        false => CCCommand::CrsGen(CrsParameters::default()),
     };
     let config = CmdConfig {
         file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
@@ -332,13 +324,11 @@ async fn crs_gen_with_custom_conf(
     insecure_crs_gen: bool,
     epoch_id: EpochId,
     context_id: ContextId,
-    extra_data: Option<String>,
 ) -> String {
     let params = CrsParameters {
         max_num_bits: 2048,
         epoch_id: Some(epoch_id),
         context_id: Some(context_id),
-        extra_data,
     };
 
     let command = match insecure_crs_gen {
@@ -379,7 +369,6 @@ async fn real_preproc(
             epoch_id: shared_args.epoch_id,
             compressed: shared_args.compressed,
             from_existing_shares: shared_args.existing_keyset_id.is_some(),
-            extra_data: None,
         }),
         logs: true,
         max_iter,
@@ -694,7 +683,6 @@ async fn new_genesis_epoch(
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id,
         new_context_id: context_id,
-        extra_data: hex::encode(make_extra_data(2, Some(&context_id), Some(&epoch_id))),
         previous_epoch_params: None,
     });
 
@@ -1026,7 +1014,7 @@ async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id = crs_gen(ctx, keys_folder, false, Some("0xffff".to_string())).await;
+    let crs_id = crs_gen(ctx, keys_folder, false).await;
     // hex string with double the length of ID_LENGTH
     assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
@@ -1039,7 +1027,7 @@ async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralized) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
@@ -1472,8 +1460,8 @@ async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdDefa
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
-    let crs_id_2 = crs_gen(ctx, keys_folder, false, Some("0xabcd".to_string())).await;
+    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 
@@ -1485,8 +1473,8 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let res = join_all([
-        crs_gen(ctx, keys_folder, false, None),
-        crs_gen(ctx, keys_folder, false, Some("0xabcd".to_string())),
+        crs_gen(ctx, keys_folder, false),
+        crs_gen(ctx, keys_folder, false),
     ])
     .await;
     assert_ne!(res[0], res[1]);
@@ -1500,7 +1488,7 @@ async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdTest) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, keys_folder, true, None).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
@@ -1712,7 +1700,6 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
                 existing_keyset_id: None,
                 existing_epoch_id: None,
                 use_existing_key_tag: false,
-                extra_data: None,
             },
             200,
         )
@@ -1763,11 +1750,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_1,
         new_context_id: context_id_set_1,
-        extra_data: hex::encode(make_extra_data(
-            2,
-            Some(&context_id_set_1),
-            Some(&epoch_id_set_1),
-        )),
         previous_epoch_params: None,
     });
 
@@ -1802,7 +1784,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         false,
         epoch_id_set_1,
         context_id_set_1,
-        None,
     )
     .await;
 
@@ -1879,11 +1860,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_2,
         new_context_id: context_id_set_2,
-        extra_data: hex::encode(make_extra_data(
-            2,
-            Some(&context_id_set_2),
-            Some(&epoch_id_set_2),
-        )),
         previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,
@@ -1959,7 +1935,6 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             existing_keyset_id: None,
             existing_epoch_id: None,
             use_existing_key_tag: false,
-            extra_data: None,
         },
         200,
     )
@@ -2016,8 +1991,8 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs(
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
-    let crs_id_2 = crs_gen(ctx, keys_folder, false, Some("0x9999".to_string())).await;
+    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 

@@ -1140,11 +1140,12 @@ pub(crate) async fn run_preproc(
     );
 
     // the responses should be empty
+    let extra_data = preproc_request.extra_data.clone();
     let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
-            .process_preproc_response(preproc_req_id, &domain, &response)
+            .process_preproc_response(preproc_req_id, &domain, &response, extra_data.clone())
             .unwrap();
     }
 }
