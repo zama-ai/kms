@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 /// Builds a LagrangeMap containing pre-computed Lagrange polynomials for all sorted subsets
 /// of `{embed(1), ..., embed(num_parties)}` with size ≥ `threshold + 1`.
-fn build_lagrange_map<F: Field>(
+pub(crate) fn build_lagrange_map<F: Field>(
     num_parties: usize,
     threshold: usize,
 ) -> anyhow::Result<LagrangeMap<F>> {
@@ -25,17 +25,13 @@ fn build_lagrange_map<F: Field>(
     Ok(map)
 }
 
+#[allow(unused_variables)]
 /// Pre-computes Lagrange polynomial stores for all enabled Galois field types.
 /// Must be called at startup with the known number of parties and threshold.
+///
+/// __NOTE__: GF8 and GF16 are small enough that we can pre-compute all possible lagrange basis.
+/// so they are skipped here.
 pub fn init_all_lagrange_stores(num_parties: usize, threshold: usize) -> anyhow::Result<()> {
-    #[cfg(feature = "extension_degree_3")]
-    super::gf8::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, threshold)?)
-        .ok();
-    #[cfg(feature = "extension_degree_4")]
-    super::gf16::LAGRANGE_STORE
-        .set(build_lagrange_map(num_parties, threshold)?)
-        .ok();
     #[cfg(feature = "extension_degree_5")]
     super::gf32::LAGRANGE_STORE
         .set(build_lagrange_map(num_parties, threshold)?)

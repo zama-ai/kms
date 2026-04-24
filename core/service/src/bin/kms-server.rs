@@ -368,11 +368,14 @@ async fn main_exec() -> anyhow::Result<()> {
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
-    if let Some(threshold_config) = core_config.threshold.as_ref()
-        && let Some(peers) = threshold_config.peers.as_ref()
-    {
-        init_all_lagrange_stores(peers.len(), threshold_config.threshold as usize)?;
-    }
+    // NOTE: Cache for GF16 (which we use here -- for now) is fully
+    // hence why the block below is commented out.
+
+    //if let Some(threshold_config) = core_config.threshold.as_ref()
+    //    && let Some(peers) = threshold_config.peers.as_ref()
+    //{
+    //    init_all_lagrange_stores(peers.len(), threshold_config.threshold as usize)?;
+    //}
 
     tracing::info!(
         "Multi-threading values: tokio::num_workers: {}, rayon_num_threads: {}, total_num_cpus: {}",

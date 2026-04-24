@@ -1,11 +1,11 @@
 use crate::{
-    galois_fields::LagrangeMap,
+    galois_fields::{LagrangeMap, common::build_lagrange_map},
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 g2p!(
     GF8,
@@ -84,11 +84,15 @@ impl RingWithExceptionalSequence for GF8 {
     }
 }
 
-pub(crate) static LAGRANGE_STORE: OnceLock<LagrangeMap<GF8>> = OnceLock::new();
+pub(crate) static LAGRANGE_STORE: LazyLock<LagrangeMap<GF8>> = LazyLock::new(|| {
+    build_lagrange_map::<GF8>(0, 7).expect(
+        " Initializaiton of the GF8 Lagrange basis can't fail with 7 parties and threshold 0",
+    )
+});
 
 impl Field for GF8 {
     fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
-        LAGRANGE_STORE.get()?.get(points).map(|v| v.as_slice())
+        LAGRANGE_STORE.get(points).map(|v| v.as_slice())
     }
 }
 
