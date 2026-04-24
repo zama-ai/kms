@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::prelude::{
     SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
 };
+use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
 use tfhe::shortint::key_switching_key::KeySwitchingKeyDestinationAtomicPattern;
+use tfhe::{CompressedReRandomizationKey, CompressedReRandomizationKeySwitchingKey};
 use tfhe::shortint::list_compression::{
     CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
 };
@@ -162,12 +164,30 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             _ => (None, None),
         };
 
-        // TODO(tfhe-1.6): `CompressedReRandomizationKey` is not re-exported at the
-        // public API boundary of tfhe-rs 1.6, so we cannot construct it here.
-        // Until a public constructor is exposed upstream, the rerand key is not
-        // attached to the compressed server key when it is built from raw parts.
-        let _ = &self.cpk_re_randomization_ksk;
-        let rerand_ksk = None;
+        let rerand_ksk = self.cpk_re_randomization_ksk.as_ref().map(|rerand_ksk| {
+            let ksk = match rerand_ksk {
+                CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
+                    CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
+                }
+                CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    dedicated_rerand_ksk,
+                ) => {
+                    let shortint_rerand_ksk =
+                        tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            dedicated_rerand_ksk.clone(),
+                            0,
+                            EncryptionKeyChoice::Big,
+                            KeySwitchingKeyDestinationAtomicPattern::Standard,
+                        );
+                    let rerand_ksk =
+                        tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            shortint_rerand_ksk,
+                        );
+                    CompressedReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
+                }
+            };
+            CompressedReRandomizationKey::LegacyDedicatedCPK { ksk }
+        });
 
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),

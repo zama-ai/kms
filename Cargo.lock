@@ -4238,7 +4238,7 @@ dependencies = [
  "test-utils",
  "test-utils-service",
  "tfhe",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.12",
  "thread-handles",
  "threshold-algebra",
@@ -4330,7 +4330,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tfhe",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.12",
  "threshold-hashing",
  "threshold-types",
@@ -7377,9 +7377,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11f66a1aeaee5d65031510bd75d687acbd3bc8843281c0f7a0549c96a7f2b698"
+version = "1.6.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -7394,12 +7393,12 @@ dependencies = [
  "serde",
  "sha3",
  "strum",
- "tfhe-csprng",
+ "tfhe-csprng 0.9.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
  "tfhe-fft",
  "tfhe-ntt",
- "tfhe-safe-serialize",
- "tfhe-versionable",
- "tfhe-zk-pok",
+ "tfhe-safe-serialize 0.1.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
+ "tfhe-versionable 0.7.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
+ "tfhe-zk-pok 0.8.1 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
 ]
 
 [[package]]
@@ -7411,16 +7410,27 @@ dependencies = [
  "aes",
  "getrandom 0.2.17",
  "libc",
+ "serde",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "tfhe-csprng"
+version = "0.9.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
+dependencies = [
+ "aes",
+ "getrandom 0.2.17",
+ "libc",
  "rayon",
  "serde",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
 ]
 
 [[package]]
 name = "tfhe-fft"
 version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "960a6a2ef1869320837e3d45ab60bbc031c045005eb2578b20fe074a982c2e56"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7434,8 +7444,7 @@ dependencies = [
 [[package]]
 name = "tfhe-ntt"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10650c743ade46b166c698c8349902ed5986784a7db418c51f810bea25f09e3d"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7450,7 +7459,17 @@ checksum = "d0603167ceb9c52247b80ea6e944bb0a4f2b45ce4e1f413d97af5df6dee443ff"
 dependencies = [
  "bincode 1.3.3",
  "serde",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "tfhe-safe-serialize"
+version = "0.1.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
+dependencies = [
+ "bincode 1.3.3",
+ "serde",
+ "tfhe-versionable 0.7.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
 ]
 
 [[package]]
@@ -7462,7 +7481,18 @@ dependencies = [
  "aligned-vec",
  "num-complex",
  "serde",
- "tfhe-versionable-derive",
+ "tfhe-versionable-derive 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "tfhe-versionable"
+version = "0.7.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
+dependencies = [
+ "aligned-vec",
+ "num-complex",
+ "serde",
+ "tfhe-versionable-derive 0.7.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
 ]
 
 [[package]]
@@ -7470,6 +7500,16 @@ name = "tfhe-versionable-derive"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "085ba3a819d9931325c08ff7430864f941c7b05b0b87d1b0086336cea8f658ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "tfhe-versionable-derive"
+version = "0.7.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7493,8 +7533,29 @@ dependencies = [
  "rayon",
  "serde",
  "sha3",
- "tfhe-safe-serialize",
- "tfhe-versionable",
+ "tfhe-safe-serialize 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zeroize",
+]
+
+[[package]]
+name = "tfhe-zk-pok"
+version = "0.8.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a#99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-poly",
+ "getrandom 0.2.17",
+ "itertools 0.14.0",
+ "num-bigint",
+ "rand 0.8.5",
+ "rayon",
+ "serde",
+ "sha3",
+ "tfhe-safe-serialize 0.1.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
+ "tfhe-versionable 0.7.0 (git+https://github.com/zama-ai/tfhe-rs.git?rev=99ded5fc5222b0ed24f4fc5420e0a04c56b5c88a)",
  "zeroize",
 ]
 
@@ -7588,7 +7649,7 @@ dependencies = [
  "sha3",
  "statrs",
  "strum",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "threshold-hashing",
  "threshold-types",
  "tracing",
@@ -7629,9 +7690,9 @@ dependencies = [
  "tempfile",
  "test-utils",
  "tfhe",
- "tfhe-csprng",
- "tfhe-versionable",
- "tfhe-zk-pok",
+ "tfhe-csprng 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tfhe-zk-pok 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-handles",
  "threshold-algebra",
  "threshold-hashing",
@@ -7667,7 +7728,7 @@ dependencies = [
  "rayon",
  "serde",
  "tfhe",
- "tfhe-csprng",
+ "tfhe-csprng 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-handles",
  "threshold-algebra",
  "threshold-execution",
@@ -7720,8 +7781,8 @@ dependencies = [
  "tempfile",
  "test-utils",
  "tfhe",
- "tfhe-csprng",
- "tfhe-zk-pok",
+ "tfhe-csprng 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tfhe-zk-pok 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-handles",
  "threshold-algebra",
  "threshold-execution",
@@ -7771,7 +7832,7 @@ dependencies = [
  "sha2",
  "test-utils",
  "tfhe",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-handles",
  "threshold-algebra",
  "threshold-execution",
@@ -7796,7 +7857,7 @@ dependencies = [
  "async-trait",
  "rand 0.8.5",
  "serde",
- "tfhe-versionable",
+ "tfhe-versionable 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "threshold-hashing",
  "zeroize",
 ]
