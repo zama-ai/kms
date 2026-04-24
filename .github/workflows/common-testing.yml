@@ -249,17 +249,16 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
           MINIO_REGION: eu-north-1
         run: |
-          curl -fL --retry 3 --retry-delay 2 https://dl.min.io/client/mc/release/linux-amd64/mc \
+          curl https://dl.min.io/client/mc/release/linux-amd64/mc \
             --create-dirs \
-            -o "${HOME}/minio-binaries/mc"
+            -o "${HOME}"/minio-binaries/mc
 
-          chmod +x "${HOME}/minio-binaries/mc"
+          chmod +x "${HOME}"/minio-binaries/mc
           export PATH="${PATH}:${HOME}/minio-binaries/"
-          mc --version
 
           mc alias set "${MINIO_ALIAS}" http://127.0.0.1:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-          mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
-          mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
+          mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
+          mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
 
       - name: Setup cargo dylint
         run: |
