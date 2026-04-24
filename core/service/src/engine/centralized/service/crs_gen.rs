@@ -329,6 +329,7 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::{
+        consts::DEFAULT_EPOCH_ID,
         dummy_domain,
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
     };
@@ -620,6 +621,48 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn abort_during_crs_gen() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("abort_during_crs_gen_crs_id").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = CrsGenRequest {
+            request_id: Some(req_id.into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()), // use default epoch to make sure the test works even if the default epoch fallback is removed in validation
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain),
+            extra_data: vec![],
+            max_num_bits: Some(2048),
+        };
+        crs_gen_impl(&kms, Request::new(request), false)
+            .await
+            .unwrap();
+
+        // Abort before the background task finishes. The cancellation token is
+        // inserted synchronously inside `crs_gen_impl` before it returns, so the
+        // abort is guaranteed to find it. Generation with max_num_bits=2048 takes
+        // long enough that the cancel arm wins the `tokio::select!` race.
+        abort_crs_gen_impl(&kms, Request::new(req_id.into()))
+            .await
+            .unwrap();
+
+        // Second abort fails because the cancellation token has already been consumed.
+        let err = abort_crs_gen_impl(&kms, Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        // The cancellation arm updates the meta store with an "aborted" error message,
+        // so retrieving the result returns Aborted (the meta store maps "abort" error
+        // messages to tonic::Code::Aborted).
+        let err = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
     #[tokio::test]
