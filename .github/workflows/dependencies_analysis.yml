@@ -1,8 +1,13 @@
 name: dependencies_analysis
 
-# TEMP: round3 probe — was push+pull_request. Restore before merging.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - test
+
+  pull_request:
+    branches: ['*']
 
 concurrency:
   group: deps-analysis-${{ github.ref }}
