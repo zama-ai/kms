@@ -331,7 +331,7 @@ fn sanity_check_extra_data_helper(
         1 => {
             if extra_data.len() != 1 + 32 {
                 return Some(format!(
-                    "Unexpected extra data length for version 1: {}, expected 33 bytes (1 byte for version and 32 bytes for epoch ID)",
+                    "Unexpected extra data length for version 1: {}, expected 33 bytes (1 byte for version and 32 bytes for context ID)",
                     extra_data.len()
                 ));
             }
@@ -347,11 +347,11 @@ fn sanity_check_extra_data_helper(
         2 => {
             if extra_data.len() != 1 + 32 + 32 {
                 return Some(format!(
-                    "Unexpected extra data length for version 2: {}, expected 65 bytes (1 byte for version and 32 bytes for epoch ID and context ID)",
+                    "Unexpected extra data length for version 2: {}, expected 65 bytes (1 byte for version and 32 bytes for context ID and 32 bytes for epoch ID)",
                     extra_data.len()
                 ));
             }
-            if extra_data[1..33] != context_id.as_bytes()[..] {
+            if &extra_data[1..33] != context_id.as_bytes() {
                 return Some(format!(
                     "Context ID in extra data does not match expected context ID. \
                          Got {}, expected {}",

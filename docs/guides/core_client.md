@@ -600,7 +600,7 @@ The kms core locally checks for existence of the public key material, and if it 
 If this fails for some reason, this material needs to be copied manually to the core's storage beforehand.
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>];extra_data:<HEX_STRING>"]
+$ cargo run -- -f <path-to-toml-config-file> new-epoch --new-epoch-id <EPOCH_ID> --new-context-id <CONTEXT_ID> [--previous-epoch-params "context_id:<PREV_CONTEXT_ID>;epoch-id:<PREV_EPOCH_ID>;previous_keys:[key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,server_key_digest=<DIGEST>,public_key_digest=<DIGEST>;key_id=<KEY_ID>,preproc_id=<PREPROC_ID>,xof_key_digest=<DIGEST>];previous_crs:[crs_id:<CRS_ID>,digest=<CRS_DIGEST>]"]
 ```
 
 Required arguments:
@@ -619,7 +619,6 @@ Optional argument `--previous-epoch-params` (for resharing from a previous epoch
  - `previous_crs`: An array (enclosed in square brackets) with the information about the CRSes to re-sign (each CRS is separated by a semicolon, each information concerning a CRS is separated by a coma):
     - `crs_id <CRS_ID>`: The ID of the CRS
     - `digest <DIGEST>`: the hex-encoded CRS digest
- - `extra_data <HEX_STRING>`: hex-encoded extra data bound into the EIP712 signatures over the newly reshared keys and re-signed CRSs. Required; pass an empty value (`extra_data:`) if no extra data should be bound.
 
 #### Destroying an MPC Epoch
 
