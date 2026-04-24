@@ -11,6 +11,7 @@ use observability::metrics_names::{
     OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
 };
 use threshold_execution::tfhe_internals::parameters::DKGParams;
+use tokio_util::sync::CancellationToken;
 
 use tokio::sync::RwLock;
 use tonic::{Request, Response};
@@ -81,7 +82,9 @@ pub async fn crs_gen_impl<
     )?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
+    let meta_store_cancel = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
+    let crypto_storage_cancel = service.crypto_storage.clone();
     let sk = service
             .base_kms
             .sig_key()
@@ -96,24 +99,62 @@ pub async fn crs_gen_impl<
 
     let rng = service.base_kms.new_rng().await;
 
+    let req_id = verified.req_id;
+    let epoch_id = verified.epoch_id;
+    let token = CancellationToken::new();
+    {
+        service
+            .ongoing_crs_gen
+            .lock()
+            .await
+            .insert(req_id, token.clone());
+    }
+    let ongoing = Arc::clone(&service.ongoing_crs_gen);
+
     service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
-            crs_gen_background(
-                &verified.req_id,
-                &verified.epoch_id,
-                rng,
-                meta_store,
-                crypto_storage,
-                sk,
-                verified.params,
-                verified.eip712_domain,
-                verified.extra_data,
-                max_bits,
-                op_tag,
-            )
-            .await;
+            tokio::select! {
+                () = crs_gen_background(
+                    &req_id,
+                    &epoch_id,
+                    rng,
+                    meta_store,
+                    crypto_storage,
+                    sk,
+                    verified.params,
+                    verified.eip712_domain,
+                    verified.extra_data,
+                    max_bits,
+                    op_tag,
+                ) => {
+                    tracing::info!("CRS generation of request {} exiting normally.", req_id);
+                    // Remove cancellation token since generation is now done.
+                    ongoing.lock().await.remove(&req_id);
+                },
+                () = token.cancelled() => {
+                    MetricedError::handle_unreturnable_error(
+                        OP_CRS_GEN_REQUEST,
+                        Some(req_id),
+                        anyhow::anyhow!("CRS generation of request {} exiting before completion because of an abort request.", req_id),
+                    );
+                    let del_res = crypto_storage_cancel.inner.purge_crs_material(&req_id, &epoch_id).await;
+                    {
+                        let mut guarded_meta_store = meta_store_cancel.write().await;
+                        let msg = if del_res {
+                            let msg = format!("CRS generation aborted and CRS material deleted successfully for request {}", req_id);
+                            tracing::info!(msg);
+                            msg
+                        } else {
+                            let msg = format!("CRS generation aborted but failed to delete CRS material for request {}", req_id);
+                            tracing::error!(msg);
+                            msg
+                        };
+                        update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, OP_CRS_GEN_REQUEST);
+                    }
+                }
+            }
         }
         .instrument(tracing::Span::current()),
     );
@@ -197,34 +238,24 @@ pub async fn abort_crs_gen_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
-    // Handle abort request. In the centralized case we don't actually abort the background task
     let request_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
         .map_err(|e| MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
-
-    // First check if the request exists in the meta store
-    let guarded_meta_store = service.crs_meta_map.read().await;
-    let status = guarded_meta_store.retrieve(&request_id);
-    match status {
-        Some(status) => {
-            let err_msg = if status.is_set() {
-                "CRS generation already finished for the supplied request ID, cannot abort"
-            } else {
-                // Process started but not finished, since it is so quick in the central case, for now we simply don't allow abort
-                "CRS generation almost finished for the supplied request ID, cannot abort"
-            };
+    match service.ongoing_crs_gen.lock().await.remove(&request_id) {
+        Some(cancellation_token) => {
+            // Observe that the cancellation arm handles the abortion and clean-up
+            cancellation_token.cancel();
+            tracing::info!("Aborted CRS generation with request ID {}", request_id);
+            Ok(Response::new(Empty {}))
+        }
+        None => {
+            // No CRS generation happening; nothing to cancel
             Err(MetricedError::new(
                 OP_CRS_GEN_ABORT,
                 Some(request_id),
-                anyhow::anyhow!(err_msg),
-                tonic::Code::FailedPrecondition,
+                anyhow::anyhow!("No ongoing CRS generation found for the supplied request ID"),
+                tonic::Code::NotFound,
             ))
         }
-        None => Err(MetricedError::new(
-            OP_CRS_GEN_ABORT,
-            Some(request_id),
-            anyhow::anyhow!("No ongoing CRS generation found for the supplied request ID"),
-            tonic::Code::NotFound,
-        )),
     }
 }
 
@@ -615,9 +646,18 @@ mod tests {
             .await
             .unwrap();
 
+        // Wait for the background task to remove the cancellation token after completion.
+        // The meta store is updated before the token removal, so poll until the ongoing map is empty.
+        for _ in 0..100 {
+            if !kms.ongoing_crs_gen.lock().await.contains_key(&req_id) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
         let err = abort_crs_gen_impl(&kms, Request::new(req_id.into()))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }

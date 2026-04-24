@@ -899,8 +899,8 @@ pub(crate) mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
-    /// In the centralized case preprocessing is near-instantaneous and abort is not supported
-    /// once the preproc entry has been registered, so the endpoint must return FailedPrecondition.
+    /// Preprocessing alone does not register an ongoing key generation, so an abort
+    /// targeting only a preproc ID must return NotFound.
     #[tokio::test]
     async fn abort_with_existing_preproc() {
         let mut rng = AesRng::seed_from_u64(42);
@@ -912,6 +912,6 @@ pub(crate) mod tests {
         let err = abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
             .await
             .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }
