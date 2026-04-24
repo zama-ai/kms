@@ -16,7 +16,7 @@
 //!         .with_test_name("my_test")
 //!         .build()
 //!         .await?;
-//!     
+//!
 //!     // Use env.server, env.client
 //!     Ok(())
 //! }
@@ -35,7 +35,7 @@
 //!         .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1
 //!         .build()
 //!         .await?;
-//!     
+//!
 //!     // Use env.servers, env.clients
 //!     Ok(())
 //! }
@@ -45,4 +45,6 @@ pub mod threshold;
 
 // Re-export for convenience
 pub use centralized::{CentralizedTestEnv, CentralizedTestEnvBuilder};
-pub use threshold::{ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder};
+pub use threshold::{
+    TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
+};

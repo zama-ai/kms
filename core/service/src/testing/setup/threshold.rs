@@ -33,6 +33,14 @@ pub struct ThresholdTestEnv {
     pub clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
 }
 
+/// Lifetime guard returned by [`ThresholdTestEnv::into_parts`].
+///
+/// Owns the tempdir handle. Must be held until the test body finishes — dropping it deletes the tempdir the servers
+/// were reading from.
+pub struct TestMaterialGuard {
+    _material_dir: TestMaterialHandle,
+}
+
 impl ThresholdTestEnv {
     /// Create a new builder for threshold test environment
     pub fn builder() -> ThresholdTestEnvBuilder {
@@ -62,6 +70,25 @@ impl ThresholdTestEnv {
     /// Consume and iterate over all servers with their party IDs (for shutdown)
     pub fn into_servers_with_id(self) -> impl Iterator<Item = (u32, ServerHandle)> {
         self.servers.into_iter()
+    }
+
+    /// Destructure the [`ThresholdTestEnv`] into parts.
+    ///
+    /// Returns `(clients, servers, material_path, guards)`. Tests that also need an `internal_client` should build it
+    /// via [`create_internal_client`](Self::create_internal_client) before calling `into_parts`.
+    pub fn into_parts(
+        self,
+    ) -> (
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        HashMap<u32, ServerHandle>,
+        std::path::PathBuf,
+        TestMaterialGuard,
+    ) {
+        let material_path = self.material_dir.path().to_path_buf();
+        let guards = TestMaterialGuard {
+            _material_dir: self.material_dir,
+        };
+        (self.clients, self.servers, material_path, guards)
     }
 
     /// Get client for a specific party ID
