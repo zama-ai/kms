@@ -609,6 +609,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -635,6 +636,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -661,6 +663,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -687,6 +690,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];

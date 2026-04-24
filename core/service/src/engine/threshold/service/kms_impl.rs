@@ -829,6 +829,7 @@ mod tests {
                     RequestId::zeros(),
                     HashMap::new(),
                     vec![],
+                    vec![],
                 ),
             };
 

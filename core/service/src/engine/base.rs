@@ -293,7 +293,7 @@ pub(crate) fn compute_info_standard_keygen(
         key_id,
         server_key_digest.clone(),
         public_key_digest.clone(),
-        extra_data,
+        extra_data.clone(),
     );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -305,6 +305,7 @@ pub(crate) fn compute_info_standard_keygen(
             (PubDataType::PublicKey, public_key_digest),
         ]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -321,7 +322,7 @@ pub(crate) fn compute_info_decompression_keygen(
 
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
-        extraData: extra_data.into(),
+        extraData: extra_data.clone().into(),
     };
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -330,6 +331,7 @@ pub(crate) fn compute_info_decompression_keygen(
         *prep_id,
         HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -356,7 +358,7 @@ pub(crate) fn compute_info_compressed_keygen(
         prep_id,
         key_id,
         compressed_keyset_digest.clone(),
-        extra_data,
+        extra_data.clone(),
     );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -365,6 +367,7 @@ pub(crate) fn compute_info_compressed_keygen(
         *prep_id,
         HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -862,12 +865,35 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenMetadataInnerVersioned {
-    V0(KeyGenMetadataInner),
+    V0(KeyGenMetadataInnerQ126),
+    V1(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersioned)]
 pub struct KeyGenMetadataInner {
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+}
+
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
+        Ok(KeyGenMetadataInner {
+            key_id: self.key_id,
+            preprocessing_id: self.preprocessing_id,
+            key_digest_map: self.key_digest_map,
+            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
+            external_signature: self.external_signature,
+        })
+    }
+}
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct KeyGenMetadataInnerQ126 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
     pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
@@ -898,12 +924,22 @@ impl KeyGenMetadata {
         preprocessing_id: RequestId,
         key_digest_map: HashMap<PubDataType, Vec<u8>>,
         external_signature: Vec<u8>,
+        extra_data: Vec<u8>,
     ) -> Self {
+        let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
+            tracing::warn!(
+                "Creating KeyGenMetadata with empty extra data. Will set use the legacy format"
+            );
+            None
+        } else {
+            Some(extra_data)
+        };
         KeyGenMetadata::Current(KeyGenMetadataInner {
             key_id,
             preprocessing_id,
             key_digest_map,
             external_signature,
+            extra_data: parsed_extra_data,
         })
     }
 

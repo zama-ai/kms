@@ -24,7 +24,7 @@ use kms_grpc::{
     RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    solidity_types::{CrsgenVerification, KeygenVerification},
+    solidity_types::{CrsgenVerification, KeygenVerificationQ126},
 };
 use kms_lib::{
     backup::{
@@ -198,12 +198,11 @@ fn test_key_gen_metadata(
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerificationQ126::new_standard(
         &preprocessing_id,
         &key_id,
         server_key_digest.clone(),
         pub_key_digest.clone(),
-        vec![],
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
@@ -232,6 +231,7 @@ fn test_key_gen_metadata(
         preprocessing_id,
         key_digest_map,
         external_signature,
+        extra_data: None, // Legacy approach
     };
 
     if original_legacy != new_legacy {
