@@ -562,11 +562,11 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'p', default_value_t = 0)]
     pub parallel_requests: usize,
-    /// Whether the key was generated as a compressed keyset (CompressedXofKeySet).
-    /// When true, fetches CompressedXofKeySet instead of PublicKey/ServerKey.
+    /// Use legacy uncompressed public key material (`PublicKey` + `ServerKey`).
+    /// By default the client uses `CompressedXofKeySet`.
     #[serde(skip_serializing, skip_deserializing)]
-    #[clap(long, default_value_t = false)]
-    pub compressed_keys: bool,
+    #[clap(long, short = 'u', default_value_t = false)]
+    pub uncompressed_keys: bool,
     /// Optional extra data (hex-encoded) to include in the request.
     /// Can optionally have a "0x" prefix.
     #[serde(skip_serializing, skip_deserializing)]
@@ -607,17 +607,14 @@ pub struct CipherWithParams {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SharedKeyGenParameters {
-    /// Generate compressed keys using XOF-seeded compression
-    #[clap(long, short = 'c', default_value_t = false)]
-    pub compressed: bool,
+    /// Generate legacy uncompressed public key material instead of the default compressed keyset.
+    #[clap(long, short = 'u', default_value_t = false)]
+    pub uncompressed: bool,
     /// Existing keyset ID to reuse all secret shares from.
     /// When set, generates new public keys from existing private key shares
     /// instead of running full distributed keygen.
     #[clap(long)]
     pub existing_keyset_id: Option<RequestId>,
-    /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
-    #[clap(long)]
-    pub existing_epoch_id: Option<EpochId>,
     /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
     /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
@@ -731,8 +728,9 @@ pub struct ResultParameters {
 pub struct KeyGenResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
-    #[clap(long, default_value_t = false)]
-    pub compressed: bool,
+    /// Fetch legacy uncompressed public key material instead of the default compressed keyset.
+    #[clap(long, short = 'u', default_value_t = false)]
+    pub uncompressed: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -834,9 +832,9 @@ pub struct KeyGenPreprocParameters {
     /// Defaults to the default epoch if not specified.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
-    /// Generate compressed keys using XOF-seeded compression
-    #[clap(long, short = 'c', default_value_t = false)]
-    pub compressed: bool,
+    /// Generate legacy uncompressed public key material instead of the default compressed keyset.
+    #[clap(long, short = 'u', default_value_t = false)]
+    pub uncompressed: bool,
     /// Do preprocessing that's needed to generate a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub from_existing_shares: bool,
@@ -1250,46 +1248,45 @@ pub async fn fetch_ctxt_from_file(
     ))
 }
 
-/// Try to fetch keys for the given key ID, auto-detecting whether they are regular or compressed.
+/// Try to fetch keys for the given key ID, auto-detecting whether they use the default
+/// compressed storage or the legacy uncompressed layout.
 ///
-/// If `compressed_keys` is explicitly `true`, fetches `[CompressedXofKeySet]` only.
-/// Otherwise, tries `[PublicKey, ServerKey]` first; on failure, falls back to `[CompressedXofKeySet]`.
-/// Returns the fetched party confs and a boolean indicating whether compressed keys were found.
+/// If `uncompressed_keys` is explicitly `true`, fetches `[PublicKey, ServerKey]` only.
+/// Otherwise, tries the current compressed layout `[CompressedXofKeySet, PublicKey]`
+/// first; on failure, falls back to the legacy `[PublicKey, ServerKey]`.
+/// Returns the fetched party confs and a boolean indicating whether uncompressed keys were found.
 async fn fetch_keys_auto_detect(
     key_id: &str,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
 ) -> anyhow::Result<(Vec<CoreConf>, bool)> {
-    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
+    let compressed_key_types = vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey];
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-    if compressed_keys {
-        let confs = fetch_public_elements(
-            key_id,
-            &compressed_key_types,
-            cc_conf,
-            destination_prefix,
-            false,
-        )
-        .await?;
+    if uncompressed_keys {
+        let confs =
+            fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await?;
         return Ok((confs, true));
     }
 
-    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
-    match fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await {
+    match fetch_public_elements(
+        key_id,
+        &compressed_key_types,
+        cc_conf,
+        destination_prefix,
+        false,
+    )
+    .await
+    {
         Ok(confs) => Ok((confs, false)),
         Err(_) => {
             tracing::info!(
-                "Regular keys [PublicKey, ServerKey] not found, trying CompressedXofKeySet..."
+                "Compressed layout [CompressedXofKeySet, PublicKey] not found, trying legacy [PublicKey, ServerKey]..."
             );
-            let confs = fetch_public_elements(
-                key_id,
-                &compressed_key_types,
-                cc_conf,
-                destination_prefix,
-                false,
-            )
-            .await?;
+            let confs =
+                fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false)
+                    .await?;
             Ok((confs, true))
         }
     }
@@ -1332,6 +1329,11 @@ pub async fn encrypt(
         keys_folder
     );
 
+    // TODO(dp): There's an architecture kink here: the caller of `encrypt()` must know what kind of keys are stored on
+    // disk (compressed/uncompressed) and tell `compute_cipher_from_stored_key` which to use. But this is backward: it's
+    // the storage layer that knows what is on disk and what isn't, and it should decide what is optimal to use. We
+    // should get rid of the `uncompressed_keys` boolean parameter here and instead just let the storage layer do it's
+    // job. That flag leaks persistence details into high level call sites.
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
@@ -1341,7 +1343,7 @@ pub async fn encrypt(
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
         },
-        cipher_params.compressed_keys,
+        cipher_params.uncompressed_keys,
     )
     .await;
 
@@ -1649,9 +1651,9 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
+                    let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.compressed_keys,
+                        cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1666,7 +1668,7 @@ pub async fn execute_cmd(
                             .as_str(),
                     );
                     let mut cipher_parameters = cipher_parameters.clone();
-                    cipher_parameters.compressed_keys = detected_compressed;
+                    cipher_parameters.uncompressed_keys = detected_uncompressed;
                     encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
@@ -1726,9 +1728,9 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    let (party_confs, detected_compressed) = fetch_keys_auto_detect(
+                    let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.compressed_keys,
+                        cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1743,7 +1745,7 @@ pub async fn execute_cmd(
                             .as_str(),
                     );
                     let mut cipher_parameters = cipher_parameters.clone();
-                    cipher_parameters.compressed_keys = detected_compressed;
+                    cipher_parameters.uncompressed_keys = detected_uncompressed;
                     encrypt(destination_prefix, storage_prefix, cipher_parameters).await?
                 }
             };
@@ -1897,13 +1899,24 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
-            compressed,
+            uncompressed,
             from_existing_shares,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
-            let keyset_config = keygen::build_keyset_config(*compressed, *from_existing_shares);
+            let keyset_config = Some(keygen::build_standard_keyset_config(
+                if *uncompressed {
+                    keygen::PublicKeyConfig::Uncompressed
+                } else {
+                    keygen::PublicKeyConfig::Compressed
+                },
+                if *from_existing_shares {
+                    keygen::SecretKeyConfig::UseExisting
+                } else {
+                    keygen::SecretKeyConfig::GenerateAll
+                },
+            ));
             let req_id = do_preproc(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1950,9 +1963,9 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            let (party_confs, detected_compressed) = fetch_keys_auto_detect(
+            let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
-                cipher_parameters.compressed_keys,
+                cipher_parameters.uncompressed_keys,
                 &cc_conf,
                 destination_prefix,
             )
@@ -1967,7 +1980,7 @@ pub async fn execute_cmd(
                     .as_str(),
             );
             let mut cipher_parameters = cipher_parameters.clone();
-            cipher_parameters.compressed_keys = detected_compressed;
+            cipher_parameters.uncompressed_keys = detected_uncompressed;
             encrypt(destination_prefix, storage_prefix, cipher_parameters).await?;
             vec![(None, "Encryption generated".to_string())]
         }
@@ -2004,7 +2017,7 @@ pub async fn execute_cmd(
                 vec![],
                 resp_response_vec,
                 cmd_config.download_all,
-                result_parameters.compressed,
+                result_parameters.uncompressed,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -2037,7 +2050,7 @@ pub async fn execute_cmd(
                 vec![],
                 resp_response_vec,
                 cmd_config.download_all,
-                result_parameters.compressed,
+                result_parameters.uncompressed,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
@@ -2347,7 +2360,13 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_lib::engine::base::derive_request_id;
+    use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
+    use kms_lib::vault::storage::{StorageType, file::FileStorage, store_versioned_at_request_id};
     use std::env;
+    use tempfile::tempdir;
+    use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
+    use tfhe::xof_key_set::CompressedXofKeySet;
 
     #[test]
     fn test_parse_hex() {
@@ -2522,5 +2541,121 @@ mod tests {
             "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_keys_auto_detect_downloads_public_key_for_compressed_layout() {
+        let remote_root = tempdir().unwrap();
+        let destination_root = tempdir().unwrap();
+        let object_folder = "PUB-p1";
+        let key_id = derive_request_id("fetch_keys_auto_detect_downloads_public_key").unwrap();
+
+        let params = kms_lib::consts::TEST_PARAM;
+        let config = params.to_tfhe_config();
+        let max_norm_hwt = params
+            .get_params_basics_handle()
+            .get_sk_deviations()
+            .map(|x| x.pmax)
+            .unwrap_or(1.0);
+        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+        let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
+            config,
+            vec![1, 2, 3, 4],
+            params.get_params_basics_handle().get_sec() as u32,
+            max_norm_hwt,
+            key_id.into(),
+        )
+        .unwrap();
+        let (public_key, _server_key) = compressed_keyset
+            .clone()
+            .decompress()
+            .unwrap()
+            .into_raw_parts();
+
+        let mut remote_storage = FileStorage::new(
+            Some(remote_root.path()),
+            StorageType::PUB,
+            Some(object_folder),
+        )
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut remote_storage,
+            &key_id,
+            &compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut remote_storage,
+            &key_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let cc_conf = CoreClientConfig {
+            kms_type: KmsType::Threshold,
+            cores: vec![CoreConf {
+                party_id: 1,
+                address: "127.0.0.1:0".to_string(),
+                s3_endpoint: format!("file://{}", remote_root.path().display()),
+                object_folder: object_folder.to_string(),
+                #[cfg(feature = "testing")]
+                private_object_folder: None,
+                #[cfg(feature = "testing")]
+                config_path: None,
+            }],
+            decryption_mode: None,
+            num_majority: 1,
+            num_reconstruct: 1,
+            fhe_params: Some(FheParameter::Test),
+        };
+
+        let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
+            &key_id.to_string(),
+            false,
+            &cc_conf,
+            destination_root.path(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(party_confs.len(), 1);
+        assert!(
+            !detected_uncompressed,
+            "compressed layout should not fall back to legacy uncompressed keys"
+        );
+
+        let downloaded_pk_path = destination_root
+            .path()
+            .join(object_folder)
+            .join(PubDataType::PublicKey.to_string())
+            .join(key_id.to_string());
+        assert!(
+            downloaded_pk_path.exists(),
+            "compressed auto-detect should download the authoritative standalone PublicKey"
+        );
+
+        let _downloaded_pk =
+            load_pk_from_pub_storage(Some(destination_root.path()), &key_id, Some(object_folder))
+                .await;
+        let (ciphertext, _format, _fhe_type) = compute_cipher_from_stored_key(
+            Some(destination_root.path()),
+            TestingPlaintext::U8(42),
+            &key_id,
+            Some(object_folder),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            false,
+        )
+        .await;
+        assert!(
+            !ciphertext.is_empty(),
+            "encryption should succeed from freshly fetched compressed key material"
+        );
     }
 }

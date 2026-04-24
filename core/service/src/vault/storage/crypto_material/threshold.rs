@@ -310,12 +310,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// The [meta_store] is updated to "Done" if the procedure is successful.
     ///
     /// This is similar to [write_threshold_keys_with_dkg_meta_store] but for compressed keys.
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_threshold_keys_with_dkg_meta_store_compressed(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
         ensure_meta_store_request_pending(&meta_store, key_id).await?;
@@ -327,6 +329,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 epoch_id,
                 threshold_fhe_keys,
                 compressed_keyset,
+                compact_public_key,
                 Arc::clone(&meta_store),
             )
             .await;
@@ -366,6 +369,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) -> bool {
         // use guarded_meta_store as the synchronization point
@@ -405,8 +409,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 store_result.is_ok()
             };
             let f2 = async {
-                // Store compressed xof key set
-                let server_result = store_versioned_at_request_id(
+                // Store compressed xof key set and the compact public key derived from it.
+                let keyset_result = store_versioned_at_request_id(
                     &mut (*pub_storage),
                     key_id,
                     compressed_keyset,
@@ -414,7 +418,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 )
                 .await;
 
-                if let Err(e) = &server_result {
+                if let Err(e) = &keyset_result {
                     tracing::error!(
                         "Failed to store compressed server key for request {}: {}",
                         key_id,
@@ -429,7 +433,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         true,
                     );
                 }
-                server_result.is_ok()
+
+                let pk_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    compact_public_key,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &pk_result {
+                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::PublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+
+                keyset_result.is_ok() && pk_result.is_ok()
             };
             tokio::join!(f1, f2)
         };

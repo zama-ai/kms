@@ -6,7 +6,7 @@ use threshold_execution::{
     random::get_rng,
     tfhe_internals::{
         parameters::{BC_PARAMS_SNS, DKGParams},
-        test_feature::gen_key_set,
+        test_feature::gen_uncompressed_key_set,
         utils::expanded_encrypt,
     },
 };
@@ -16,7 +16,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     group.sample_size(10);
 
     let params: DKGParams = BC_PARAMS_SNS;
-    let keyset = gen_key_set(params, tfhe::Tag::default(), &mut get_rng());
+    let keyset = gen_uncompressed_key_set(params, tfhe::Tag::default(), &mut get_rng());
     set_server_key(keyset.public_keys.server_key.clone());
 
     let public_key = bc2wrap::serialize(&(keyset.public_keys.public_key)).unwrap();

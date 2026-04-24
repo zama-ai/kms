@@ -18,7 +18,7 @@ use tfhe::{core_crypto::prelude::NormalizedHammingWeightBound, xof_key_set::Comp
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
-    test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
+    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -35,6 +35,7 @@ use crate::{
         crypto_material::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
+        delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
         store_versioned_at_request_id,
     },
@@ -709,9 +710,12 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         req_id.into(),
     )
     .unwrap();
-    threshold_fhe_keys.public_material =
-        PublicKeyMaterial::new_compressed(compressed_keyset.clone())
-            .expect("compressed material should be valid");
+    let (compact_pk, _sk) = compressed_keyset
+        .clone()
+        .decompress()
+        .unwrap()
+        .into_raw_parts();
+    threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let result = crypto_storage
@@ -720,6 +724,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
             &epoch_id,
             threshold_fhe_keys,
             &compressed_keyset,
+            &compact_pk,
             meta_store,
         )
         .await;
@@ -757,6 +762,93 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
     assert!(
         cache_read.is_err(),
         "compressed threshold cache should not retain failed writes"
+    );
+}
+
+#[tokio::test]
+async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
+    let req_id =
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("compressed_fhe_keys_exist_requires_standalone_public_key_epoch")
+            .unwrap()
+            .into();
+
+    let crypto_storage = CentralizedCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+    );
+
+    let params = TEST_PARAM;
+    let config = params.to_tfhe_config();
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+    let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
+        config,
+        vec![50, 51, 52, 53],
+        params.get_params_basics_handle().get_sec() as u32,
+        max_norm_hwt,
+        req_id.into(),
+    )
+    .unwrap();
+    let (compact_pk, _server_key) = compressed_keyset
+        .clone()
+        .decompress()
+        .unwrap()
+        .into_raw_parts();
+    let key_info = KmsFheKeyHandles {
+        client_key,
+        decompression_key: None,
+        public_key_info: dummy_info(),
+    };
+
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&req_id).unwrap();
+    }
+
+    crypto_storage
+        .write_centralized_compressed_keys_with_meta_store(
+            &req_id,
+            &epoch_id,
+            key_info,
+            &compressed_keyset,
+            &compact_pk,
+            meta_store,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        crypto_storage
+            .inner
+            .fhe_keys_exist(&req_id, &epoch_id)
+            .await
+            .unwrap(),
+        "sanity check: complete compressed layout should be considered present"
+    );
+
+    {
+        let mut guard = crypto_storage.inner.public_storage.lock().await;
+        delete_at_request_id(&mut *guard, &req_id, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+    }
+
+    assert!(
+        !crypto_storage
+            .inner
+            .fhe_keys_exist(&req_id, &epoch_id)
+            .await
+            .unwrap(),
+        "compressed keys should be treated as missing when the standalone PublicKey is absent"
     );
 }
 
@@ -812,7 +904,8 @@ fn setup_threshold_store(
         .to_classic_pbs_parameters();
 
     let mut rng = AesRng::seed_from_u64(100);
-    let keyset = gen_key_set(TEST_PARAM, req_id.into(), &mut rng);
+    // TODO(dp): should probably switch over to compressed keys here (and below).
+    let keyset = gen_uncompressed_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
         keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
 
@@ -821,14 +914,14 @@ fn setup_threshold_store(
     let (integer_server_key, _, _, _, sns_key, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
-    let threshold_fhe_keys = ThresholdFheKeys {
-        private_keys: Arc::new(key_shares[0].to_owned()),
-        public_material: PublicKeyMaterial::Uncompressed {
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: None,
-        },
-        meta_data: dummy_info(),
-    };
+    let threshold_fhe_keys = ThresholdFheKeys::new(
+        Arc::new(key_shares[0].to_owned()),
+        PublicKeyMaterial::new_uncompressed(
+            Arc::new(integer_server_key),
+            sns_key.map(Arc::new),
+            None,
+        ),
+        dummy_info(),
+    );
     (crypto_storage, threshold_fhe_keys, fhe_key_set)
 }

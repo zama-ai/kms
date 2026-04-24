@@ -23,31 +23,45 @@ use tfhe::{CompactPublicKey, ServerKey};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-/// Build a `KeySetConfig` from compressed and keyset_type parameters.
-/// Returns `None` when both `compressed` is false and `keyset_type` is `None`.
-pub(crate) fn build_keyset_config(
-    compressed: bool,
-    use_existing: bool,
-) -> Option<kms_grpc::kms::v1::KeySetConfig> {
-    if compressed || use_existing {
-        Some(kms_grpc::kms::v1::KeySetConfig {
-            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
-            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-                compute_key_type: 0, // CPU
-                secret_key_config: if use_existing {
-                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
-                } else {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PublicKeyConfig {
+    Compressed,
+    Uncompressed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SecretKeyConfig {
+    GenerateAll,
+    UseExisting,
+}
+
+/// Build an explicit standard `KeySetConfig`.
+pub(crate) fn build_standard_keyset_config(
+    public_key_config: PublicKeyConfig,
+    secret_key_config: SecretKeyConfig,
+) -> kms_grpc::kms::v1::KeySetConfig {
+    kms_grpc::kms::v1::KeySetConfig {
+        keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+        standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+            compute_key_type: 0, // CPU
+            secret_key_config: match secret_key_config {
+                SecretKeyConfig::GenerateAll => {
                     kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll as i32
-                },
-                compressed_key_config: if compressed {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
-                } else {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
-                },
-            }),
-        })
-    } else {
-        None
+                }
+                SecretKeyConfig::UseExisting => {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
+                }
+            },
+            compressed_key_config: match public_key_config {
+                PublicKeyConfig::Compressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll
+                }
+                PublicKeyConfig::Uncompressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone
+                }
+            }
+            .into(),
+        }),
     }
 }
 
@@ -79,13 +93,23 @@ pub(crate) async fn do_keygen(
     // NOTE: If we do not use dummy_domain here, then
     // this needs changing too in the KeyGenResult command.
     let use_existing = shared_config.existing_keyset_id.is_some();
-    let keyset_config = build_keyset_config(shared_config.compressed, use_existing);
+    let keyset_config = Some(build_standard_keyset_config(
+        if shared_config.uncompressed {
+            PublicKeyConfig::Uncompressed
+        } else {
+            PublicKeyConfig::Compressed
+        },
+        if use_existing {
+            SecretKeyConfig::UseExisting
+        } else {
+            SecretKeyConfig::GenerateAll
+        },
+    ));
     let keyset_added_info =
         shared_config
             .existing_keyset_id
             .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
                 existing_keyset_id: Some(id.into()),
-                existing_epoch_id: shared_config.existing_epoch_id.map(Into::into),
                 use_existing_key_tag: shared_config.use_existing_key_tag,
                 ..Default::default()
             });
@@ -166,7 +190,7 @@ pub(crate) async fn do_keygen(
         extra_data,
         resp_response_vec,
         cmd_conf.download_all,
-        shared_config.compressed,
+        shared_config.uncompressed,
     )
     .await?;
 
@@ -184,7 +208,7 @@ pub(crate) async fn fetch_and_check_keygen(
     extra_data: Vec<u8>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
-    compressed: bool,
+    uncompressed: bool,
 ) -> anyhow::Result<()> {
     if responses.len() < num_expected_responses {
         anyhow::bail!(
@@ -195,10 +219,10 @@ pub(crate) async fn fetch_and_check_keygen(
     }
 
     // Download the generated keys.
-    let key_types = if compressed {
-        vec![PubDataType::CompressedXofKeySet]
-    } else {
+    let key_types = if uncompressed {
         vec![PubDataType::PublicKey, PubDataType::ServerKey]
+    } else {
+        vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey]
     };
 
     let party_confs = fetch_public_elements(
@@ -218,7 +242,7 @@ pub(crate) async fn fetch_and_check_keygen(
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    if compressed {
+    if !uncompressed {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
             load_material_from_pub_storage(
                 Some(destination_prefix),
@@ -227,6 +251,9 @@ pub(crate) async fn fetch_and_check_keygen(
                 pub_storage_prefix,
             )
             .await;
+        let compact_public_key =
+            load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix)
+                .await;
 
         for response in responses {
             let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -248,6 +275,7 @@ pub(crate) async fn fetch_and_check_keygen(
             })?;
             check_compressed_keyset_ext_signature(
                 &compressed_keyset,
+                &compact_public_key,
                 &prep_id.try_into()?,
                 &request_id,
                 &external_signature,
@@ -289,7 +317,7 @@ pub(crate) async fn fetch_and_check_keygen(
                     "No preprocessing ID in keygen response, cannot verify external signature"
                 )
             })?;
-            check_standard_keyset_ext_signature(
+            check_uncompressed_keyset_ext_signature(
                 &public_key,
                 &server_key,
                 &prep_id.try_into()?,
@@ -411,7 +439,7 @@ pub(crate) async fn get_keygen_responses(
 
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn check_standard_keyset_ext_signature(
+pub(crate) fn check_uncompressed_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
     prep_id: &RequestId,
@@ -432,7 +460,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         prep_id,
         key_id,
         server_key_digest,
@@ -453,8 +481,10 @@ pub(crate) fn check_standard_keyset_ext_signature(
 }
 
 /// Check external signature for compressed keyset
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_compressed_keyset_ext_signature(
     compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
+    public_key: &CompactPublicKey,
     prep_id: &RequestId,
     key_id: &RequestId,
     external_sig: &[u8],
@@ -464,18 +494,23 @@ pub(crate) fn check_compressed_keyset_ext_signature(
 ) -> anyhow::Result<()> {
     let keyset_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
-        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={}",
+        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={},public_key_digest={}",
         key_id,
         prep_id,
-        hex::encode(&keyset_digest)
+        hex::encode(&keyset_digest),
+        hex::encode(&public_key_digest)
     );
 
     let sol_type = KeygenVerification::new_compressed(
         prep_id,
         key_id,
-        keyset_digest, /* TODO: reenable for RFC005 extra_data */
+        keyset_digest,
+        public_key_digest,
+        // TODO: reenable for RFC005
+        // extra_data,
     );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 

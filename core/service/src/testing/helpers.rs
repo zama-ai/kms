@@ -7,7 +7,7 @@ use crate::consts::{
 };
 use crate::util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist};
 use crate::vault::storage::{Storage, file::FileStorage};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 
 /// Create test material manager with workspace test-material path
@@ -58,7 +58,7 @@ pub fn create_test_material_manager() -> TestMaterialManager {
 /// (both private and public) with correct, matching RequestIds.
 /// This ensures test material has consistent key pairs including:
 /// - Server signing keys (VerfKey, VerfAddress, SigningKey)
-/// - FHE keys (PublicKey, ServerKey, FhePrivateKey)
+/// - FHE keys (CompressedXofKeySet, FhePrivateKey)
 ///
 /// # Arguments
 /// * `pub_storage` - Public storage for regenerated keys
@@ -94,23 +94,24 @@ pub async fn regenerate_central_keys(
     }
 
     // Delete all FHE key artifacts to force clean regeneration.
-    // ensure_central_keys_exist short-circuits on existing PublicKey, but we also
-    // remove ServerKey and FhePrivateKey from all Epochs to avoid stale data
-    // from previous runs.
+    // `ensure_central_keys_exist short-circuits` on existing CompressedXofKeySet,
+    // so we remove it plus any uncompressed artifacts and private keys.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        if let Err(e) = pub_storage
+        pub_storage
+            .delete_data(key_id, &PubDataType::CompressedXofKeySet.to_string())
+            .await
+            .map_err(|e| anyhow!("Failed to delete compressed key for {key_id}: {e}"))?;
+        // Also clean up uncompressed artifacts if present
+        pub_storage
             .delete_data(key_id, &PubDataType::PublicKey.to_string())
             .await
-        {
-            anyhow::bail!("Failed to delete PublicKey for {key_id}: {e}");
-        }
-        if let Err(e) = pub_storage
+            .map_err(|e| anyhow!("Failed to delete PublicKey for {key_id}: {e}"))?;
+        pub_storage
             .delete_data(key_id, &PubDataType::ServerKey.to_string())
             .await
-        {
-            anyhow::bail!("Failed to delete ServerKey for {key_id}: {e}");
-        }
+            .map_err(|e| anyhow!("Failed to delete ServerKey for {key_id}: {e}"))?;
     }
+
     remove_dir_if_exists(
         priv_storage
             .root_dir()

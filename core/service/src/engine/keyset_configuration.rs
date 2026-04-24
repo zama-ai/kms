@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use kms_grpc::RequestId;
-use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::utils::tonic_result::BoxedStatus;
@@ -75,8 +74,8 @@ pub(crate) struct WrappedCompressedKeyConfig(i32);
 impl From<WrappedCompressedKeyConfig> for ddec_keyset_config::CompressedKeyConfig {
     fn from(value: WrappedCompressedKeyConfig) -> Self {
         match value.0 {
-            1 => ddec_keyset_config::CompressedKeyConfig::All,
-            _ => ddec_keyset_config::CompressedKeyConfig::None, // 0 or invalid defaults to None
+            1 => ddec_keyset_config::CompressedKeyConfig::None,
+            _ => ddec_keyset_config::CompressedKeyConfig::All, // 0 or invalid defaults to All (compressed)
         }
     }
 }
@@ -106,7 +105,9 @@ impl InternalKeySetConfig {
         keyset_added_info: Option<KeySetAddedInfo>,
     ) -> anyhow::Result<Self> {
         if keyset_config.is_none() {
-            tracing::info!("No keyset config provided, defaulting to Standard KeySetConfig");
+            tracing::info!(
+                "No keyset config provided, defaulting to Standard KeySetConfig with compressed public keys"
+            );
         }
         let result = Self {
             keyset_config: preproc_proto_to_keyset_config(&keyset_config)
@@ -181,24 +182,6 @@ impl InternalKeySetConfig {
             .is_some_and(|info| info.use_existing_key_tag)
     }
 
-    pub fn get_existing_epoch_id(&self) -> anyhow::Result<Option<EpochId>> {
-        let added_info = self
-            .keyset_added_info
-            .as_ref()
-            .ok_or_else(|| anyhow!("keyset_added_info is required for UseExisting"))?;
-        let epoch_id: Option<EpochId> = added_info
-            .existing_epoch_id
-            .as_ref()
-            .map(|inner| {
-                parse_grpc_request_id(
-                    inner,
-                    RequestIdParsingErr::Other("invalid existing keyset ID".to_string()),
-                )
-            })
-            .transpose()?;
-        Ok(epoch_id)
-    }
-
     pub fn validate(&self) -> anyhow::Result<()> {
         match &self.keyset_config {
             ddec_keyset_config::KeySetConfig::Standard(inner) => match inner.secret_key_config {
@@ -206,8 +189,6 @@ impl InternalKeySetConfig {
                 ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting => {
                     // Must have a parseable existing keyset ID
                     self.get_existing_keyset_id()?;
-                    // Optional existing epoch ID must be parseable if set
-                    self.get_existing_epoch_id()?;
                 }
             },
             ddec_keyset_config::KeySetConfig::DecompressionOnly => {
@@ -272,7 +253,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_internal_keyset_config_standard_use_existing_with_added_info_missing_ids() {
-        // Standard config with UseExisting, the added info is present but missing existing_keyset_id and/or existing_epoch_id
+        // Standard config with UseExisting, the added info is present but missing existing_keyset_id
         let keyset_config = KeySetConfig {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
@@ -284,7 +265,6 @@ pub(crate) mod tests {
         {
             let keyset_added_info = KeySetAddedInfo {
                 existing_keyset_id: None,
-                existing_epoch_id: None,
                 ..Default::default()
             };
             let result = InternalKeySetConfig::new(Some(keyset_config), Some(keyset_added_info));
@@ -296,29 +276,16 @@ pub(crate) mod tests {
                     request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
                         .to_string(),
                 }),
-                existing_epoch_id: None,
                 ..Default::default()
             };
             let result = InternalKeySetConfig::new(Some(keyset_config), Some(keyset_added_info));
             assert!(result.is_ok());
         }
-        {
-            let keyset_added_info = KeySetAddedInfo {
-                existing_keyset_id: None,
-                existing_epoch_id: Some(kms_grpc::kms::v1::RequestId {
-                    request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-                        .to_string(),
-                }),
-                ..Default::default()
-            };
-            let result = InternalKeySetConfig::new(Some(keyset_config), Some(keyset_added_info));
-            assert!(result.is_err());
-        }
     }
 
     #[test]
     fn test_internal_keyset_config_standard_use_existing_with_added_info_with_ids() {
-        // Standard config with UseExisting, added info is present with both existing_keyset_id and existing_epoch_id
+        // Standard config with UseExisting, added info is present with existing_keyset_id
         let keyset_config = KeySetConfig {
             keyset_type: KeySetType::Standard as i32,
             standard_keyset_config: Some(StandardKeySetConfig {
@@ -330,10 +297,6 @@ pub(crate) mod tests {
         let keyset_added_info = KeySetAddedInfo {
             existing_keyset_id: Some(kms_grpc::kms::v1::RequestId {
                 request_id: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-                    .to_string(),
-            }),
-            existing_epoch_id: Some(kms_grpc::kms::v1::RequestId {
-                request_id: "1112030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
                     .to_string(),
             }),
             ..Default::default()
@@ -405,27 +368,6 @@ pub(crate) mod tests {
         kms_grpc::kms::v1::RequestId {
             request_id: id.to_string(),
         }
-    }
-
-    #[test]
-    fn test_new_use_existing_unparseable_epoch_id() {
-        // Valid keyset ID but unparseable epoch ID should be rejected
-        let result = InternalKeySetConfig::new(
-            Some(KeySetConfig {
-                keyset_type: KeySetType::Standard as i32,
-                standard_keyset_config: Some(StandardKeySetConfig {
-                    compute_key_type: 0,
-                    secret_key_config: KeyGenSecretKeyConfig::UseExisting as i32,
-                    compressed_key_config: 0,
-                }),
-            }),
-            Some(KeySetAddedInfo {
-                existing_keyset_id: Some(request_id(VALID_ID)),
-                existing_epoch_id: Some(request_id(INVALID_ID)),
-                ..Default::default()
-            }),
-        );
-        assert!(result.is_err());
     }
 
     #[test]
