@@ -53,6 +53,8 @@ use crate::testing::helpers::domain_to_msg;
 use crate::testing::material::TestMaterialSpec;
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::testing::setup::threshold::ThresholdTestEnv;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
@@ -145,24 +147,34 @@ impl TestKeyGenResult {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::Result<()> {
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
     let key_id: RequestId = derive_request_id(&format!(
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    ))?;
+
+    // Test generates its own FHE keys; only signing material + PRSS are
+    // needed pre-generated.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_insecure_compressed_dkg")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .force_isolated()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
     let (keyset_config, keyset_added_info) = compressed_keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
@@ -173,7 +185,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
         keyset_config,
         keyset_added_info,
         true,
-        None,
+        Some(&material_path),
         0,
     )
     .await
@@ -187,6 +199,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
+
+    Ok(())
 }
 
 /// Test compressed keygen with test parameters and 4 parties.
@@ -665,8 +679,6 @@ pub(crate) async fn preproc_and_keygen(
         newly_crashed
     }
 
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut preproc_ids = vec![];
     let mut key_ids = vec![];
     for i in 0..iterations {
@@ -674,28 +686,12 @@ pub(crate) async fn preproc_and_keygen(
             "full_dkg_preproc_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_preproc,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         preproc_ids.push(req_preproc);
 
         let req_key: RequestId = derive_request_id(&format!(
             "full_dkg_key_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
-        purge(
-            None,
-            None,
-            &req_key,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
         key_ids.push(req_key);
     }
 
@@ -714,15 +710,33 @@ pub(crate) async fn preproc_and_keygen(
         new_epoch: 1,
     };
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        *dkg_param,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        None,
-    )
-    .await;
+    // Isolated tempdir — this helper generates its own FHE keys, so only
+    // signing material + PRSS is pre-generated.
+    let spec = {
+        use crate::testing::prelude::KeyType;
+        let mut s =
+            crate::testing::prelude::TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = crate::testing::prelude::ThresholdTestEnv::builder()
+        .with_test_name("preproc_and_keygen")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss()
+        .force_isolated()
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_param, None)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
     let mut expected_num_parties_crashed =
         party_ids_to_crash_preproc.as_ref().map_or(0, |v| v.len());
@@ -785,6 +799,7 @@ pub(crate) async fn preproc_and_keygen(
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
+                let material_path = material_path.clone();
                 async move {
                     // todo proper use of insecure to skip preproc
                     (
@@ -798,7 +813,7 @@ pub(crate) async fn preproc_and_keygen(
                             keyset_config,
                             keyset_added_info,
                             insecure_key_gen,
-                            None,
+                            Some(&material_path),
                             expected_num_parties_crashed,
                         )
                         .await
@@ -831,7 +846,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(&material_path),
                 compressed,
             )
             .await;
@@ -873,7 +888,7 @@ pub(crate) async fn preproc_and_keygen(
                 keyset_config,
                 keyset_added_info,
                 insecure_key_gen,
-                None,
+                Some(&material_path),
                 expected_num_parties_crashed,
             )
             .await
@@ -897,7 +912,7 @@ pub(crate) async fn preproc_and_keygen(
                 },
                 None,
                 1,
-                None,
+                Some(&material_path),
                 compressed,
             )
             .await;

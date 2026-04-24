@@ -81,7 +81,9 @@ pub mod prelude {
     // Setup utilities
     pub use super::setup::{
         centralized::{CentralizedTestEnv, CentralizedTestEnvBuilder},
-        threshold::{ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder},
+        threshold::{
+            TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
+        },
     };
 
     // Helper functions

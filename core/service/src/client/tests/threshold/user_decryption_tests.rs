@@ -1,6 +1,4 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -19,7 +17,6 @@ use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
-#[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -31,7 +28,6 @@ use kms_grpc::RequestId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-// use serial_test::serial;  // TEMP: round3 probe
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
@@ -401,12 +397,45 @@ pub(crate) async fn user_decryption_threshold(
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
-        threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
+
+    // Spec: pre-gen FHE keys for `key_id` plus signing + PRSS. Material
+    // type follows the DKG params.
+    let spec = {
+        let mut s = if dkg_params == TEST_PARAM {
+            TestMaterialSpec::threshold_basic(amount_parties)
+        } else {
+            TestMaterialSpec::threshold_default(amount_parties)
+        };
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("user_decryption_threshold_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .force_isolated();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-        None,
+        Some(&material_path),
         msg,
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
@@ -574,7 +603,7 @@ pub(crate) async fn user_decryption_threshold(
         }
     }
 
-    let server_private_keys = get_server_private_keys(amount_parties).await;
+    let server_private_keys = get_server_private_keys(amount_parties, Some(&material_path)).await;
 
     process_batch_threshold_user_decryption(
         &mut internal_client,
@@ -711,11 +740,15 @@ async fn process_batch_threshold_user_decryption(
     }
 }
 
-async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+async fn get_server_private_keys(
+    amount_parties: usize,
+    data_root_path: Option<&std::path::Path>,
+) -> HashMap<u32, PrivateSigKey> {
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
-        let priv_storage = FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap();
+        let priv_storage =
+            FileStorage::new(data_root_path, StorageType::PRIV, prefix.as_deref()).unwrap();
         let sk = get_core_signing_key(&priv_storage)
             .await
             .inspect_err(|e| {

@@ -25,31 +25,148 @@ cfg_if::cfg_if! {
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_insecure_crs_gen_threshold() {
-    crs_gen(
-        4,
-        FheParameter::Test,
-        Some(16),
+async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
+    use crate::consts::TEST_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Test;
+    let max_bits = Some(16);
+
+    // This test needs signing keys (for request auth) and PRSS material (for the distributed ceremony). FHE keys are
+    // not used.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("insecure_crs_gen_threshold")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss() // initialize PRSS epoch at server boot
+        .force_isolated()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "insecure_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
         true, // insecure
-        1,
-        false, // not concurrent
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
     )
     .await;
+
+    Ok(())
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn secure_threshold_crs() {
-    crs_gen(4, FheParameter::Default, Some(2048), false, 1, false).await;
+async fn secure_threshold_crs() -> anyhow::Result<()> {
+    use crate::consts::DEFAULT_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Default;
+    let max_bits = Some(2048);
+
+    // Default material spec for production-size keys, minus FHE keys (CRS
+    // generation doesn't use them).
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_default(amount_parties);
+        s.required_keys.remove(&KeyType::FheKeys);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("secure_threshold_crs")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss() // initialize PRSS epoch at server boot
+        .force_isolated()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&DEFAULT_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "secure_threshold_crs_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
+        false, // secure
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
+    )
+    .await;
+
+    Ok(())
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_crs_gen_threshold() {
-    crs_gen(4, FheParameter::Test, Some(2048), false, 1, false).await;
+async fn test_crs_gen_threshold() -> anyhow::Result<()> {
+    use crate::consts::TEST_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Test;
+    let max_bits = Some(2048);
+
+    // Signing keys + PRSS only. CRS gen doesn't consume FHE keys.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_crs_gen_threshold")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss() // initialize PRSS epoch at server boot
+        .force_isolated()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "test_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
+        false, // secure
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
+    )
+    .await;
+
+    Ok(())
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]

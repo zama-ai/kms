@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use itertools::Itertools;
 use kms_grpc::{
@@ -8,7 +9,6 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-// use serial_test::serial;  // TEMP: round3 probe
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
@@ -20,7 +20,6 @@ use crate::{
         tests::{
             common::standard_keygen_config,
             threshold::{
-                common::threshold_handles,
                 crs_gen_tests::run_crs,
                 key_gen_tests::{
                     TestKeyGenResult, run_preproc, run_threshold_keygen, verify_keygen_responses,
@@ -29,10 +28,7 @@ use crate::{
             },
         },
     },
-    consts::{
-        DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-    },
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::{
@@ -40,10 +36,11 @@ use crate::{
         threshold::service::ThresholdFheKeys,
         validation::ResharingParams,
     },
+    testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::{
             max_threshold,
-            test_tools::{EncryptionConfig, TestingPlaintext, purge},
+            test_tools::{EncryptionConfig, TestingPlaintext},
         },
         rate_limiter::RateLimiterConfig,
     },
@@ -51,9 +48,8 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
-async fn test_new_epoch_with_reshare() {
-    new_epoch_with_reshare_and_crs(4, 3, 2, FheParameter::Test, None).await;
+async fn test_new_epoch_with_reshare() -> anyhow::Result<()> {
+    new_epoch_with_reshare_and_crs(4, 3, 2, FheParameter::Test, None).await
 }
 
 pub(crate) async fn new_epoch_with_reshare_and_crs(
@@ -62,7 +58,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     num_crs: usize,
     parameters: FheParameter,
     party_ids_to_crash: Option<Vec<usize>>,
-) {
+) -> anyhow::Result<()> {
     let dkg_param: WrappedDKGParams = parameters.into();
     // Preproc should use all the tokens in the bucket,
     // then they're returned to the bucket before keygen starts.
@@ -77,82 +73,54 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         keygen: 100,
         new_epoch: 1,
     };
-    // Need to purge before creating the clients
+
     let mut preproc_ids = Vec::new();
     let mut key_ids = Vec::new();
     for key_id in 0..num_keys {
         let preproc_req_id: RequestId = derive_request_id(&format!(
             "reshare_dkg_preproc_{amount_parties}_{key_id}_{parameters:?}"
-        ))
-        .unwrap();
-        let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-        let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-        purge(
-            None,
-            None,
-            &preproc_req_id,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
-
+        ))?;
         preproc_ids.push(preproc_req_id);
 
         let key_req_id: RequestId = derive_request_id(&format!(
             "reshare_dkg_key_{amount_parties}_{key_id}_{parameters:?}"
-        ))
-        .unwrap();
-        purge(
-            None,
-            None,
-            &key_req_id,
-            pub_storage_prefixes,
-            priv_storage_prefixes,
-        )
-        .await;
+        ))?;
         key_ids.push(key_req_id);
     }
 
     let mut crs_ids: Vec<RequestId> = Vec::new();
-
     for crs_id in 0..num_crs {
         let req_id = derive_request_id(&format!(
             "reshare_crs_{amount_parties}_{crs_id}_{parameters:?}"
-        ))
-        .unwrap();
-        purge(
-            None,
-            None,
-            &req_id,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
-        )
-        .await;
+        ))?;
         crs_ids.push(req_id);
     }
 
     let new_epoch_id: EpochId =
-        derive_request_id(&format!("new_epoch_id__{amount_parties}_{parameters:?}"))
-            .unwrap()
-            .into();
-    purge(
-        None,
-        None,
-        &new_epoch_id.into(),
-        &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
-        &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties],
-    )
-    .await;
-    // Setting ensure_default_prss to true to
-    // to create the default context and epoch with its PRSS init
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        *dkg_param,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        None,
-    )
-    .await;
+        derive_request_id(&format!("new_epoch_id__{amount_parties}_{parameters:?}"))?.into();
+
+    // This test generates its own keys and CRSs, so only signing-material + PRSS
+    // is pre-generated. The rate-limiter bucket must be large enough to allow
+    // preproc + keygen + new-epoch in sequence.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("new_epoch_with_reshare")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss() // create default context + epoch with PRSS init
+        .force_isolated()
+        .build()
+        .await?;
+
+    let mut internal_client = env.create_internal_client(&dkg_param, None).await?;
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
     let mut keys_info = Vec::new();
     let mut keysets = Vec::new();
@@ -182,7 +150,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             keyset_config,
             keyset_added_info,
             false,
-            None,
+            Some(&material_path),
             expected_num_parties_crashed,
         )
         .await;
@@ -228,7 +196,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             false,
             crs_id,
             Some(2048),
-            None,
+            Some(&material_path),
         )
         .await;
         assert_eq!(crs.len(), 1);
@@ -259,6 +227,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         new_context_id,
         new_epoch_id,
         resharing,
+        Some(&material_path),
     )
     .await
     .unwrap();
@@ -365,11 +334,17 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             },
             None,
             1,
-            None,
+            Some(&material_path),
             false, // compressed_keys
         )
         .await;
     }
+
+    for (_, server) in kms_servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -380,6 +355,7 @@ async fn run_new_epoch(
     new_context_id: ContextId,
     new_epoch_id: EpochId,
     resharing: Option<ResharingParams>,
+    data_root_path: Option<&Path>,
 ) -> Option<Vec<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)>> {
     let num_keys = resharing
         .as_ref()
@@ -488,7 +464,7 @@ async fn run_new_epoch(
             let key_id = key_id.as_ref().unwrap().try_into().unwrap();
             let out = verify_keygen_responses(
                 responses,
-                None,
+                data_root_path,
                 internal_client,
                 &preproc_id,
                 &key_id,
@@ -520,7 +496,7 @@ async fn run_new_epoch(
                         .expect("each party should have a CRS response")
                         .clone();
                     let storage = FileStorage::new(
-                        None,
+                        data_root_path,
                         StorageType::PUB,
                         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[*party_idx as usize - 1].as_deref(),
                     )
