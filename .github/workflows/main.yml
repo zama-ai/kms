@@ -513,6 +513,9 @@ jobs:
   # 3. Dependabot Tests: Simplified build for dependency updates
   ############################################################################
 
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
   # experiments tests don't consume kms test material.
@@ -549,6 +552,10 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
+
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
@@ -587,6 +594,9 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
