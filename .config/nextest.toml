@@ -6,11 +6,11 @@ nextest-version = { required = "0.9.48" }
 # nextest runs each test in a separate process, so #[serial] attributes alone
 # are insufficient to prevent parallel execution across binaries.
 [test-groups]
-# TODO(dp): Cleanup comments
-# The `kms` package's `integration_test` binary still has `#[serial]`-marked tests that write to global default paths
-# (`core/service/tests/integration_test.rs`) and stays serialized here. `kms-core-client`'s `integration_test` binary is
-# excluded from this group — each test uses its own tempdir and OS-assigned ports, so cross-test contention shouldn't
-# happen in theory. First CI run under this setting is a soak; revert to the broad filter if flakes appear.
+# The `kms` package's `integration_test` binary has `#[serial]`-marked tests
+# that write to global default paths (in `core/service/tests/integration_test.rs`)
+# and must run sequentially. `kms-core-client`'s `integration_test` binary is
+# excluded from this group — each of its tests uses its own tempdir and
+# OS-assigned ports.
 integration-serial = { max-threads = 1 }
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
@@ -31,10 +31,10 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# TODO(dp): Cleanup comments
-# Serialize `kms` package's integration_test binary (uses `#[serial]` to cover for tests writing to global disk paths).
-# The nightly slow-test names in `default-filter` above live only in `kms-core-client`, so no slow-timeout override is
-# needed for the `ci` profile (those tests are excluded here).
+# Serialize `kms` package's integration_test binary (the nightly slow-test
+# names in `default-filter` above live only in `kms-core-client`, so no
+# slow-timeout override is needed in the `ci` profile — those tests are
+# excluded here).
 [[profile.ci.overrides]]
 filter = "package(kms) & binary(=integration_test)"
 test-group = "integration-serial"
@@ -57,9 +57,9 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# TODO(dp): Cleanup comments
-# Long timeout for slow production-param nightly tests. They live in `kms-core-client` and are already isolated
-# (tempdirs + OS-assigned ports), so no `test-group` — they can run in parallel.
+# Long timeout for slow production-param nightly tests. They live in
+# `kms-core-client` and are isolated per-test (tempdirs + OS-assigned ports),
+# so no `test-group` — they can run in parallel.
 [[profile.ci-nightly.overrides]]
 filter = 'package(kms-core-client) & binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
