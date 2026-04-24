@@ -124,7 +124,7 @@ impl FileStorage {
     ) -> anyhow::Result<HashSet<RequestId>> {
         if !path.try_exists()? {
             // If the path does not exist, then return an empty hashmap.
-            tracing::debug!(
+            tracing::info!(
                 "The path {} does not exist, returning an empty map of URLs",
                 path.display(),
             );
@@ -348,7 +348,7 @@ impl StorageExt for FileStorage {
             );
             return Ok(StoreWriteOutcome::SkippedExisting);
         }
-        tracing::debug!(
+        tracing::info!(
             "Storing data {} at epoch {:?} at path {}",
             data_type,
             epoch_id,

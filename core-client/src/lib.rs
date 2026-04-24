@@ -1449,7 +1449,7 @@ pub async fn execute_cmd(
         .collect::<Vec<String>>();
 
     for path_to_config in path_iter {
-        tracing::debug!("Using config file: {:?}", &path_to_config);
+        tracing::info!("Using config file: {:?}", &path_to_config);
 
         let mut inner_cc_conf: CoreClientConfig = Settings::builder()
             .path(path_to_config)

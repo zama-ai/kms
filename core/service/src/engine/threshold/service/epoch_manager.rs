@@ -372,7 +372,7 @@ impl<
 
         session_maker.add_epoch(*epoch_id, prss).await;
 
-        tracing::debug!(
+        tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
             epoch_id,
             own_identity
