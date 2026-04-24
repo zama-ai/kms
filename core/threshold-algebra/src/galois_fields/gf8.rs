@@ -5,7 +5,7 @@ use crate::{
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::{num::NonZero, sync::LazyLock};
 
 g2p!(
     GF8,
@@ -84,9 +84,11 @@ impl RingWithExceptionalSequence for GF8 {
     }
 }
 
+/// Pre-computed Lagrange basis for all (ordered) non-empty subsets of GF8 that exclude 0.
+/// Size is \sum_{k=1}^{7} C(7, k) * k = 7 * 2^6 = 448, which is small enough to be pre-computed and stored in memory.
 pub(crate) static LAGRANGE_STORE: LazyLock<LagrangeMap<GF8>> = LazyLock::new(|| {
-    build_lagrange_map::<GF8>(0, 7).expect(
-        " Initializaiton of the GF8 Lagrange basis can't fail with 7 parties and threshold 0",
+    build_lagrange_map::<GF8>(NonZero::new(7).expect("7 is non-zero"), 0).expect(
+        "Initialization of the GF8 Lagrange basis can't fail with 7 parties and threshold 0",
     )
 });
 

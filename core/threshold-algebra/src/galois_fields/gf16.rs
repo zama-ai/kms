@@ -5,7 +5,7 @@ use crate::{
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::{num::NonZero, sync::LazyLock};
 
 g2p!(
     GF16,
@@ -84,9 +84,11 @@ impl RingWithExceptionalSequence for GF16 {
     }
 }
 
+/// Pre-computed Lagrange basis for all (ordered) non-empty subsets of GF16 that exclude 0.
+/// Size is \sum_{k=1}^{15} C(15, k) * k = 15 * 2^14 = 245760, which is small enough to be pre-computed and stored in memory.
 pub(crate) static LAGRANGE_STORE: LazyLock<LagrangeMap<GF16>> = LazyLock::new(|| {
-    build_lagrange_map::<GF16>(0, 15).expect(
-        " Initializaiton of the GF16 Lagrange basis can't fail with 15 parties and threshold 0",
+    build_lagrange_map::<GF16>(NonZero::new(15).expect("15 is non-zero"), 0).expect(
+        "Initialization of the GF16 Lagrange basis can't fail with 15 parties and threshold 0",
     )
 });
 

@@ -6,7 +6,7 @@ use algebra::{
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
 use observability::telemetry::make_span;
-use std::sync::Arc;
+use std::{num::NonZero, sync::Arc};
 use threshold_execution::{
     large_execution::offline::SecureLargePreprocessing,
     online::preprocessing::{PreprocessorFactory, create_memory_factory, create_redis_factory},
@@ -41,7 +41,10 @@ where
         let num_parties = peers.len() + 1;
         // The threshold-fhe config currently assumes n = 3t + 1.
         let threshold = (num_parties - 1) / 3;
-        init_all_lagrange_stores(num_parties, threshold)?;
+        init_all_lagrange_stores(
+            NonZero::new(num_parties).expect("num_parties must be non-zero"),
+            threshold,
+        )?;
     }
 
     let tls_conf = settings
