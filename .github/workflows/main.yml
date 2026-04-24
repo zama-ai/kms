@@ -434,7 +434,7 @@ jobs:
             --no-fail-fast \
             --features threshold_tests \
             --test integration_test \
-            -E 'test(=test_threshold_mpc_context_switch_6_docker)'
+            -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
 
   # Core client unit tests. Integration filters below skip everything that
   # consumes kms test material, so `skip-test-material: true` is safe.
