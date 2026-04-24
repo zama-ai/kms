@@ -31,8 +31,11 @@
 //! - No shared state between tests (full isolation)
 //!
 //! **Execution:**
-//! - Default tests run in parallel for speed
-//! - PRSS tests run sequentially (marked with `#[serial]`) due to network coordination
+//! - Tests run in parallel; each one owns its tempdir and OS-assigned ports,
+//!   so there is no cross-test contention on storage, ports, or PRSS state.
+//! - Within a single test, any concurrent sub-commands that touch the same
+//!   client keyfile must use separate `keys_folder` subdirs (see the
+//!   `test_threshold_concurrent_*` tests for the pattern).
 //! - CLI commands unchanged (testing actual CLI functionality)
 //!
 //! **Feature Flags:**
@@ -165,7 +168,6 @@
 //! ```no_run
 //! #[cfg(feature = "threshold_tests")]
 //! #[tokio::test]
-//! #[serial]
 //! async fn test_my_threshold_feature() -> Result<()> {
 //!     let (material_dir, _servers, config_path) =
 //!         setup_isolated_threshold_cli_test_with_prss("my_test", 4).await?;
@@ -178,7 +180,6 @@
 //!
 //! ```no_run
 //! #[tokio::test]
-//! #[serial]
 //! #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 //! async fn test_my_context_feature() -> Result<()> {
 //!     let (material_dir, _servers, config_path) =
@@ -237,7 +238,6 @@ use kms_lib::consts::{
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
-// use serial_test::serial;  // TEMP: round3 probe
 use std::collections::HashMap;
 use std::fs::write;
 use std::path::{Path, PathBuf};
@@ -577,7 +577,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///
 /// # Note
 /// Requires `threshold_tests` feature. Tests using this must be marked with:
-/// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
 /// This helper enables `ensure_default_prss=true` during server startup. The test material copy
@@ -592,7 +591,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// # Example
 /// ```no_run
 /// #[tokio::test]
-/// #[serial]
 /// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
@@ -2448,7 +2446,6 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 /// Requires pre-generated Default PRSS material in `test-material/default`.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2468,7 +2465,6 @@ async fn test_threshold_insecure() -> Result<()> {
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2490,7 +2486,6 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 /// Test threshold concurrent preprocessing and keygen operations
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2622,7 +2617,6 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// on a threshold cluster using Test FHE parameters.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
     init_logging();
 
@@ -2644,7 +2638,6 @@ async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
 /// that both produce distinct key IDs.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2670,7 +2663,6 @@ async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
 /// 3. A public-decrypt request succeeds in the new context
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2834,7 +2826,6 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2921,7 +2912,6 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
@@ -2985,7 +2975,6 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
@@ -3103,7 +3092,6 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
 /// 7. Execute resharing command
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-// #[serial]  // TEMP: round3 probe
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 

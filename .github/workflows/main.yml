@@ -271,9 +271,12 @@ jobs:
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
-      # TEMP: round3 probe — was unset (nextest default). Try 4 on the
-      # ~129min threshold hog.
-      nextest-test-threads: "4"
+      # TODO(dp): Reassess this with data. Was serialized by `integration-serial` test-group in nextest.toml; that group
+      # is now narrowed to `package(kms)` so this job's 11 integration_test tests (each using its own tempdir +
+      # OS-assigned ports) can run in parallel. 6-way chosen to match `test-core-service` on the assumption the slowest
+      # tail tests (~16 min) dominate, not CPU contention. First CI run with this config is a soak — drop to "4" or
+      # widen the test-group filter if flakes appear.
+      nextest-test-threads: "6"
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
