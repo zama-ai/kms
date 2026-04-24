@@ -485,7 +485,6 @@ jobs:
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       crate-names: '-p kms'
-      # slab-backend: 'big-instance-service'
       runner-volume: '400gb'
       rust-log-level: 'info'
       # Availables runners:
