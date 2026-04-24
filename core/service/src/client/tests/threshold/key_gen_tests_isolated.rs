@@ -85,8 +85,9 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 /// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
 /// **Requires:**
 /// - `insecure` feature flag
-/// - `slow_tests` feature flag (for default material generation)
-/// - Pre-generated default material: `make generate-test-material-all`
+/// - `slow_tests` feature flag (to run this slow default-parameter test)
+/// - Pre-generated secure material:
+///   `generate-test-material --profile secure --parties 4,10,13`
 ///
 /// **Run with:** `cargo test --lib --features insecure,testing,slow_tests default_insecure_dkg_isolated`
 #[tokio::test]

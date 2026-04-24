@@ -415,17 +415,17 @@ pub mod setup {
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };
-    #[cfg(feature = "slow_tests")]
-    use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
+    use crate::engine::base::derive_request_id;
+    use crate::testing::material::{MaterialType, threshold_crs_id_name, threshold_key_id_name};
     use crate::util::key_setup::{
         ThresholdSigningKeyConfig, ensure_central_crs_exists, ensure_central_keys_exist,
         ensure_client_keys_exist,
     };
     use crate::{
         consts::{
-            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
-            TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
+            DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, KEY_PATH_PREFIX,
+            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -436,8 +436,10 @@ pub mod setup {
         },
         vault::storage::{StorageType, file::FileStorage},
     };
+    use anyhow::{Context, Result, bail};
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::EpochId;
+    use std::collections::BTreeSet;
     use std::path::Path;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
 
@@ -458,106 +460,97 @@ pub mod setup {
         }
     }
 
-    async fn testing_material(path: Option<&Path>) {
-        ensure_dir_exist(path).await;
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
-        central_material(
-            &TEST_PARAM,
-            &TEST_CENTRAL_KEY_ID,
-            &OTHER_CENTRAL_TEST_ID,
-            &TEST_CENTRAL_CRS_ID,
-            &epoch_id,
-            path,
-        )
-        .await;
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        threshold_material(
-            &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_4P,
-            &TEST_THRESHOLD_CRS_ID_4P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &epoch_id,
-            path,
-        )
-        .await;
-        threshold_material(
-            &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_10P,
-            &TEST_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &epoch_id,
-            path,
-        )
-        .await;
-        #[cfg(feature = "slow_tests")]
-        threshold_material(
-            &TEST_PARAM,
-            &TEST_THRESHOLD_KEY_ID_13P,
-            &TEST_THRESHOLD_CRS_ID_13P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
-            &epoch_id,
-            path,
-        )
-        .await;
-    }
-
     pub async fn ensure_testing_material_exists(path: Option<&Path>) {
-        testing_material(path).await;
+        generate_material_to_path(MaterialType::Testing, path, &[4, 10])
+            .await
+            .expect("testing material generation should succeed");
     }
 
-    async fn default_material(path: Option<&Path>) {
-        use crate::consts::{
-            DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
-            DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_CRS_ID_10P,
-            DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
-            DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, OTHER_CENTRAL_DEFAULT_ID,
-        };
+    pub async fn ensure_default_material_exists() {
+        ensure_default_material_exists_to_path(None).await;
+    }
+
+    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
+        generate_material_to_path(MaterialType::Default, path, &[4, 10, 13])
+            .await
+            .expect("default material generation should succeed");
+    }
+
+    pub async fn generate_material_to_path(
+        material_type: MaterialType,
+        path: Option<&Path>,
+        party_counts: &[usize],
+    ) -> Result<()> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
         ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
-        central_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_CENTRAL_KEY_ID,
-            &OTHER_CENTRAL_DEFAULT_ID,
-            &DEFAULT_CENTRAL_CRS_ID,
-            &epoch_id,
-            path,
-        )
-        .await;
-        threshold_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_4P,
-            &DEFAULT_THRESHOLD_CRS_ID_4P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            &epoch_id,
-            path,
-        )
-        .await;
-        threshold_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_10P,
-            &DEFAULT_THRESHOLD_CRS_ID_10P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            &epoch_id,
-            path,
-        )
-        .await;
-        threshold_material(
-            &DEFAULT_PARAM,
-            &DEFAULT_THRESHOLD_KEY_ID_13P,
-            &DEFAULT_THRESHOLD_CRS_ID_13P,
-            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
-            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
-            &epoch_id,
-            path,
-        )
-        .await;
+        match material_type {
+            MaterialType::Testing => {
+                central_material(
+                    &TEST_PARAM,
+                    &TEST_CENTRAL_KEY_ID,
+                    &OTHER_CENTRAL_TEST_ID,
+                    &TEST_CENTRAL_CRS_ID,
+                    &epoch_id,
+                    path,
+                )
+                .await;
+            }
+            MaterialType::Default => {
+                central_material(
+                    &DEFAULT_PARAM,
+                    &DEFAULT_CENTRAL_KEY_ID,
+                    &OTHER_CENTRAL_DEFAULT_ID,
+                    &DEFAULT_CENTRAL_CRS_ID,
+                    &epoch_id,
+                    path,
+                )
+                .await;
+            }
+        }
+
+        let max_supported_parties = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL.len();
+        if party_counts.contains(&0) {
+            bail!(
+                "Unsupported party count 0. Centralized material is generated implicitly, so threshold party counts must start at 2."
+            );
+        }
+
+        let unique_party_counts = party_counts.iter().copied().collect::<BTreeSet<_>>();
+
+        for party_count in unique_party_counts {
+            if !(2..=max_supported_parties).contains(&party_count) {
+                bail!(
+                    "Unsupported party count {party_count}. Threshold party counts must be between 2 and {max_supported_parties}; centralized material is generated implicitly."
+                );
+            }
+
+            let key_id = derive_request_id(&threshold_key_id_name(material_type, party_count))
+                .with_context(|| {
+                    format!("Failed to derive threshold key ID for {party_count} parties")
+                })?;
+            let crs_id = derive_request_id(&threshold_crs_id_name(material_type, party_count))
+                .with_context(|| {
+                    format!("Failed to derive threshold CRS ID for {party_count} parties")
+                })?;
+            let params = match material_type {
+                MaterialType::Testing => &TEST_PARAM,
+                MaterialType::Default => &DEFAULT_PARAM,
+            };
+
+            threshold_material(
+                params,
+                &key_id,
+                &crs_id,
+                &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
+                &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
+                &epoch_id,
+                path,
+            )
+            .await;
+        }
+
+        Ok(())
     }
 
     async fn central_material(
@@ -655,14 +648,6 @@ pub mod setup {
             true,
         )
         .await;
-    }
-
-    pub async fn ensure_default_material_exists() {
-        default_material(None).await;
-    }
-
-    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
-        default_material(path).await;
     }
 }
 

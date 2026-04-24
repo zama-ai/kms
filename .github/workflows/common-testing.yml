@@ -271,23 +271,28 @@ jobs:
           rm test-material-default.tar.gz
           ls -la ./test-material/
 
-      # Generate test material. Subcommand is `all` (testing + default) when
-      # the job uses slow_tests or explicitly requests default; otherwise
-      # `testing` only. Must run from workspace root, not working-directory.
-      - name: Generate Test Material
-        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
+      # Generate insecure test material (always needed, small and fast to generate).
+      # Centralized fixtures are always included. Must run from workspace root.
+      - name: Generate Test Material (Testing)
+        if: ${{ ! inputs.skip-test-material }}
         working-directory: .
         env:
           GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
           ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
-          if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
-            SUBCOMMAND=all
-          else
-            SUBCOMMAND=testing
-          fi
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
-          cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+          echo "Generating insecure test material..."
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10"
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+
+      # Generate secure test material when explicitly requested or for slow_tests,
+      # and only when not using pre-generated artifacts.
+      - name: Generate Test Material (Default)
+        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
+        working-directory: .
+        run: |
+          echo "Generating secure test material..."
+          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13"
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary

@@ -132,15 +132,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn test_material_spec_serialization() {
-        let spec = TestMaterialSpec::threshold_basic(4);
-
-        // Test JSON serialization
-        let json = serde_json::to_string(&spec).unwrap();
-        let deserialized: TestMaterialSpec = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(spec, deserialized);
-    }
 }

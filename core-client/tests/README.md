@@ -37,7 +37,8 @@
 - `threshold_tests` enables tests that require pre-generated material: **PRSS** (generated at server startup via `ensure_default_prss=true`) and **keygen preprocessing material** (offline DKG phase, required by `nightly_full_gen_tests_default_*`).
 - For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
 - Some tests generate PRSS live during the test (via `new_prss_isolated`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
-- Generate all required Default material with `make generate-test-material-default` (or `make generate-test-material-all`).
+- Generate the required secure material with
+  `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,10,13`.
 
 ### Test gating patterns
 
