@@ -20,12 +20,6 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      SLAB_ACTION_TOKEN:
-        required: true
-      SLAB_BASE_URL:
-        required: true
-      JOB_SECRET:
-        required: true
       AWS_ACCESS_KEY_S3_USER:
         required: true
       AWS_SECRET_KEY_S3_USER:

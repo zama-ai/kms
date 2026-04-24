@@ -572,7 +572,6 @@ End-to-end test of **partial rolling upgrades** for `thresholdWithEnclave`: depl
 | Job | Purpose | Notes |
 |-----|---------|--------|
 | **docker-build** | Optional image build | Runs only when `build=true`; calls reusable `docker-build.yml` |
-| **start-runner** | EC2 runner (SLAB) | `small-instance` profile for the long test job |
 | **rolling-upgrade-testing** | Deploy, baseline perf, two upgrade batches, mixed perf, cleanup | Uses `aws-perf`, namespace `kms-ci`, Argo workflows under `ci/perf-testing/argo-workflow/` |
 | **stop-runner** | Tear down EC2 runner | Runs `always()` after the main job |
 

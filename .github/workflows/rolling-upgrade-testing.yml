@@ -17,7 +17,6 @@
 # ------------------------
 #   1. Optional: if workflow input build=true, call docker-build.yml to build the
 #      new image from the selected branch; its image_tag becomes the new tag.
-#   2. Start an EC2 runner (SLAB), then run the main job on it.
 #   3. Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
 #      (ci/scripts/deploy.sh --target aws-perf).
 #   4. Baseline Argo perf workflow: full test suite (insecure-key-gen + tests);
@@ -151,35 +150,13 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
-  # Start Runner
-  ############################################################################
-  start-runner:
-    name: rolling-upgrade/start-runner
-    needs: [docker-build]
-    if: always()
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: small-instance
-
-  ############################################################################
   # Rolling Upgrade Testing Job
   ############################################################################
   rolling-upgrade-testing:
-    needs: [docker-build, start-runner]
-    if: always() && needs.start-runner.result == 'success' && !cancelled()
+    needs: [docker-build]
+    if: always() && !cancelled()
     name: rolling-upgrade-testing
-    runs-on: ${{ needs.start-runner.outputs.label }}
+    runs-on: "runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/spot=false/extras=s3-cache"
     timeout-minutes: 2400
     env:
       DEPLOYMENT_TYPE: 'thresholdWithEnclave'
@@ -572,21 +549,3 @@ jobs:
           kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
           echo "Cleanup completed"
-
-  ############################################################################
-  # Stop Runner
-  ############################################################################
-  stop-runner:
-    name: rolling-upgrade/stop-runner
-    needs: [start-runner, rolling-upgrade-testing]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Stop runner
-        uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner.outputs.label }}
