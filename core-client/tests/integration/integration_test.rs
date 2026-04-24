@@ -1569,7 +1569,6 @@ async fn test_threshold_abort_key_gen(ctx: &DockerComposeThresholdDefault) {
         RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd11")
             .unwrap();
     let res = abort_key_gen(ctx, keys_folder, request_id).await;
-    println!("Abort key gen response: {:?}", res);
     // No ongoing key generation, so NotFound should be returned by all servers
     res.iter().for_each(|r| assert!(r.contains("not found")));
 }

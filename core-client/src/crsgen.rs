@@ -224,7 +224,7 @@ pub(crate) async fn get_crsgen_responses(
         let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
+            // Sleep to give the server some time to complete crs generation
             tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
 
             let mut response = if insecure {
@@ -350,7 +350,7 @@ pub(crate) async fn do_abort_crs_gen(
         let mut cur_client = ce.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
+            // Sleep to give the server some time to complete CRS generation
             tokio::time::sleep(tokio::time::Duration::from_millis(
                 SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))

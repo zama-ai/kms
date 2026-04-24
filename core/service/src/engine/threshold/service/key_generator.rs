@@ -1732,7 +1732,7 @@ mod tests {
         }
         {
             // bad keyset_config
-            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(42));
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(43));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let keyset_config = KeySetConfig {
                 keyset_type: 100, // bad keyset type
@@ -1765,7 +1765,7 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(11);
         let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut rng);
 
@@ -1843,7 +1843,7 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(123);
         let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1880,7 +1880,7 @@ mod tests {
         .await;
         let prep_id0 = prep_ids[0];
         let prep_id1 = prep_ids[1];
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(22);
         let key_id = RequestId::new_random(&mut rng);
 
         // do one keygen
@@ -1937,7 +1937,7 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(5);
         let key_id = RequestId::new_random(&mut rng);
         let wrong_keyset_id = RequestId::new_random(&mut rng);
 
@@ -1985,7 +1985,7 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(6);
         let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -2020,7 +2020,7 @@ mod tests {
         .await;
 
         // Abort with a preproc ID for which no key generation is running
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(7);
         let random_id = RequestId::new_random(&mut rng);
         let status = kg.abort_key_gen(random_id).await;
         assert_eq!(status.code(), tonic::Code::NotFound);
@@ -2035,7 +2035,7 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let mut rng = AesRng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(8);
         let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();

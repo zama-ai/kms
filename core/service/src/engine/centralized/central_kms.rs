@@ -439,7 +439,7 @@ pub struct CentralizedKms<
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     // Map of ongoing key generation tasks, indexed by the preprocessing ID
-    pub ongoing_key_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+    pub(crate) ongoing_key_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
@@ -447,7 +447,7 @@ pub struct CentralizedKms<
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     // Map of ongoing CRS generation tasks, indexed by the CRS request ID
-    pub ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+    pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,

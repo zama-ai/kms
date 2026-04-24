@@ -134,19 +134,30 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the key generation again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
-  // Aborts a key generation (both actual key generation and preprocessing).
+  // Aborts a key generation identified by its preprocessing ID.
+  //
+  // In the threshold KMS this aborts either:
+  //   * an ongoing preprocessing (before any key generation has consumed it), or
+  //   * an ongoing key generation that has already consumed the preprocessing.
+  //
+  // In the centralized KMS, preprocessing is a no-op placeholder, so this
+  // endpoint only aborts an ongoing key generation that was started with the
+  // given `preproc_id`.
   //
   // # Parameters
-  // * `request` - The `preproc_id` for the preprocessing used in the ongoing preprocessing, or as the preprocessing id in the ongoing key generation, to abort. That is, the [`RequestId`] used when starting the preprocessing.
+  // * `request` - The `preproc_id` identifying the preprocessing used (or to be
+  //   used) by the ongoing key generation. That is, the [`RequestId`] used when
+  //   starting the preprocessing with `KeyGenPreproc`.
   //
   // # Conditions
   // ## Pre-condition:
   // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   //   Furthermore, the request ID must be the same as the one used to start a preprocessing generation with method `KeyGenPreproc`.
-  //   The preprocessing or key generation using the preprocessing identified by the `preproc_id` in `request` must be ongoing.
+  //   In the threshold KMS the preprocessing or key generation identified by the `preproc_id` must be ongoing.
+  //   In the centralized KMS the key generation using the `preproc_id` must be ongoing.
   // ## Post-condition:
   // * The `preproc_id` in `request` will not be usable again (neither will the associated `keygen_id` if key generation had been started).
-  // * All data associated with the preprocessing identified by `preproc_id` has been removed. 
+  // * All data associated with the preprocessing identified by `preproc_id` has been removed.
   rpc AbortKeyGen(kms.v1.RequestId) returns (kms.v1.Empty);
 
   // Start public decryption.
@@ -285,7 +296,7 @@ service CoreServiceEndpoint {
   //   The CRS generation identified by the `crs_id` in `request` must be ongoing.
   // ## Post-condition:
   // * The `crs_id` in `request` will not be usable again.
-  // * All data associated with the `crs_id` has been removed. 
+  // * All data associated with the `crs_id` has been removed.
   rpc AbortCrsGen(kms.v1.RequestId) returns (kms.v1.Empty);
   
   // Constructs a new MPC context.

@@ -127,6 +127,7 @@ pub async fn key_gen_impl<
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
+    let key_meta_store_cancel = Arc::clone(&service.key_meta_map);
     let sk = service
             .base_kms
             .sig_key()
@@ -152,7 +153,6 @@ pub async fn key_gen_impl<
     let crypto_storage_cancel = service.crypto_storage.clone();
 
     let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
-    let preproc_meta_store_cancel = Arc::clone(&service.preprocessing_meta_store);
     let keygen_background = async move {
         // "Remove" the preprocessing material by deleting its entry from the meta store
         tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
@@ -202,11 +202,11 @@ pub async fn key_gen_impl<
                             format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
                         );
                         tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
-                        let mut guarded_meta_store = preproc_meta_store_cancel.write().await;
+                        let mut guarded_meta_store = key_meta_store_cancel.write().await;
                         let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
                         // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem.
                         // In connection with this the meta store update should be moved to AFTER the purging
-                        crypto_storage_cancel.inner.purge_key_material(&req_id, &epoch_id,KMSType::Centralized, guarded_meta_store).await;
+                        crypto_storage_cancel.inner.purge_key_material(&req_id, &epoch_id, KMSType::Centralized, guarded_meta_store).await;
                     }
                 }
         }
@@ -302,18 +302,17 @@ pub async fn abort_key_gen_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
-    // Handle abort request. In the centralized case we don't actually abort the background task, we just check the preprocessing meta store to return an appropriate error
     let preproc_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenAbort)
         .map_err(|e| MetricedError::new(OP_KEYGEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
     match service.ongoing_key_gen.lock().await.remove(&preproc_id) {
         Some(cancellation_token) => {
-            // Observe that the cancellation arm handles the abortion and clean-up
+            // The cancel arm of `tokio::select!` handles abort and clean-up.
             cancellation_token.cancel();
             tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
             Ok(Response::new(Empty {}))
         }
         None => {
-            // No keygen happening; nothing to cancel
+            // No keygen task registered for this preproc id; nothing to cancel.
             Err(MetricedError::new(
                 OP_KEYGEN_ABORT,
                 Some(preproc_id),

@@ -452,7 +452,6 @@ pub(crate) async fn do_abort_key_gen(
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        println!("Got response for abort_key_gen: {:?}", resp);
         match resp {
             Ok(Ok(_)) => {
                 resp_response_vec.push(Code::Ok.description().to_string());
