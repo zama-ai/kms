@@ -372,14 +372,13 @@ async fn main_exec() -> anyhow::Result<()> {
     // The call below is effectively a no-op unless we work in bigger fields.
     if let Some(threshold_config) = core_config.threshold.as_ref()
         && let Some(peers) = threshold_config.peers.as_ref()
+        && !peers.is_empty()
     {
-        if peers.len() > 0 {
-            init_all_lagrange_stores(
-                NonZero::new(peers.len())
-                    .expect("peers.len() (i.e. number of parties) was just checked to be non-zero"),
-                threshold_config.threshold as usize,
-            )?;
-        }
+        init_all_lagrange_stores(
+            NonZero::new(peers.len())
+                .expect("peers.len() (i.e. number of parties) was just checked to be non-zero"),
+            threshold_config.threshold as usize,
+        )?;
     }
 
     tracing::info!(
