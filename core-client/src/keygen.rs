@@ -65,7 +65,6 @@ pub(crate) async fn do_keygen(
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
-    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -99,6 +98,9 @@ pub(crate) async fn do_keygen(
         keyset_added_info,
         dummy_domain(),
     )?;
+    // Mirror the extra_data the request builder embedded, so signature verification uses
+    // the same bytes that the server signed.
+    let extra_data = dkg_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)KeyGenResult commands
@@ -418,7 +420,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
     key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
@@ -437,8 +439,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
         key_id,
         server_key_digest,
         public_key_digest,
-        // TODO: reenable for RFC005
-        // extra_data,
+        extra_data,
     );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
@@ -459,7 +460,7 @@ pub(crate) fn check_compressed_keyset_ext_signature(
     key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let keyset_digest =
@@ -472,11 +473,7 @@ pub(crate) fn check_compressed_keyset_ext_signature(
         hex::encode(&keyset_digest)
     );
 
-    let sol_type = KeygenVerification::new_compressed(
-        prep_id,
-        key_id,
-        keyset_digest, /* TODO: reenable for RFC005 extra_data */
-    );
+    let sol_type = KeygenVerification::new_compressed(prep_id, key_id, keyset_digest, extra_data);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -515,6 +512,9 @@ pub(crate) async fn do_preproc(
         keyset_config,
         &domain,
     )?;
+    // Extra data is computed by the request builder; mirror it here so we verify the response
+    // signature against the same bytes the server signed.
+    let extra_data = pp_req.extra_data.clone();
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -552,7 +552,12 @@ pub(crate) async fn do_preproc(
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
         // this part also verifies the signature
-        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+        internal_client.process_preproc_response(
+            &req_id,
+            &domain,
+            &response,
+            extra_data.clone(),
+        )?;
     }
 
     Ok(req_id)
@@ -585,6 +590,11 @@ pub(crate) async fn do_partial_preproc(
             store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
         }),
     )?;
+    let extra_data = pp_req
+        .base_request
+        .as_ref()
+        .map(|b| b.extra_data.clone())
+        .unwrap_or_default();
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -621,7 +631,12 @@ pub(crate) async fn do_partial_preproc(
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
-        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+        internal_client.process_preproc_response(
+            &req_id,
+            &domain,
+            &response,
+            extra_data.clone(),
+        )?;
     }
 
     Ok(req_id)

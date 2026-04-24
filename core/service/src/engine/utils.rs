@@ -1,10 +1,10 @@
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::vault::storage::{StorageExt, StorageReader, read_versioned_at_request_id};
 use hashing::hash_element;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
+use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
@@ -296,6 +296,88 @@ where
     })
 }
 
+/// Helper method to sanity check the content of the extra data field.
+///
+/// This method will never fail, but only print a warning if the content is not as expected.
+/// This is to ensure forward compatibility in case of the structure change on the sdk side.
+pub fn sanity_check_extra_data(extra_data: &[u8], epoch_id: &EpochId, context_id: &ContextId) {
+    if let Some(warning) = sanity_check_extra_data_helper(extra_data, epoch_id, context_id) {
+        tracing::warn!("{}", warning);
+    }
+}
+
+/// Helper method to return an Option<String> containing a warning message if the extra data is not in the expected format.
+fn sanity_check_extra_data_helper(
+    extra_data: &[u8],
+    epoch_id: &EpochId,
+    context_id: &ContextId,
+) -> Option<String> {
+    if extra_data.is_empty() {
+        return Some(
+            "Extra data is empty, expected at least 1 byte to indicate the version".to_string(),
+        );
+    }
+
+    let version = extra_data[0];
+    match version {
+        0 => {
+            if extra_data.len() != 1 {
+                return Some(format!(
+                    "Unexpected extra data length for version 0: {}, expected 1 byte for version",
+                    extra_data.len()
+                ));
+            }
+        }
+        1 => {
+            if extra_data.len() != 1 + 32 {
+                return Some(format!(
+                    "Unexpected extra data length for version 1: {}, expected 33 bytes (1 byte for version and 32 bytes for context ID)",
+                    extra_data.len()
+                ));
+            }
+            if &extra_data[1..33] != context_id.as_bytes() {
+                return Some(format!(
+                    "Context ID in extra data does not match expected context ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    context_id
+                ));
+            }
+        }
+        2 => {
+            if extra_data.len() != 1 + 32 + 32 {
+                return Some(format!(
+                    "Unexpected extra data length for version 2: {}, expected 65 bytes (1 byte for version and 32 bytes for context ID and 32 bytes for epoch ID)",
+                    extra_data.len()
+                ));
+            }
+            if &extra_data[1..33] != context_id.as_bytes() {
+                return Some(format!(
+                    "Context ID in extra data does not match expected context ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[1..33]),
+                    context_id
+                ));
+            }
+            if &extra_data[33..65] != epoch_id.as_bytes() {
+                return Some(format!(
+                    "Epoch ID in extra data does not match expected epoch ID. \
+                         Got {}, expected {}",
+                    hex::encode(&extra_data[33..65]),
+                    epoch_id
+                ));
+            }
+        }
+        _ => {
+            return Some(format!(
+                "Unknown extra data version: {}. Highest version understood is 2",
+                version
+            ));
+        }
+    }
+    None
+}
+
 /// MetricedError wraps an internal error with additional context for metrics and logging.
 /// The struct is used to ensure that appropriate metrics are incremented and errors are logged
 /// consistently across different operations.
@@ -527,6 +609,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -553,6 +636,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -579,6 +663,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -605,6 +690,7 @@ mod tests {
             preprocessing_id: preproc_id,
             key_digest_map: digests,
             external_signature: vec![],
+            extra_data: None,
         });
 
         let entries = vec![(key_id, metadata)];
@@ -712,6 +798,229 @@ mod tests {
         sanity_check_crs_materials(&storage, &entries)
             .await
             .expect("legacy CRS readability check should pass");
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_0_valid() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let extra_data = [0u8; 1];
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 0 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_0_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let extra_data = vec![0u8, 0xAB];
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("long v0 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 0: 2"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_valid() {
+        let epoch_id = EpochId::from_bytes([0x11; 32]);
+        let context_id = ContextId::from_bytes([0x22; 32]);
+
+        let mut extra_data = [0u8; 33];
+        extra_data[0] = 1;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 1 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_valid() {
+        let epoch_id = EpochId::from_bytes([0x33; 32]);
+        let context_id = ContextId::from_bytes([0x44; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+        extra_data[33..65].copy_from_slice(epoch_id.as_bytes());
+
+        assert!(
+            sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
+            "well-formed version 2 payload should not produce a warning"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_empty() {
+        let epoch_id = EpochId::from_bytes([0x00; 32]);
+        let context_id = ContextId::from_bytes([0x00; 32]);
+
+        let warning = sanity_check_extra_data_helper(&[], &epoch_id, &context_id)
+            .expect("empty input should produce a warning");
+        assert!(
+            warning.contains("Extra data is empty"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_unknown_version() {
+        let epoch_id = EpochId::from_bytes([0x55; 32]);
+        let context_id = ContextId::from_bytes([0x66; 32]);
+
+        let extra_data = vec![99u8, 0, 0, 0];
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("unknown version should produce a warning");
+        assert!(
+            warning.contains("Unknown extra data version: 99"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x77; 32]);
+        let context_id = ContextId::from_bytes([0x88; 32]);
+
+        // Too short — guard prevents an out-of-bounds slice.
+        let short = vec![1u8, 0, 0, 0];
+        let warning = sanity_check_extra_data_helper(&short, &epoch_id, &context_id)
+            .expect("short v1 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 1: 4"),
+            "unexpected warning: {warning}"
+        );
+
+        // Too long for version 1.
+        let mut long = [0u8; 34];
+        long[0] = 1;
+        long[1..33].copy_from_slice(context_id.as_bytes());
+        long[33] = 0xAB;
+        let warning = sanity_check_extra_data_helper(&long, &epoch_id, &context_id)
+            .expect("long v1 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 1: 34"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_1_context_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x01; 32]);
+        let context_id = ContextId::from_bytes([0x02; 32]);
+        let other_context = ContextId::from_bytes([0xAA; 32]);
+
+        let mut extra_data = [0u8; 33];
+        extra_data[0] = 1;
+        extra_data[1..33].copy_from_slice(other_context.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched context should produce a warning");
+        assert!(
+            warning.contains("Context ID in extra data does not match expected context ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_context.as_bytes())),
+            "warning should include the received (other) context hex: {warning}"
+        );
+        assert!(
+            warning.contains(&context_id.to_string()),
+            "warning should include the expected context id: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_wrong_length() {
+        let epoch_id = EpochId::from_bytes([0x03; 32]);
+        let context_id = ContextId::from_bytes([0x04; 32]);
+
+        // Length 33 (valid for v1) is not valid for v2.
+        let mut short = [0u8; 33];
+        short[0] = 2;
+        short[1..33].copy_from_slice(context_id.as_bytes());
+        let warning = sanity_check_extra_data_helper(&short, &epoch_id, &context_id)
+            .expect("short v2 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 2: 33"),
+            "unexpected warning: {warning}"
+        );
+
+        // Too long for version 2.
+        let mut long = [0u8; 66];
+        long[0] = 2;
+        long[1..33].copy_from_slice(context_id.as_bytes());
+        long[33..65].copy_from_slice(epoch_id.as_bytes());
+        long[65] = 0xAB;
+
+        let warning = sanity_check_extra_data_helper(&long, &epoch_id, &context_id)
+            .expect("long v2 input should produce a warning");
+        assert!(
+            warning.contains("Unexpected extra data length for version 2: 66"),
+            "unexpected warning: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_epoch_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x05; 32]);
+        let context_id = ContextId::from_bytes([0x06; 32]);
+        let other_epoch = EpochId::from_bytes([0xBB; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(context_id.as_bytes());
+        extra_data[33..65].copy_from_slice(other_epoch.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched epoch should produce a warning");
+        assert!(
+            warning.contains("Epoch ID in extra data does not match expected epoch ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_epoch.as_bytes())),
+            "warning should include the received (other) epoch hex: {warning}"
+        );
+        assert!(
+            warning.contains(&epoch_id.to_string()),
+            "warning should include the expected epoch id: {warning}"
+        );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_version_2_context_mismatch() {
+        let epoch_id = EpochId::from_bytes([0x07; 32]);
+        let context_id = ContextId::from_bytes([0x08; 32]);
+        let other_context = ContextId::from_bytes([0xCC; 32]);
+
+        let mut extra_data = [0u8; 65];
+        extra_data[0] = 2;
+        extra_data[1..33].copy_from_slice(other_context.as_bytes());
+        extra_data[33..65].copy_from_slice(epoch_id.as_bytes());
+
+        let warning = sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id)
+            .expect("mismatched context should produce a warning");
+        assert!(
+            warning.contains("Context ID in extra data does not match expected context ID"),
+            "unexpected warning: {warning}"
+        );
+        assert!(
+            warning.contains(&hex::encode(other_context.as_bytes())),
+            "warning should include the received (other) context hex: {warning}"
+        );
+        assert!(
+            warning.contains(&context_id.to_string()),
+            "warning should include the expected context id: {warning}"
+        );
     }
 
     async fn setup_standard_keys(

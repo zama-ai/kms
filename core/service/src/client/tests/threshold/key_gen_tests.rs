@@ -386,6 +386,7 @@ pub(crate) async fn run_threshold_keygen(
             domain,
         )
         .unwrap();
+    let extra_data = req_keygen.extra_data.clone();
 
     let responses = launch_dkg(req_keygen.clone(), kms_clients, insecure).await;
     for response in responses {
@@ -399,6 +400,7 @@ pub(crate) async fn run_threshold_keygen(
         internal_client,
         insecure,
         &keyset_config,
+        extra_data,
         data_root_path,
         expected_num_parties_crashed,
     )
@@ -451,6 +453,7 @@ async fn wait_for_keygen_result(
     internal_client: &Client,
     insecure: bool,
     keyset_config: &Option<KeySetConfig>,
+    extra_data: Vec<u8>,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
@@ -550,6 +553,7 @@ async fn wait_for_keygen_result(
             &req_preproc,
             &req_get_keygen,
             &domain,
+            extra_data,
             kms_clients.len() + expected_num_parties_crashed,
             None,
             compressed,
@@ -1140,11 +1144,12 @@ pub(crate) async fn run_preproc(
     );
 
     // the responses should be empty
+    let extra_data = preproc_request.extra_data.clone();
     let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
-            .process_preproc_response(preproc_req_id, &domain, &response)
+            .process_preproc_response(preproc_req_id, &domain, &response, extra_data.clone())
             .unwrap();
     }
 }
@@ -1366,6 +1371,7 @@ pub(crate) async fn verify_keygen_responses(
     req_preproc: &RequestId,
     req_get_keygen: &RequestId,
     domain: &Eip712Domain,
+    extra_data: Vec<u8>,
     total_num_parties: usize,
     read_key_at_epoch: Option<kms_grpc::EpochId>,
     compressed: bool,
@@ -1399,7 +1405,7 @@ pub(crate) async fn verify_keygen_responses(
                     req_get_keygen,
                     &kg_res,
                     domain,
-                    vec![],
+                    extra_data.clone(),
                     &storage,
                 )
                 .await

@@ -77,6 +77,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         request_id: RequestId,
         context_id: ContextId,
         epoch_id: EpochId,
+        extra_data: Vec<u8>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
         permit: OwnedSemaphorePermit,
@@ -129,6 +130,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         my_identity,
                         dkg_params,
                         keyset_config,
+                        extra_data,
                         factory,
                         permit,
                         #[cfg(feature = "insecure")] percentage_offline
@@ -172,6 +174,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         own_identity: Identity,
         params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
+        extra_data: Vec<u8>,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
         #[cfg(feature = "insecure")] partial_params: Option<
@@ -304,14 +307,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             req_id,
             own_identity,
         );
-        let external_signature = match compute_external_signature_preprocessing(&sk, req_id, domain)
-        {
-            Ok(sig) => sig,
-            Err(e) => {
-                tracing::error!("Failed to compute external signature: {}", e);
-                return Err(());
-            }
-        };
+        let external_signature =
+            match compute_external_signature_preprocessing(&sk, req_id, domain, extra_data) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    tracing::error!("Failed to compute external signature: {}", e);
+                    return Err(());
+                }
+            };
 
         let mut guarded_meta_store = bucket_store.write().await;
 
@@ -369,8 +372,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let permit = self.rate_limiter.start_preproc().await?;
         let mut timer = METRICS.time_operation(OP_KEYGEN_PREPROC_REQUEST).start();
 
-        let (request_id, context_id, epoch_id, dkg_params, keyset_config, eip712_domain) =
-            validate_preproc_request(request)?;
+        let (
+            request_id,
+            context_id,
+            epoch_id,
+            dkg_params,
+            keyset_config,
+            eip712_domain,
+            extra_data,
+        ) = validate_preproc_request(request)?;
         let my_role = validate_context_and_epoch(
             OP_KEYGEN_PREPROC_REQUEST,
             &self.session_maker,
@@ -397,6 +407,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 request_id,
                 context_id,
                 epoch_id,
+                extra_data,
                 &eip712_domain,
                 timer,
                 permit,
@@ -588,6 +599,7 @@ mod tests {
                 context_id: None,
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -615,6 +627,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -635,6 +648,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -655,6 +669,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: None,
                 epoch_id: None,
+                extra_data: vec![],
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -683,6 +698,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
             epoch_id: None,
+            extra_data: vec![],
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -709,6 +725,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
             epoch_id: None,
+            extra_data: vec![],
         };
 
         // even though we use a failing preprocessor, the request should be ok
@@ -757,6 +774,7 @@ mod tests {
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain),
                 epoch_id: None,
+                extra_data: vec![],
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -782,6 +800,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
             epoch_id: None,
+            extra_data: vec![],
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
             .await
@@ -812,6 +831,7 @@ mod tests {
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain.clone()),
             epoch_id: None,
+            extra_data: vec![],
         };
         prep.key_gen_preproc(tonic::Request::new(request))
             .await

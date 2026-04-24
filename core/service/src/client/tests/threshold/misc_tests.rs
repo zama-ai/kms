@@ -130,6 +130,7 @@ async fn test_threshold_health_endpoint_availability() {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
+                    extra_data: Vec::new(),
                 }))
                 .await
         });

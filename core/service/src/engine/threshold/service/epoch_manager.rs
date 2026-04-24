@@ -124,14 +124,12 @@ struct VerifiedKeyInfo {
     /// The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
     /// If there are no key_digests, the digest verification is skipped.
     pub key_digests: HashMap<PubDataType, Vec<u8>>,
-    pub extra_data: Vec<u8>,
 }
 
 #[derive(Debug)]
 struct VerifiedCrsInfo {
     pub crs_id: kms_grpc::RequestId,
     pub crs_digest: Vec<u8>,
-    pub extra_data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -165,6 +163,7 @@ fn verify_epoch_info(
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&previous_epoch.epoch_id, RequestIdParsingErr::Epoch)
             .map_err(make_metriced_err)?;
+
     let keys_info = previous_epoch
         .keys_info
         .into_iter()
@@ -207,9 +206,6 @@ fn verify_epoch_info(
                 preproc_id,
                 key_parameters,
                 key_digests,
-                // TODO: for RFC005 add this field to request and here
-                // this will come externally, i.e., via KeyInfo
-                extra_data: vec![],
             })
         })
         .try_collect()?;
@@ -227,7 +223,6 @@ fn verify_epoch_info(
             Ok(VerifiedCrsInfo {
                 crs_id,
                 crs_digest: crs_info.crs_digest,
-                extra_data: vec![], //TODO: for RFC005 add this field to request and here
             })
         })
         .try_collect()?;
@@ -606,6 +601,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
         verified_materials: Vec<VerifiedPublicMaterial>,
         new_private_keysets: Vec<PrivateKeySet<4>>,
@@ -634,7 +630,7 @@ impl<
                         &key_info.key_id,
                         &fhe_pubkeys,
                         eip712_domain,
-                        key_info.extra_data.clone(),
+                        new_extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -676,7 +672,7 @@ impl<
                         &key_info.key_id,
                         &compressed_keyset,
                         eip712_domain,
-                        key_info.extra_data.clone(),
+                        new_extra_data.clone(),
                     ) {
                         Ok(info) => info,
                         Err(e) => {
@@ -729,7 +725,7 @@ impl<
                 &crs_info.crs_id,
                 &crs,
                 eip712_domain,
-                crs_info.extra_data.clone(),
+                new_extra_data.clone(),
             )?;
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
@@ -759,11 +755,13 @@ impl<
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reshare_as_set_2(
         &self,
         two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
@@ -845,6 +843,7 @@ impl<
                 meta_store,
                 &sk,
                 new_epoch_id,
+                new_extra_data,
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
@@ -857,11 +856,13 @@ impl<
         Ok(task)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reshare_as_both_sets(
         &self,
         two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
+        new_extra_data: Vec<u8>,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         crs_info: Vec<CompactPkeCrs>,
@@ -972,6 +973,7 @@ impl<
                 meta_store,
                 &sk,
                 new_epoch_id,
+                new_extra_data,
                 &verified_previous_epoch,
                 verified_fhe_public_materials,
                 new_private_keysets,
@@ -1081,6 +1083,7 @@ impl<
         &self,
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
+        new_extra_data: &[u8],
         previous_epoch: PreviousEpochInfo,
         eip712_domain: Eip712Domain,
     ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
@@ -1147,6 +1150,7 @@ impl<
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
+                    new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
                     crs_info,
@@ -1158,6 +1162,7 @@ impl<
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
+                    new_extra_data.to_vec(),
                     verified_previous_epoch,
                     eip712_domain,
                     crs_info,
@@ -1189,6 +1194,7 @@ impl<
         let VerifiedNewMpcEpochRequest {
             context_id,
             epoch_id,
+            extra_data,
             resharing: resharing_params,
         } = validate_new_mpc_epoch_request(inner)?;
 
@@ -1209,6 +1215,7 @@ impl<
                 self.initiate_resharing_and_crs_resign(
                     &context_id,
                     &epoch_id,
+                    &extra_data,
                     previous_epoch,
                     signing_domain,
                 )
@@ -1429,14 +1436,19 @@ pub(crate) mod tests {
     use super::*;
 
     use crate::{
-        client::test_tools::{self},
+        client::{
+            make_extra_data,
+            test_tools::{self},
+        },
         consts::{
             DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
         },
         cryptography::signatures::gen_sig_keys,
-        engine::base::{BaseKmsStruct, derive_request_id},
-        engine::threshold::service::session::PRSSSetupCombined,
+        engine::{
+            base::{BaseKmsStruct, derive_request_id},
+            threshold::service::session::PRSSSetupCombined,
+        },
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
             StorageType,
@@ -1689,6 +1701,7 @@ pub(crate) mod tests {
                 context_id: None,
                 previous_epoch: None,
                 domain: None,
+                extra_data: Vec::new(),
             }))
             .await
             .unwrap();
@@ -1715,6 +1728,7 @@ pub(crate) mod tests {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
+                    extra_data: Vec::new(),
                 }))
                 .await
                 .unwrap_err()
@@ -1740,6 +1754,7 @@ pub(crate) mod tests {
                         context_id: None,
                         previous_epoch: None,
                         domain: None,
+                        extra_data: Vec::new(),
                     }))
                     .await
                     .unwrap_err()
@@ -1755,6 +1770,7 @@ pub(crate) mod tests {
                         context_id: None,
                         previous_epoch: None,
                         domain: None,
+                        extra_data: Vec::new(),
                     }))
                     .await
                     .unwrap_err()
@@ -1777,6 +1793,7 @@ pub(crate) mod tests {
                 context_id: Some(context_id.into()),
                 previous_epoch: None,
                 domain: None,
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
             }))
             .await
             .unwrap_err();
@@ -1796,6 +1813,7 @@ pub(crate) mod tests {
                 context_id: None,
                 previous_epoch: None,
                 domain: None,
+                extra_data: Vec::new(),
             }))
             .await
             .unwrap();
@@ -1808,6 +1826,7 @@ pub(crate) mod tests {
                     context_id: None,
                     previous_epoch: None,
                     domain: None,
+                    extra_data: Vec::new(),
                 }))
                 .await
                 .unwrap_err()

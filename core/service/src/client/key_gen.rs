@@ -1,6 +1,8 @@
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
+use crate::client::make_extra_data;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::validation::RequestIdParsingErr;
@@ -33,6 +35,13 @@ impl Client {
     /// We need to reference the preprocessing we want to consume via
     /// its [`RequestId`]. In theory this is not needed in the centralized case
     /// but we still require it so that it is consistent with the threshold case.
+    ///
+    /// `context_id` and `epoch_id` are optional: when the caller does not
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
+    /// — the same defaults the server resolves during validation — and bind
+    /// those resolved ids into the `extra_data` the KMS will sign. This is the
+    /// current desired behaviour so that the request and the EIP-712 signature
+    /// agree on the context/epoch regardless of whether the caller passed them.
     #[allow(clippy::too_many_arguments)]
     pub fn key_gen_request(
         &self,
@@ -60,6 +69,9 @@ impl Client {
             )));
         }
 
+        let context_id = context_id.copied().unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.copied().unwrap_or(*DEFAULT_EPOCH_ID);
+
         Ok(KeyGenRequest {
             params: Some(parsed_param),
             preproc_id: Some((*preproc_id).into()),
@@ -67,12 +79,18 @@ impl Client {
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
             keyset_added_info,
-            context_id: context_id.map(|id| (*id).into()),
-            epoch_id: epoch_id.map(|id| (*id).into()),
-            extra_data: vec![],
+            context_id: Some(context_id.into()),
+            epoch_id: Some(epoch_id.into()),
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
         })
     }
 
+    /// `context_id` and `epoch_id` are optional: when the caller does not
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
+    /// — the same defaults the server resolves during validation — and bind
+    /// those resolved ids into the `extra_data` the KMS will sign. This is the
+    /// current desired behaviour so that the request and the EIP-712 signature
+    /// agree on the context/epoch regardless of whether the caller passed them.
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
@@ -89,14 +107,17 @@ impl Client {
         }
 
         let domain = alloy_to_protobuf_domain(domain)?;
+        let context_id = context_id.copied().unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.copied().unwrap_or(*DEFAULT_EPOCH_ID);
 
         Ok(KeyGenPreprocRequest {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
-            context_id: context_id.map(|id| (*id).into()),
+            context_id: Some(context_id.into()),
             domain: Some(domain),
-            epoch_id: epoch_id.map(|id| (*id).into()),
+            epoch_id: Some(epoch_id.into()),
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
         })
     }
 
@@ -139,6 +160,7 @@ impl Client {
             epoch_id: Some((*to_epoch_id).into()),
             previous_epoch,
             domain: domain.map(alloy_to_protobuf_domain).transpose()?,
+            extra_data: make_extra_data(2, Some(to_context_id), Some(to_epoch_id))?,
         })
     }
 
@@ -147,8 +169,9 @@ impl Client {
         preproc_id: &RequestId,
         domain: &Eip712Domain,
         resp: &KeyGenPreprocResult,
+        extra_data: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let sol_type = PrepKeygenVerification::new(preproc_id);
+        let sol_type = PrepKeygenVerification::new(preproc_id, extra_data);
         let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
@@ -172,7 +195,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<(ServerKey, CompactPublicKey)> {
         let req_id = parse_optional_grpc_request_id(
@@ -257,8 +280,7 @@ impl Client {
             key_id,
             server_key_digest,
             public_key_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
@@ -278,7 +300,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
@@ -345,8 +367,7 @@ impl Client {
             preproc_id,
             key_id,
             compressed_keyset_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;

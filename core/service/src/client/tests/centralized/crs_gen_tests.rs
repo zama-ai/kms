@@ -125,8 +125,7 @@ async fn crs_gen_centralized_manual(
                 crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
                 maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
                 crsDigest: actual_digest.to_vec().into(),
-                // TODO: reenable for RFC005
-                // extraData: vec![].into(),
+                extraData: vec![].into(),
             },
             &domain,
             &resp.external_signature,

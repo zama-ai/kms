@@ -466,6 +466,7 @@ pub(crate) mod tests {
             context_id: None,
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             epoch_id: None,
+            extra_data: vec![],
         };
 
         // Because preprocessing does not do anything useful in the centralized KMS,

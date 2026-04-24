@@ -241,16 +241,12 @@ pub(crate) fn compute_info_crs(
     crs_id: &RequestId,
     pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
     let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
-    let sol_type = CrsgenVerification::new(
-        crs_id,
-        max_num_bits,
-        crs_digest.clone(), /* TODO: reenable for RFC005 extra_data */
-    );
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data);
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(CrsGenMetadata::new(
@@ -265,8 +261,9 @@ pub(crate) fn compute_external_signature_preprocessing(
     sk: &PrivateSigKey,
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
-    let sol_type = PrepKeygenVerification::new(prep_id);
+    let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
     Ok(external_signature)
 }
@@ -278,7 +275,7 @@ pub(crate) fn compute_info_standard_keygen(
     key_id: &RequestId,
     keyset: &FhePubKeySet,
     domain: &alloy_sol_types::Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
     let server_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
@@ -296,8 +293,7 @@ pub(crate) fn compute_info_standard_keygen(
         key_id,
         server_key_digest.clone(),
         public_key_digest.clone(),
-        // TODO: reenable for RFC005
-        // extra_data,
+        extra_data.clone(),
     );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -309,6 +305,7 @@ pub(crate) fn compute_info_standard_keygen(
             (PubDataType::PublicKey, public_key_digest),
         ]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -325,7 +322,7 @@ pub(crate) fn compute_info_decompression_keygen(
 
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
-        extraData: extra_data.into(),
+        extraData: extra_data.clone().into(),
     };
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -334,6 +331,7 @@ pub(crate) fn compute_info_decompression_keygen(
         *prep_id,
         HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -346,7 +344,7 @@ pub(crate) fn compute_info_compressed_keygen(
     key_id: &RequestId,
     compressed_keyset: &CompressedXofKeySet,
     domain: &alloy_sol_types::Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
     let compressed_keyset_digest =
         safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
@@ -360,8 +358,7 @@ pub(crate) fn compute_info_compressed_keygen(
         prep_id,
         key_id,
         compressed_keyset_digest.clone(),
-        // TODO: reenable for RFC005
-        // extra_data,
+        extra_data.clone(),
     );
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
@@ -370,6 +367,7 @@ pub(crate) fn compute_info_compressed_keygen(
         *prep_id,
         HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
         external_signature,
+        extra_data,
     ))
 }
 
@@ -867,12 +865,35 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenMetadataInnerVersioned {
-    V0(KeyGenMetadataInner),
+    V0(KeyGenMetadataInnerQ126),
+    V1(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersioned)]
 pub struct KeyGenMetadataInner {
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+}
+
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
+        Ok(KeyGenMetadataInner {
+            key_id: self.key_id,
+            preprocessing_id: self.preprocessing_id,
+            key_digest_map: self.key_digest_map,
+            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
+            external_signature: self.external_signature,
+        })
+    }
+}
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct KeyGenMetadataInnerQ126 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
     pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
@@ -903,12 +924,22 @@ impl KeyGenMetadata {
         preprocessing_id: RequestId,
         key_digest_map: HashMap<PubDataType, Vec<u8>>,
         external_signature: Vec<u8>,
+        extra_data: Vec<u8>,
     ) -> Self {
+        let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
+            tracing::warn!(
+                "Creating KeyGenMetadata with empty extra data. Will set use the legacy format"
+            );
+            None
+        } else {
+            Some(extra_data)
+        };
         KeyGenMetadata::Current(KeyGenMetadataInner {
             key_id,
             preprocessing_id,
             key_digest_map,
             external_signature,
+            extra_data: parsed_extra_data,
         })
     }
 
@@ -1422,6 +1453,7 @@ pub(crate) mod tests {
             server_key,
         };
         let domain = dummy_domain();
+        let extra_data = vec![0x01u8, 0x02, 0x03, 0x04];
         let meta_data = compute_info_standard_keygen(
             &sk,
             &crate::engine::base::DSEP_PUBDATA_KEY,
@@ -1429,7 +1461,7 @@ pub(crate) mod tests {
             &key_id,
             &keyset,
             &domain,
-            vec![],
+            extra_data.clone(),
         )
         .unwrap();
 
@@ -1440,8 +1472,7 @@ pub(crate) mod tests {
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
 
             assert_eq!(
@@ -1467,8 +1498,7 @@ pub(crate) mod tests {
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
 
             assert_ne!(
@@ -1489,8 +1519,7 @@ pub(crate) mod tests {
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1510,8 +1539,7 @@ pub(crate) mod tests {
                 &bad_key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1532,8 +1560,7 @@ pub(crate) mod tests {
                 &key_id,
                 bad_server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1556,7 +1583,7 @@ pub(crate) mod tests {
                 &key_id,
                 &keyset,
                 &domain,
-                vec![],
+                extra_data.clone(),
             )
             .unwrap();
             let bad_signature = meta_data.external_signature();
@@ -1565,11 +1592,30 @@ pub(crate) mod tests {
                 &key_id,
                 server_key_digest.clone(),
                 public_key_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, bad_signature).unwrap(),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong extra_data
+            let bad_extra_data = vec![0x04u8, 0x03, 0x02, 0x01];
+            let sol_struct = KeygenVerification::new_standard(
+                &prep_id,
+                &key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+                bad_extra_data,
+            );
+            assert_ne!(
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1584,13 +1630,14 @@ pub(crate) mod tests {
         let params = TEST_PARAM;
         let max_num_bits = 64;
         let domain = dummy_domain();
+        let extra_data = vec![0x10u8, 0x20, 0x30];
 
         let (crs, meta_data) = gen_centralized_crs(
             &sk,
             &params,
             Some(max_num_bits),
             &domain,
-            vec![],
+            extra_data.clone(),
             &crs_id,
             &mut rng,
         )
@@ -1603,7 +1650,8 @@ pub(crate) mod tests {
             let sol_struct = CrsgenVerification::new(
                 &crs_id,
                 max_num_bits as usize,
-                crs_digest.clone(), /* TODO: reenable for RFC005 vec![] */
+                crs_digest.clone(),
+                extra_data.clone(),
             );
 
             assert_eq!(
@@ -1623,8 +1671,7 @@ pub(crate) mod tests {
                 &bad_crs_id,
                 max_num_bits as usize,
                 crs_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
 
             assert_ne!(
@@ -1648,7 +1695,8 @@ pub(crate) mod tests {
             let sol_struct = CrsgenVerification::new(
                 &crs_id,
                 max_num_bits as usize,
-                crs_digest.clone(), /* TODO: reenable for RFC005 vec![] */
+                crs_digest.clone(),
+                extra_data.clone(),
             );
             assert_ne!(
                 recover_address_from_ext_signature(
@@ -1667,8 +1715,7 @@ pub(crate) mod tests {
                 &crs_id,
                 wrong_max_num_bits as usize,
                 crs_digest.clone(),
-                // TODO: reenable for RFC005
-                // vec![],
+                extra_data.clone(),
             );
 
             assert_ne!(
@@ -1688,7 +1735,8 @@ pub(crate) mod tests {
             let sol_struct = CrsgenVerification::new(
                 &crs_id,
                 max_num_bits as usize,
-                wrong_digest, /* TODO: reenable for RFC005 vec![] */
+                wrong_digest,
+                extra_data.clone(),
             );
 
             assert_ne!(
@@ -1709,7 +1757,7 @@ pub(crate) mod tests {
                 &params,
                 Some(max_num_bits),
                 &domain,
-                vec![],
+                extra_data.clone(),
                 &crs_id,
                 &mut rng,
             )
@@ -1720,7 +1768,28 @@ pub(crate) mod tests {
             let sol_struct = CrsgenVerification::new(
                 &crs_id,
                 max_num_bits as usize,
-                crs_digest.clone(), /* TODO: reenable for RFC005vec![] */
+                crs_digest.clone(),
+                extra_data.clone(),
+            );
+
+            assert_ne!(
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong extra_data
+            let bad_extra_data = vec![0x30u8, 0x20, 0x10];
+            let sol_struct = CrsgenVerification::new(
+                &crs_id,
+                max_num_bits as usize,
+                crs_digest.clone(),
+                bad_extra_data,
             );
 
             assert_ne!(
@@ -1822,11 +1891,14 @@ pub(crate) mod tests {
         let actual_address = pk.address();
         let preproc_id = RequestId::new_random(&mut rng);
         let domain = dummy_domain();
-        let sig = compute_external_signature_preprocessing(&sk, &preproc_id, &domain).unwrap();
+        let extra_data = vec![0x0Au8, 0x0B, 0x0C];
+        let sig =
+            compute_external_signature_preprocessing(&sk, &preproc_id, &domain, extra_data.clone())
+                .unwrap();
 
         {
             // happy path
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
             assert_eq!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address
@@ -1835,7 +1907,7 @@ pub(crate) mod tests {
         {
             // wrong ID
             let bad_preproc_id = RequestId::new_random(&mut rng);
-            let sol_struct = PrepKeygenVerification::new(&bad_preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&bad_preproc_id, extra_data.clone());
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address
@@ -1849,7 +1921,7 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &bad_domain, &sig).unwrap(),
                 actual_address
@@ -1858,9 +1930,23 @@ pub(crate) mod tests {
         {
             // wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
-            let sig =
-                compute_external_signature_preprocessing(&bad_sk, &preproc_id, &domain).unwrap();
-            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            let sig = compute_external_signature_preprocessing(
+                &bad_sk,
+                &preproc_id,
+                &domain,
+                extra_data.clone(),
+            )
+            .unwrap();
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, extra_data.clone());
+            assert_ne!(
+                recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
+                actual_address
+            );
+        }
+        {
+            // wrong extra data
+            let bad_extra_data = vec![0x0Bu8, 0x0A, 0x0D];
+            let sol_struct = PrepKeygenVerification::new(&preproc_id, bad_extra_data);
             assert_ne!(
                 recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
                 actual_address

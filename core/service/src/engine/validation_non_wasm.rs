@@ -1,7 +1,7 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, sanity_check_extra_data};
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -240,6 +240,8 @@ fn unpack_user_decrypt_req(
         None => *DEFAULT_EPOCH_ID,
     };
 
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
@@ -345,6 +347,8 @@ fn unpack_public_decrypt_req(
         Some(epoch_id) => epoch_id.try_into()?,
         None => *DEFAULT_EPOCH_ID,
     };
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     let key_id: KeyId =
         parse_optional_grpc_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?;
 
@@ -360,7 +364,7 @@ fn unpack_public_decrypt_req(
         context_id,
         epoch_id,
         eip712_domain,
-        req.extra_data.clone(),
+        extra_data,
     ))
 }
 
@@ -689,6 +693,7 @@ pub(crate) fn validate_preproc_request(
         DKGParams,
         KeySetConfig,
         Eip712Domain,
+        Vec<u8>,
     ),
     MetricedError,
 > {
@@ -712,6 +717,7 @@ fn unpack_preproc_request(
     DKGParams,
     KeySetConfig,
     Eip712Domain,
+    Vec<u8>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -732,6 +738,9 @@ fn unpack_preproc_request(
         None => *DEFAULT_EPOCH_ID,
     };
 
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
+
     let dkg_params = retrieve_parameters(Some(req.params))?;
     let keyset_config = preproc_proto_to_keyset_config(&req.keyset_config)?;
 
@@ -744,6 +753,7 @@ fn unpack_preproc_request(
         dkg_params,
         keyset_config,
         eip712_domain,
+        extra_data,
     ))
 }
 
@@ -808,7 +818,8 @@ fn unpack_key_gen_request(
         Some(epoch_id) => epoch_id.try_into()?,
         None => *DEFAULT_EPOCH_ID,
     };
-
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     let internal_keyset_config =
         InternalKeySetConfig::new(req.keyset_config, req.keyset_added_info).map_err(|e| {
             tonic::Status::new(
@@ -827,7 +838,7 @@ fn unpack_key_gen_request(
         dkg_params,
         internal_keyset_config,
         eip712_domain,
-        req.extra_data.clone(),
+        extra_data,
     ))
 }
 
@@ -889,7 +900,8 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         Some(epoch) => parse_grpc_request_id(epoch, RequestIdParsingErr::Epoch)?,
         None => *DEFAULT_EPOCH_ID,
     };
-
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     Ok(VerifiedCrsGenRequest {
@@ -899,7 +911,7 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         witness_dim,
         params,
         eip712_domain,
-        extra_data: req.extra_data.clone(),
+        extra_data,
     })
 }
 
@@ -926,6 +938,7 @@ pub(crate) struct ResharingParams {
 pub(crate) struct VerifiedNewMpcEpochRequest {
     pub context_id: ContextId,
     pub epoch_id: EpochId,
+    pub extra_data: Vec<u8>,
     pub resharing: Option<ResharingParams>,
 }
 
@@ -949,6 +962,8 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     };
     let epoch_id: EpochId =
         parse_optional_grpc_request_id(&req.epoch_id, RequestIdParsingErr::Epoch)?;
+    let extra_data = req.extra_data.clone();
+    sanity_check_extra_data(&extra_data, &epoch_id, &context_id);
     let resharing = match req.previous_epoch {
         Some(previous_epoch) => {
             let signing_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
@@ -962,6 +977,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
     Ok(VerifiedNewMpcEpochRequest {
         context_id,
         epoch_id,
+        extra_data,
         resharing,
     })
 }

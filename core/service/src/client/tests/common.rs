@@ -1,5 +1,7 @@
 use crate::client::client_wasm::Client;
+use crate::client::make_extra_data;
 use crate::consts::TEST_PARAM;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
@@ -21,6 +23,12 @@ use tonic::transport::Channel;
 
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
+
+/// Constructs the extra data field based on the default context and epoch IDs.
+pub(crate) fn default_isolated_extra_data() -> Vec<u8> {
+    make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
+        .expect("make_extra_data with defaults cannot fail")
+}
 
 /// Returns standard keygen config (no compression, no decompression)
 pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {

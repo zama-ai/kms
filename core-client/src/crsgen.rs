@@ -33,7 +33,6 @@ pub(crate) async fn do_crsgen(
     destination_prefix: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
-    extra_data: Vec<u8>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -46,12 +45,14 @@ pub(crate) async fn do_crsgen(
 
     let crs_req = internal_client.crs_gen_request(
         &req_id,
-        context_id,
-        epoch_id,
+        context_id.as_ref(),
+        epoch_id.as_ref(),
         max_num_bits,
         Some(param),
         &dummy_domain(),
     )?;
+    // The request builder computes extra_data; mirror it for signature verification.
+    let extra_data = crs_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -309,7 +310,7 @@ fn check_crsgen_ext_signature(
     crs_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
@@ -321,11 +322,7 @@ fn check_crsgen_ext_signature(
     );
 
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(
-        crs_id,
-        max_num_bits,
-        crs_digest, /* TODO: reenable for RFC005 extra_data */
-    );
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, extra_data);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -407,11 +404,7 @@ mod tests {
         let max_num_bits = max_num_bits_from_crs(&crs);
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
             .expect("serialization should succeed");
-        let crs_sol_struct = CrsgenVerification::new(
-            crs_id,
-            max_num_bits,
-            crs_digest, /* TODO: reenable for RFC005 vec![] */
-        );
+        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, vec![]);
 
         // sign with EIP712
         let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain)

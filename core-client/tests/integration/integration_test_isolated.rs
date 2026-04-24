@@ -1361,7 +1361,6 @@ async fn crs_gen_isolated_with_params(
         max_num_bits,
         epoch_id: Some(epoch_id),
         context_id: Some(context_id),
-        extra_data: None,
     };
     let command = if insecure_crs_gen {
         CCCommand::InsecureCrsGen(crs_params)
