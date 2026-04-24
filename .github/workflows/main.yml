@@ -342,12 +342,12 @@ jobs:
   test-core-client-docker-tls:
     name: main/test-core-client-docker-tls
     permissions:
-      checks: write
-      packages: read
-      issues: write
-      pull-requests: write
-      actions: read
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-client == 'true' ||
@@ -377,7 +377,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
           persist-credentials: true
 
       - name: Get Rust version
@@ -398,8 +398,8 @@ jobs:
         uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
-          username: ${{ secrets.CGR_USERNAME }}
-          password: ${{ secrets.CGR_PASSWORD }}
+          username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
+          password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
 
       - name: Set up Docker Buildx
         uses: ./.github/actions/docker-setup-buildx
@@ -423,7 +423,7 @@ jobs:
 
       - name: Setup usage of private repo
         env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
         run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 
       - name: Run TLS-over-Docker integration test
