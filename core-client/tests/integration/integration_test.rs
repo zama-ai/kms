@@ -22,6 +22,13 @@
 //! - Context init/switch/reshare tests generate PRSS live via `new_prss`
 //!   and do NOT require pre-generated startup PRSS.
 //!
+//! **Docker-based TLS test (1 test)**:
+//! - `test_threshold_mpc_context_switch_6_docker` — requires Docker Compose and
+//!   locally buildable KMS images. Excluded from default CI via `--skip`; runs
+//!   only in the dedicated `test-core-client-docker-tls` job. Exists to cover
+//!   mTLS certificate-store reload on MPC context change, which no isolated
+//!   test exercises.
+//!
 //! ## Architecture
 //!
 //! **Test Isolation:**
@@ -3089,6 +3096,117 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     drop(servers);
 
     Ok(())
+}
+
+/// Docker-compose harness + TLS-enabled variant of `test_threshold_mpc_context_switch_6`.
+///
+/// The isolated tests in this file run without TLS, so this module exists to
+/// exercise mTLS + certificate-store reload when the MPC context changes and
+/// new parties join.
+mod docker_harness {
+    use super::*;
+    use test_context::{AsyncTestContext, test_context};
+    use test_utils_cc::{DockerCompose, KMSMode};
+
+    trait DockerComposeManager {
+        fn root_path(&self) -> PathBuf;
+        fn config_path(&self) -> &str;
+        fn alternative_config_path(&self) -> &str {
+            self.config_path()
+        }
+    }
+
+    pub struct DockerComposeThresholdTestNoInitSixParty {
+        pub cmd: DockerCompose,
+    }
+
+    impl DockerComposeManager for DockerComposeThresholdTestNoInitSixParty {
+        fn root_path(&self) -> PathBuf {
+            self.cmd.cmd.root_path.clone()
+        }
+
+        fn config_path(&self) -> &str {
+            "core-client/config/client_local_threshold.toml"
+        }
+
+        fn alternative_config_path(&self) -> &str {
+            "core-client/config/client_local_threshold_alternative.toml"
+        }
+    }
+
+    impl AsyncTestContext for DockerComposeThresholdTestNoInitSixParty {
+        async fn setup() -> Self {
+            Self {
+                cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInitSixParty),
+            }
+        }
+
+        async fn teardown(self) {
+            drop(self.cmd);
+        }
+    }
+
+    /// Docker-compose variant of `test_threshold_mpc_context_switch_6`.
+    ///
+    /// Runs against 6 KMS servers under Docker Compose with mTLS enabled.
+    ///
+    /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
+    #[test_context(DockerComposeThresholdTestNoInitSixParty)]
+    #[tokio::test]
+    #[serial(docker)]
+    #[cfg_attr(not(feature = "threshold_tests"), ignore)]
+    async fn test_threshold_mpc_context_switch_6_docker(
+        ctx: &DockerComposeThresholdTestNoInitSixParty,
+    ) -> Result<()> {
+        init_logging();
+
+        let temp_dir = tempfile::tempdir()?;
+        let test_path = temp_dir.path();
+        let config_path_1 = ctx.root_path().join(ctx.config_path());
+        let config_path_2 = ctx.root_path().join(ctx.alternative_config_path());
+
+        // First MPC context: parties 1, 2, 3, 4 via default config.
+        let context_1_id = derive_request_id("CONTEXT_6P_SET_1")?.into();
+        let epoch_1_id = derive_request_id("EPOCH_6P_SET_1")?.into();
+        let context_1_path = test_path.join("mpc_context_1.bin");
+        store_mpc_context_in_file(&context_1_path, &config_path_1, context_1_id).await?;
+        new_mpc_context(&config_path_1, &context_1_path, test_path).await?;
+        new_prss(&config_path_1, context_1_id, epoch_1_id, test_path).await?;
+
+        let (key_1_id, _) = real_preproc_and_keygen_with_context(
+            &config_path_1,
+            test_path,
+            Some(context_1_id),
+            Some(epoch_1_id),
+        )
+        .await?;
+        info!("Context 1 keygen produced key_id={key_1_id}");
+
+        // Second MPC context: parties 5,6,3,4 via alternative config.
+        // Servers 5,6 replace 1,2 — their TLS certificates must be loaded by the
+        // peers when the new context takes effect. If certificate-store reload
+        // is broken, the mTLS handshake for subsequent MPC traffic fails here.
+        let context_2_id = derive_request_id("CONTEXT_6P_SET_2")?.into();
+        let epoch_2_id = derive_request_id("EPOCH_6P_SET_2")?.into();
+        let context_2_path = test_path.join("mpc_context_2.bin");
+        store_mpc_context_in_file(&context_2_path, &config_path_2, context_2_id).await?;
+        new_mpc_context(&config_path_2, &context_2_path, test_path).await?;
+        new_prss(&config_path_2, context_2_id, epoch_2_id, test_path).await?;
+
+        let (key_2_id, _) = real_preproc_and_keygen_with_context(
+            &config_path_2,
+            test_path,
+            Some(context_2_id),
+            Some(epoch_2_id),
+        )
+        .await?;
+        info!("Context 2 keygen produced key_id={key_2_id}");
+
+        assert_ne!(context_1_id, context_2_id);
+        assert_ne!(key_1_id, key_2_id);
+
+        Ok(())
+    }
 }
 
 /// Test threshold reshare operation via CLI (isolated version)
