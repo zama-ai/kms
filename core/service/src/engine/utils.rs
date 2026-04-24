@@ -549,8 +549,8 @@ pub fn make_extra_data(
     }
     if sanity_check_extra_data_helper(
         &extra_data,
-        &epoch_id.unwrap_or(&DEFAULT_EPOCH_ID),
-        &context_id.unwrap_or(&DEFAULT_MPC_CONTEXT),
+        epoch_id.unwrap_or(&DEFAULT_EPOCH_ID),
+        context_id.unwrap_or(&DEFAULT_MPC_CONTEXT),
     )
     .is_some()
     {
