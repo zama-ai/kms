@@ -3,12 +3,23 @@ rules:
     ignore:
       # ignore line 61 in workflow-pr-dockerfile.yml, any column
       - workflow-pr-dockerfile.yml:61
+  secrets-outside-env:
+    ignore:
+      # BLOCKCHAIN_ACTIONS_TOKEN is used to checkout private submodules and
+      # configure insteadOf git rewrites; we don't use GitHub Environments
+      # for this.
+      - rust-lint.yml:27
+      - rust-lint.yml:53
   secrets-inherit:
     ignore:
+      - main.yml
       - performance-testing.yml:210
       - performance-testing.yml:211
       - kind-testing.yml:260
       - kind-testing.yml:261
+      - performance-testing.yml:100
+      - performance-testing.yml:149
+      - performance-testing.yml:199
       - pr-preview-deploy.yml:100
       - pr-preview-deploy.yml:101
       - rolling-upgrade-testing.yml:126

@@ -1,0 +1,74 @@
+name: rust-lint
+
+on:
+  pull_request:
+
+concurrency:
+  group: rust-lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read # Required to checkout repository code
+  actions: read # Required to read workflow run information
+
+jobs:
+  rust-lint:
+    name: rust-lint/workspace
+    permissions:
+      contents: read # Required to checkout repository code
+      actions: read # Required to read workflow run information
+      id-token: write # Required for OIDC token generation
+    runs-on: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: rustfmt, clippy
+          rust-cache: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Setup usage of private repo
+        env:
+          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+
+      - name: Formatting
+        run: |
+          echo "EXECUTING: cargo fmt --all -- --check"
+          cargo fmt --all -- --check
+
+      - name: Clippy
+        run: |
+          echo "EXECUTING: cargo clippy --workspace --all-targets --all-features -- -D warnings"
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Install cargo-dylint
+        run: |
+          echo "EXECUTING: cargo install cargo-dylint dylint-link --locked"
+          cargo install cargo-dylint dylint-link --locked
+
+      - name: Dylint
+        run: |
+          echo "EXECUTING: cargo dylint --all"
+          cargo dylint --all

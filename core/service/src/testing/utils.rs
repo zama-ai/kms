@@ -509,7 +509,6 @@ pub mod setup {
         testing_material(path).await;
     }
 
-    #[cfg(feature = "slow_tests")]
     async fn default_material(path: Option<&Path>) {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
@@ -658,12 +657,10 @@ pub mod setup {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
     pub async fn ensure_default_material_exists() {
         default_material(None).await;
     }
 
-    #[cfg(feature = "slow_tests")]
     pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
         default_material(path).await;
     }
