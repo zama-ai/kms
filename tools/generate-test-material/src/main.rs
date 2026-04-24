@@ -15,9 +15,9 @@ use path_absolutize::Absolutize;
 use tracing::{info, warn};
 
 use kms_lib::testing::material::{MaterialType, TestMaterialSpec};
-#[cfg(feature = "slow_tests")]
-use kms_lib::testing::utils::setup::ensure_default_material_exists_to_path;
-use kms_lib::testing::utils::setup::ensure_testing_material_exists;
+use kms_lib::testing::utils::setup::{
+    ensure_default_material_exists_to_path, ensure_testing_material_exists,
+};
 
 /// Storage types that are required for test material.
 /// Note: BACKUP is excluded as it's not used in test material generation.
@@ -184,34 +184,25 @@ async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()>
     }
 
     // Generate default material using existing KMS functions
-    #[cfg(feature = "slow_tests")]
-    {
-        use tokio::fs;
+    use tokio::fs;
 
-        let default_dir = output_dir.join("default");
+    let default_dir = output_dir.join("default");
 
-        if force {
-            remove_dir_if_present(&default_dir).await?;
-        }
-
-        // Create default subdirectory
-        fs::create_dir_all(&default_dir).await?;
-
-        // Generate default material directly to the default subdirectory
-        // This matches the pattern used for testing material
-        ensure_default_material_exists_to_path(Some(&default_dir)).await;
-
-        info!(
-            "Default material generated successfully at: {}",
-            default_dir.display()
-        );
+    if force {
+        remove_dir_if_present(&default_dir).await?;
     }
 
-    #[cfg(not(feature = "slow_tests"))]
-    {
-        warn!("Default material generation requires 'slow_tests' feature");
-        warn!("Run with: cargo run --features slow_tests");
-    }
+    // Create default subdirectory
+    fs::create_dir_all(&default_dir).await?;
+
+    // Generate default material directly to the default subdirectory
+    // This matches the pattern used for testing material
+    ensure_default_material_exists_to_path(Some(&default_dir)).await;
+
+    info!(
+        "Default material generated successfully at: {}",
+        default_dir.display()
+    );
 
     Ok(())
 }
@@ -270,14 +261,7 @@ async fn generate_material_for_spec(
             ensure_testing_material_exists(Some(&spec_dir)).await;
         }
         MaterialType::Default => {
-            #[cfg(feature = "slow_tests")]
-            {
-                ensure_default_material_exists_to_path(Some(&spec_dir)).await;
-            }
-            #[cfg(not(feature = "slow_tests"))]
-            {
-                warn!("Default material requires 'slow_tests' feature");
-            }
+            ensure_default_material_exists_to_path(Some(&spec_dir)).await;
         }
     }
 

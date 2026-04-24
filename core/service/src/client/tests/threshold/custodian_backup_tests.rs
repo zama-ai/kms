@@ -230,6 +230,8 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
 
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after generation)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the new CRS was backed up
     let crss: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         env.test_path(),
@@ -538,7 +540,8 @@ async fn test_keygen_backup_presence_threshold() {
         0,
     )
     .await;
-
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after keygen)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Verify FHE key material appears in backup immediately after keygen
     let key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         env.test_path(),
@@ -589,7 +592,8 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         0,
     )
     .await;
-
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after generation)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Read backup under first custodian context
     let backup_a: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         env.test_path(),
@@ -781,7 +785,8 @@ async fn test_backup_after_reshare_threshold() {
     .await;
     assert_eq!(crs_info_vec.len(), 1);
     let crs_info_item = &crs_info_vec[0];
-
+    // Sleep briefly to allow backup to be written (since backup is done asynchronously after generation)
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Verify initial backup exists at default epoch before reshare
     let initial_key_backup: Vec<BackupCiphertext> = read_custodian_backup_files_with_epoch(
         env.test_path(),

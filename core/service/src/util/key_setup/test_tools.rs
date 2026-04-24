@@ -676,7 +676,7 @@ pub(crate) mod setup {
         testing_material(path).await;
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[allow(dead_code)]
     async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
@@ -825,7 +825,7 @@ pub(crate) mod setup {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
+    #[allow(dead_code)]
     pub(crate) async fn ensure_default_material_exists() {
         default_material().await;
     }
