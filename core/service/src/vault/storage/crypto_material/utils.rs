@@ -200,7 +200,7 @@ pub fn log_data_exists<T: Display, U: Display, V: Display>(
             storage_info,
             pub_info
         ),
-        None => tracing::info!(
+        None => tracing::warn!(
             "{} with ID {} already exist, skipping generation",
             data_type,
             id

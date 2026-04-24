@@ -112,7 +112,7 @@ impl<
                 health_reporter
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
-                tracing::info!("Sat not serving");
+                tracing::trace!("Set not serving");
                 tracker.close();
                 tracker.wait().await;
                 mpc_abort_handle.abort();
@@ -211,7 +211,7 @@ impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
                 health_reporter
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
-                tracing::info!("Sat not serving");
+                tracing::trace!("Set not serving");
                 tracker.close();
                 tracker.wait().await;
                 mpc_abort_handle.abort();
