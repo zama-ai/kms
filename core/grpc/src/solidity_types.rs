@@ -118,6 +118,15 @@ alloy_sol_types::sol! {
         /// @notice Extra data for client-specific context.
         bytes extraData;
     }
+
+    struct KeygenVerificationQ126 {
+        /// @notice The ID of the preprocessing keygen request.
+        uint256 prepKeygenId;
+        /// @notice The ID of the generated key.
+        uint256 keyId;
+        /// @notice The generated digests of keys.
+        KeyDigest[] keyDigests;
+    }
 }
 
 impl KeygenVerification {
@@ -160,6 +169,46 @@ impl KeygenVerification {
                 digest: compressed_keyset_digest.into(),
             }],
             extraData: extra_data.into(),
+        }
+    }
+}
+
+impl KeygenVerificationQ126 {
+    pub fn new_standard(
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        server_key_digest: Vec<u8>,
+        public_key_digest: Vec<u8>,
+    ) -> Self {
+        Self {
+            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            keyId: U256::from_be_slice(key_id.as_bytes()),
+            // NOTE: order should be in the order of the enum KeyType
+            keyDigests: vec![
+                KeyDigest {
+                    keyType: KeyType::SERVER,
+                    digest: server_key_digest.into(),
+                },
+                KeyDigest {
+                    keyType: KeyType::PUBLIC,
+                    digest: public_key_digest.into(),
+                },
+            ],
+        }
+    }
+    pub fn new_compressed(
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        compressed_keyset_digest: Vec<u8>,
+    ) -> Self {
+        Self {
+            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            keyId: U256::from_be_slice(key_id.as_bytes()),
+            // NOTE: order should be in the order of the enum KeyType
+            keyDigests: vec![KeyDigest {
+                keyType: KeyType::COMPRESSED_KEYSET,
+                digest: compressed_keyset_digest.into(),
+            }],
         }
     }
 }
