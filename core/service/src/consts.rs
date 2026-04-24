@@ -81,24 +81,6 @@ cfg_if::cfg_if! {
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
-        pub static TEST_EXTRA_DATA_V0: LazyLock<Vec<u8>> =
-            LazyLock::new(|| vec![0u8]);
-        pub static TEST_EXTRA_DATA_V1: LazyLock<Vec<u8>> =
-            LazyLock::new(|| {
-                let mut data = [0u8; 33];
-                data[0] = 1; // version byte
-                data[1..33].copy_from_slice(DEFAULT_MPC_CONTEXT.as_bytes());
-                data.to_vec()
-            });
-        pub static TEST_EXTRA_DATA_V2: LazyLock<Vec<u8>> =
-            LazyLock::new(|| {
-                let mut data = [0u8; 65];
-                data[0] = 2; // version byte
-                data[1..33].copy_from_slice(DEFAULT_MPC_CONTEXT.as_bytes());
-                data[33..65].copy_from_slice(DEFAULT_EPOCH_ID.as_bytes());
-                data.to_vec()
-            });
-
         pub static TEST_CENTRAL_KEY_ID: LazyLock<RequestId> =
             LazyLock::new(|| derive_request_id("TEST_CENTRAL_KEY_ID").unwrap());
         pub static TEST_THRESHOLD_KEY_ID_4P: LazyLock<RequestId> =
