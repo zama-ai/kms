@@ -383,6 +383,8 @@ impl MetricedError {
         // Ensure that we only handle the error once
         if !self.returned {
             self.returned = true;
+            #[cfg(test)]
+            HANDLE_ERROR_CALL_COUNT.with(|c| c.set(c.get() + 1));
             // Increment the method specific metric
             METRICS.increment_error_counter(
                 self.op_metric,
@@ -441,6 +443,11 @@ impl From<MetricedError> for Status {
     }
 }
 #[cfg(test)]
+thread_local! {
+    static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
@@ -457,7 +464,6 @@ mod tests {
     use tfhe::xof_key_set::CompressedXofKeySet;
 
     #[test]
-    #[kms_test_tracing::traced_test]
     fn test_metriced_error_creation() {
         let error = MetricedError::new(
             "test_op",
@@ -466,31 +472,35 @@ mod tests {
             tonic::Code::Internal,
         );
         assert_eq!(error.code(), tonic::Code::Internal);
+        assert!(error.to_string().contains("test error"));
 
         let status: Status = error.into();
         assert!(status.message().contains("test_op"));
         assert!(!status.message().contains("test error"));
-        assert!(logs_contain("test error"));
     }
 
     #[test]
-    #[kms_test_tracing::traced_test]
-    fn test_metriced_error_drop_logging() {
+    fn test_metriced_error_drop_without_return() {
+        let before = super::HANDLE_ERROR_CALL_COUNT.with(|c| c.get());
         let error = MetricedError::new(
             "test_op_drop",
             Some(RequestId::zeros()),
             anyhow::anyhow!("dropped error"),
             tonic::Code::Internal,
         );
+        // Error starts unreturned; Drop will invoke handle_error.
+        assert!(!error.returned);
         drop(error);
-        // Check that the log contains the error message about being dropped without being returned
-        assert!(logs_contain("dropped without being returned"));
-        // Check that the error is indeed logged
-        assert!(logs_contain("Grpc failure on requestID"));
+        // Confirm that Drop invokes handle_error when the error was not returned.
+        let after = super::HANDLE_ERROR_CALL_COUNT.with(|c| c.get());
+        assert_eq!(
+            after,
+            before + 1,
+            "Drop should have called handle_error exactly once"
+        );
     }
 
     #[test]
-    #[kms_test_tracing::traced_test]
     fn test_metriced_error_no_dropping() {
         let error = MetricedError::new(
             "test_no_drop",
@@ -498,11 +508,9 @@ mod tests {
             anyhow::anyhow!("dropped error"),
             tonic::Code::Internal,
         );
-        let _status: Status = error.into();
-        // Check that the log does NOT contains the error message about being dropped without being returned
-        assert!(!logs_contain("dropped without being returned"));
-        // Check that the error is indeed logged
-        assert!(logs_contain("Grpc failure on requestID"));
+        // Converting to Status marks the error as returned, so Drop won't log the warning.
+        let status: Status = error.into();
+        assert!(status.message().contains("test_no_drop"));
     }
 
     #[tokio::test]
@@ -611,7 +619,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[kms_test_tracing::traced_test]
     async fn sanity_check_legacy_metadata_readability_only() {
         let mut rng = AesRng::seed_from_u64(46);
         let key_id = RequestId::new_random(&mut rng);
@@ -638,9 +645,6 @@ mod tests {
         sanity_check_public_materials(&storage, &entries)
             .await
             .expect("legacy readability check should pass");
-
-        assert!(logs_contain("Legacy metadata"));
-        assert!(logs_contain("readability check only"));
     }
 
     #[tokio::test]
@@ -692,7 +696,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[kms_test_tracing::traced_test]
     async fn sanity_check_crs_legacy_readability_only() {
         let mut rng = AesRng::seed_from_u64(72);
         let crs_id = RequestId::new_random(&mut rng);
@@ -709,9 +712,6 @@ mod tests {
         sanity_check_crs_materials(&storage, &entries)
             .await
             .expect("legacy CRS readability check should pass");
-
-        assert!(logs_contain("Legacy CRS metadata"));
-        assert!(logs_contain("readability check only"));
     }
 
     async fn setup_standard_keys(

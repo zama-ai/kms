@@ -127,8 +127,12 @@ impl<Z: Ring> GenericBaseSessionHandles<Role> for SmallSession<Z> {
         self.base_session.corrupt_roles()
     }
 
-    fn add_corrupt(&mut self, role: Role) -> bool {
-        self.base_session.add_corrupt(role)
+    fn corrupt_reasons(&self) -> &std::collections::HashMap<Role, Vec<String>> {
+        self.base_session.corrupt_reasons()
+    }
+
+    fn add_corrupt_with_reason(&mut self, role: Role, reason: &str) -> bool {
+        self.base_session.add_corrupt_with_reason(role, reason)
     }
 }
 

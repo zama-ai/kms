@@ -747,8 +747,14 @@ fn test_recovery_material(
         };
         cts.insert(cus_role, cts_out.clone());
     }
-    let new_versionized =
-        RecoveryValidationMaterial::new(cts, commitments, icc, &operator_sk).unwrap();
+    let new_versionized = RecoveryValidationMaterial::new(
+        cts,
+        commitments,
+        icc,
+        &operator_sk,
+        kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
+    )
+    .unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -869,6 +875,7 @@ fn test_internal_custodian_recovery_output(
         signcryption,
         custodian_role: Role::indexed_from_one(2),
         operator_verification_key,
+        mpc_context_id: kms_grpc::RequestId::from_bytes([7u8; 32]),
     };
 
     if original_versionized != new_versionized {
@@ -1082,7 +1089,7 @@ fn test_operator_backup_output(
         )
         .unwrap()
     };
-    let (cts, _commitments) = &operator
+    let signcrypt_result = operator
         .secret_share_and_signcrypt(
             &mut rng,
             &test.plaintext,
@@ -1091,7 +1098,7 @@ fn test_operator_backup_output(
         .unwrap();
 
     // in this test we fix the custodian role to 1
-    let new_operator_backup_output = &cts[&Role::indexed_from_one(1)];
+    let new_operator_backup_output = &signcrypt_result.ct_shares[&Role::indexed_from_one(1)];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(

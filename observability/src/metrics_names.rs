@@ -2,6 +2,7 @@
 // These match the gRPC method names for better correlation.
 // Counters are incremented for each operation, and also used for error tracking.
 
+pub const OP_BOOT: &str = "boot";
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
@@ -58,10 +59,6 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 // Common metric tag keys
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
-pub const TAG_KEY_ID: &str = "key_id";
-pub const TAG_CRS_ID: &str = "crs_id";
-pub const TAG_CONTEXT_ID: &str = "context_id";
-pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm"; // TODO not used yet
 pub const TAG_OPERATION_TYPE: &str = "operation_type"; // TODO not used yet
 pub const TAG_PARTY_ID: &str = "party_id";
@@ -84,6 +81,7 @@ pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
 /// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
 pub const ERR_ASYNC: &str = "async_call_error";
+pub const ERR_BACKUP: &str = "backup_error";
 
 // Common operation type values
 pub const OP_TYPE_TOTAL: &str = "total";

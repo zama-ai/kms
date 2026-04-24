@@ -8,7 +8,6 @@ use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
@@ -29,6 +28,7 @@ use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::metrics_names::OP_BOOT;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 
 use crate::util::rate_limiter::RateLimiter;
@@ -467,7 +467,6 @@ pub fn central_public_decrypt<
 >(
     keys: &KmsFheKeyHandles,
     cts: &[TypedCiphertext],
-    metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use observability::{
         metrics,
@@ -481,7 +480,6 @@ pub fn central_public_decrypt<
         .map(|ct| {
             let mut inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .tags(metric_tags.clone())
                 .start();
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
@@ -511,7 +509,6 @@ pub async fn async_user_decrypt<
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
-    metric_tags: Vec<(&'static str, String)>,
     extra_data: &[u8],
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
     use observability::{
@@ -519,15 +516,13 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    // LEGACY CODE: see `from_legacy_bytes` for docs
-    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(client_enc_key_bytes)
+    let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(client_enc_key_bytes)
         .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
         let mut inner_timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_INNER)
-            .tags(metric_tags.clone())
             .start();
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type()?;
@@ -958,8 +953,14 @@ impl<
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption hence
         // existing values are not re-backed up
-        backup_operator.update_backup_vault(false).await?;
-
+        if !crypto_storage
+            .inner
+            .update_backup_vault(false, OP_BOOT)
+            .await
+        {
+            anyhow::bail!("Failed to update backup vault when booting");
+        }
+        tracing::info!("Successfully updated backup vault when booting");
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =
             Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
@@ -1194,7 +1195,7 @@ pub(crate) mod tests {
             .await?;
         }
         let sk_handle = compute_handle(&keys.sig_pk)?;
-        ram_storage
+        let _ = ram_storage
             .store_data(
                 &keys.sig_sk,
                 &RequestId::from_str(&sk_handle)?,

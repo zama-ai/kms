@@ -47,7 +47,7 @@ pub trait ConfigTracing {
     fn telemetry(&self) -> Option<TelemetryConfig>;
 }
 
-use kms_test_tracing::config::{
+use test_utils::test_logging::{
     TruncatingMakeWriter, test_console_enabled, test_console_env_filter, test_log_max_bytes,
     test_logging_enabled, test_persistent_env_filter,
 };

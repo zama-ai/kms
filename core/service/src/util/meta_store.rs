@@ -15,7 +15,7 @@ cfg_if::cfg_if! {
         use crate::engine::utils::MetricedError;
         use anyhow::anyhow;
         use std::fmt::{self};
-        use tokio::sync::RwLockWriteGuard;
+        use tokio::sync::{RwLock, RwLockWriteGuard};
     }
 }
 
@@ -342,6 +342,32 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
             MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
             false
         }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn ensure_meta_store_request_pending<T: Clone>(
+    meta_store: &Arc<RwLock<MetaStore<T>>>,
+    req_id: &RequestId,
+) -> anyhow::Result<()> {
+    let guarded_meta_store = meta_store.read().await;
+    let cell = guarded_meta_store.get_cell(req_id).ok_or_else(|| {
+        anyhow::anyhow!("Error while updating meta store for {req_id}: request is missing")
+    })?;
+    if cell.is_set() {
+        anyhow::bail!("Error while updating meta store for {req_id}: request is already completed");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) fn should_purge_after_meta_update_failure<T: Clone>(
+    meta_store: &MetaStore<T>,
+    req_id: &RequestId,
+) -> bool {
+    match meta_store.get_cell(req_id) {
+        Some(cell) => !cell.is_set(),
+        None => true,
     }
 }
 

@@ -13,8 +13,7 @@ use kms_grpc::kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult};
 use observability::{
     metrics::METRICS,
     metrics_names::{
-        CENTRAL_TAG, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_CONTEXT_ID,
-        TAG_EPOCH_ID, TAG_PARTY_ID,
+        CENTRAL_TAG, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_PARTY_ID,
     },
 };
 use tonic::{Request, Response};
@@ -51,19 +50,14 @@ pub async fn preprocessing_impl<
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let _permit = service.rate_limiter.start_preproc().await?;
-    let mut timer = METRICS
+    let _timer = METRICS
         .time_operation(OP_KEYGEN_PREPROC_REQUEST)
         .tag(TAG_PARTY_ID, CENTRAL_TAG)
         .start();
     let inner = request.into_inner();
 
-    let (req_id, context_id, epoch_id, dkg_param, _key_set_config, eip712_domain) =
+    let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain) =
         validate_preproc_request(inner)?;
-    let metric_tags = vec![
-        (TAG_CONTEXT_ID, context_id.as_str()),
-        (TAG_EPOCH_ID, epoch_id.as_str()),
-    ];
-    timer.tags(metric_tags.clone());
 
     add_req_to_meta_store(
         &mut service.preprocessing_meta_store.write().await,

@@ -637,6 +637,7 @@ mod kms_custodian_binary_tests {
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{
                 Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -652,7 +653,7 @@ mod kms_custodian_binary_tests {
     use threshold_types::role::Role;
 
     fn run_custodian_cli(commands: Vec<String>) -> String {
-        kms_test_tracing::init_logging();
+        test_utils::test_logging::init_test_logging();
         let h = thread::spawn(|| {
             let mut cmd = Command::cargo_bin(KMS_CUSTODIAN).unwrap();
             for arg in commands {
@@ -723,7 +724,6 @@ mod kms_custodian_binary_tests {
         let _verf_out = run_custodian_cli(verf_command);
     }
 
-    #[kms_test_tracing::traced_test]
     #[tokio::test]
     #[serial_test::serial]
     async fn sunshine_decrypt_custodian() {
@@ -791,6 +791,8 @@ mod kms_custodian_binary_tests {
                     custodian_index.to_string(),
                     "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
+                    "--mpc-context-id".to_string(),
+                    DEFAULT_MPC_CONTEXT.to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
@@ -893,20 +895,22 @@ mod kms_custodian_binary_tests {
         )
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();
-        let (ct_map, commitments) = operator
+        let signcrypt_result = operator
             .secret_share_and_signcrypt(
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,
             )
             .unwrap();
+        let ct_map = signcrypt_result.ct_shares;
+        let commitments = signcrypt_result.commitments;
         let custodian_context = InternalCustodianContext::new(
             CustodianContext {
                 custodian_nodes: setup_msgs
                     .iter()
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
-                context_id: Some(backup_id.into()),
+                custodian_context_id: Some(backup_id.into()),
                 threshold: threshold as u32,
             },
             backup_pke,
@@ -917,6 +921,7 @@ mod kms_custodian_binary_tests {
             commitments.clone(),
             custodian_context,
             &signing_key,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         let mut ciphertexts = BTreeMap::new();

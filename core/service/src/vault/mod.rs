@@ -3,7 +3,7 @@ use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{Storage, StorageProxy, StorageReader};
+use storage::{Storage, StorageProxy, StorageReader, StoreWriteOutcome};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{Unversionize, Versionize, named::Named};
@@ -323,7 +323,7 @@ impl Storage for Vault {
         data: &T,
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
         match self.keychain.as_mut() {
             Some(kcp) => {
@@ -336,15 +336,13 @@ impl Storage for Vault {
                         .storage
                         .store_data(&blob, data_id, data_type)
                         .await
-                        .map_err(|e| anyhow!("Key blob store failed: {e}"))?,
-                    EnvelopeStore::OperatorBackupOutput(ct) => {
-                        self.storage
-                            .store_data(&ct, data_id, &vault_data_type)
-                            .await
-                            .map_err(|e| anyhow!("Backup output store failed: {e}"))?;
-                    }
+                        .map_err(|e| anyhow!("Key blob store failed: {e}")),
+                    EnvelopeStore::OperatorBackupOutput(ct) => self
+                        .storage
+                        .store_data(&ct, data_id, &vault_data_type)
+                        .await
+                        .map_err(|e| anyhow!("Backup output store failed: {e}")),
                 }
-                Ok(())
             }
             None => self
                 .storage
@@ -367,7 +365,7 @@ impl Storage for Vault {
         bytes: &[u8],
         data_id: &RequestId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
         self.storage
             .store_bytes(bytes, data_id, &backup_type)
@@ -384,7 +382,7 @@ impl StorageExt for Vault {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
         match self.keychain.as_mut() {
             Some(kcp) => {
@@ -397,15 +395,13 @@ impl StorageExt for Vault {
                         .storage
                         .store_data_at_epoch(&blob, data_id, epoch_id, data_type)
                         .await
-                        .map_err(|e| anyhow!("Key blob store failed: {e}"))?,
-                    EnvelopeStore::OperatorBackupOutput(ct) => {
-                        self.storage
-                            .store_data_at_epoch(&ct, data_id, epoch_id, &vault_data_type)
-                            .await
-                            .map_err(|e| anyhow!("Backup output store failed: {e}"))?;
-                    }
+                        .map_err(|e| anyhow!("Key blob store failed: {e}")),
+                    EnvelopeStore::OperatorBackupOutput(ct) => self
+                        .storage
+                        .store_data_at_epoch(&ct, data_id, epoch_id, &vault_data_type)
+                        .await
+                        .map_err(|e| anyhow!("Backup output store failed: {e}")),
                 }
-                Ok(())
             }
             None => self
                 .storage
@@ -421,7 +417,7 @@ impl StorageExt for Vault {
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StoreWriteOutcome> {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
         self.storage
             .store_bytes_at_epoch(bytes, data_id, epoch_id, &backup_type)
@@ -487,8 +483,16 @@ pub(crate) fn storage_prefix_safety(
 
 #[cfg(test)]
 pub mod tests {
-    use super::VaultDataType;
+    use super::{Vault, VaultDataType};
+    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::engine::base::derive_request_id;
+    use crate::vault::keychain::KeychainProxy;
+    use crate::vault::keychain::secretsharing::SecretShareKeychain;
+    use crate::vault::storage::file::FileStorage;
+    use crate::vault::storage::{Storage, StorageType};
+    use aes_prng::AesRng;
     use kms_grpc::{RequestId, rpc_types::PrivDataType};
+    use rand::SeedableRng;
 
     #[test]
     fn regression_test_vault_data_type_serialization() {
@@ -509,5 +513,56 @@ pub mod tests {
         let vdt3 = VaultDataType::UnencryptedData(PrivDataType::FheKeyInfo.to_string());
         assert_eq!(vdt3.to_string(), PrivDataType::FheKeyInfo.to_string());
         assert_eq!(vdt2.to_string(), vdt3.to_string());
+    }
+
+    /// Verify that custodian backup data is stored in a folder hierarchy
+    /// rooted at the custodian context ID:
+    ///   <backup_root>/<custodian_context_id>/<data_type>/<request_id>
+    #[tokio::test]
+    async fn test_custodian_backup_folder_hierarchy() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let backup_storage =
+            FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
+        let backup_root = backup_storage.root_dir().to_path_buf();
+
+        // Create a secret sharing keychain with a known custodian context ID
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let mut keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
+            .await
+            .unwrap();
+        let custodian_context_id = derive_request_id("test_custodian_context").unwrap();
+        keychain.set_backup_enc_key(custodian_context_id, enc_key);
+
+        let mut vault = Vault {
+            storage: crate::vault::storage::StorageProxy::from(backup_storage),
+            keychain: Some(KeychainProxy::SecretSharing(keychain)),
+        };
+
+        // Store some data through the vault
+        let data_type = PrivDataType::SigningKey;
+        let data_id = derive_request_id("test_data_item").unwrap();
+        // Use store_bytes since it doesn't require encryption (just wraps the path)
+        vault
+            .store_bytes(b"test_data", &data_id, &data_type.to_string())
+            .await
+            .unwrap();
+
+        // Verify the folder hierarchy starts with the custodian context ID
+        let expected_dir = backup_root
+            .join(custodian_context_id.to_string())
+            .join(data_type.to_string());
+        assert!(
+            expected_dir.exists(),
+            "Backup data directory should be under <backup_root>/<custodian_context_id>/<data_type>, \
+             expected: {expected_dir:?}"
+        );
+        let expected_file = expected_dir.join(data_id.to_string());
+        assert!(
+            expected_file.exists(),
+            "Backup data file should be at <backup_root>/<custodian_context_id>/<data_type>/<request_id>, \
+             expected: {expected_file:?}"
+        );
     }
 }

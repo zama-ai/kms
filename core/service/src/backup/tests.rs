@@ -8,6 +8,7 @@ use crate::{
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -24,7 +25,6 @@ use rand::{SeedableRng, rngs::OsRng};
 use std::collections::BTreeMap;
 use threshold_types::role::Role;
 
-#[kms_test_tracing::traced_test]
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -64,10 +64,9 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(operator.is_ok());
-        assert!(logs_contain(
-            "Invalid header in custodian setup message from custodian 1"
-        ));
+        let operator = operator.unwrap();
+        // The invalid-header message should have been filtered out
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
     }
 
     // use the wrong timestamp, setup should not fail
@@ -82,10 +81,9 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(operator.is_ok());
-        assert!(logs_contain(
-            "Invalid timestamp in custodian setup message from custodian 2"
-        ));
+        let operator = operator.unwrap();
+        // The invalid-timestamp message should have been filtered out
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
     }
 }
 
@@ -138,8 +136,8 @@ fn custodian_reencrypt() {
         })
         .collect::<Vec<_>>();
 
-    // cts[i][j] should go to custodian j, for all i
-    let cts = operators
+    // signcrypt_results[i].ct_shares[j] should go to custodian j, for all i
+    let signcrypt_results = operators
         .iter()
         .zip_eq(&secrets)
         .map(|(operator, secret)| {
@@ -150,21 +148,23 @@ fn custodian_reencrypt() {
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
+    let mpc_context_id = RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]);
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
     {
         let operator_role = Role::indexed_from_zero(0);
-        let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
+        let mut bad_results = signcrypt_results.clone();
+        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
             z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].0.get(&operator_role).unwrap(),
+                bad_results[0].ct_shares.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -176,15 +176,16 @@ fn custodian_reencrypt() {
     // tweak the signature, so that signature verification also fails
     {
         let operator_role = Role::indexed_from_zero(0);
-        let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
+        let mut bad_results = signcrypt_results.clone();
+        if let Some(z) = bad_results[0].ct_shares.get_mut(&operator_role) {
             z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].0.get(&operator_role).unwrap(),
+                bad_results[0].ct_shares.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -200,7 +201,8 @@ fn custodian_reencrypt() {
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].0.get(&operator_role).unwrap(),
+                signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 bad_backup_id,
@@ -215,7 +217,8 @@ fn custodian_reencrypt() {
         let _ = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].0.get(&operator_role).unwrap(),
+                signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
+                mpc_context_id,
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
@@ -349,7 +352,6 @@ fn full_flow_malicious_custodian_not_enough() {
     );
 }
 
-#[kms_test_tracing::traced_test]
 #[test]
 fn full_flow_malicious_custodian_init() {
     let mut rng = AesRng::seed_from_u64(1337);
@@ -373,20 +375,23 @@ fn full_flow_malicious_custodian_init() {
             custodian_count,
         )
         .unwrap();
+        // Verify the missing custodian was detected (only 4 of 5 accepted)
+        assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
-        let res = operator.secret_share_and_signcrypt(
-            &mut rng,
-            &bc2wrap::serialize(&backup_priv_key).unwrap(),
-            backup_id,
+        let result = operator
+            .secret_share_and_signcrypt(
+                &mut rng,
+                &bc2wrap::serialize(&backup_priv_key).unwrap(),
+                backup_id,
+            )
+            .unwrap();
+        assert!(
+            result.skipped_roles.contains(&Role::indexed_from_one(2)),
+            "expected role 2 to be skipped (removed custodian): {:?}",
+            result.skipped_roles
         );
-        assert!(res.is_ok());
     }
-    // Check that we indeed get a warning about the malicious custodian
-    assert!(logs_contain(
-        "An incorrect amount of custodian messages were received"
-    ));
-    assert!(logs_contain("Could not find custodian keys for role 2"));
 }
 
 #[test]
@@ -578,7 +583,7 @@ fn operator_handle_init(
             .iter()
             .map(|msg| msg.to_owned().try_into().unwrap())
             .collect(),
-        context_id: Some((*backup_id).into()),
+        custodian_context_id: Some((*backup_id).into()),
         threshold: custodian_threshold as u32,
     };
     for _op_idx in 1..=operator_count {
@@ -592,13 +597,15 @@ fn operator_handle_init(
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
-        let (cur_op_output, cur_comm) = operator
+        let signcrypt_result = operator
             .secret_share_and_signcrypt(
                 rng,
                 &bc2wrap::serialize(&backup_dec_key).unwrap(),
                 *backup_id,
             )
             .unwrap();
+        let cur_op_output = signcrypt_result.ct_shares;
+        let cur_comm = signcrypt_result.commitments;
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
         let validation_material = RecoveryValidationMaterial::new(
@@ -606,6 +613,7 @@ fn operator_handle_init(
             cur_comm.to_owned(),
             operator_cus_context,
             &signing_key,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         operators.insert(
@@ -662,6 +670,7 @@ fn custodian_recover(
             match custodian.verify_reencrypt(
                 rng,
                 cur_backup.get(cur_cus_role).unwrap(),
+                RequestId::from_bytes([7u8; crate::consts::ID_LENGTH]),
                 verification_key,
                 ephemeral_enc_key,
                 *backup_id,

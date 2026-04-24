@@ -1,5 +1,5 @@
-CLAUDE.md
-.claude/
+.claude/settings.local.json
+./CLAUDE.local.md
 .codex
 /target*
 **/temp/*
@@ -13,7 +13,6 @@ CLAUDE.md
 .vscode/launch.json
 .DS_Store
 .vscode/
-.claude
 .idea/
 *.eif
 .crates.toml

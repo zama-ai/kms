@@ -6,7 +6,6 @@ use crate::{
     anyhow_error_and_log,
     cryptography::{
         encryption::UnifiedPublicEncKey,
-        internal_crypto_types::LegacySerialization,
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
@@ -47,6 +46,7 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     pub server_pks: &'a HashMap<u32, PublicSigKey>,
     pub eip712_domain: Option<&'a Eip712Domain>,
     pub ext_handles_bytes: &'a [Vec<u8>],
+    #[allow(unused)]
     pub extra_data: Option<&'a [u8]>,
     pub request: Option<&'a PublicDecryptionRequest>,
 }
@@ -263,11 +263,12 @@ fn unpack_user_decrypt_req(
     let (link, _) = req.compute_link_checked()?;
     // Deserialize to validate the enc_key bytes, but don't return the typed key —
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
-    let _client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
-        Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
-            "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-        ))
-    })?;
+    let _client_enc_key =
+        UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
+            anyhow::anyhow!(
+                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
+            )
+        })?;
     Ok((
         req.typed_ciphertexts.clone(),
         link,
@@ -380,7 +381,7 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// original request, we will not have EIP-712 parameters.
 /// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
 fn validate_public_decrypt_meta_data(
-    trusted_ctx: &PublicDecTrustedValidationContext,
+    ext_handles_bytes: &[Vec<u8>],
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
@@ -396,12 +397,6 @@ fn validate_public_decrypt_meta_data(
         );
         return Ok(false);
     }
-    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
-    if !trusted_ctx.server_pks.values().contains(&resp_verf_key) {
-        tracing::warn!("Server key is unknown or incorrect.");
-        return Ok(false);
-    }
 
     // the plaintexts should match
     if pivot_resp.plaintexts != other_resp.plaintexts {
@@ -413,13 +408,17 @@ fn validate_public_decrypt_meta_data(
         sig: k256::ecdsa::Signature::from_slice(signature)?,
     };
 
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
+
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     if internal_verify_sig(
         &DSEP_PUBLIC_DECRYPTION,
         &bc2wrap::serialize(&other_resp)?,
         &sig,
-        &resp_verf_key,
+        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+        &cur_verf_key,
     )
     .is_err()
     {
@@ -434,7 +433,7 @@ fn validate_public_decrypt_meta_data(
             return Ok(false);
         }
         let message = compute_public_decryption_message(
-            trusted_ctx.ext_handles_bytes,
+            ext_handles_bytes,
             &other_resp.plaintexts,
             params.response_extra_data,
         )?;
@@ -444,7 +443,7 @@ fn validate_public_decrypt_meta_data(
             params.response_external_signature,
         ) {
             Ok(recovered_addr) => {
-                let expected_addr = resp_verf_key.address();
+                let expected_addr = cur_verf_key.address();
                 if recovered_addr != expected_addr {
                     tracing::warn!(
                         "External signature address mismatch: recovered {} but expected {}",
@@ -541,18 +540,34 @@ fn validate_public_decrypt_responses(
                 continue;
             }
         };
-
         if let Some(expected_extra_data) = trusted_ctx.extra_data
             && cur_resp.extra_data != expected_extra_data
         {
             tracing::warn!("Extra data mismatch in public decryption!");
             continue;
         }
-
-        // check the uniqueness of verification key
-        if verification_keys.contains(&cur_payload.verification_key) {
+        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+        let mut found_new_verf_key = false;
+        // Validate the verf key
+        for (cur_id, key_to_check_against) in trusted_ctx.server_pks {
+            if key_to_check_against == &cur_verf_key {
+                if verification_keys.contains(&cur_verf_key) {
+                    tracing::warn!(
+                        "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
+                        hex::encode(&cur_payload.verification_key),
+                        cur_id
+                    );
+                } else {
+                    found_new_verf_key = true;
+                }
+                // We found the key so break the inner loop
+                break;
+            }
+        }
+        if !found_new_verf_key {
             tracing::warn!(
-                "At least two servers gave the same verification key {}",
+                "Verification key {} in public decryption could not be matched with a unique and validated verification key",
                 hex::encode(&cur_payload.verification_key),
             );
             continue;
@@ -568,7 +583,7 @@ fn validate_public_decrypt_responses(
                 trusted_eip712_domain: domain,
             });
         if !validate_public_decrypt_meta_data(
-            trusted_ctx,
+            trusted_ctx.ext_handles_bytes,
             &pivot_payload,
             cur_payload,
             &cur_resp.signature,
@@ -584,7 +599,7 @@ fn validate_public_decrypt_responses(
         }
 
         // add the verified response
-        verification_keys.insert(cur_payload.verification_key.clone());
+        verification_keys.insert(cur_verf_key);
         resp_parsed_payloads.push(cur_payload.clone());
     }
     Ok(resp_parsed_payloads)
@@ -971,7 +986,7 @@ mod tests {
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{gen_sig_keys, internal_sign},
+            signatures::{PublicSigKey, gen_sig_keys, internal_sign},
         },
         dummy_domain,
         engine::{
@@ -1106,7 +1121,6 @@ mod tests {
         }
     }
 
-    #[kms_test_tracing::traced_test]
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test
@@ -1388,7 +1402,7 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
             [vk0, vk1, vk2]
                 .into_iter()
                 .enumerate()
@@ -1416,22 +1430,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1441,22 +1442,9 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .is_err()
+                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .is_err()
             );
         }
 
@@ -1481,22 +1469,9 @@ mod tests {
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &pivot,
-                    &bad_signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &bad_signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1520,22 +1495,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1555,22 +1517,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1590,22 +1539,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                !validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &bad_value,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
+                    .unwrap()
             );
         }
 
@@ -1614,22 +1550,9 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
-            let trusted_ctx = PublicDecTrustedValidationContext {
-                server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
-                request: None,
-            };
             assert!(
-                validate_public_decrypt_meta_data(
-                    &trusted_ctx,
-                    &pivot,
-                    &pivot,
-                    &signature_buf,
-                    None,
-                )
-                .unwrap()
+                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
+                    .unwrap()
             );
         }
     }
@@ -2069,7 +1992,7 @@ mod tests {
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = HashMap::from_iter(
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
             [vk0, vk1, vk2]
                 .into_iter()
                 .enumerate()
@@ -2111,18 +2034,10 @@ mod tests {
         let mut bad_external_signature = external_signature.clone();
         bad_external_signature[0] ^= 1;
 
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
-            ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data),
-            request: None,
-        };
-
         // return false for empty external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,
@@ -2138,7 +2053,7 @@ mod tests {
         // return false for bad external signature
         assert!(
             !validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,
@@ -2154,7 +2069,7 @@ mod tests {
         // happy path
         assert!(
             validate_public_decrypt_meta_data(
-                &trusted_ctx,
+                &ext_handles_bytes,
                 &pivot,
                 &pivot,
                 &signature_buf,

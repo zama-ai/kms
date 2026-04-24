@@ -482,7 +482,7 @@ pub fn decrypt_ciphertext_for_recipient(
 
     // validate the PKCS7 envelope
     ensure!(
-        envelope.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_VERSION),
+        envelope.version == Integer::from(AWS_KMS_ENVELOPED_DATA_VERSION),
         "User decrypted ciphertext envelope must have version {}, actual version: {}",
         AWS_KMS_ENVELOPED_DATA_VERSION,
         envelope.version
@@ -497,7 +497,7 @@ pub fn decrypt_ciphertext_for_recipient(
         bail!("User decrypted ciphertext envelope does not contain a recipient");
     };
     ensure!(
-        ktri.version == Integer::Primitive(AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION),
+        ktri.version == Integer::from(AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION),
         "User decrypted ciphertext envelope recipient info must have version {}, actual version: {}",
         AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION,
         ktri.version

@@ -1,11 +1,20 @@
-use crate::metrics_names::{TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE};
+use crate::metrics_names::{
+    TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    TAG_USER_DECRYPTION_KIND,
+};
 use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
 /// Label keys for the duration histogram (must match all tag keys used by callers)
-const DURATION_LABEL_KEYS: &[&str] = &[TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_TFHE_TYPE];
+const DURATION_LABEL_KEYS: &[&str] = &[
+    TAG_OPERATION_TYPE,
+    TAG_PARTY_ID,
+    TAG_TFHE_TYPE,
+    TAG_PUBLIC_DECRYPTION_KIND,
+    TAG_USER_DECRYPTION_KIND,
+];
 
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
@@ -13,6 +22,7 @@ pub struct CoreMetrics {
     // Counters
     request_counter: IntCounterVec,
     error_counter: IntCounterVec,
+    backup_error_counter: IntCounterVec, // Keeps track of errors when making a backup. These MUST be handled as it means some party may not have everything backed up properly
     network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
 
@@ -94,6 +104,17 @@ impl CoreMetrics {
         .expect("failed to create error counter");
         prometheus::register(Box::new(error_counter.clone()))
             .expect("failed to register error counter");
+
+        let backup_error_counter = IntCounterVec::new(
+            Opts::new(
+                format!("{prefix}_backup_errors_total"),
+                "Total number of backup errors",
+            ),
+            &["operation", "error"],
+        )
+        .expect("failed to create backup error counter");
+        prometheus::register(Box::new(backup_error_counter.clone()))
+            .expect("failed to register backup error counter");
 
         let network_rx_counter = IntCounter::with_opts(Opts::new(
             format!("{prefix}_network_rx_bytes_total"),
@@ -274,6 +295,7 @@ impl CoreMetrics {
         Self {
             request_counter,
             error_counter,
+            backup_error_counter,
             network_rx_counter,
             network_tx_counter,
             duration_histogram,
@@ -315,6 +337,16 @@ impl CoreMetrics {
 
     pub fn increment_error_counter(&self, operation: impl AsRef<str>, error: impl AsRef<str>) {
         self.error_counter
+            .with_label_values(&[operation.as_ref(), error.as_ref()])
+            .inc();
+    }
+
+    pub fn increment_backup_error_counter(
+        &self,
+        operation: impl AsRef<str>,
+        error: impl AsRef<str>,
+    ) {
+        self.backup_error_counter
             .with_label_values(&[operation.as_ref(), error.as_ref()])
             .inc();
     }
@@ -594,6 +626,7 @@ impl Default for MetricsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn metric_families_match_allowlist() {
@@ -603,6 +636,7 @@ mod tests {
         // Seed Vec-type metrics so they appear in gather()
         METRICS.increment_request_counter("_test");
         METRICS.increment_error_counter("_test", "_test");
+        METRICS.increment_backup_error_counter("_test", "_test");
         METRICS.observe_duration("_test", Duration::from_millis(0));
         METRICS.observe_size("_test", 1.0);
 
@@ -614,6 +648,7 @@ mod tests {
         #[allow(unused_mut)]
         let mut expected_metrics = vec![
             "kms_active_sessions",
+            "kms_backup_errors_total",
             "kms_cpu_load",
             "kms_file_descriptors",
             "kms_inactive_sessions",
@@ -654,5 +689,60 @@ mod tests {
             names, expected_metrics,
             "Metric families changed. If intentional, update the allowlist in this test."
         );
+    }
+
+    #[test]
+    fn duration_histogram_uses_only_low_cardinality_labels() {
+        let _ = &*METRICS;
+
+        METRICS.observe_duration_with_tags(
+            "_test_cardinality",
+            Duration::from_millis(1),
+            &[
+                (TAG_PARTY_ID, "1".to_string()),
+                (TAG_TFHE_TYPE, "fhe_uint8".to_string()),
+                (TAG_PUBLIC_DECRYPTION_KIND, "test".to_string()),
+            ],
+        );
+
+        let duration_family = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_operation_duration_ms")
+            .expect("duration histogram should be registered");
+        let observed_metric = duration_family
+            .get_metric()
+            .iter()
+            .find(|metric| {
+                metric.get_label().iter().any(|label| {
+                    label.name() == TAG_OPERATION_TYPE && label.value() == "_test_cardinality"
+                })
+            })
+            .expect("seeded duration sample should be present");
+
+        let actual_labels: BTreeSet<&str> = observed_metric
+            .get_label()
+            .iter()
+            .map(|label| label.name())
+            .collect();
+        let expected_labels: BTreeSet<&str> = DURATION_LABEL_KEYS.iter().copied().collect();
+
+        assert_eq!(
+            actual_labels, expected_labels,
+            "duration histogram labels should stay low-cardinality"
+        );
+
+        println!("Actual labels: {actual_labels:#?}");
+
+        assert!(
+            actual_labels.len() <= 5,
+            "duration histogram should have at most 5 labels to avoid high cardinality"
+        );
+
+        for disallowed_label in ["key_id", "context_id", "epoch_id", "crs_id"] {
+            assert!(
+                !actual_labels.contains(disallowed_label),
+                "high-cardinality label {disallowed_label} should not be exported"
+            );
+        }
     }
 }

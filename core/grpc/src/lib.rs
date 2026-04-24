@@ -6,6 +6,8 @@ macro_rules! my_include_proto {
 }
 pub mod kms {
     pub mod v1 {
+        // Fires on proto-derived doc comments in prost-generated code.
+        #![allow(clippy::doc_lazy_continuation)]
         my_include_proto!("kms.v1");
     }
 }
@@ -13,6 +15,7 @@ pub mod kms {
 #[cfg(feature = "non-wasm")]
 pub mod kms_service {
     pub mod v1 {
+        #![allow(clippy::doc_lazy_continuation)]
         my_include_proto!("kms_service.v1");
     }
 }
@@ -20,6 +23,7 @@ pub mod kms_service {
 #[cfg(feature = "non-wasm")]
 pub mod metastore_status {
     pub mod v1 {
+        #![allow(clippy::doc_lazy_continuation)]
         my_include_proto!("metastore_status.v1");
     }
 }
@@ -40,8 +44,7 @@ use anyhow::anyhow;
 use std::{fmt, panic::Location};
 
 // NOTE: the below is copied from core/threshold
-// since the calling tracing from another crate
-// does not generate correct logs in kms_test_tracing::traced_test
+// since calling tracing from another crate may not generate correct logs
 #[cfg(feature = "non-wasm")]
 #[track_caller]
 pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {

@@ -9,6 +9,8 @@ pub enum CryptographyError {
     AesGcmError(#[from] aes_gcm::Error),
     #[error("ml-kem error")]
     MlKemError,
+    #[error("ML-KEM 1024 is no longer supported")]
+    MlKem1024Unsupported,
     #[error("serialization error: {0}")]
     SerializationError(String),
     #[error("deserialization error: {0}")]
