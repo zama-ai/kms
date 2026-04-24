@@ -212,7 +212,9 @@ impl<'de> Deserialize<'de> for RetryConfig {
         let helper = RetryConfigHelper::deserialize(deserializer)?;
         tracing::info!(
             "Deserializing RetryConfig: max_retries={:?}, initial_delay_ms={:?}, max_delay_ms={:?}",
-            helper.max_retries, helper.initial_delay_ms, helper.max_delay_ms,
+            helper.max_retries,
+            helper.initial_delay_ms,
+            helper.max_delay_ms,
         );
 
         Ok(RetryConfig {
