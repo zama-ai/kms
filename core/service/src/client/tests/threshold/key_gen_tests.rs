@@ -5,6 +5,7 @@ cfg_if::cfg_if! {
 }}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use crate::client::key_gen::tests::check_conformance;
     use crate::client::tests::common::{OptKeySetConfigAccessor};
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
@@ -124,6 +125,8 @@ impl TestKeyGenResult {
                 (client_key, public_key, server_key)
             }
         };
+
+        check_conformance(server_key.clone(), client_key.clone());
 
         let pt1 = 27u8;
         let pt2 = 2u8;
