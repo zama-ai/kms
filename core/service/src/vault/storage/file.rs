@@ -295,11 +295,7 @@ impl Storage for FileStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let path = self.item_path(data_id, data_type);
-        if self.item_exists_at_path(&path).await? {
-            Ok(tokio::fs::remove_file(&path).await?)
-        } else {
-            Ok(())
-        }
+        Ok(tokio::fs::remove_file(&path).await?)
     }
 }
 
