@@ -27,12 +27,14 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_ABORT,
     OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, TAG_PARTY_ID,
 };
+use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio_util::sync::CancellationToken;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -189,31 +191,83 @@ pub async fn key_gen_impl<
         async move {
             let _timer = timer;
             let _permit = permit;
-            tokio::select! {
-                () = keygen_background => {
-                        tracing::info!("Key generation of request {} with preproc id {} exiting normally.", req_id, preproc_id);
-                        // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&preproc_id);
-                    },
-                    () = token.cancelled() => {
-                        MetricedError::handle_unreturnable_error(
-                            OP_KEYGEN_REQUEST,
-                            Some(req_id),
-                            format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
-                        );
-                        tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
-                        let mut guarded_meta_store = key_meta_store_cancel.write().await;
-                        let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
-                        // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem.
-                        // In connection with this the meta store update should be moved to AFTER the purging
-                        crypto_storage_cancel.inner.purge_key_material(&req_id, &epoch_id, KMSType::Centralized, guarded_meta_store).await;
-                    }
-                }
+            run_keygen_with_cancel(
+                keygen_background,
+                token,
+                req_id,
+                preproc_id,
+                epoch_id,
+                ongoing,
+                key_meta_store_cancel,
+                crypto_storage_cancel,
+            )
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
 
     Ok(Response::new(Empty {}))
+}
+
+/// Runs the key-generation background future under a cancellation token. If the
+/// token is cancelled before the future completes, the key meta store is
+/// updated with an `Aborted` error and any partial key material is purged.
+///
+/// Extracted from `key_gen_impl` so the cancel arm can be exercised
+/// deterministically in tests with a pending future.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_keygen_with_cancel<
+    Fut: Future<Output = ()>,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+>(
+    keygen_background: Fut,
+    token: CancellationToken,
+    req_id: RequestId,
+    preproc_id: RequestId,
+    epoch_id: EpochId,
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
+    key_meta_store_cancel: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    crypto_storage_cancel: CentralizedCryptoMaterialStorage<PubS, PrivS>,
+) {
+    tokio::select! {
+        () = keygen_background => {
+            tracing::info!(
+                "Key generation of request {} with preproc id {} exiting normally.",
+                req_id, preproc_id
+            );
+            // Remove cancellation token since generation is now done.
+            ongoing.lock().await.remove(&preproc_id);
+        },
+        () = token.cancelled() => {
+            MetricedError::handle_unreturnable_error(
+                OP_KEYGEN_REQUEST,
+                Some(req_id),
+                format!(
+                    "Key generation background with preprocessing id {} failed since the task got aborted",
+                    preproc_id
+                ),
+            );
+            tracing::error!(
+                "Key generation of request {} exiting before completion because of an abort request.",
+                &req_id
+            );
+            let mut guarded_meta_store = key_meta_store_cancel.write().await;
+            if let Err(e) = guarded_meta_store
+                .update(&req_id, Result::Err("Key generation was aborted".to_string()))
+            {
+                tracing::warn!(
+                    "Failed to mark request {req_id} as aborted in the key meta store: {e}"
+                );
+            }
+            // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem.
+            // In connection with this the meta store update should be moved to AFTER the purging
+            crypto_storage_cancel
+                .inner
+                .purge_key_material(&req_id, &epoch_id, KMSType::Centralized, guarded_meta_store)
+                .await;
+        }
+    }
 }
 
 /// Implementation of the get_key_gen_result endpoint
@@ -912,5 +966,77 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Drives the cancel arm of `run_keygen_with_cancel` deterministically by
+    /// passing a never-completing keygen future, then issues an abort via
+    /// `abort_key_gen_impl` and checks that `get_key_gen_result_impl` returns
+    /// `Aborted` rather than waiting the full timeout. Mirrors the threshold
+    /// `abort_during_key_gen` test that uses `SlowOnlineDistributedKeyGen128`.
+    #[tokio::test]
+    async fn abort_during_key_gen() {
+        use crate::consts::DEFAULT_EPOCH_ID;
+        use crate::util::meta_store::add_req_to_meta_store;
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let preproc_id = derive_request_id("test_central_abort_during_key_gen_preproc").unwrap();
+        let req_id = derive_request_id("test_central_abort_during_key_gen_reqid").unwrap();
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+
+        // Register the request id in the key meta store so `get_key_gen_result_impl`
+        // has a cell to wait on, mirroring what `key_gen_impl` does before spawning.
+        add_req_to_meta_store(
+            &mut kms.key_meta_map.write().await,
+            &req_id,
+            OP_KEYGEN_REQUEST,
+        )
+        .unwrap();
+
+        // Register the cancellation token in `ongoing_key_gen` so `abort_key_gen_impl`
+        // finds it, and spawn the cancel-aware task with a pending future so only the
+        // cancel arm can fire.
+        let token = CancellationToken::new();
+        kms.ongoing_key_gen
+            .lock()
+            .await
+            .insert(preproc_id, token.clone());
+
+        let ongoing = Arc::clone(&kms.ongoing_key_gen);
+        let key_meta = Arc::clone(&kms.key_meta_map);
+        let crypto_storage = kms.crypto_storage.clone();
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let task = tokio::spawn(async move {
+            run_keygen_with_cancel(
+                std::future::pending::<()>(),
+                token,
+                req_id,
+                preproc_id,
+                epoch_id,
+                ongoing,
+                key_meta,
+                crypto_storage,
+            )
+            .await;
+        });
+
+        // Abort should succeed and trigger the cancel arm.
+        abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
+            .await
+            .unwrap();
+        // Second abort returns NotFound since the token was removed.
+        let err = abort_key_gen_impl(&kms, Request::new(preproc_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        // Wait for the cancel arm to finish writing the meta store update.
+        task.await.unwrap();
+
+        // The key meta store now holds the aborted error, so `get_key_gen_result_impl`
+        // returns `Aborted` immediately instead of blocking for the 60s timeout.
+        let err = get_key_gen_result_impl(&kms, Request::new(req_id.into()), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }
