@@ -41,13 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
-      changes-backward-compatibility: ${{ steps.filter.outputs.backward-compatibility }}
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
       changes-core-client-k8s-tests: ${{ steps.filter.outputs.core-client-k8s-tests }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
+      changes-workspace-crates: ${{ steps.filter.outputs.workspace-crates }}
       changes-tools: ${{ steps.filter.outputs.tools }}
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
@@ -61,15 +61,13 @@ jobs:
           # Define paths that trigger specific component workflows
           # Changes to observability affect multiple components
           filters: |
-            backward-compatibility:
-              - 'backward-compatibility/**'
             ci:
               - '.github/workflows/**'
             core-client:
               - 'core-client/src/**'
               - 'core-client/config/**'
               - 'core-client/tests-utils/**'
-              - 'core-client/tests-utils-cc/**'
+              - 'core-client/test-utils-cc/**'
               - 'observability/**'
               - 'core/thread-handles/**'
               - 'Cargo.toml'
@@ -81,6 +79,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-service:
+              - 'backward-compatibility/**'
               - 'core/grpc/**'
               - 'core/service/**'
               - 'core/threshold/**'
@@ -97,8 +96,18 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-            tools:
-              - 'tools/**'
+            # Workspace crates that have no dedicated CI job of their own.
+            # Used by `test-workspace-crates` to run their unit tests grouped
+            # across a few runners.
+            workspace-crates:
+              - 'bc2wrap/**'
+              - 'core/error-utils/**'
+              - 'core/test-utils/**'
+              - 'core/thread-handles/**'
+              - 'core/threshold-*/**'
+              - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
             docs:
               - 'docs/**'
             helm-chart:
@@ -120,15 +129,7 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   ############################################################################
   # Helm chart pipeline
@@ -212,60 +213,6 @@ jobs:
         run: python3 ci/scripts/local_docs_link_check.py
 
   ############################################################################
-  # KMS Backward Compatibility Testing
-  # Triggered by:
-  # - Changes to backward-compatibility/**
-  # - Changes to workflow file itself
-  ############################################################################
-  test-backward-compatibility:
-    name: main/test-backward-compatibility
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      working-directory: './core/service'
-      args-tests: 'backward_compatibility'
-      package-name: 'kms'
-      # slab-backend: 'big-instance-service'
-      app-cache-dir: 'kms'
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################
   # Core Client Pipeline
   # Testing triggered by:
   # - Changes to core-client/**
@@ -290,6 +237,10 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
+      #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
+      #   centralized : central testing only (no threshold material)
       - name: Set matrix
         id: set-matrix
         run: |
@@ -331,10 +282,9 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
-      app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -345,17 +295,7 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests)
   test-core-client-nightly:
@@ -375,27 +315,17 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      crate-names: '-p kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
       # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
       args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
       generate-default-material: true
       nextest-profile: 'ci-nightly'
-      app-cache-dir: 'kms-core-client'
       runs-on: '32cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
-  # Core client unit tests
+  # Core client unit tests. Integration filters below skip everything that
+  # consumes kms test material, so `skip-test-material: true` is safe.
   test-core-client-unit:
     name: main/test-core-client-unit
     # job permissions
@@ -411,12 +341,12 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
-      package-name: 'kms-core-client'
+      crate-names: '-p kms-core-client'
+      skip-test-material: true
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
       # Also skip isolated_test_example which requires pre-generated test material
       # Must include features to compile test code that uses feature-gated functions
       args-tests: '--features testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
-      app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -426,18 +356,8 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+      runs-on: '64cpu-linux-x64'
+    secrets: inherit
 
   ############################################################################
   # GRPC Testing
@@ -445,6 +365,7 @@ jobs:
   # - Changes to core/grpc/**
   # - Changes to workflow file
   ############################################################################
+  # kms-grpc tests don't consume kms test material.
   test-grpc:
     name: main/test-grpc
     # job permissions
@@ -461,8 +382,8 @@ jobs:
     with:
       working-directory: './core/grpc'
       args-tests: '--all-features'
-      package-name: 'kms-grpc'
-      app-cache-dir: 'kms-grpc'
+      crate-names: '-p kms-grpc'
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -473,17 +394,7 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   ############################################################################
   # Core Service Pipeline
@@ -517,6 +428,21 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # per-entry specs instead of regenerating everything. Concrete needs:
+      #   entry 1 (`-F testing --lib`)
+      #     : 4P testing, aka "insecure"
+      #   entry 2 (`slow_tests ... default_user_decryption_threshold --skip nightly`)
+      #     : 4P testing + 4P default (aka 4P insecure/4P secure)
+      #       (all surviving cases pin DEFAULT_THRESHOLD_KEY_ID_4P)
+      #   entry 3 (`slow_tests ... threshold --skip default_user_decryption_threshold --skip nightly`)
+      #     : 4P + 10P testing + 4P default + 13P testing
+      #       (10P from 2 public_decryption cases;
+      #        13P via TEST_THRESHOLD_KEY_ID alias in misc_tests)
+      #   entry 4 (`slow_tests ... -- --skip threshold --skip nightly`)
+      #     : 4P testing + 4P default (centralized only)
+      #   schedule
+      #     : all (nightly runs 10P user_decryption + 13P default)
       - name: Set matrix
         id: set-matrix
         run: |
@@ -558,9 +484,8 @@ jobs:
       working-directory: './core/service'
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
-      package-name: 'kms'
+      crate-names: '-p kms'
       # slab-backend: 'big-instance-service'
-      app-cache-dir: 'kms'
       runner-volume: '400gb'
       rust-log-level: 'info'
       # Availables runners:
@@ -575,17 +500,7 @@ jobs:
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
       enable-shared-material: true  # Use shared material mode (no copying)
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   ############################################################################
   # Core Threshold Pipeline
@@ -602,6 +517,7 @@ jobs:
 
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
+  # threshold-fhe tests don't consume kms test material.
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
     # job permissions
@@ -620,9 +536,9 @@ jobs:
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
       args-tests: '-F slow_tests --lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      crate-names: '-p threshold-fhe'
       nextest-test-threads: 4
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -633,21 +549,12 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
-    secrets:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
+  # threshold-fhe tests don't consume kms test material.
   test-core-threshold-main:
     name: main/test-core-threshold-main
     # job permissions
@@ -667,9 +574,9 @@ jobs:
       # and limit the number of test ran in parallel to 4
       args-tests: '-F slow_tests --lib'
       run-redis: true
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      crate-names: '-p threshold-fhe'
       nextest-test-threads: 4
+      skip-test-material: true
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -680,20 +587,12 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
-    secrets:
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    secrets: inherit
 
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
+  # threshold-fhe tests don't consume kms test material.
   build-dependabot:
     name: main/build-dependabot
     # job permissions
@@ -710,18 +609,80 @@ jobs:
     with:
       working-directory: './core/threshold'
       args-tests: '--lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
-    secrets:
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+      crate-names: '-p threshold-fhe'
+      skip-test-material: true
+    secrets: inherit
+
+  ############################################################################
+  # Workspace crates
+  # Runs clippy + unit tests for workspace crates that have no dedicated CI
+  # job. Crates are split into four groups to amortize runner setup cost.
+  # Triggered by:
+  # - Changes to any of the grouped crates (filter: workspace-crates)
+  # - Changes to CI workflows
+  ############################################################################
+  test-workspace-crates:
+    name: main/test-workspace-crates
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    secrets: inherit
+    if: >-
+      needs.check-changes.outputs.changes-workspace-crates == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      # Groups aim at similarly-sized work. `runtime-slow` is split out because enabling `slow_tests` takes a long time.
+      matrix:
+        include:
+
+          # Most "normal" crates should be added here; runs with default features only.
+          - group: crates-normies
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-experimental'
+            # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
+            # all its per-degree tests run.
+            features: '-F threshold-algebra/all_extension_degrees'
+            threads: ''
+            runs-on: '64cpu-linux-x64'
+
+          # Slow/heavy tests, 1/2. Big iron, lots of RAM.
+          - group: crates-heavy-1
+            crates: '-p threshold-execution'
+            features: '-F threshold-execution/slow_tests'
+            # Cap parallelism: slow_tests are RAM-heavy. Empirical: 4 worked
+            # at ~89min; trying 8 to halve wall-clock. Back off if OOM.
+            threads: '8'
+            runs-on: '64cpu-linux-x64'
+
+          # Slow/heavy tests, 2/2. Big iron, lots of RAM.
+          # The `threshold-experimental` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
+          # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
+          - group: crates-heavy-2
+            crates: '-p threshold-experimental -p threshold-networking'
+            features: '-F threshold-experimental/slow_tests'
+            threads: '8'
+            runs-on: '64cpu-linux-x64'
+
+          # Small and light utility crates. Quick to run.
+          - group: workspace-utils
+            crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+            features: '--all-features'
+            threads: ''
+            runs-on: '8cpu-linux-x64'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      # --no-tests=pass: no tests is not an error, but to nexttest it is and this is the fix.
+      args-tests: '--no-tests=pass ${{ matrix.features }} ${{ matrix.crates }}'
+      crate-names: ${{ matrix.crates }}
+      nextest-test-threads: ${{ matrix.threads }}
+      skip-test-material: true
+      runs-on: ${{ matrix.runs-on }}
 
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
@@ -729,13 +690,13 @@ jobs:
     name: main/test-reporter
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs:
-      - test-backward-compatibility
       - test-core-client
       - test-core-client-unit
       - test-grpc
       - test-core-service
       - test-core-threshold-pr
       - test-core-threshold-main
+      - test-workspace-crates
       - test-wasm
       - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
@@ -746,8 +707,7 @@ jobs:
       pull-requests: write # Required to create comments on pull requests
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+    secrets: inherit
 
   ############################################################################
   # Wasm Testing Pipeline
@@ -769,8 +729,7 @@ jobs:
     uses: ./.github/workflows/wasm-testing.yml
     with:
       working-directory: './core/service'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+    secrets: inherit
 
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
