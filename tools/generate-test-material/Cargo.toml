@@ -39,7 +39,3 @@ tempfile = { workspace = true }
 
 # Path utilities
 path-absolutize = "3.0"
-
-[features]
-default = []
-slow_tests = ["kms/slow_tests"]

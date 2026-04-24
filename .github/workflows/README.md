@@ -599,7 +599,7 @@ graph TD
 
 ## 🛠️ Reusable Workflow Infrastructure
 
-### 1. 🖥️ Big Instance Testing
+### 1. 🖥️ Big Instance Testing -- DEPRECATED / REMOVED / REPLACED BY RUNS-ON
 [`.github/workflows/common-testing-big-instance.yml`](common-testing-big-instance.yml)
 
 #### Architecture
