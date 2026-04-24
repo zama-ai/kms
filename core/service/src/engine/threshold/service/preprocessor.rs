@@ -33,6 +33,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
+    anyhow_error_and_log,
     consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
     cryptography::signatures::PrivateSigKey,
     engine::{
@@ -109,7 +110,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         let token = CancellationToken::new();
         {
-            self.ongoing.lock().await.insert(request_id, token.clone());
+            let mut ongoing_lock = self.ongoing.lock().await;
+            if ongoing_lock.contains_key(&request_id) {
+                return Err(anyhow_error_and_log(format!(
+                    "Preprocessing with request ID {} is already ongoing. This should never happen and means the meta store is not up to date",
+                    request_id
+                )));
+            }
+            // We just checked above that eviction cannot happen
+            let _ = ongoing_lock.insert(request_id, token.clone());
         }
         let ongoing = Arc::clone(&self.ongoing);
 
@@ -827,6 +836,42 @@ mod tests {
             .unwrap();
 
         // try again with the same request and we should get AlreadyExists error
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn cannot_start_same_preproc_id_after_completion() {
+        // The `already_exists` test covers the in-progress case. This ensures the ID
+        // remains reserved even after the background task finishes successfully.
+        let mut rng = AesRng::seed_from_u64(22);
+        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            domain: Some(domain),
+            epoch_id: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // Block until preprocessing has finished so the bucket is in the Done state.
+        prep.get_result(tonic::Request::new(req_id.into()))
+            .await
+            .unwrap();
+
+        // Re-starting with the same preprocessing ID must still be rejected.
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
                 .await
