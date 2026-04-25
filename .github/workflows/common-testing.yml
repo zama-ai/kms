@@ -201,9 +201,7 @@ jobs:
 
       - name: Install nextest
         run: |
-          # Force reinstall nextest to ensure we have the required version (0.9.124+)
-          # The cache may contain an older version that doesn't support test-groups
-          cargo install cargo-nextest@0.9.124 --locked --force
+          cargo install cargo-nextest@0.9.133 --locked --force
 
       - name: Setup usage of private repo
         env:
