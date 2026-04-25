@@ -42,7 +42,6 @@ use tokio::task::JoinSet;
 #[case(false, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn test_user_decryption_threshold_nightly(
     #[case] secure: bool,
     #[case] pt: TestingPlaintext,
@@ -78,7 +77,6 @@ async fn test_user_decryption_threshold_nightly(
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn test_user_decryption_threshold(
     #[case] secure: bool,
     #[case] pt: TestingPlaintext,
@@ -109,7 +107,6 @@ async fn test_user_decryption_threshold(
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(1)])]
 #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(4)])]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn test_user_decryption_threshold_malicious(
     #[case] pt: TestingPlaintext,
     #[case] key_id: &RequestId,
@@ -135,7 +132,6 @@ async fn test_user_decryption_threshold_malicious(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 #[should_panic]
 async fn test_user_decryption_threshold_malicious_failure() {
     // should panic because the malicious set is too big
@@ -164,7 +160,6 @@ async fn test_user_decryption_threshold_malicious_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 #[should_panic]
 async fn test_user_decryption_threshold_all_malicious_failure() {
     // should panic because the malicious set is too big
@@ -196,7 +191,6 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
 #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn test_user_decryption_threshold_precompute_sns(
     #[case] secure: bool,
     #[case] amount_parties: usize,
@@ -227,7 +221,6 @@ async fn test_user_decryption_threshold_precompute_sns(
 #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
 #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn test_user_decryption_threshold_and_write_transcript(
     #[case] secure: bool,
     #[case] amount_parties: usize,
@@ -257,7 +250,6 @@ async fn test_user_decryption_threshold_and_write_transcript(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn default_user_decryption_threshold_and_write_transcript(
     #[case] msg: TestingPlaintext,
     #[case] amount_parties: usize,
@@ -288,7 +280,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
 #[case(TestingPlaintext::Bool(true), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn default_user_decryption_threshold(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -319,7 +310,6 @@ async fn default_user_decryption_threshold(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-// #[serial]  // TEMP: round3 probe
 async fn default_user_decryption_threshold_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -350,7 +340,6 @@ async fn default_user_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4,Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-// #[serial]  // TEMP: round3 probe
 async fn default_user_decryption_threshold_with_crash(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,

@@ -9,24 +9,25 @@ use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
+use anyhow::Result;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
-use serial_test::serial;
 use std::collections::HashMap;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) {
+async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) -> Result<()> {
     user_decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_user_decryption_centralized",
         false,
         TestingPlaintext::U8(48),
         EncryptionConfig {
@@ -36,19 +37,19 @@ async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) {
         4,
         secure,
     )
-    .await;
+    .await
 }
 
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_user_decryption_centralized_precompute_sns(
     #[values(true, false)] secure: bool,
     #[values(true, false)] compression: bool,
-) {
+) -> Result<()> {
     user_decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_user_decryption_centralized_precompute_sns",
         false,
         TestingPlaintext::U8(48),
         EncryptionConfig {
@@ -58,17 +59,17 @@ async fn test_user_decryption_centralized_precompute_sns(
         4,
         secure,
     )
-    .await;
+    .await
 }
 
 // The transcripts only need to be 4 parties, it's used for js tests
 #[cfg(feature = "wasm_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn test_user_decryption_centralized_and_write_transcript() {
+async fn test_user_decryption_centralized_and_write_transcript() -> Result<()> {
     user_decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
+        "test_user_decryption_centralized_and_write_transcript",
         true,
         TestingPlaintext::U8(48),
         EncryptionConfig {
@@ -78,18 +79,18 @@ async fn test_user_decryption_centralized_and_write_transcript() {
         1, // wasm tests are single-threaded
         true,
     )
-    .await;
+    .await
 }
 
 // Only need to run once for the transcript
 #[cfg(all(feature = "wasm_tests", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_user_decryption_centralized_and_write_transcript() {
+async fn default_user_decryption_centralized_and_write_transcript() -> Result<()> {
     let msg = TestingPlaintext::U8(u8::MAX);
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_user_decryption_centralized_and_write_transcript",
         true,
         msg,
         EncryptionConfig {
@@ -99,19 +100,19 @@ async fn default_user_decryption_centralized_and_write_transcript() {
         1, // wasm tests are single-threaded
         true,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_user_decryption_centralized(#[values(true, false)] secure: bool) {
+async fn default_user_decryption_centralized(#[values(true, false)] secure: bool) -> Result<()> {
     let msg = TestingPlaintext::U8(u8::MAX);
     let parallelism = 1;
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_user_decryption_centralized",
         false,
         msg,
         EncryptionConfig {
@@ -121,19 +122,21 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
         parallelism,
         secure,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_user_decryption_centralized_no_compression(#[values(true, false)] secure: bool) {
+async fn default_user_decryption_centralized_no_compression(
+    #[values(true, false)] secure: bool,
+) -> Result<()> {
     let msg = TestingPlaintext::U8(u8::MAX);
     let parallelism = 1;
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_user_decryption_centralized_no_compression",
         false,
         msg,
         EncryptionConfig {
@@ -143,22 +146,22 @@ async fn default_user_decryption_centralized_no_compression(#[values(true, false
         parallelism,
         secure,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_centralized_precompute_sns(
     #[values(true, false)] secure: bool,
     #[values(true, false)] compression: bool,
-) {
+) -> Result<()> {
     let msg = TestingPlaintext::U8(u8::MAX);
     let parallelism = 1;
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "default_user_decryption_centralized_precompute_sns",
         false,
         msg,
         EncryptionConfig {
@@ -168,25 +171,38 @@ async fn default_user_decryption_centralized_precompute_sns(
         parallelism,
         secure,
     )
-    .await;
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
+    test_name: &str,
     _write_transcript: bool,
     msg: TestingPlaintext,
     enc_config: EncryptionConfig,
     parallelism: usize,
     secure: bool,
-) {
+) -> Result<()> {
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_server, kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_handles(dkg_params, None).await;
-    let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, None, enc_config, false).await;
+    let env = CentralizedTestEnv::builder()
+        .with_test_name(test_name)
+        .with_backup_vault()
+        .build()
+        .await?;
+    let mut internal_client = env.create_internal_client(dkg_params).await?;
+    let (kms_server, kms_client, material_path, _guard) = env.into_parts();
+    let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+        Some(material_path.as_path()),
+        msg,
+        key_id,
+        None,
+        enc_config,
+        false,
+    )
+    .await;
 
     // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
     // println!(
@@ -386,4 +402,5 @@ pub(crate) async fn user_decryption_centralized(
     }
 
     kms_server.assert_shutdown().await;
+    Ok(())
 }

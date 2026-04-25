@@ -44,7 +44,9 @@ pub mod centralized;
 pub mod threshold;
 
 // Re-export for convenience
-pub use centralized::{CentralizedTestEnv, CentralizedTestEnvBuilder};
+pub use centralized::{
+    CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
+};
 pub use threshold::{
     TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
 };
