@@ -13,6 +13,7 @@ use crate::consts::{
 };
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
+use futures_util::future::{Either, ready};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
@@ -254,7 +255,6 @@ impl TestMaterialManager {
 
         // Create storage directories based on test type
         if spec.is_threshold() {
-            // Create directories for each party
             for i in 1..=spec.party_count() {
                 let role = Role::indexed_from_one(i);
                 let pub_path = compute_storage_path(Some(base_path), StorageType::PUB, Some(role));
@@ -295,34 +295,42 @@ impl TestMaterialManager {
         let source_base_ref = source_base.as_deref();
         let dest_base = temp_dir.path();
 
-        // Copy client keys if required
-        if spec.requires_key_type(KeyType::ClientKeys) {
-            self.copy_client_keys(source_base_ref, dest_base).await?;
-        }
-
-        // Copy signing keys if required (client or server signing keys)
-        if spec.requires_key_type(KeyType::SigningKeys)
+        let copy_client_keys = if spec.requires_key_type(KeyType::ClientKeys) {
+            Either::Left(self.copy_client_keys(source_base_ref, dest_base))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_signing_keys = if spec.requires_key_type(KeyType::SigningKeys)
             || spec.requires_key_type(KeyType::ServerSigningKeys)
         {
-            self.copy_signing_keys(source_base_ref, dest_base, spec)
-                .await?;
-        }
+            Either::Left(self.copy_signing_keys(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_fhe_keys = if spec.requires_key_type(KeyType::FheKeys) {
+            Either::Left(self.copy_fhe_keys(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_crs_keys =
+            if spec.requires_key_type(KeyType::CrsKeys) && spec.include_slow_material {
+                Either::Left(self.copy_crs_keys(source_base_ref, dest_base, spec))
+            } else {
+                Either::Right(ready(Ok(())))
+            };
+        let copy_prss_setup = if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
+            Either::Left(self.copy_prss_setup(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
 
-        // Copy FHE keys if required
-        if spec.requires_key_type(KeyType::FheKeys) {
-            self.copy_fhe_keys(source_base_ref, dest_base, spec).await?;
-        }
-
-        // Copy CRS keys if required
-        if spec.requires_key_type(KeyType::CrsKeys) && spec.include_slow_material {
-            self.copy_crs_keys(source_base_ref, dest_base, spec).await?;
-        }
-
-        // Copy PRSS setup for threshold tests
-        if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
-            self.copy_prss_setup(source_base_ref, dest_base, spec)
-                .await?;
-        }
+        tokio::try_join!(
+            copy_client_keys,
+            copy_signing_keys,
+            copy_fhe_keys,
+            copy_crs_keys,
+            copy_prss_setup
+        )?;
 
         Ok(())
     }
@@ -332,7 +340,7 @@ impl TestMaterialManager {
         let source_client_path = compute_storage_path(source_base, StorageType::CLIENT, None);
         let dest_client_path = compute_storage_path(Some(dest_base), StorageType::CLIENT, None);
 
-        if source_client_path.exists() {
+        if fs::try_exists(&source_client_path).await? {
             self.copy_directory_contents(&source_client_path, &dest_client_path)
                 .await?;
         }
@@ -347,8 +355,12 @@ impl TestMaterialManager {
         dest_base: &Path,
         spec: &TestMaterialSpec,
     ) -> Result<()> {
+        let signing_key_id = SIGNING_KEY_ID.to_string();
+        let verification_key_type = PubDataType::VerfKey.to_string();
+        let verification_address_type = PubDataType::VerfAddress.to_string();
+        let signing_key_type = PrivDataType::SigningKey.to_string();
+
         if spec.is_threshold() {
-            // Copy signing keys for each party
             for i in 1..=spec.party_count() {
                 let role = Role::indexed_from_one(i);
 
@@ -362,32 +374,22 @@ impl TestMaterialManager {
                 fs::create_dir_all(&dest_pub).await?;
                 fs::create_dir_all(&dest_priv).await?;
 
-                // Copy verification keys
                 self.copy_key_files(
                     &source_pub,
                     &dest_pub,
-                    &PubDataType::VerfKey.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
+                    &verification_key_type,
+                    &signing_key_id,
                 )
                 .await?;
-
-                // Copy verification addresses
                 self.copy_key_files(
                     &source_pub,
                     &dest_pub,
-                    &PubDataType::VerfAddress.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
+                    &verification_address_type,
+                    &signing_key_id,
                 )
                 .await?;
-
-                // Copy signing keys
-                self.copy_key_files(
-                    &source_priv,
-                    &dest_priv,
-                    &PrivDataType::SigningKey.to_string(),
-                    &SIGNING_KEY_ID.to_string(),
-                )
-                .await?;
+                self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
+                    .await?;
             }
         } else {
             // Copy centralized signing keys
@@ -403,26 +405,19 @@ impl TestMaterialManager {
             self.copy_key_files(
                 &source_pub,
                 &dest_pub,
-                &PubDataType::VerfKey.to_string(),
-                &SIGNING_KEY_ID.to_string(),
+                &verification_key_type,
+                &signing_key_id,
             )
             .await?;
-
             self.copy_key_files(
                 &source_pub,
                 &dest_pub,
-                &PubDataType::VerfAddress.to_string(),
-                &SIGNING_KEY_ID.to_string(),
+                &verification_address_type,
+                &signing_key_id,
             )
             .await?;
-
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                &PrivDataType::SigningKey.to_string(),
-                &SIGNING_KEY_ID.to_string(),
-            )
-            .await?;
+            self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
+                .await?;
         }
 
         Ok(())
@@ -436,9 +431,13 @@ impl TestMaterialManager {
         spec: &TestMaterialSpec,
     ) -> Result<()> {
         let key_ids = self.get_key_ids_for_spec(spec);
+        let public_key_type = PubDataType::PublicKey.to_string();
+        let server_key_type = PubDataType::ServerKey.to_string();
+        let decompression_key_type = PubDataType::DecompressionKey.to_string();
+        let fhe_private_key_type = PrivDataType::FhePrivateKey.to_string();
+        let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
 
         if spec.is_threshold() {
-            // Copy threshold FHE keys
             for i in 1..=spec.party_count() {
                 let role = Role::indexed_from_one(i);
                 let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
@@ -448,42 +447,25 @@ impl TestMaterialManager {
                     compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
                 for key_id in &key_ids.fhe_keys {
-                    // Copy various FHE key types
-                    self.copy_key_files(
-                        &source_pub,
-                        &dest_pub,
-                        &PubDataType::PublicKey.to_string(),
-                        key_id,
-                    )
-                    .await?;
-                    self.copy_key_files(
-                        &source_pub,
-                        &dest_pub,
-                        &PubDataType::ServerKey.to_string(),
-                        key_id,
-                    )
-                    .await?;
+                    self.copy_key_files(&source_pub, &dest_pub, &public_key_type, key_id)
+                        .await?;
+                    self.copy_key_files(&source_pub, &dest_pub, &server_key_type, key_id)
+                        .await?;
                     self.copy_epoch_key_files(
                         &source_priv,
                         &dest_priv,
-                        &PrivDataType::FhePrivateKey.to_string(),
+                        &fhe_private_key_type,
                         key_id,
                     )
                     .await?;
-                    // Threshold servers store key shares under FheKeyInfo
-                    self.copy_epoch_key_files(
-                        &source_priv,
-                        &dest_priv,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                        key_id,
-                    )
-                    .await?;
+                    self.copy_epoch_key_files(&source_priv, &dest_priv, &fhe_key_info_type, key_id)
+                        .await?;
 
                     if spec.requires_key_type(KeyType::DecompressionKeys) {
                         self.copy_key_files(
                             &source_pub,
                             &dest_pub,
-                            &PubDataType::DecompressionKey.to_string(),
+                            &decompression_key_type,
                             key_id,
                         )
                         .await?;
@@ -498,27 +480,12 @@ impl TestMaterialManager {
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
 
             for key_id in &key_ids.fhe_keys {
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &PubDataType::PublicKey.to_string(),
-                    key_id,
-                )
-                .await?;
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &PubDataType::ServerKey.to_string(),
-                    key_id,
-                )
-                .await?;
-                self.copy_epoch_key_files(
-                    &source_priv,
-                    &dest_priv,
-                    &PrivDataType::FhePrivateKey.to_string(),
-                    key_id,
-                )
-                .await?;
+                self.copy_key_files(&source_pub, &dest_pub, &public_key_type, key_id)
+                    .await?;
+                self.copy_key_files(&source_pub, &dest_pub, &server_key_type, key_id)
+                    .await?;
+                self.copy_epoch_key_files(&source_priv, &dest_priv, &fhe_private_key_type, key_id)
+                    .await?;
             }
         }
 
@@ -533,6 +500,8 @@ impl TestMaterialManager {
         spec: &TestMaterialSpec,
     ) -> Result<()> {
         let key_ids = self.get_key_ids_for_spec(spec);
+        let crs_key_type = PubDataType::CRS.to_string();
+        let crs_info_type = PrivDataType::CrsInfo.to_string();
 
         if spec.is_threshold() {
             for i in 1..=spec.party_count() {
@@ -544,20 +513,10 @@ impl TestMaterialManager {
                     compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
                 for crs_id in &key_ids.crs_keys {
-                    self.copy_key_files(
-                        &source_pub,
-                        &dest_pub,
-                        &PubDataType::CRS.to_string(),
-                        crs_id,
-                    )
-                    .await?;
-                    self.copy_epoch_key_files(
-                        &source_priv,
-                        &dest_priv,
-                        &PrivDataType::CrsInfo.to_string(),
-                        crs_id,
-                    )
-                    .await?;
+                    self.copy_key_files(&source_pub, &dest_pub, &crs_key_type, crs_id)
+                        .await?;
+                    self.copy_epoch_key_files(&source_priv, &dest_priv, &crs_info_type, crs_id)
+                        .await?;
                 }
             }
         } else {
@@ -567,20 +526,10 @@ impl TestMaterialManager {
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
 
             for crs_id in &key_ids.crs_keys {
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &PubDataType::CRS.to_string(),
-                    crs_id,
-                )
-                .await?;
-                self.copy_epoch_key_files(
-                    &source_priv,
-                    &dest_priv,
-                    &PrivDataType::CrsInfo.to_string(),
-                    crs_id,
-                )
-                .await?;
+                self.copy_key_files(&source_pub, &dest_pub, &crs_key_type, crs_id)
+                    .await?;
+                self.copy_epoch_key_files(&source_priv, &dest_priv, &crs_info_type, crs_id)
+                    .await?;
             }
         }
 
@@ -618,7 +567,7 @@ impl TestMaterialManager {
         let source_type_dir = source_dir.join(key_type);
         let dest_type_dir = dest_dir.join(key_type);
 
-        if !source_type_dir.exists() {
+        if !fs::try_exists(&source_type_dir).await? {
             tracing::warn!(
                 "Source directory does not exist, skipping copy: {}",
                 source_type_dir.display()
@@ -631,7 +580,7 @@ impl TestMaterialManager {
         let source_file = source_type_dir.join(key_id);
         let dest_file = dest_type_dir.join(key_id);
 
-        if source_file.exists() {
+        if fs::try_exists(&source_file).await? {
             fs::copy(&source_file, &dest_file).await.with_context(|| {
                 format!(
                     "Failed to copy {} from {} to {}",
@@ -661,7 +610,7 @@ impl TestMaterialManager {
         let source_type_dir = source_dir.join(key_type);
         let dest_type_dir = dest_dir.join(key_type);
 
-        if !source_type_dir.exists() {
+        if !fs::try_exists(&source_type_dir).await? {
             tracing::warn!(
                 "Source directory does not exist, skipping copy: {}",
                 source_type_dir.display()
@@ -679,7 +628,7 @@ impl TestMaterialManager {
                 let dest_epoch_dir = dest_type_dir.join(&epoch_name);
                 let dest_file = dest_epoch_dir.join(key_id);
 
-                if source_file.exists() {
+                if fs::try_exists(&source_file).await? {
                     fs::create_dir_all(&dest_epoch_dir).await?;
                     fs::copy(&source_file, &dest_file).await.with_context(|| {
                         format!(
@@ -710,13 +659,13 @@ impl TestMaterialManager {
         dest: &'a Path,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
         Box::pin(async move {
-            if !source.exists() {
-                return Ok(());
-            }
+            let mut entries = match fs::read_dir(source).await {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
 
             fs::create_dir_all(dest).await?;
-
-            let mut entries = fs::read_dir(source).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let source_path = entry.path();
                 let dest_path = dest.join(entry.file_name());

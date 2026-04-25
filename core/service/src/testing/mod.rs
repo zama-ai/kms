@@ -68,8 +68,8 @@ pub mod utils;
 /// For threshold-specific helpers, import directly:
 /// ```
 /// use crate::client::tests::threshold::common::{
-///     threshold_key_gen_isolated,
-///     threshold_key_gen_secure_isolated,
+///     threshold_insecure_key_gen,
+///     threshold_key_gen_secure,
 /// };
 /// ```
 pub mod prelude {
@@ -80,8 +80,12 @@ pub mod prelude {
 
     // Setup utilities
     pub use super::setup::{
-        centralized::{CentralizedTestEnv, CentralizedTestEnvBuilder},
-        threshold::{ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder},
+        centralized::{
+            CentralizedTestEnv, CentralizedTestEnvBuilder, CentralizedTestMaterialGuard,
+        },
+        threshold::{
+            TestMaterialGuard, ThresholdTestConfig, ThresholdTestEnv, ThresholdTestEnvBuilder,
+        },
     };
 
     // Helper functions

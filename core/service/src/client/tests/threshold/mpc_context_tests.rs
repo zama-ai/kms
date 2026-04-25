@@ -1,23 +1,18 @@
 use aes_prng::AesRng;
 use kms_grpc::{RequestId, rpc_types::PubDataType};
 use rand::SeedableRng;
-use threshold_execution::{
-    endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
-};
 use tokio::task::JoinSet;
 
 use crate::{
-    client::tests::threshold::{
-        common::threshold_handles,
-        public_decryption_tests::{
-            run_decryption_threshold, run_decryption_threshold_optionally_fail,
-        },
+    client::tests::threshold::public_decryption_tests::{
+        run_decryption_threshold, run_decryption_threshold_optionally_fail,
     },
     consts::{
         DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
     cryptography::signatures::PublicSigKey,
+    testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
         rate_limiter::RateLimiterConfig,
@@ -28,22 +23,15 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial]
-async fn test_context_switch_4p() {
-    do_context_switch(TEST_PARAM, 4, None).await;
-}
-
-async fn do_context_switch(
-    dkg_params: DKGParams,
-    amount_parties: usize,
-    decryption_mode: Option<DecryptionMode>,
-) {
+async fn test_context_switch_4p() -> anyhow::Result<()> {
     // 1. setup the threshold handles
     // 2. do a context switch
     // 3. verify that the context switch was successful by doing a decryption
     // 4. delete the context
     // 5. verify that the context is deleted and decryption should fail
     // 6. decrypt with the old context to verify it's still there
+
+    let amount_parties = 4;
 
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
@@ -54,14 +42,24 @@ async fn do_context_switch(
         keygen: 1,
         new_epoch: 1,
     };
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        dkg_params,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        decryption_mode,
-    )
-    .await;
+
+    // Decrypts a real ciphertext, so needs the full threshold-basic set
+    // (client/signing/server-signing/FHE/PRSS).
+    let spec = TestMaterialSpec::threshold_basic(amount_parties);
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("context_switch_4p")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss()
+        .force_isolated()
+        .build()
+        .await?;
+
+    let mut internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
 
     // There is already a previous context by default.
     //
@@ -73,17 +71,19 @@ async fn do_context_switch(
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let all_private_storage = priv_storage_prefixes
         .iter()
-        .map(|prefix| FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap())
+        .map(|prefix| {
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap()
+        })
         .collect::<Vec<_>>();
 
     let all_public_storage = pub_storage_prefixes
         .iter()
-        .map(|prefix| FileStorage::new(None, StorageType::PUB, prefix.as_deref()).unwrap())
+        .map(|prefix| {
+            FileStorage::new(Some(&material_path), StorageType::PUB, prefix.as_deref()).unwrap()
+        })
         .collect::<Vec<_>>();
 
-    let previous_epoch = read_context_at_id(&all_private_storage[0], &previous_epoch_id)
-        .await
-        .unwrap();
+    let previous_epoch = read_context_at_id(&all_private_storage[0], &previous_epoch_id).await?;
     println!("previous context: {:?}", previous_epoch);
 
     let new_context = {
@@ -101,8 +101,7 @@ async fn do_context_switch(
                 &SIGNING_KEY_ID,
                 &PubDataType::VerfKey.to_string(),
             )
-            .await
-            .unwrap();
+            .await?;
             node.verification_key = Some(pk);
         }
         new_context
@@ -111,9 +110,7 @@ async fn do_context_switch(
     println!("got new context: {:?}", new_context);
 
     {
-        let req = internal_client
-            .new_mpc_context_request(new_context)
-            .unwrap();
+        let req = internal_client.new_mpc_context_request(new_context)?;
 
         let mut req_tasks = JoinSet::new();
         for (_, client) in kms_clients.iter() {
@@ -124,7 +121,7 @@ async fn do_context_switch(
 
         let mut req_response_vec = Vec::new();
         while let Some(inner) = req_tasks.join_next().await {
-            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+            req_response_vec.push(inner??.into_inner());
         }
         assert_eq!(req_response_vec.len(), kms_clients.len());
     }
@@ -147,16 +144,14 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
+        Some(&material_path),
         false, // compressed_keys
     )
     .await;
 
     // delete the new context
     {
-        let req = internal_client
-            .destroy_mpc_context_request(&new_context_id)
-            .unwrap();
+        let req = internal_client.destroy_mpc_context_request(&new_context_id)?;
 
         let mut req_tasks = JoinSet::new();
         for (_, client) in kms_clients.iter() {
@@ -167,7 +162,7 @@ async fn do_context_switch(
 
         let mut req_response_vec = Vec::new();
         while let Some(inner) = req_tasks.join_next().await {
-            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+            req_response_vec.push(inner??.into_inner());
         }
         assert_eq!(req_response_vec.len(), kms_clients.len());
     }
@@ -186,7 +181,7 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
+        Some(&material_path),
         true,
         false, // compressed_keys
     )
@@ -205,7 +200,7 @@ async fn do_context_switch(
         enc_config,
         None,
         1,
-        None,
+        Some(&material_path),
         false, // compressed_keys
     )
     .await;
@@ -213,4 +208,6 @@ async fn do_context_switch(
     for (_, server) in kms_servers {
         server.assert_shutdown().await;
     }
+
+    Ok(())
 }

@@ -29,7 +29,6 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use rand::SeedableRng;
-use serial_test::serial;
 use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
 use threshold_types::role::Role;
@@ -97,7 +96,6 @@ impl CentralizedBackupTestEnv {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_auto_update_backups_central() {
     auto_update_backup(5, 2).await;
 }
@@ -141,7 +139,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_backup_after_crs_central() {
     backup_after_crs(5, 2).await;
 }
@@ -201,7 +198,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_decrypt_after_recovery_central() {
     decrypt_after_recovery(5, 2).await;
 }
@@ -314,7 +310,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 /// Two custodians submit corrupted signcryption; those outputs are rejected and recovery still
 /// completes with the remaining valid shares (see `assert_eq!(sig_key, new_sig_key)` at end).
 #[tokio::test]
-#[serial]
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
@@ -413,7 +408,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 /// immediately after key generation (centralized mode).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_keygen_backup_presence_central() {
     let mut env = CentralizedBackupTestEnv::new("test_keygen_backup_presence_central", 3, 1).await;
     let key_id: RequestId = derive_request_id("test_keygen_backup_presence_central_key").unwrap();
@@ -455,7 +449,6 @@ async fn test_keygen_backup_presence_central() {
 /// Test that creating a new MPC context results in the ContextInfo
 /// being backed up in the custodian backup vault (centralized mode).
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_mpc_context_backup_central() {
     let mut env = CentralizedBackupTestEnv::new("test_mpc_context_backup_central", 3, 1).await;
 

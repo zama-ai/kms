@@ -73,7 +73,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-client-k8s-tests:
-              - 'core-client/tests/**'
+              - 'core-client/tests/kind-testing/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -285,6 +285,11 @@ jobs:
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
+      # 11 integration_test tests, each isolated (tempdir + OS-assigned ports).
+      # Measured 49.5min total at 6-way; the slowest test
+      # (`test_threshold_mpc_context_switch_6`, ~20min) is the floor, so
+      # going past 6 is diminishing returns.
+      nextest-test-threads: "6"
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -321,7 +326,8 @@ jobs:
       args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
       generate-default-material: true
       nextest-profile: 'ci-nightly'
-      runs-on: '32cpu-linux-x64'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
     secrets: inherit
 
   # Core client unit tests. Integration filters below skip everything that
@@ -450,7 +456,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
-            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -498,8 +504,39 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
-      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
+      # 6-way at 50.9min total (vs 57.4min at 4-way). Floor is the slowest
+      # test (`test_new_epoch_with_reshare`, ~13min), so going past 6 is
+      # diminishing returns.
+      nextest-test-threads: "6"
       enable-shared-material: true  # Use shared material mode (no copying)
+    secrets: inherit
+
+  # threshold-flavored tests with `slow_tests`.
+  test-core-service-slow-threshold:
+    name: main/test-core-service-slow-threshold
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core/service'
+      args-tests: '-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
+      run-minio: true
+      crate-names: '-p kms'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
+      enable-shared-material: true
     secrets: inherit
 
   ############################################################################
@@ -694,6 +731,7 @@ jobs:
       - test-core-client-unit
       - test-grpc
       - test-core-service
+      - test-core-service-slow-threshold
       - test-core-threshold-pr
       - test-core-threshold-main
       - test-workspace-crates

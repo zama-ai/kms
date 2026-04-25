@@ -32,14 +32,6 @@ on:
       crate-names:
         type: string
         required: true
-      test-coverage:
-        type: boolean
-        required: false
-        default: false
-      test-minimum-coverage:
-        type: string
-        required: false
-        default: 0
       npm-release:
         type: boolean
         required: false
@@ -140,7 +132,6 @@ jobs:
       run-wasm: ${{ inputs.run-wasm }}
       crate-names: ${{ inputs.crate-names }}
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
-      test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       nextest-profile: ${{ inputs.nextest-profile }}
       nextest-test-threads: ${{ inputs.nextest-test-threads }}
