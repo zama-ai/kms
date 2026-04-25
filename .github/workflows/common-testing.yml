@@ -56,14 +56,6 @@ on:
         type: boolean
         required: false
         default: false
-      test-coverage:
-        type: boolean
-        required: false
-        default: false
-      test-minimum-coverage:
-        type: string
-        required: false
-        default: 0
       npm-release:
         type: boolean
         required: false
@@ -207,12 +199,11 @@ jobs:
         with:
           save-if: false
 
-      - name: Install nextest and grcov
+      - name: Install nextest
         run: |
           # Force reinstall nextest to ensure we have the required version (0.9.124+)
           # The cache may contain an older version that doesn't support test-groups
           cargo install cargo-nextest@0.9.124 --locked --force
-          cargo install grcov --locked
 
       - name: Setup usage of private repo
         env:
@@ -300,22 +291,7 @@ jobs:
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
         id: tests
-        if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
-          # some integration tests run docker compose
-          # which builds images which need git access
-          # building images in every integration test run is bad
-          #
-          # If we want to enable the coverage again we can use the snippets below:
-          # COVERAGE
-          # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
-          #   export RUSTFLAGS="-Cinstrument-coverage"
-          #   export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          #   ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${RUNNER_TEMP}/lcov" -t lcov
-          # else
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
-          # fi
           AWS_ACCESS_KEY_ID: 'minioadmin'
           AWS_SECRET_ACCESS_KEY: 'minioadmin'
           AWS_DEFAULT_REGION: 'eu-north-1'
@@ -327,7 +303,6 @@ jobs:
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
-          RUNNER_TEMP: ${{ runner.temp }}
           RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
           # Build the env-var prefix for the nextest invocation so the printed
@@ -394,15 +369,6 @@ jobs:
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
-      # COVERAGE
-      # - name: Upload coverage to Codecov
-      #   if: github.event_name == 'schedule'
-      #   uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
-      #     files: '${{ runner.temp }}/lcov'
-      #     fail_ci_if_error: true
 
       - name: Set Slack color
         id: slack_color
