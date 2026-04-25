@@ -1,8 +1,7 @@
 name: rust-lint
 
-# TEMP: round3 probe — was `pull_request:`. Restore before merging.
 on:
-  workflow_dispatch:
+  pull_request:
 
 concurrency:
   group: rust-lint-${{ github.ref }}

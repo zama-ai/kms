@@ -1,7 +1,6 @@
 name: docker-scan
-# TEMP: round3 probe — was `pull_request:`. Restore before merging.
 on:
-  workflow_dispatch:
+  pull_request:
 
 permissions: {}
 
