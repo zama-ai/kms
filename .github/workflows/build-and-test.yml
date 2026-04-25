@@ -12,8 +12,9 @@
 name: build-and-test
 
 on:
-  pull_request:
-    types: [opened, labeled, synchronize, reopened]
+  # pull_request:  # disabled on fs-probe branch — only fs-probe.yml should fire
+  #   types: [opened, labeled, synchronize, reopened]
+  workflow_dispatch:
 
 permissions: {}
 

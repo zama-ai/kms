@@ -6,8 +6,8 @@ on:
       - main
       - test
 
-  pull_request:
-    branches: ['*']
+  # pull_request:  # disabled on fs-probe branch — only fs-probe.yml should fire
+  #   branches: ['*']
 
 concurrency:
   group: deps-analysis-${{ github.ref }}

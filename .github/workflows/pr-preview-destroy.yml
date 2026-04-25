@@ -6,8 +6,8 @@ name: pr-preview-destroy
 on:
   schedule:
     - cron: '0 0 * * *'
-  pull_request:
-    types: [closed, unlabeled]
+  # pull_request:  # disabled on fs-probe branch — only fs-probe.yml should fire
+  #   types: [closed, unlabeled]
 
 permissions: {}
 

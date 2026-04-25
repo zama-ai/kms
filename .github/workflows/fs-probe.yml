@@ -1,0 +1,82 @@
+name: fs-probe
+
+# One-shot diagnostic: report the filesystem the test-core-* runner gets so we
+# know whether reflinks/CoW are available without touching the AMI. Triggered
+# manually only — no auto-fire on PR or push.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    name: fs-probe
+    permissions:
+      contents: read
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Probe filesystems
+        shell: bash
+        run: |
+          set +e  # don't fail the job on any single missing tool
+          echo "=== uname / distro ==="
+          uname -a
+          (. /etc/os-release && echo "$PRETTY_NAME") || true
+
+          echo
+          echo "=== mounts of interest ==="
+          for p in / /tmp "$RUNNER_TEMP" "$GITHUB_WORKSPACE" /home /mnt; do
+            [ -e "$p" ] && findmnt -no TARGET,SOURCE,FSTYPE,OPTIONS --target "$p" \
+              | sed "s|^|$p -> |"
+          done
+
+          echo
+          echo "=== df -hT ==="
+          df -hT
+
+          echo
+          echo "=== xfs reflink probe ==="
+          for p in / /tmp "$RUNNER_TEMP" "$GITHUB_WORKSPACE"; do
+            [ -e "$p" ] || continue
+            fs=$(findmnt -no FSTYPE --target "$p")
+            if [ "$fs" = "xfs" ]; then
+              src=$(findmnt -no SOURCE --target "$p")
+              echo "--- xfs_info on $p ($src) ---"
+              sudo xfs_info "$p" 2>/dev/null || xfs_info "$p" 2>/dev/null || echo "xfs_info failed"
+            fi
+          done
+
+          echo
+          echo "=== live reflink test ==="
+          # Tries an actual reflink copy in each candidate dir. If reflink works,
+          # cp returns 0 with --reflink=always; otherwise it errors.
+          for p in /tmp "$RUNNER_TEMP" "$GITHUB_WORKSPACE"; do
+            [ -d "$p" ] || continue
+            d=$(mktemp -d "$p/reflink-probe.XXXXXX") || continue
+            dd if=/dev/zero of="$d/src" bs=1M count=16 status=none
+            if cp --reflink=always "$d/src" "$d/dst" 2>/dev/null; then
+              echo "REFLINK OK: $p ($(findmnt -no FSTYPE --target "$p"))"
+            else
+              echo "REFLINK NO: $p ($(findmnt -no FSTYPE --target "$p"))"
+            fi
+            rm -rf "$d"
+          done
+
+          echo
+          echo "=== sudo + capabilities sanity ==="
+          sudo -n true && echo "passwordless sudo: yes" || echo "passwordless sudo: no"
+          id
+
+          echo
+          echo "=== fuse / overlay availability ==="
+          command -v fuse-overlayfs && fuse-overlayfs --version || echo "fuse-overlayfs: not installed"
+          [ -e /dev/fuse ] && echo "/dev/fuse: present" || echo "/dev/fuse: absent"
+          grep -E '(^|[[:space:]])overlay($|[[:space:]])' /proc/filesystems || true

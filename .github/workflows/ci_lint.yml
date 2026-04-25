@@ -2,7 +2,8 @@
 name: ci_lint
 
 on:
-  pull_request:
+  # pull_request:  # disabled on fs-probe branch — only fs-probe.yml should fire
+  workflow_dispatch:
 
 concurrency:
   group: ci-lint-${{ github.ref }}
