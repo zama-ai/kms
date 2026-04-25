@@ -1,10 +1,12 @@
 name: fs-probe
 
 # One-shot diagnostic: report the filesystem the test-core-* runner gets so we
-# know whether reflinks/CoW are available without touching the AMI. Triggered
-# manually only — no auto-fire on PR or push.
+# know whether reflinks/CoW are available without touching the AMI. Auto-fires
+# on every push to this branch only — branch is throwaway, so is this trigger.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - dvdplm/chore/figure-out-ci-runner-fs-stuff
 
 permissions: {}
 
