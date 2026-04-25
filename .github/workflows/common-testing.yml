@@ -45,8 +45,8 @@ on:
         default: '-F wasm_tests'
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
-        # Injected verbatim into `cargo clippy` (and effectively into nextest
-        # via `args-tests`).
+        # Injected verbatim into cargo invocations that need explicit package
+        # scoping (`cargo clippy`, `cargo nextest`).
         type: string
         required: true
       skip-test-material:
@@ -301,8 +301,10 @@ jobs:
           else
             SUBCOMMAND=testing
           fi
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
-          cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+          # Build the generator in Cargo's built-in `test` profile so nextest
+          # can reuse more of the same optimized artifacts later in the job.
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
 
           # TODO(dp): keep?
           # Confirms material landed on the btrfs mount (via the symlink) rather
@@ -314,8 +316,10 @@ jobs:
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
         run: |
-          echo "EXECUTING: cargo build --package kms --bin kms-custodian"
-          cargo build --package kms --bin kms-custodian
+          # Cargo's built-in `test` profile still emits into `target/debug`, so
+          # integration tests can keep resolving the sibling binary there.
+          echo "EXECUTING: cargo build --profile test --package kms --bin kms-custodian"
+          cargo build --profile test --package kms --bin kms-custodian
 
       # Test execution
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
@@ -327,6 +331,7 @@ jobs:
           AWS_DEFAULT_REGION: 'eu-north-1'
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_RETRIES: 3
@@ -368,11 +373,11 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config
-          # Intentional word-splitting on CMD_ENV and ARGS_TESTS.
+          # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
 
       # TODO(dp): keep?
       # Did reflinks actually happen? Compare the logical size of all per-test
