@@ -84,121 +84,78 @@ jobs:
           grep -E '(^|[[:space:]])overlay($|[[:space:]])' /proc/filesystems || true
 
       # ---------------------------------------------------------------------
-      # Loopback CoW probe: mount XFS-reflink and Btrfs on a loopback file,
-      # confirm reflink works, and benchmark byte-copy vs reflink for a 1 GiB
-      # file. This is what option 2 (loopback XFS) would set up at job start
-      # in the real workflow.
+      # The four comparisons we actually care about:
+      #   1. ext4 single cp                  (today's CI baseline)
+      #   2. ext4 6× sequential cp           (today's 6-thread fan-out)
+      #   3. btrfs loopback single reflink cp
+      #   4. btrfs loopback 6× reflink cp
+      # All against a 1 GiB random source. Page cache dropped before each
+      # measurement so we're comparing cold-cache cost. `time` output is
+      # redirected to stdout via `{ ...; } 2>&1` so each timing prints
+      # immediately after its own header — no more cross-step interleaving.
       # ---------------------------------------------------------------------
-      - name: Install xfsprogs and btrfs-progs
+      - name: Install btrfs-progs
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xfsprogs btrfs-progs
+          sudo apt-get install -y -qq btrfs-progs
 
-      - name: Loopback XFS-reflink probe
+      - name: Benchmark ext4 byte-cp vs btrfs loopback reflink-cp
         shell: bash
         run: |
-          set +e
-          IMG=/tmp/xfs-scratch.img
-          MNT=/mnt/xfs-scratch
-          SIZE_GB=20
+          set -e
+          SRC_GB=1
+          EXT4_DIR="$RUNNER_TEMP/ext4-bench"
+          BTRFS_IMG=/tmp/btrfs-scratch.img
+          BTRFS_MNT=/mnt/btrfs-scratch
 
-          echo "=== create $SIZE_GB GiB sparse image ==="
-          truncate -s ${SIZE_GB}G "$IMG"
+          # === Setup ===
+          mkdir -p "$EXT4_DIR"
+          dd if=/dev/urandom of="$EXT4_DIR/big.bin" bs=1M count=$((SRC_GB * 1024)) status=none
 
-          echo
-          echo "=== mkfs.xfs -m reflink=1 ==="
-          mkfs.xfs -m reflink=1 "$IMG"
+          truncate -s 20G "$BTRFS_IMG"
+          mkfs.btrfs -q "$BTRFS_IMG"
+          sudo mkdir -p "$BTRFS_MNT"
+          sudo mount -o loop "$BTRFS_IMG" "$BTRFS_MNT"
+          sudo chown "$USER" "$BTRFS_MNT"
+          # Seed btrfs source with the same bytes (paid once, not measured).
+          cp "$EXT4_DIR/big.bin" "$BTRFS_MNT/big.bin"
 
-          echo
-          echo "=== mount loopback ==="
-          sudo mkdir -p "$MNT"
-          sudo mount -o loop "$IMG" "$MNT"
-          sudo chown "$USER" "$MNT"
-          findmnt -no TARGET,SOURCE,FSTYPE,OPTIONS --target "$MNT"
+          set +e  # benchmark errors should not fail the job
 
-          echo
-          echo "=== live reflink test ==="
-          dd if=/dev/zero of="$MNT/src" bs=1M count=16 status=none
-          if cp --reflink=always "$MNT/src" "$MNT/dst" 2>/dev/null; then
-            echo "REFLINK OK on loopback XFS"
-          else
-            echo "REFLINK FAIL on loopback XFS — investigate"
-          fi
-          rm -f "$MNT/src" "$MNT/dst"
+          drop_caches() { sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null; }
 
-          echo
-          echo "=== 1 GiB copy benchmark: byte-copy vs reflink ==="
-          dd if=/dev/urandom of="$MNT/big.bin" bs=1M count=1024 status=none
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          echo "--- plain cp (forces byte copy) ---"
-          time cp --reflink=never "$MNT/big.bin" "$MNT/big.copy.bytes"
-          echo "--- reflink cp ---"
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          time cp --reflink=always "$MNT/big.bin" "$MNT/big.copy.reflink"
-          echo "--- 6 sequential reflink copies (simulating 6-thread test fan-out) ---"
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          time for i in 1 2 3 4 5 6; do cp --reflink=always "$MNT/big.bin" "$MNT/big.copy.r$i"; done
-          echo "--- df after the dust settles ---"
-          df -h "$MNT"
-          ls -la "$MNT"
+          echo "=================================================================="
+          echo " Source size: ${SRC_GB} GiB"
+          echo " ext4  src: $EXT4_DIR/big.bin   ($(findmnt -no FSTYPE --target "$EXT4_DIR"))"
+          echo " btrfs src: $BTRFS_MNT/big.bin  ($(findmnt -no FSTYPE --target "$BTRFS_MNT"))"
+          echo "=================================================================="
 
-          echo
-          echo "=== unmount and cleanup ==="
-          sudo umount "$MNT"
-          sudo rmdir "$MNT"
-          rm -f "$IMG"
+          drop_caches
+          echo "--- [1/4] ext4 single cp (today's CI baseline) ---"
+          { time cp "$EXT4_DIR/big.bin" "$EXT4_DIR/big.cp.1"; } 2>&1
 
-      - name: Loopback Btrfs probe
-        shell: bash
-        run: |
-          set +e
-          IMG=/tmp/btrfs-scratch.img
-          MNT=/mnt/btrfs-scratch
-          SIZE_GB=20
+          drop_caches
+          echo "--- [2/4] ext4 6× sequential cp (today's 6-thread fan-out) ---"
+          { time for i in 1 2 3 4 5 6; do cp "$EXT4_DIR/big.bin" "$EXT4_DIR/big.cp.s$i"; done; } 2>&1
 
-          echo "=== create $SIZE_GB GiB sparse image ==="
-          truncate -s ${SIZE_GB}G "$IMG"
+          drop_caches
+          echo "--- [3/4] btrfs loopback single reflink cp ---"
+          { time cp --reflink=always "$BTRFS_MNT/big.bin" "$BTRFS_MNT/big.cp.1"; } 2>&1
+
+          drop_caches
+          echo "--- [4/4] btrfs loopback 6× reflink cp ---"
+          { time for i in 1 2 3 4 5 6; do cp --reflink=always "$BTRFS_MNT/big.bin" "$BTRFS_MNT/big.cp.s$i"; done; } 2>&1
 
           echo
-          echo "=== mkfs.btrfs (CoW by default) ==="
-          mkfs.btrfs -q "$IMG"
+          echo "=== disk usage after ==="
+          echo "ext4 (only the bench dir):"
+          du -sh "$EXT4_DIR"
+          echo "btrfs mount:"
+          df -h "$BTRFS_MNT"
 
-          echo
-          echo "=== mount loopback ==="
-          sudo mkdir -p "$MNT"
-          sudo mount -o loop "$IMG" "$MNT"
-          sudo chown "$USER" "$MNT"
-          findmnt -no TARGET,SOURCE,FSTYPE,OPTIONS --target "$MNT"
-
-          echo
-          echo "=== live reflink test ==="
-          dd if=/dev/zero of="$MNT/src" bs=1M count=16 status=none
-          if cp --reflink=always "$MNT/src" "$MNT/dst" 2>/dev/null; then
-            echo "REFLINK OK on loopback Btrfs"
-          else
-            echo "REFLINK FAIL on loopback Btrfs — investigate"
-          fi
-          rm -f "$MNT/src" "$MNT/dst"
-
-          echo
-          echo "=== 1 GiB copy benchmark: byte-copy vs reflink ==="
-          dd if=/dev/urandom of="$MNT/big.bin" bs=1M count=1024 status=none
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          echo "--- plain cp (forces byte copy) ---"
-          time cp --reflink=never "$MNT/big.bin" "$MNT/big.copy.bytes"
-          echo "--- reflink cp ---"
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          time cp --reflink=always "$MNT/big.bin" "$MNT/big.copy.reflink"
-          echo "--- 6 sequential reflink copies ---"
-          sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
-          time for i in 1 2 3 4 5 6; do cp --reflink=always "$MNT/big.bin" "$MNT/big.copy.r$i"; done
-          echo "--- df after the dust settles ---"
-          df -h "$MNT"
-          ls -la "$MNT"
-
-          echo
-          echo "=== unmount and cleanup ==="
-          sudo umount "$MNT"
-          sudo rmdir "$MNT"
-          rm -f "$IMG"
+          # === Cleanup ===
+          sudo umount "$BTRFS_MNT"
+          sudo rmdir "$BTRFS_MNT"
+          rm -f "$BTRFS_IMG"
+          rm -rf "$EXT4_DIR"
