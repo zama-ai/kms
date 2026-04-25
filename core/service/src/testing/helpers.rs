@@ -93,20 +93,26 @@ pub async fn regenerate_central_keys(
         ));
     }
 
-    // Delete all FHE key artifacts to force clean regeneration.
-    // `ensure_central_keys_exist` short-circuits on existing CompressedXofKeySet,
-    // so we remove it plus any uncompressed artifacts and private keys.
-    // Use `delete_at_request_id` which is a no-op when the data is absent — since
-    // compressed keys are the default, the uncompressed artifacts may not exist.
+    // Delete any pre-existing FHE key artifacts to force clean regeneration.
+    // ensure_central_keys_exist short-circuits on existing PublicKey, so we
+    // remove PublicKey + ServerKey + CompressedXofKeySet + DecompressionKey
+    // (and the FhePrivateKey dir below) to avoid stale data from previous
+    // runs or from `test-material/` source fixtures (which include
+    // CompressedXofKeySet that would otherwise be inconsistent with freshly
+    // regenerated PublicKey/ServerKey, causing a "Server key digest
+    // mismatch" at server boot). `delete_at_request_id` is a no-op when the
+    // artifact isn't present, which is fine — we'll regenerate either way.
     for key_id in [&*TEST_CENTRAL_KEY_ID, &*OTHER_CENTRAL_TEST_ID] {
-        delete_at_request_id(
-            pub_storage,
-            key_id,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await?;
-        delete_at_request_id(pub_storage, key_id, &PubDataType::PublicKey.to_string()).await?;
-        delete_at_request_id(pub_storage, key_id, &PubDataType::ServerKey.to_string()).await?;
+        for data_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::CompressedXofKeySet,
+            PubDataType::DecompressionKey,
+        ] {
+            delete_at_request_id(pub_storage, key_id, &data_type.to_string())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to delete {data_type:?} for {key_id}: {e}"))?;
+        }
     }
 
     remove_dir_if_exists(
