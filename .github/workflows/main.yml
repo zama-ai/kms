@@ -456,7 +456,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
-            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -509,6 +509,34 @@ jobs:
       # diminishing returns.
       nextest-test-threads: "6"
       enable-shared-material: true  # Use shared material mode (no copying)
+    secrets: inherit
+
+  # threshold-flavored tests with `slow_tests`.
+  test-core-service-slow-threshold:
+    name: main/test-core-service-slow-threshold
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core/service'
+      args-tests: '-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
+      run-minio: true
+      crate-names: '-p kms'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
+      enable-shared-material: true
     secrets: inherit
 
   ############################################################################
@@ -703,6 +731,7 @@ jobs:
       - test-core-client-unit
       - test-grpc
       - test-core-service
+      - test-core-service-slow-threshold
       - test-core-threshold-pr
       - test-core-threshold-main
       - test-workspace-crates
