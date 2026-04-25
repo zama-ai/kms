@@ -326,7 +326,8 @@ jobs:
       args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
       generate-default-material: true
       nextest-profile: 'ci-nightly'
-      runs-on: '32cpu-linux-x64'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
     secrets: inherit
 
   # Core client unit tests. Integration filters below skip everything that
