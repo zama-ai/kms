@@ -734,7 +734,7 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .inner_write_crs(
+                    .resharing_crs_write(
                         &crs_info.crs_id,
                         &new_epoch_id,
                         crs,

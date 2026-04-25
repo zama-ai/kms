@@ -3224,3 +3224,138 @@ async fn test_threshold_reshare() -> Result<()> {
     info!("✅ Threshold reshare test completed successfully");
     Ok(())
 }
+
+// ===========================================================================
+// Abort helpers + tests
+//
+/// Helper to abort an in-flight key generation via CLI (isolated version).
+///
+/// The CLI command collects a response (ok or error code) from every party and
+/// only fails the command when it cannot gather enough responses. This helper
+/// therefore exercises the outer dispatch path: the command is expected to
+/// complete successfully even when the abort targets a non-existent request id.
+async fn abort_key_gen_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    request_id: RequestId,
+) -> anyhow::Result<Vec<String>> {
+    let config = cmd_config(
+        config_path,
+        CCCommand::AbortKeyGen(AbortParameters { request_id }),
+        200,
+    );
+    info!("Aborting key-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    info!("Abort key-gen done");
+    Ok(results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect())
+}
+
+/// Helper to abort an in-flight CRS generation via CLI (isolated version).
+async fn abort_crs_gen_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    request_id: RequestId,
+) -> anyhow::Result<Vec<String>> {
+    let config = cmd_config(
+        config_path,
+        CCCommand::AbortCrsGen(AbortParameters { request_id }),
+        200,
+    );
+    info!("Aborting CRS-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    info!("Abort CRS-gen done");
+    Ok(results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect())
+}
+
+/// Test centralized abort key generation via CLI
+///
+/// Aborting an unknown request_id exercises the CLI dispatch: the command fans
+/// out to every party and completes successfully even though each server
+/// responds with an error code (NotFound for centralized).
+#[tokio::test]
+async fn test_centralized_abort_key_gen() -> Result<()> {
+    init_logging();
+
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test("centralized_abort_key_gen").await?;
+
+    let keys_folder = material_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd21")?;
+    let res = abort_key_gen_isolated(&config_path, keys_folder, request_id).await?;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+    Ok(())
+}
+
+/// Test centralized abort CRS generation via CLI
+#[tokio::test]
+async fn test_centralized_abort_crs_gen() -> Result<()> {
+    init_logging();
+
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test("centralized_abort_crs_gen").await?;
+
+    let keys_folder = material_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd22")?;
+    let res = abort_crs_gen_isolated(&config_path, keys_folder, request_id).await?;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+    Ok(())
+}
+
+/// Test threshold abort key generation via CLI
+///
+/// Aborting an unknown request_id on the threshold cluster: every party responds
+/// (with NotFound since no key gen is running), so the CLI command succeeds.
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+async fn test_threshold_abort_key_gen() -> Result<()> {
+    init_logging();
+
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_signing_only("threshold_abort_key_gen", 4).await?;
+
+    let keys_folder = material_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd31")?;
+    let res = abort_key_gen_isolated(&config_path, keys_folder, request_id).await?;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+    Ok(())
+}
+
+/// Test threshold abort CRS generation via CLI
+#[cfg(feature = "threshold_tests")]
+#[tokio::test]
+async fn test_threshold_abort_crs_gen() -> Result<()> {
+    init_logging();
+
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_signing_only("threshold_abort_crs_gen", 4).await?;
+
+    let keys_folder = material_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd32")?;
+    let res = abort_crs_gen_isolated(&config_path, keys_folder, request_id).await?;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+    Ok(())
+}

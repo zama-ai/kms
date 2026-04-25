@@ -82,7 +82,9 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating meta store for"),
+        err.contains(&format!(
+            "Error while updating meta store for {req_id}: request is missing"
+        )),
         "expected meta-store update failure when empty, got: {err}"
     );
     {
@@ -141,7 +143,11 @@ async fn write_crs() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating meta store for"),
+        err.contains("Error while updating meta store"),
+        "expected meta-store conflict on double write, got: {err}"
+    );
+    assert!(
+        err.contains("request is already completed"),
         "expected meta-store conflict on double write, got: {err}"
     );
     {
@@ -177,8 +183,9 @@ async fn write_crs() {
         )
         .await;
     let err = result.unwrap_err().to_string();
+    // Successful purging since there is actually nothing to purge
     assert!(
-        err.contains("Storage write failed for CRS"),
+        err.contains("successfully purged dangling CRS material and updated meta store"),
         "expected underlying storage failure, got: {err}"
     );
 

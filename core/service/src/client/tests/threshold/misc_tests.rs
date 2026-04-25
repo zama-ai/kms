@@ -151,12 +151,24 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
 /// drops server 1, sleeps 300ms, verifies both services are unreachable.
 #[tokio::test]
 async fn test_threshold_close_after_drop() -> Result<()> {
+    use crate::testing::material::KeyType;
+
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+
+    // Lifecycle test only — no decryption. Signing keys + PRSS are sufficient,
+    // and avoiding FheKeys here means we don't need fresh `test-material/`
+    // FHE fixtures (whose schema can rot).
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(4);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("close_after_drop")
         .with_party_count(4)
         .with_threshold(1)
+        .with_material_spec(spec)
         .with_prss()
         .force_isolated() // Prevent writing PRSS data to the shared test-material source
         .build()

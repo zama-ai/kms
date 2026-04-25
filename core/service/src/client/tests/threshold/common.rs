@@ -144,6 +144,7 @@ async fn threshold_handles_w_vaults(
 /// responses).
 /// This provides a setup _without_ custodian backup. Instead the backup vaults are just realized using
 /// an uncrypted file storage.
+#[cfg(feature = "slow_tests")]
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,

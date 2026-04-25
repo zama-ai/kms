@@ -5,22 +5,28 @@ cfg_if::cfg_if! {
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::CrsGenRequest;
     use kms_grpc::kms::v1::{Empty, FheParameter};
     use kms_grpc::kms::v1::CrsInfo;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::RequestId;
-    // use serial_test::serial;  // TEMP: round3 probe
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Arc;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
-    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+    use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+}}
+
+// `crs_gen` (slow_tests only) is the sole consumer of these helpers.
+cfg_if::cfg_if! {
+   if #[cfg(feature = "slow_tests")] {
+    use crate::client::tests::common::TIME_TO_SLEEP_MS;
+    use crate::client::tests::threshold::common::threshold_handles;
+    use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
+    use crate::util::key_setup::test_tools::purge;
+    use std::sync::Arc;
 }}
 
 #[cfg(feature = "insecure")]
@@ -169,7 +175,7 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
     parameter: FheParameter,

@@ -30,6 +30,7 @@ use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned}
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
+use tokio_util::sync::CancellationToken;
 
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
@@ -70,7 +71,7 @@ use threshold_execution::{
     zk::ceremony::public_parameters_by_trusted_setup,
 };
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -437,12 +438,16 @@ pub struct CentralizedKms<
     pub(crate) preprocessing_meta_store: Arc<RwLock<MetaStore<CentralizedPreprocBucket>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    // Map of ongoing key generation tasks, indexed by the preprocessing ID
+    pub(crate) ongoing_key_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
     pub(crate) user_dec_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+    // Map of ongoing CRS generation tasks, indexed by the CRS request ID
+    pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
@@ -987,9 +992,11 @@ impl<
                     HashMap::new(),
                 ))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                ongoing_key_gen: Arc::new(Mutex::new(HashMap::new())),
                 pub_dec_meta_store,
                 user_dec_meta_store,
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                ongoing_crs_gen: Arc::new(Mutex::new(HashMap::new())),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
