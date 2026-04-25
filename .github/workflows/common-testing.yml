@@ -242,6 +242,11 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
+      # TODO(dp) dead code? double check!
+      # No caller in main.yml passes `use-pregenerated-material: true`, so
+      # both download/decompress steps appear unused. Note: If revived, they also need the
+      # btrfs-loopback preamble below (otherwise tests on the loopback
+      # won't find the decompressed material under ./test-material).
       # Download pre-generated default test material if available (for slow_tests jobs)
       - name: Download Test Material (Default)
         if: ${{ inputs.use-pregenerated-material }}
@@ -263,6 +268,9 @@ jobs:
       # Generate test material. Subcommand is `all` (testing + default) when
       # the job uses slow_tests or explicitly requests default; otherwise
       # `testing` only. Must run from workspace root, not working-directory.
+      #
+      # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
+      # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
         if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
         working-directory: .
@@ -270,6 +278,18 @@ jobs:
           GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
           ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq btrfs-progs
+          sudo truncate -s 110G /tmp/cow-scratch.img
+          sudo mkfs.btrfs -q /tmp/cow-scratch.img
+          sudo mkdir -p /mnt/cow-scratch
+          sudo mount -o loop /tmp/cow-scratch.img /mnt/cow-scratch
+          sudo chown "$USER" /mnt/cow-scratch
+          mkdir -p /mnt/cow-scratch/test-material /mnt/cow-scratch/tmp
+          rm -rf ./test-material
+          ln -s /mnt/cow-scratch/test-material ./test-material
+          echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
+
           if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
             SUBCOMMAND=all
           else
