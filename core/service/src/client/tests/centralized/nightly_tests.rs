@@ -4,6 +4,7 @@ use crate::client::tests::centralized::user_decryption_tests::user_decryption_ce
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::engine::base::derive_request_id;
+use crate::testing::material::MaterialType;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use anyhow::Result;
@@ -33,6 +34,7 @@ async fn default_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_decryption_centralized",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: true,
@@ -68,6 +70,7 @@ async fn default_decryption_centralized_precompute_sns(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_decryption_centralized_precompute_sns",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression,
@@ -102,6 +105,7 @@ async fn default_user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_user_decryption_centralized_nightly",
+        MaterialType::Default,
         false,
         msg,
         EncryptionConfig {
@@ -139,6 +143,7 @@ async fn default_user_decryption_centralized_precompute_sns(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_user_decryption_centralized_precompute_sns_nightly",
+        MaterialType::Default,
         false,
         msg,
         EncryptionConfig {

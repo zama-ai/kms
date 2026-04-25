@@ -4,7 +4,7 @@
 //! test environments with automatic cleanup.
 use crate::consts::SIGNING_KEY_ID;
 use crate::testing::helpers::{create_test_material_manager, regenerate_central_keys};
-use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
+use crate::testing::material::{MaterialType, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 use crate::util::key_setup::ensure_client_keys_exist;
 use crate::vault::storage::{StorageType, file::FileStorage};
@@ -148,9 +148,11 @@ impl CentralizedTestEnvBuilder {
         let mut priv_storage =
             FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
-        // Generate centralized keys directly (don't use ensure_testing_material_exists
-        // which generates both centralized and threshold material unnecessarily)
-        regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
+        // For `Testing` material we (re)generate centralized keys to guarantee freshness;
+        // for `Default` we trust the pre-generated `test-material/default/` fixture as-is.
+        if spec.material_type == MaterialType::Testing {
+            regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
+        }
 
         // Ensure client signing/verification keys exist
         ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;

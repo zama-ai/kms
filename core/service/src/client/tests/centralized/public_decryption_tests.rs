@@ -8,6 +8,7 @@ use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::testing::material::{MaterialType, TestMaterialSpec};
 use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -28,6 +29,7 @@ async fn test_decryption_central() -> Result<()> {
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         "test_decryption_central",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -49,6 +51,7 @@ async fn test_decryption_central_no_decompression() -> Result<()> {
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         "test_decryption_central_no_decompression",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -70,6 +73,7 @@ async fn test_decryption_central_precompute_sns() -> Result<()> {
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         "test_decryption_central_precompute_sns",
+        MaterialType::Testing,
         vec![
             TestingPlaintext::U8(42),
             TestingPlaintext::U32(9876),
@@ -98,6 +102,7 @@ async fn default_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_decryption_centralized",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: true,
@@ -120,6 +125,7 @@ async fn default_decryption_centralized_precompute_sns(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         "default_decryption_centralized_precompute_sns",
+        MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: false,
@@ -134,15 +140,21 @@ pub(crate) async fn decryption_centralized(
     dkg_params: &DKGParams,
     key_id: &RequestId,
     test_name: &str,
+    material_type: MaterialType,
     msgs: Vec<TestingPlaintext>,
     encryption_config: EncryptionConfig,
     parallelism: usize,
 ) -> Result<()> {
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+    let spec = match material_type {
+        MaterialType::Testing => TestMaterialSpec::centralized_basic(),
+        MaterialType::Default => TestMaterialSpec::centralized_default(),
+    };
     let env = CentralizedTestEnv::builder()
         .with_test_name(test_name)
         .with_backup_vault()
+        .with_material_spec(spec)
         .build()
         .await?;
     let mut internal_client = env.create_internal_client(dkg_params).await?;
