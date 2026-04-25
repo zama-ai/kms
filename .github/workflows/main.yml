@@ -73,7 +73,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-client-k8s-tests:
-              - 'core-client/tests/**'
+              - 'core-client/tests/kind-testing/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
