@@ -290,6 +290,12 @@ jobs:
           ln -s /mnt/cow-scratch/test-material ./test-material
           echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
 
+          # TODO(dp): keep?
+          # Confirms btrfs is mounted at /mnt/cow-scratch (vs falling back to ext4
+          # silently). If this line is missing or shows a non-btrfs FS, the
+          # preamble didn't take effect.
+          findmnt /mnt/cow-scratch
+
           if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
             SUBCOMMAND=all
           else
@@ -297,6 +303,12 @@ jobs:
           fi
           echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
           cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+
+          # TODO(dp): keep?
+          # Confirms material landed on the btrfs mount (via the symlink) rather
+          # than on workspace ext4. Expect ~200MB for `testing` only, ~20-80GB
+          # for `all`.
+          du -sh /mnt/cow-scratch/test-material
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
@@ -361,6 +373,19 @@ jobs:
           echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
           env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+
+      # TODO(dp): keep?
+      # Did reflinks actually happen? Compare the logical size of all per-test
+      # tempdirs (apparent) against the disk blocks used on the btrfs mount.
+      # If reflinks worked, apparent >> used (e.g., 200 GB logical / 25 GB used).
+      # If they didn't, apparent ≈ used and we got byte copies for nothing.
+      - name: Verify CoW reflinks
+        if: ${{ always() && ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
+        run: |
+          echo "--- logical size of per-test tempdirs (apparent) ---"
+          du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
+          echo "--- actual blocks used on the btrfs mount ---"
+          df -h /mnt/cow-scratch
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
