@@ -1,10 +1,9 @@
 //! Threshold misc tests.
 //!
-//! These tests use the consolidated testing module and run in isolated
-//! temporary directories with pre-generated cryptographic material.
+//! These tests run in isolated temporary directories with pre-generated cryptographic material.
 
 use crate::client::test_tools::{await_server_ready, check_port_is_closed};
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, send_dec_reqs};
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::testing::prelude::*;
@@ -27,9 +26,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
 
-    // Boot servers WITHOUT PRSS and without pre-generated PRSS material,
-    // so decryption requests fail (no epoch initialized). FHE keys are still
-    // needed so send_dec_reqs can encrypt ciphertexts for the request.
+    // DON'T setup PRSS in order to ensure the server is not ready yet
     let spec = {
         use crate::testing::material::KeyType;
         let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
@@ -41,9 +38,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
-        .force_isolated() // Must use isolated material: shared mode includes PRSS data
-        // which would cause the epoch to load, making decrypt succeed
-        // instead of returning NotFound.
+        .force_isolated()
         .build()
         .await?;
 
@@ -66,8 +61,8 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         await_server_ready(core_service_name, cur_handle.service_port).await;
     }
 
-    // Validate that the send itself fails since there is no PRSS (no epoch initialized)
-    let (dec_tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
+    // Validate that the core server is not ready
+    let (dec_tasks, _req_id) = send_dec_reqs(
         1,
         &TEST_THRESHOLD_KEY_ID_4P,
         None,
@@ -84,7 +79,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
             .all(|res| res.is_err() && res.as_ref().err().unwrap().code() == tonic::Code::NotFound)
     );
 
-    // Check core service health for server 1
+    // Get health client for main server 1
     let mut main_health_client = get_health_client(servers.get(&1).unwrap().service_port)
         .await
         .expect("Failed to get core health client");
@@ -97,7 +92,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
 
-    // Check MPC threshold health for server 1
+    // Get health client for main server 1
     let mut threshold_health_client = get_health_client(servers.get(&1).unwrap().mpc_port.unwrap())
         .await
         .expect("Failed to get threshold health client");
@@ -111,7 +106,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         "Service is not in SERVING status. Got status: {status}"
     );
 
-    // Initialize PRSS via new_mpc_epoch on all parties
+    // Now initialize and check that the server is serving
     let mut req_tasks = JoinSet::new();
     for i in 1..=amount_parties as u32 {
         let mut cur_client = clients.get(&i).unwrap().clone();
@@ -137,19 +132,19 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         }
     }
 
-    // Shutdown the servers and check that the threshold health endpoint is no longer serving
+    // Shutdown the servers and check that the health endpoint is no longer serving
     for (_, server) in servers {
         server.assert_shutdown().await;
     }
+    // The MPC servers should be closed at this point
     let status = get_status(&mut threshold_health_client, threshold_service_name).await;
     assert!(status.is_err());
 
     Ok(())
 }
 
-/// Boots servers with PRSS, checks both core + MPC health,
-/// drops server 1, sleeps 300ms, verifies both services are unreachable.
-#[tokio::test]
+/// Validate that dropping the server signal triggers the server to shut down
+#[tokio::test(flavor = "multi_thread")]
 async fn test_threshold_close_after_drop() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
@@ -195,15 +190,12 @@ async fn test_threshold_close_after_drop() -> Result<()> {
         ServingStatus::Serving as i32,
         "Service is not in SERVING status. Got status: {status}"
     );
-
-    // Drop server 1 to trigger shutdown
+    // Trigger the shutdown
     let res = servers.remove(&1).unwrap();
     drop(res);
-
-    // Sleep to allow completion of the shut down
+    // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-
-    // Check both services are no longer reachable
+    // Check the server is no longer there
     assert!(
         get_status(&mut core_health_client, core_service_name)
             .await

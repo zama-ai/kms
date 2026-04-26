@@ -1,9 +1,8 @@
 //! Centralized misc tests.
 //!
-//! These tests use the consolidated testing module and run in isolated
-//! temporary directories with pre-generated cryptographic material.
+//! These tests run in isolated temporary directories with pre-generated cryptographic material.
 
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::{TIME_TO_SLEEP_MS, get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::testing::prelude::*;
@@ -75,12 +74,10 @@ async fn test_central_close_after_drop() -> Result<()> {
         .build()
         .await?;
 
-    // Create additional storage instances for internal client
     let pub_storage = FileStorage::new(Some(env.material_dir.path()), StorageType::PUB, None)?;
     let client_storage =
         FileStorage::new(Some(env.material_dir.path()), StorageType::CLIENT, None)?;
 
-    // Create internal client with isolated material
     let pub_storage_map = HashMap::from([(1, pub_storage)]);
     let mut internal_client = crate::client::client_wasm::Client::new_client(
         client_storage,
@@ -116,14 +113,14 @@ async fn test_central_close_after_drop() -> Result<()> {
     );
     let client_map = HashMap::from([(1, kms_client)]);
     // Keep the server occupied so it won't shut down immediately after dropping the handle
-    let (tasks, req_id) = crate::client::tests::common::send_dec_reqs(
+    let (tasks, req_id) = send_dec_reqs(
         3,
         &TEST_CENTRAL_KEY_ID,
         None,
         &client_map,
         &mut internal_client,
         &[None],
-        Some(env.material_dir.path()), // use isolated material path
+        Some(env.material_dir.path()),
     )
     .await;
     // Drop server
@@ -140,7 +137,7 @@ async fn test_central_close_after_drop() -> Result<()> {
     let dec_res = tasks.join_all().await;
     assert!(dec_res.iter().all(|res| res.is_ok()));
     // And wait for public decryption to also be done
-    let dec_resp_tasks = crate::client::tests::common::get_pub_dec_resp(&req_id, &client_map).await;
+    let dec_resp_tasks = get_pub_dec_resp(&req_id, &client_map).await;
     let dec_resp_res = dec_resp_tasks.join_all().await;
     // In centralized mode, dropping the single server means all responses should fail
     assert!(dec_resp_res.iter().all(|res| res.is_err()));

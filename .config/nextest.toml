@@ -6,8 +6,8 @@ nextest-version = { required = "0.9.48" }
 # nextest runs each test in a separate process, so #[serial] attributes alone
 # are insufficient to prevent parallel execution across binaries.
 [test-groups]
-# integration_test binaries spin up full KMS servers; running them in parallel
-# would cause port/resource contention.
+# integration_test spin up full KMS servers; running them in parallel could cause port/resource contention, hence we
+# force serialization.
 integration-serial = { max-threads = 1 }
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
