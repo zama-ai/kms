@@ -276,9 +276,6 @@ jobs:
       - name: Generate Test Material (Testing)
         if: ${{ ! inputs.skip-test-material }}
         working-directory: .
-        env:
-          GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
-          ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
           echo "Generating insecure test material..."
           echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10"
