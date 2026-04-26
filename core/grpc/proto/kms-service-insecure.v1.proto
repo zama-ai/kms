@@ -25,6 +25,8 @@ service CoreServiceEndpoint {
 
   rpc GetInsecureKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
+  rpc AbortKeyGen(kms.v1.RequestId) returns (kms.v1.Empty);
+
   rpc PublicDecrypt(kms.v1.PublicDecryptionRequest) returns (kms.v1.Empty);
 
   rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
@@ -40,6 +42,8 @@ service CoreServiceEndpoint {
   rpc InsecureCrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
   rpc GetInsecureCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
+
+  rpc AbortCrsGen(kms.v1.RequestId) returns (kms.v1.Empty);
 
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 

@@ -17,11 +17,11 @@ use crate::backup::{
     do_custodian_backup_recovery, do_custodian_recovery_init, do_get_operator_pub_keys,
     do_new_custodian_context, do_restore_from_backup,
 };
-use crate::crsgen::{do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
+use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
 use crate::keygen::{
-    do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen, get_keygen_responses,
-    get_preproc_keygen_responses,
+    do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
+    get_keygen_responses, get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
@@ -736,6 +736,12 @@ pub struct KeyGenResultParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct AbortParameters {
+    #[clap(long, short = 'i')]
+    pub request_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct RecoveryInitParameters {
     /// Indicator as to whether the KMS should overwrite a possible existing ephemeral key
     /// If false, the call will be indempotent, if true, this will not be the case
@@ -863,6 +869,7 @@ pub enum CCCommand {
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(KeyGenResultParameters),
+    AbortKeyGen(AbortParameters),
     InsecureKeyGen(InsecureKeyGenParameters),
     InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
@@ -873,6 +880,7 @@ pub enum CCCommand {
     UserDecrypt(CipherArguments),
     CrsGen(CrsParameters),
     CrsGenResult(ResultParameters),
+    AbortCrsGen(AbortParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
@@ -1832,6 +1840,14 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "insecure keygen done".to_string())]
         }
+        CCCommand::AbortKeyGen(AbortParameters { request_id }) => {
+            tracing::info!("Aborting key generation with request ID {}.", request_id);
+            let res =
+                do_abort_key_gen(&core_endpoints_req, *request_id, max_iter, num_parties).await?;
+            res.iter()
+                .map(|cur_resp| (Some(*request_id), cur_resp.clone()))
+                .collect::<Vec<(Option<RequestId>, String)>>()
+        }
         CCCommand::CrsGen(CrsParameters {
             max_num_bits,
             epoch_id,
@@ -1893,6 +1909,14 @@ pub async fn execute_cmd(
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
+        }
+        CCCommand::AbortCrsGen(AbortParameters { request_id }) => {
+            tracing::info!("Aborting CRS generation with request ID {}.", request_id);
+            let res =
+                do_abort_crs_gen(&core_endpoints_req, *request_id, max_iter, num_parties).await?;
+            res.iter()
+                .map(|cur_resp| (Some(*request_id), cur_resp.clone()))
+                .collect::<Vec<(Option<RequestId>, String)>>()
         }
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,

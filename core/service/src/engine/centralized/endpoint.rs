@@ -1,6 +1,7 @@
 use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::centralized::service::{
-    get_preprocessing_res_impl, init_impl, preprocessing_impl,
+    abort_crs_gen_impl, abort_key_gen_impl, get_preprocessing_res_impl, init_impl,
+    preprocessing_impl,
 };
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
@@ -130,6 +131,17 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
+    async fn abort_key_gen(
+        &self,
+        request: Request<kms_grpc::kms::v1::RequestId>,
+    ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_KEYGEN_ABORT);
+        abort_key_gen_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
     async fn user_decrypt(
         &self,
         request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
@@ -189,6 +201,17 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
         get_crs_gen_result_impl(self, request, false)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn abort_crs_gen(
+        &self,
+        request: Request<kms_grpc::kms::v1::RequestId>,
+    ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_CRS_GEN_ABORT);
+        abort_crs_gen_impl(self, request)
             .await
             .map_err(|e| e.into())
     }
