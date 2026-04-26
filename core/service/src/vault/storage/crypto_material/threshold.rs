@@ -3,6 +3,7 @@
 //! This module provides the storage implementation for cryptographic material
 //! used in the threshold KMS variant.
 
+use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
@@ -22,6 +23,7 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
     },
+    util::meta_store::update_err_req_in_meta_store,
     util::meta_store::{
         MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
     },
@@ -106,10 +108,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
     }
 
-    /// Write the CRS to the storage backend.
+    /// Write the CRS to the storage backend (for use in connection with resharing).
+    /// Returns true if the write was successful, false otherwise.
+    ///
     /// On failure, the meta_store is used to purge dangling data.
     /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    pub(crate) async fn inner_write_crs<T: Clone>(
+    pub(crate) async fn resharing_crs_write<T: Clone>(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
@@ -117,28 +121,42 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) -> bool {
-        self.inner
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info, meta_store)
+        if self
+            .inner
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info)
             .await
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
-            .await
+        {
+            true
+        } else {
+            // Some store op failed, we need to purge any potentially
+            // dangling data and update the meta store accordingly.
+            // Try to delete stored data to avoid anything dangling
+            // Ignore any failure to delete something since it might
+            // be because the data did not get created
+            // In any case, we can't do much.
+            if self.inner.purge_crs_material(crs_id, epoch_id).await {
+                // Successfully purged dangling data, now update meta store with error
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = update_err_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    crs_id,
+                    format!("Failed to write CRS to storage for epoch change to {epoch_id}"),
+                    OP_NEW_EPOCH,
+                );
+            } else {
+                // Failure in purging data
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = update_err_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    crs_id,
+                    format!(
+                        "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}"
+                    ),
+                    OP_NEW_EPOCH,
+                );
+            }
+            false
+        }
     }
 
     /// Check if the CRS under [req_id, epoch_id] exists in the storage.
@@ -539,18 +557,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) {
         self.inner
             .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
-            .await
-    }
-
-    /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    pub async fn purge_crs_material(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
-    ) {
-        self.inner
-            .purge_crs_material(req_id, epoch_id, guarded_meta_store)
             .await
     }
 
