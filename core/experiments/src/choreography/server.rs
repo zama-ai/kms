@@ -1,7 +1,7 @@
 use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
-    galois_fields::common::init_all_lagrange_stores,
+    galois_fields::lagrange::init_lagrange_stores,
     galois_rings::common::ResiduePoly,
     structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
 };
@@ -39,7 +39,7 @@ where
         let num_parties = peers.len() + 1;
         // The threshold-fhe config currently assumes n = 3t + 1.
         let threshold = (num_parties - 1) / 3;
-        init_all_lagrange_stores(
+        init_lagrange_stores(
             NonZero::new(num_parties).expect("num_parties must be non-zero"),
             threshold,
         )?;

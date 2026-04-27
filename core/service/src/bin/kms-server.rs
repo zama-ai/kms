@@ -1,4 +1,4 @@
-use algebra::galois_fields::common::init_all_lagrange_stores;
+use algebra::galois_fields::lagrange::init_lagrange_stores;
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
@@ -374,7 +374,7 @@ async fn main_exec() -> anyhow::Result<()> {
         && let Some(peers) = threshold_config.peers.as_ref()
         && !peers.is_empty()
     {
-        init_all_lagrange_stores(
+        init_lagrange_stores(
             NonZero::new(peers.len())
                 .expect("peers.len() (i.e. number of parties) was just checked to be non-zero"),
             threshold_config.threshold as usize,

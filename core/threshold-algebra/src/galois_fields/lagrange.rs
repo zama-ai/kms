@@ -1,10 +1,7 @@
 use std::num::NonZero;
 
 use super::LagrangeMap;
-use crate::{
-    poly::lagrange_polynomials, sharing::shamir::ShamirFieldPoly, structure_traits::Field,
-    syndrome::decode_syndrome,
-};
+use crate::{poly::lagrange_polynomials, structure_traits::Field};
 use itertools::Itertools;
 
 /// Builds a LagrangeMap containing pre-computed Lagrange polynomials for all sorted subsets
@@ -34,7 +31,7 @@ pub(crate) fn build_lagrange_map<F: Field>(
 ///
 /// __NOTE__: GF8 and GF16 are small enough that we can pre-compute all possible lagrange basis.
 /// so they are skipped here.
-pub fn init_all_lagrange_stores(
+pub fn init_lagrange_stores(
     num_parties: NonZero<usize>,
     min_threshold: usize,
 ) -> anyhow::Result<()> {
@@ -55,14 +52,4 @@ pub fn init_all_lagrange_stores(
         .set(build_lagrange_map(num_parties, min_threshold)?)
         .ok();
     Ok(())
-}
-
-pub fn syndrome_decoding_z2<F: Field + From<u8>>(
-    parties: &[usize],
-    syndrome: &ShamirFieldPoly<F>,
-    threshold: usize,
-) -> Vec<F> {
-    let xs: Vec<F> = parties.iter().map(|s| F::from(*s as u8)).collect();
-    let r = parties.len() - (threshold + 1);
-    decode_syndrome(syndrome, &xs, r)
 }
