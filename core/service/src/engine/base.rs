@@ -928,10 +928,7 @@ impl KeyGenMetadata {
         external_signature: Vec<u8>,
         extra_data: Vec<u8>,
     ) -> Self {
-        let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
-            tracing::warn!(
-                "Creating KeyGenMetadata with empty extra data. Will use the legacy format"
-            );
+        let parsed_extra_data = if extra_data.is_empty() {
             None
         } else {
             Some(extra_data)
@@ -1034,10 +1031,7 @@ impl CrsGenMetadata {
         external_signature: Vec<u8>,
         extra_data: Vec<u8>,
     ) -> Self {
-        let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
-            tracing::warn!(
-                "Creating CrsGenMetadata with empty extra data. Will use the legacy format"
-            );
+        let parsed_extra_data = if extra_data.is_empty() {
             None
         } else {
             Some(extra_data)
