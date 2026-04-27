@@ -362,7 +362,7 @@ pub fn sanity_check_extra_data(extra_data: &[u8], epoch_id: &EpochId, context_id
 }
 
 /// Helper method to return an Option<String> containing a warning message if the extra data is not in the expected format.
-/// WARNING: As per design the KMS is supposed to be agnostic to the extra_data content for forwards 
+/// WARNING: As per design the KMS is supposed to be agnostic to the extra_data content for forward
 /// compatibility reasons. Hence malformed extra_data will not cause a failure but only a warning logs.
 fn sanity_check_extra_data_helper(
     extra_data: &[u8],
