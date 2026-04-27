@@ -8,16 +8,14 @@ use kms_core_client::*;
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
-use kms_lib::backup::SEED_PHRASE_DESC;
-use kms_lib::consts::DEFAULT_MPC_CONTEXT;
-use kms_lib::consts::ID_LENGTH;
-use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
-use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::engine::base::DSEP_PUBDATA_CRS;
-use kms_lib::engine::base::DSEP_PUBDATA_KEY;
-use kms_lib::engine::base::derive_request_id;
-use kms_lib::engine::base::safe_serialize_hash_element_versioned;
-use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
+use kms_lib::DecryptionMode;
+use kms_lib::client::test_tools::ServerHandle;
+use kms_lib::consts::{
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
+};
+use kms_lib::testing::prelude::*;
+use observability::conf::Settings;
+use serde::Deserialize;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -26,10 +24,8 @@ use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
-use test_utils_cc::{DockerCompose, KMSMode};
-use tfhe::safe_serialization;
-use tfhe::xof_key_set::CompressedXofKeySet;
-use tfhe::zk::CompactPkeCrs;
+#[cfg(feature = "threshold_tests")]
+use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use tracing::info;
 use validator::Validate;
 
@@ -49,9 +45,7 @@ use kms_lib::engine::base::{
     DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
 };
 #[cfg(feature = "threshold_tests")]
-use kms_lib::util::key_setup::test_tools::{
-    load_material_from_pub_storage, load_pk_from_pub_storage,
-};
+use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
 // UTILITY HELPERS
@@ -322,14 +316,11 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
-/// This helper enables `ensure_default_prss=true` during server startup. The test material copy
-/// includes pre-generated PRSS (from `test-material`). At startup, the server checks
-/// whether the loaded PRSS profile matches the context shape; if it does, live MPC
-/// PRSS init is skipped entirely.
+/// This helper enables `ensure_default_prss=true` during server startup. For Test params,
+/// pre-generated PRSS from `test-material` may be copied and reused when present.
 ///
-/// With **Test params** (`FheParameter::Test`), missing PRSS can be initialized live.
-/// For **Default params**, use `setup_isolated_threshold_cli_test_with_prss_default`,
-/// which requires pre-generated PRSS material under `test-material/default`.
+/// With **Default params**, `setup_isolated_threshold_cli_test_with_prss_default` uses the
+/// same startup PRSS initialization path instead of requiring pre-generated PRSS blobs.
 ///
 /// # Example
 /// ```no_run
@@ -447,8 +438,9 @@ async fn setup_isolated_threshold_cli_test_default(
 ///
 /// Uses `ensure_default_prss=true` with `FheParameter::Default`.
 ///
-/// Requires pre-generated Default PRSS material in `test-material/default`
-/// (for example via `make generate-test-material-default`), otherwise setup fails fast.
+/// PRSS is ensured at server startup: if the default epoch is missing, startup initializes it;
+/// otherwise existing PRSS is reused. Default threshold context and key material still come
+/// from `test-material/default`, but `PrssSetupCombined` is not copied up front.
 #[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
@@ -596,11 +588,8 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
         .with_test_name(test_name)
         .with_party_count(party_count);
 
-    let default_material_spec = match (fhe_params, ensure_default_prss) {
-        (FheParameter::Default, true) => {
-            kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
-        }
-        (FheParameter::Default, false) => {
+    let default_material_spec = match fhe_params {
+        FheParameter::Default => {
             kms_lib::testing::material::TestMaterialSpec::threshold_default_no_prss(party_count)
         }
         _ => kms_lib::testing::material::TestMaterialSpec::threshold_basic(party_count),
@@ -1025,7 +1014,7 @@ fn cipher_params(
     batch_size: usize,
     no_compression: bool,
     no_precompute_sns: bool,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
     ciphertext_output_path: Option<PathBuf>,
 ) -> CipherParameters {
     CipherParameters {
@@ -1041,7 +1030,7 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
-        compressed_keys,
+        uncompressed_keys,
         extra_data: None,
     }
 }
@@ -1051,36 +1040,19 @@ async fn insecure_key_gen(
     config_path: &Path,
     test_path: &Path,
     uncompressed: bool,
-) -> String {
-    let path_to_config = ctx.root_path().join(ctx.config_path());
-    let shared_args = if uncompressed {
-        SharedKeyGenParameters {
-            uncompressed: true,
-            ..Default::default()
-        }
-    } else {
-        SharedKeyGenParameters::default()
-    };
-    let config = CmdConfig {
-        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
-        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }),
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-        download_all: false,
-    };
-
-    println!("Doing insecure key-gen (uncompressed: {uncompressed})");
-    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure key-gen done (uncompressed: {uncompressed})");
-
-    assert_eq!(key_gen_results.len(), 1);
-    let key_id = match key_gen_results.first().unwrap() {
-        (Some(value), _) => value,
-        _ => panic!("Error doing insecure keygen (uncompressed: {uncompressed})"),
-    };
-
-    key_id.to_string()
+) -> Result<String> {
+    let config = cmd_config(
+        config_path,
+        CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            shared_args: SharedKeyGenParameters {
+                uncompressed,
+                ..Default::default()
+            },
+        }),
+        200,
+    );
+    let id = run_cmd(&config, test_path, "insecure key-gen").await?;
+    Ok(id.to_string())
 }
 
 // ============================================================================
@@ -1088,7 +1060,11 @@ async fn insecure_key_gen(
 // ============================================================================
 
 /// Helper to run CRS generation via CLI (isolated version)
-async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -> Result<String> {
+async fn crs_gen(
+    config_path: &Path,
+    test_path: &Path,
+    insecure_crs_gen: bool,
+) -> Result<String> {
     crs_gen_with_params(
         config_path,
         test_path,
@@ -1129,66 +1105,23 @@ async fn crs_gen_with_params(
     Ok(id.to_string())
 }
 
-async fn real_preproc(
-    config_path: &str,
-    test_path: &Path,
-    shared_args: &SharedKeyGenParameters,
-    max_iter: usize,
-) -> anyhow::Result<Option<RequestId>> {
-    let config = CmdConfig {
-        file_conf: Some(vec![config_path.to_string()]),
-        command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
-            context_id: shared_args.context_id,
-            epoch_id: shared_args.epoch_id,
-            uncompressed: shared_args.uncompressed,
-            from_existing_shares: shared_args.existing_keyset_id.is_some(),
-        }),
-        logs: true,
-        max_iter,
-        expect_all_responses: true,
-        download_all: false,
-    };
-    println!("Doing preprocessing");
-    let mut preproc_result = execute_cmd(&config, test_path)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    assert_eq!(preproc_result.len(), 1);
-    preproc_result
-        .pop()
-        .map(|(preproc_id, _)| preproc_id)
-        .ok_or_else(|| anyhow::anyhow!("missing preproc result"))
-}
+/// Helper to run integration test commands via CLI (isolated version)
+///
+/// Mirrors the Docker-based `integration_test_commands` in integration_test.rs:
+/// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
+/// - Encrypt to file + PublicDecrypt/UserDecrypt from file
+/// - SnS precompute variants (no_precompute_sns=false)
+async fn integration_test_commands(
+    config_path: &Path,
+    keys_folder: &Path,
+    key_id: String,
+) -> Result<()> {
+    let key_id = KeyId::from_str(&key_id)?;
+    let ctxt_path = keys_folder.join("test_encrypt_cipher.txt");
+    let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
 
-async fn real_preproc_and_keygen(
-    config_path: &str,
-    test_path: &Path,
-    shared_args: SharedKeyGenParameters,
-    max_iter: usize,
-) -> (String, String) {
-    let preproc_id = real_preproc(config_path, test_path, &shared_args, max_iter)
-        .await
-        .unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
-    let uncompressed = shared_args.uncompressed;
-    let config = CmdConfig {
-        file_conf: Some(vec![config_path.to_string()]),
-        command: CCCommand::KeyGen(KeyGenParameters {
-            preproc_id: preproc_id.unwrap(),
-            shared_args,
-        }),
-        logs: true,
-        max_iter,
-        expect_all_responses: true,
-        download_all: false,
-    };
-    println!("Doing key-gen (uncompressed: {uncompressed})");
-    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Key-gen done (uncompressed: {uncompressed})");
-    assert_eq!(key_gen_results.len(), 1);
-
-    let key_id = match key_gen_results.first().unwrap() {
-        (Some(value), _) => value,
-        _ => panic!("Error doing keygen (uncompressed: {uncompressed})"),
+    let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
+        cipher_params(val, dt, key_id, bs, no_comp, no_sns, false, None)
     };
 
     // Commands without SnS precompute (no_precompute_sns=true)
@@ -1416,11 +1349,12 @@ async fn real_preproc_and_keygen(
     Ok(())
 }
 
-/// Run a subset of integration test commands using compressed keys.
+/// Run a subset of integration test commands using the default keyset format.
 ///
-/// Compressed keys only store `CompressedXofKeySet` (no separate `PublicKey`/`ServerKey`),
-/// so all commands must use `no_compression: false` to fetch the compressed keyset.
-async fn integration_test_commands_compressed(
+/// The default public material stores only `CompressedXofKeySet`
+/// (no separate `PublicKey`/`ServerKey`), so all commands must use
+/// `uncompressed_keys: false`.
+async fn integration_test_commands_default_keys(
     config_path: &Path,
     keys_folder: &Path,
     key_id: String,
@@ -1428,7 +1362,7 @@ async fn integration_test_commands_compressed(
     let key_id = KeyId::from_str(&key_id)?;
 
     let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, false, no_sns, true, None)
+        cipher_params(val, dt, key_id, bs, false, no_sns, false, None)
     };
 
     let commands = vec![
@@ -1508,7 +1442,7 @@ async fn integration_test_commands_compressed(
     Ok(())
 }
 
-/// Helper to abort an in-flight key generation via CLI.
+/// Helper to abort an in-flight key generation via CLI (isolated version).
 ///
 /// The CLI command collects a response (ok or error code) from every party and
 /// only fails the command when it cannot gather enough responses. This helper
@@ -1538,7 +1472,7 @@ async fn abort_key_gen(
         .collect())
 }
 
-/// Helper to abort an in-flight CRS generation via CLI.
+/// Helper to abort an in-flight CRS generation via CLI (isolated version).
 async fn abort_crs_gen(
     config_path: &Path,
     test_path: &Path,
@@ -1586,14 +1520,14 @@ async fn real_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
     max_iter: usize,
-    compressed: bool,
+    uncompressed: bool,
 ) -> Result<String> {
     let preproc_config = cmd_config(
         config_path,
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id: None,
             epoch_id: None,
-            compressed,
+            uncompressed,
             from_existing_shares: false,
         }),
         max_iter,
@@ -1611,7 +1545,7 @@ async fn real_preproc_and_keygen(
         CCCommand::KeyGen(KeyGenParameters {
             preproc_id,
             shared_args: SharedKeyGenParameters {
-                compressed,
+                uncompressed,
                 ..Default::default()
             },
         }),
@@ -1717,7 +1651,11 @@ async fn run_cmd_no_id(config: &CmdConfig, test_path: &Path, label: &str) -> Res
 }
 
 /// Create new MPC context via CLI (isolated version)
-async fn new_mpc_context(config_path: &Path, context_path: &Path, test_path: &Path) -> Result<()> {
+async fn new_mpc_context(
+    config_path: &Path,
+    context_path: &Path,
+    test_path: &Path,
+) -> Result<()> {
     let config = cmd_config(
         config_path,
         CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
@@ -1762,7 +1700,7 @@ async fn real_preproc_and_keygen_with_context(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
-            compressed: false,
+            uncompressed: false,
             from_existing_shares: false,
         }),
         200,
@@ -2163,26 +2101,26 @@ async fn test_centralized_insecure() -> Result<()> {
     let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
-    // Also test with compressed keys
-    let compressed_key_id = insecure_key_gen(&config_path, keys_folder, true).await?;
-    integration_test_commands_compressed(&config_path, keys_folder, compressed_key_id).await?;
+    // Also exercise the default-key fast path separately.
+    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id)
+        .await?;
 
     Ok(())
 }
 
-/// Test centralized insecure compressed key generation via CLI
+/// Test centralized insecure key generation via CLI using the default key format.
 ///
-/// Mirrors `test_centralized_insecure_compressed_keygen` in `integration_test.rs`.
-/// Runs insecure key generation with `compressed=true` against a native in-process server.
+/// Mirrors `test_centralized_insecure_default_keygen` in `integration_test.rs`.
 #[tokio::test]
-async fn test_centralized_insecure_compressed_keygen() -> Result<()> {
+async fn test_centralized_insecure_default_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure_compressed_keygen").await?;
+        setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, true).await?;
+    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
@@ -2338,9 +2276,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure key generation via CLI (Default FHE params, with PRSS)
-///
-/// Requires pre-generated Default PRSS material in `test-material/default`.
+/// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
@@ -2354,324 +2290,15 @@ async fn test_threshold_insecure() -> Result<()> {
     let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
-    let compressed_key_id = insecure_key_gen(&config_path, keys_folder, true).await?;
-    integration_test_commands_compressed(&config_path, keys_folder, compressed_key_id).await?;
+    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id)
+        .await?;
 
     Ok(())
 }
 
-async fn integration_test_commands<T: DockerComposeManager>(
-    ctx: &T,
-    key_id: String,
-    extra_data: Option<String>,
-) {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
-    let ctxt_with_sns_path: &Path = Path::new("tests/data/test_encrypt_cipher_with_sns.txt");
-    // some commands are tested twice to see the cache in action
-    let key_id = KeyId::from_str(&key_id).expect("CCCommand failed for KeyId");
-    let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x1".to_string(),
-            data_type: FheType::Ebool,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x1".to_string(),
-            data_type: FheType::Ebool,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x6F".to_string(),
-            data_type: FheType::Euint8,
-            no_compression: true,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 3,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x6F".to_string(),
-            data_type: FheType::Euint8,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 3,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0xFFFF".to_string(),
-            data_type: FheType::Euint16,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::Encrypt(CipherParameters {
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: false,
-            no_precompute_sns: true,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: Some(ctxt_path.to_path_buf()),
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        }),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_path.to_path_buf(),
-            batch_size: 1,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_path.to_path_buf(),
-            batch_size: 1,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-            extra_data: extra_data.clone(),
-        })),
-    ];
-
-    let commands_for_sns_precompute = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x1".to_string(),
-            data_type: FheType::Ebool,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 2,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x78".to_string(),
-            data_type: FheType::Euint8,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 2,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x1".to_string(),
-            data_type: FheType::Ebool,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0x6F".to_string(),
-            data_type: FheType::Euint8,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
-            to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: None,
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::Encrypt(CipherParameters {
-            to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
-                .to_string(),
-            data_type: FheType::Euint256,
-            no_compression: true,
-            no_precompute_sns: false,
-            key_id,
-            context_id: None,
-            epoch_id: None,
-            batch_size: 1,
-            num_requests: 1,
-            parallel_requests: 1,
-            ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
-            inter_request_delay_ms: 0,
-            uncompressed_keys: false,
-            extra_data: extra_data.clone(),
-        }),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_with_sns_path.to_path_buf(),
-            batch_size: 1,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-            extra_data: extra_data.clone(),
-        })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_with_sns_path.to_path_buf(),
-            batch_size: 1,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-            extra_data,
-        })),
-    ];
-
-    test_template(
-        ctx,
-        [commands, commands_for_sns_precompute].concat(),
-        keys_folder,
-    )
-    .await
-}
-
-fn config_path_from_context(ctx: &impl DockerComposeManager) -> String {
-    ctx.root_path()
-        .join(ctx.config_path())
-        .to_str()
-        .unwrap()
-        .to_string()
-}
-
-#[test_context(DockerComposeThresholdTest)]
+/// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
+#[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
@@ -2820,46 +2447,42 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure compressed key generation via CLI (Test FHE params, with PRSS)
+/// Test threshold insecure key generation via CLI using the default key format.
 ///
-/// Mirrors `test_threshold_insecure_compressed_keygen` in integration_test.rs.
-/// Validates that insecure keygen with `compressed=true` produces a valid key ID
-/// on a threshold cluster using Test FHE parameters.
+/// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
-async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
+async fn test_threshold_insecure_default_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_compressed_keygen", 4)
-            .await?;
+        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, true).await?;
+    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
 }
 
-/// Test threshold preprocessing and keygen with compressed keys via CLI (Test FHE params, with PRSS)
+/// Test threshold preprocessing and keygen with the default key format.
 ///
-/// Mirrors `test_threshold_compressed_preproc_keygen` in integration_test.rs.
-/// Runs two sequential preproc+keygen cycles with `compressed=true` and asserts
+/// Mirrors `test_threshold_default_preproc_keygen` in `integration_test.rs`.
+/// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
-async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
+async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_compressed_preproc_keygen", 4)
-            .await?;
+        setup_isolated_threshold_cli_test_with_prss("threshold_default_preproc_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, true).await?;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, true).await?;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
 
     assert_ne!(key_id_1, key_id_2);
 
@@ -3071,8 +2694,8 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// The Test-param variant (`nightly_tests_threshold_sequential_preproc_keygen`) covers
 /// sequential 2-round behavior.
 ///
-// Extremely heavy test — requires dedicated infra with pre-generated Default-param
-// PRSS material and multi-hour runtime budget. Do NOT run in regular CI or local dev.
+// Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
+// Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
@@ -3087,213 +2710,19 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_prss_default("full_gen_preproc", 4).await?;
 
-    // try to do ddec in the new context
-    let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-        to_encrypt: "0x1".to_string(),
-        data_type: FheType::Ebool,
-        no_compression: false,
-        no_precompute_sns: true,
-        key_id: KeyId::from_str(&key_id).unwrap(),
-        context_id: Some(context_id),
-        epoch_id: None,
-        batch_size: 1,
-        num_requests: 1,
-        parallel_requests: 1,
-        ciphertext_output_path: None,
-        inter_request_delay_ms: 0,
-        uncompressed_keys: false,
-        extra_data: None,
-    }));
-    test_template(ctx, vec![ddec_command], test_path).await;
-}
-
-// Start from mpc parties that are not initialized (no prss or context).
-#[test_context(DockerComposeThresholdTestNoInit)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = temp_dir.path();
-    let context_path = temp_dir.path().join("mpc_context.bin");
-    let config_path = ctx.root_path().join(ctx.config_path());
-
-    // create and store mpc context
-    let context_id = derive_request_id("CONTEXT_INIT").unwrap().into();
-    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
-
-    // create the new context
-    new_mpc_context(&context_path, &config_path, test_path).await;
-
-    // create PRSS
-    let epoch_id = derive_request_id("EPOCH_INIT").unwrap().into();
-    new_genesis_epoch(context_id, epoch_id, &config_path, test_path).await;
-
-    // do preproc and keygen (which should use the prss)
-    let _ = real_preproc_and_keygen(
-        config_path.to_str().unwrap(),
-        test_path,
-        SharedKeyGenParameters {
-            context_id: Some(context_id),
-            epoch_id: Some(epoch_id),
-            ..Default::default()
-        },
+    let keys_folder = material_dir.path();
+    let t0 = std::time::Instant::now();
+    let key_id_1 = real_partial_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         200,
     )
-    .await;
-}
-
-#[test_context(DockerComposeThresholdTestNoInitSixParty)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoInitSixParty) {
-    init_logging();
-    let config_path = ctx.root_path().join(ctx.config_path());
-    let alternative_config_path = ctx.root_path().join(ctx.alternative_config_path());
-
-    // first mpc context with parties 1, 2, 3, 4
-    // note that this is defined by the normal config path
-    {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let test_path = temp_dir.path();
-        let context_path = temp_dir.path().join("mpc_context.bin");
-
-        // create and store mpc context
-        let context_id_1 = derive_request_id("CONTEXT_6P_SET_1").unwrap().into();
-        store_mpc_context_in_file(&context_path, &config_path, context_id_1).await;
-
-        // create the new context
-        new_mpc_context(&context_path, &config_path, test_path).await;
-
-        // create PRSS
-        let epoch_id_1 = derive_request_id("EPOCH_6P_SET_1").unwrap().into();
-        new_genesis_epoch(context_id_1, epoch_id_1, &config_path, test_path).await;
-    }
-
-    // second mpc context with parties 5, 6, 3, 4
-    {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let test_path = temp_dir.path();
-        let context_path = temp_dir.path().join("mpc_context.bin");
-
-        // create and store mpc context
-        let context_id_2 = derive_request_id("CONTEXT_6P_SET_2").unwrap().into();
-        store_mpc_context_in_file(&context_path, &alternative_config_path, context_id_2).await;
-
-        // create the new context
-        new_mpc_context(&context_path, &alternative_config_path, test_path).await;
-
-        // create PRSS
-        let epoch_id_2 = derive_request_id("EPOCH_6P_SET_2").unwrap().into();
-        new_genesis_epoch(
-            context_id_2,
-            epoch_id_2,
-            &alternative_config_path,
-            test_path,
-        )
-        .await;
-
-        // do preproc and keygen (which should use the prss)
-        let _ = real_preproc_and_keygen(
-            alternative_config_path.to_str().unwrap(),
-            test_path,
-            SharedKeyGenParameters {
-                context_id: Some(context_id_2),
-                epoch_id: Some(epoch_id_2),
-                ..Default::default()
-            },
-            200,
-        )
-        .await;
-
-        // delete context
-        destroy_mpc_context(&context_id_2, &alternative_config_path, test_path).await;
-
-        // check whether the context is deleted by running keygen, which should fail
-        let err = real_preproc(
-            alternative_config_path.to_str().unwrap(),
-            test_path,
-            &SharedKeyGenParameters {
-                context_id: Some(context_id_2),
-                epoch_id: Some(epoch_id_2),
-                uncompressed: false,
-                existing_keyset_id: None,
-                existing_epoch_id: None,
-                use_existing_key_tag: false,
-                extra_data: None,
-            },
-            200,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("Only 0/4 preproc requests succeeded")
-        );
-    }
-}
-
-#[test_context(DockerComposeThresholdTestNoInitSixParty)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = temp_dir.path();
-    let context_path_set_1 = temp_dir.path().join("mpc_context_set_1.bin");
-    let config_path_set_1 = ctx.root_path().join(ctx.config_path());
-
-    let context_path_set_2 = temp_dir.path().join("mpc_context_set_2.bin");
-    let config_path_set_2 = ctx.root_path().join(ctx.alternative_config_path());
-
-    // create and store mpc context
-    let context_id_set_1 = derive_request_id("CONTEXT_SET_1").unwrap().into();
-    store_mpc_context_in_file(&context_path_set_1, &config_path_set_1, context_id_set_1).await;
-
-    // create the new context
-    // NOTE WE NEED TO CREATE THE CONTEXT OF S1 TO PARTIES IN S2 EVEN
-    // THOUGH THEY ARE NOT IN THE CONTEXT, BECAUSE THEY STILL NEED TO KNOW THEM
-    // FOR RESHARING DURING EPOCH CREATION. (VICE VERSA FOR THE OTHER SET)
-    println!("Creating first MPC context");
-    new_mpc_context_with_two_sets(
-        &context_path_set_1,
-        &config_path_set_1,
-        &config_path_set_2,
-        test_path,
-    )
-    .await;
-    println!("Created first MPC context");
-
-    // Create the first epoch (i.e. Init the PRSS)
-    println!("Creating first epoch");
-    let epoch_id_set_1 = derive_request_id("EPOCH_ID_1").unwrap().into();
-    let command = CCCommand::NewEpoch(NewEpochParameters {
-        new_epoch_id: epoch_id_set_1,
-        new_context_id: context_id_set_1,
-        previous_epoch_params: None,
-    });
-
-    let epoch_config = CmdConfig {
-        file_conf: Some(vec![String::from(config_path_set_1.to_str().unwrap())]),
-        command,
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-        download_all: false,
-    };
-    execute_cmd(&epoch_config, test_path).await.unwrap();
-    println!("Created first epoch");
-
-    // do preproc and keygen (which should use the prss)
-    let (key_id, preproc_id) = real_preproc_and_keygen(
-        config_path_set_1.to_str().unwrap(),
-        test_path,
-        SharedKeyGenParameters {
-            context_id: Some(context_id_set_1),
-            epoch_id: Some(epoch_id_set_1),
-            ..Default::default()
-        },
+    .await?;
+    let key_id_2 = real_partial_preproc_and_keygen(
+        &config_path,
+        keys_folder,
+        PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
         200,
     )
     .await?;
@@ -3612,7 +3041,7 @@ mod docker_harness {
         info!("Context 1 keygen produced key_id={key_1_id}");
 
         // Second MPC context: parties 5,6,3,4 via alternative config.
-        // Servers 5,6 replace 1,2 — their TLS certificates must be loaded by the
+        // Servers 5,6 replace 1,2 - their TLS certificates must be loaded by the
         // peers when the new context takes effect. If certificate-store reload
         // is broken, the mTLS handshake for subsequent MPC traffic fails here.
         let context_2_id = derive_request_id("CONTEXT_6P_SET_2")?.into();
@@ -3702,8 +3131,8 @@ async fn test_threshold_reshare() -> Result<()> {
         .build()
         .init_conf()?;
 
-    let party_confs = fetch_public_elements(
-        &key_id,
+    let ids = fetch_public_elements(
+        &key_id_str,
         &[PubDataType::CompressedXofKeySet],
         &cc_conf,
         test_path,
@@ -3711,21 +3140,22 @@ async fn test_threshold_reshare() -> Result<()> {
     )
     .await?;
 
-    // read the key materials from file
-    let key_id = RequestId::from_str(&key_id).unwrap();
-    let object_folder = &cc_conf.cores[party_confs[0].party_id - 1].object_folder;
+    // Step 7: Read the key and crs materials from file and compute digests
+    let key_id = RequestId::from_str(&key_id_str)?;
+    // Use first party's storage prefix for reading materials
+    let storage_prefix = format!("PUB-p{}", ids[0].party_id);
     let compressed_keyset: CompressedXofKeySet = load_material_from_pub_storage(
         Some(test_path),
         &key_id,
         PubDataType::CompressedXofKeySet,
-        Some(object_folder),
+        Some(&storage_prefix),
     )
     .await;
 
-    // compute the digests
-    let compressed_keyset_digest = hex::encode(
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap(),
-    );
+    let compressed_keyset_digest = hex::encode(safe_serialize_hash_element_versioned(
+        &DSEP_PUBDATA_KEY,
+        &compressed_keyset,
+    )?);
 
     let _ids =
         fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
@@ -3744,99 +3174,26 @@ async fn test_threshold_reshare() -> Result<()> {
         &crs,
     )?);
 
-    // create the new context
-    new_mpc_context_with_two_sets(
-        &context_path_set_2,
-        &config_path_set_1,
-        &config_path_set_2,
-        test_path,
-    )
-    .await;
-    println!("Created second MPC context");
-
-    // Create a new epoch for this context, with resharing from the first context and epoch
-    println!("Creating reshared epoch");
-    let epoch_id_set_2 = derive_request_id("EPOCH_ID_2").unwrap().into();
-    let command = CCCommand::NewEpoch(NewEpochParameters {
-        new_epoch_id: epoch_id_set_2,
-        new_context_id: context_id_set_2,
-        previous_epoch_params: Some(PreviousEpochParameters {
-            context_id: context_id_set_1,
-            epoch_id: epoch_id_set_1,
-            previous_keys: vec![PreviousKeyInfo {
-                key_id: key_id.into(),
-                preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-                key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
-            }],
-            previous_crs: vec![PreviousCrsInfo {
-                crs_id,
-                digest: crs_digest,
-            }],
-        }),
-    });
-
-    let epoch_config = CmdConfig {
-        // Init the core client from both config files so we can talk to all the parties
-        file_conf: Some(vec![
-            String::from(config_path_set_1.to_str().unwrap()),
-            String::from(config_path_set_2.to_str().unwrap()),
-        ]),
-        command,
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-        download_all: false,
+    // Step 8: Execute resharing (must use a NEW epoch ID, different from the one created in Step 3)
+    let new_epoch_id = derive_request_id("EPOCH_RESHARE_NEW")?.into();
+    let preproc_id = RequestId::from_str(&preproc_id_str)?;
+    let previous_key_info = PreviousKeyInfo {
+        key_id: key_id.into(),
+        preproc_id,
+        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
     };
-    let result = execute_cmd(&epoch_config, test_path).await.unwrap();
-    println!("Resharing completed successfully {:?}", result);
-
-    // Try and do a decrypt with the new set and new epoch
-    let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
-        to_encrypt: "0x123456".to_string(),
-        data_type: FheType::Euint64,
-        no_compression: false,
-        no_precompute_sns: true,
-        key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
-        context_id: Some(context_id_set_2),
-        epoch_id: Some(epoch_id_set_2),
-        batch_size: 1,
-        num_requests: 1,
-        ciphertext_output_path: None,
-        parallel_requests: 1,
-        inter_request_delay_ms: 0,
-        uncompressed_keys: false,
-        extra_data: None,
-    }));
-
-    let ddec_config = CmdConfig {
-        file_conf: Some(vec![String::from(config_path_set_2.to_str().unwrap())]),
-        command: ddec_command,
-        logs: true,
-        max_iter: 200,
-        expect_all_responses: true,
-        download_all: false,
+    let previous_crs_info = PreviousCrsInfo {
+        crs_id,
+        digest: crs_digest,
     };
     let resharing_result = reshare(
         &config_path,
         test_path,
-<<<<<<< HEAD
         Some(context_id),
         Some(epoch_id),
         new_epoch_id,
         vec![previous_key_info],
         vec![previous_crs_info],
-=======
-        &SharedKeyGenParameters {
-            context_id: Some(context_id_set_1),
-            epoch_id: Some(epoch_id_set_1),
-            uncompressed: false,
-            existing_keyset_id: None,
-            existing_epoch_id: None,
-            use_existing_key_tag: false,
-            extra_data: None,
-        },
-        200,
->>>>>>> main
     )
     .await?;
 
@@ -3846,146 +3203,6 @@ async fn test_threshold_reshare() -> Result<()> {
     // The second element is the previous epoch_id used for reshare
     assert_eq!(resharing_result[1].0.unwrap(), epoch_id.into());
 
-<<<<<<< HEAD
     info!("✅ Threshold reshare test completed successfully");
     Ok(())
-=======
-// Extremely heavy test — requires dedicated infra with pre-generated Default-param
-// PRSS material and multi-hour runtime budget. Do NOT run in regular CI or local dev.
-// Only execute when a fully prepared full-generation environment is available.
-#[test_context(DockerComposeThresholdDefault)]
-#[tokio::test]
-#[serial(docker)]
-#[ignore]
-async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen(
-    ctx: &DockerComposeThresholdDefault,
-) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters::default(),
-        200,
-    )
-    .await;
-    let key_id_2 = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters::default(),
-        200,
-    )
-    .await;
-    assert_ne!(key_id_1, key_id_2);
-}
-
-#[test_context(DockerComposeThresholdDefault)]
-#[tokio::test]
-#[serial(docker)]
-async fn nightly_full_gen_tests_default_threshold_sequential_crs(
-    ctx: &DockerComposeThresholdDefault,
-) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let crs_id_1 = crs_gen(ctx, keys_folder, false, None).await;
-    let crs_id_2 = crs_gen(ctx, keys_folder, false, Some("0x9999".to_string())).await;
-    assert_ne!(crs_id_1, crs_id_2);
-}
-
-///////// COMPRESSED KEYGEN TESTS//////////
-///////////////////////////////////////////
-
-#[test_context(DockerComposeCentralized)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_centralized_insecure_default_keygen(ctx: &DockerComposeCentralized) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
-    assert!(!key_id.is_empty());
-}
-
-#[test_context(DockerComposeThresholdTest)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_insecure_default_keygen(ctx: &DockerComposeThresholdTest) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
-    assert!(!key_id.is_empty());
-}
-
-#[test_context(DockerComposeThresholdTest)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_default_preproc_keygen(ctx: &DockerComposeThresholdTest) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters {
-            uncompressed: false,
-            ..Default::default()
-        },
-        200,
-    )
-    .await;
-    let key_id_2 = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters {
-            uncompressed: false,
-            ..Default::default()
-        },
-        200,
-    )
-    .await;
-    assert_ne!(key_id_1, key_id_2);
-}
-
-#[test_context(DockerComposeThresholdTest)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_default_keygen_from_existing(ctx: &DockerComposeThresholdTest) {
-    init_logging();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let config_path = config_path_from_context(ctx);
-
-    // Step 1: Default keygen to establish a keyset with secret shares
-    let (key_id_1, _) = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters {
-            uncompressed: false,
-            ..Default::default()
-        },
-        200,
-    )
-    .await;
-
-    // Step 2: Default keygen reusing existing secret shares from keygen 1
-    let existing_keyset_id = RequestId::from_str(&key_id_1).unwrap();
-    let (key_id_2, _) = real_preproc_and_keygen(
-        &config_path,
-        keys_folder,
-        SharedKeyGenParameters {
-            uncompressed: false,
-            existing_keyset_id: Some(existing_keyset_id),
-            ..Default::default()
-        },
-        200,
-    )
-    .await;
-
-    assert_ne!(key_id_1, key_id_2);
->>>>>>> main
 }
