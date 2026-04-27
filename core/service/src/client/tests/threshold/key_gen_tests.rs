@@ -1379,9 +1379,9 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 
 /// Test insecure threshold DKG with Default parameters.
 ///
-/// Generates a threshold FHE key using insecure mode with Default parameters
-/// (larger keys, production-size) across 4 parties. Verifies key generation
-/// succeeded on all parties.
+/// Generates a compressed threshold FHE keyset using insecure mode
+/// with Default parameters (larger keys, production-size) across 4 parties.
+/// Verifies key generation succeeded on all parties.
 ///
 /// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
 /// **Requires:**
@@ -1423,7 +1423,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true,
     )
     .await
     .expect("keygen verification failed");
@@ -1437,8 +1437,9 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
 
 /// Test secure threshold key generation with preprocessing.
 ///
-/// Generates a threshold FHE key using secure mode (with preprocessing) with Test parameters
-/// across 4 parties. Verifies key generation succeeded on all parties.
+/// Generates a compressed threshold FHE keyset using secure mode
+/// (with preprocessing) with Test parameters across 4 parties. Verifies key
+/// generation succeeded on all parties.
 ///
 /// **IMPORTANT:** Uses secure mode with preprocessing (not insecure mode).
 /// **Requires:**
@@ -1484,7 +1485,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true,
     )
     .await
     .expect("keygen verification failed");
@@ -1901,8 +1902,8 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
 /// `run_threshold_decompression_keygen`.
 ///
 /// **Workflow:**
-/// 1. Generate first keyset (insecure mode), reconstruct ClientKey + ServerKey via verify_keygen_responses
-/// 2. Generate second keyset (insecure mode), reconstruct ClientKey via verify_keygen_responses
+/// 1. Generate first compressed keyset (insecure mode), reconstruct ClientKey + ServerKey via verify_keygen_responses
+/// 2. Generate second compressed keyset (insecure mode), reconstruct ClientKey via verify_keygen_responses
 /// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
 /// 4. Retrieve decompression key from public storage
 /// 5. Run run_decompression_test to validate key compatibility (mirrors non-isolated verification)
@@ -1934,11 +1935,15 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true,
     )
     .await
     .expect("keygen 1 verification failed");
-    let (client_key_1, _, server_key_1) = keys_1.get_standard();
+    let (client_key_1, compressed_keyset_1) = keys_1.get_compressed();
+    let (_, server_key_1) = compressed_keyset_1
+        .decompress()
+        .expect("decompress keyset 1")
+        .into_raw_parts();
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
@@ -1953,11 +1958,11 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true,
     )
     .await
     .expect("keygen 2 verification failed");
-    let (client_key_2, _, _) = keys_2.get_standard();
+    let (client_key_2, _) = keys_2.get_compressed();
 
     // Step 3: Generate decompression key (secure mode - required for decompression)
     let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;
