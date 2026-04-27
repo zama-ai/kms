@@ -1,12 +1,12 @@
 use std::num::NonZero;
 
-use super::LagrangeMap;
 use crate::{
     poly::lagrange_polynomials, sharing::shamir::ShamirFieldPoly, structure_traits::Field,
     syndrome::decode_syndrome,
 };
 use itertools::Itertools;
 
+pub(crate) type LagrangeMap<F> = std::collections::HashMap<Vec<F>, Vec<crate::poly::Poly<F>>>;
 /// Builds a LagrangeMap containing pre-computed Lagrange polynomials for all sorted subsets
 /// of `{embed(1), ..., embed(num_parties)}` with size ≥ `min_threshold + 1`.
 pub(crate) fn build_lagrange_map<F: Field>(

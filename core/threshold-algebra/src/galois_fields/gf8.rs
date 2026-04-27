@@ -1,5 +1,5 @@
 use crate::{
-    galois_fields::{LagrangeMap, common::build_lagrange_map},
+    galois_fields::common::{LagrangeMap, build_lagrange_map},
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };

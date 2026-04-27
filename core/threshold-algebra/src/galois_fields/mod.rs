@@ -7,8 +7,6 @@
     feature = "extension_degree_7",
     feature = "extension_degree_8",
 ))]
-pub(crate) type LagrangeMap<F> = std::collections::HashMap<Vec<F>, Vec<crate::poly::Poly<F>>>;
-
 pub mod common;
 #[cfg(feature = "extension_degree_7")]
 pub mod gf128;
