@@ -4,13 +4,14 @@
 //! concepts and crypto work, but use isolated test material instead of shared storage.
 
 use crate::client::test_tools::{await_server_ready, check_port_is_closed};
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, default_isolated_extra_data};
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
+use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::consts::{
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_THRESHOLD_KEY_ID_4P, default_extra_data,
+};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
 use crate::vault::storage::file::FileStorage;
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "slow_tests")]
@@ -118,14 +119,13 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     for i in 1..=amount_parties as u32 {
         let mut cur_client = clients.get(&i).unwrap().clone();
         req_tasks.spawn(async move {
-            let req_id: RequestId = (*crate::consts::DEFAULT_EPOCH_ID).into();
             cur_client
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                    epoch_id: Some(req_id.into()),
-                    context_id: None,
+                    epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+                    context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                     previous_epoch: None,
                     domain: None,
-                    extra_data: default_isolated_extra_data(),
+                    extra_data: default_extra_data(),
                 }))
                 .await
         });

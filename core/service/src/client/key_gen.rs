@@ -1,10 +1,10 @@
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
-use crate::client::make_extra_data;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::safe_serialize_hash_element_versioned;
+use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;

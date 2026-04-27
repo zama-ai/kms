@@ -1435,18 +1435,16 @@ pub(crate) mod tests {
     use super::*;
 
     use crate::{
-        client::{
-            make_extra_data,
-            test_tools::{self},
-        },
+        client::test_tools::{self},
         consts::{
-            DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+            DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
         engine::{
             base::{BaseKmsStruct, derive_request_id},
             threshold::service::session::PRSSSetupCombined,
+            utils::make_extra_data,
         },
         util::rate_limiter::RateLimiterConfig,
         vault::storage::{
@@ -1697,10 +1695,11 @@ pub(crate) mod tests {
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
-                context_id: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,
                 domain: None,
-                extra_data: Vec::new(),
+                extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&epoch_id))
+                    .unwrap(),
             }))
             .await
             .unwrap();
@@ -1724,10 +1723,11 @@ pub(crate) mod tests {
             epoch_manager
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     epoch_id: Some(epoch_id.into()),
-                    context_id: None,
+                    context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                     previous_epoch: None,
                     domain: None,
-                    extra_data: Vec::new(),
+                    extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&epoch_id))
+                        .unwrap(),
                 }))
                 .await
                 .unwrap_err()
@@ -1749,11 +1749,16 @@ pub(crate) mod tests {
             assert_eq!(
                 epoch_manager
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                        epoch_id: Some(bad_epoch_id),
-                        context_id: None,
+                        epoch_id: Some(bad_epoch_id.clone()),
+                        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                         previous_epoch: None,
                         domain: None,
-                        extra_data: Vec::new(),
+                        extra_data: make_extra_data(
+                            2,
+                            Some(&DEFAULT_MPC_CONTEXT),
+                            Some(&(bad_epoch_id.try_into().unwrap()))
+                        )
+                        .unwrap(),
                     }))
                     .await
                     .unwrap_err()
@@ -1765,11 +1770,11 @@ pub(crate) mod tests {
             assert_eq!(
                 epoch_manager
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                        epoch_id: None,
-                        context_id: None,
+                        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+                        context_id: Some((*DEFAULT_EPOCH_ID).into()),
                         previous_epoch: None,
                         domain: None,
-                        extra_data: Vec::new(),
+                        extra_data: default_extra_data(),
                     }))
                     .await
                     .unwrap_err()
@@ -1809,10 +1814,11 @@ pub(crate) mod tests {
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
-                context_id: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,
                 domain: None,
-                extra_data: Vec::new(),
+                extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&(epoch_id)))
+                    .unwrap(),
             }))
             .await
             .unwrap();

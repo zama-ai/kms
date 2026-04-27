@@ -351,6 +351,54 @@ where
     })
 }
 
+/// Highest `extra_data` version understood by [`make_extra_data`].
+/// Must stay in sync with `sanity_check_extra_data` in `engine::utils`.
+pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
+
+/// Build an `extra_data` payload for a gRPC request, matching the format the KMS core expects
+/// (see `sanity_check_extra_data` in `engine::utils`). Layout:
+/// - byte 0: version
+/// - v0: no extra bytes
+/// - v1: 32 bytes of context_id
+/// - v2: 32 bytes of context_id followed by 32 bytes of epoch_id
+///
+/// Errors when `version` is above [`MAX_EXTRA_DATA_VERSION`], when v1 is requested without a
+/// `context_id`, or when v2 is requested without both a `context_id` and an `epoch_id`.
+pub fn make_extra_data(
+    version: u8,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
+) -> anyhow::Result<Vec<u8>> {
+    let mut extra_data = vec![version];
+    match version {
+        0 => {
+            // no extra data
+        }
+        1 => {
+            let ctx = context_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 1 requires a context_id")
+            })?;
+            extra_data.extend_from_slice(ctx.as_bytes());
+        }
+        2 => {
+            let ctx = context_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 2 requires a context_id")
+            })?;
+            let ep = epoch_id.ok_or_else(|| {
+                anyhow::anyhow!("make_extra_data: version 2 requires an epoch_id")
+            })?;
+            extra_data.extend_from_slice(ctx.as_bytes());
+            extra_data.extend_from_slice(ep.as_bytes());
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "make_extra_data: unknown version {version}, highest supported is {MAX_EXTRA_DATA_VERSION}"
+            ));
+        }
+    }
+    Ok(extra_data)
+}
+
 /// Helper method to sanity check the content of the extra data field.
 ///
 /// This method will never fail, but only print a warning if the content is not as expected.

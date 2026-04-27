@@ -12,14 +12,16 @@ use crate::client::test_tools::{
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::{
-    DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-    TEST_PARAM, TEST_THRESHOLD_KEY_ID,
+    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM, TEST_THRESHOLD_KEY_ID,
 };
 use crate::engine::threshold::service::RealThresholdKms;
+use crate::engine::utils::make_extra_data;
 use crate::util::key_setup::test_tools::purge;
 use crate::vault::storage::file::FileStorage;
 cfg_if::cfg_if! {
     if #[cfg(feature = "slow_tests")] {
+        use kms_grpc::RequestId;
         use std::env;
         use kms_grpc::kms::v1::{FheParameter, TypedCiphertext};
         use crate::util::key_setup::max_threshold;
@@ -30,7 +32,6 @@ cfg_if::cfg_if! {
         use crate::util::key_setup::test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext};
     }
 }
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use serial_test::serial;
@@ -123,14 +124,18 @@ async fn test_threshold_health_endpoint_availability() {
     for i in 1..=4 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         req_tasks.spawn(async move {
-            let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
             cur_client
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                    epoch_id: Some(req_id.into()),
-                    context_id: None,
+                    epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+                    context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                    extra_data: make_extra_data(
+                        2,
+                        Some(&DEFAULT_MPC_CONTEXT),
+                        Some(&DEFAULT_EPOCH_ID),
+                    )
+                    .unwrap(),
                     previous_epoch: None,
                     domain: None,
-                    extra_data: Vec::new(),
                 }))
                 .await
         });

@@ -1,9 +1,9 @@
 use crate::client::client_wasm::Client;
-use crate::client::make_extra_data;
 use crate::consts::TEST_PARAM;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::engine::utils::make_extra_data;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
