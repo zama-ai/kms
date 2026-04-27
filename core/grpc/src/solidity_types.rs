@@ -115,8 +115,9 @@ alloy_sol_types::sol! {
         uint256 keyId;
         /// @notice The generated digests of keys.
         KeyDigest[] keyDigests;
-        /// @notice Extra data for client-specific context.
-        bytes extraData;
+        // TODO(#3006) enable extraData for preproc
+        // /// @notice Extra data for client-specific context.
+        // bytes extraData;
     }
 }
 
@@ -173,7 +174,7 @@ impl KeygenVerification {
         key_id: &RequestId,
         server_key_digest: Vec<u8>,
         public_key_digest: Vec<u8>,
-        extra_data: Vec<u8>,
+        _extra_data: Vec<u8>,
     ) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
@@ -189,14 +190,15 @@ impl KeygenVerification {
                     digest: public_key_digest.into(),
                 },
             ],
-            extraData: extra_data.into(),
+            // TODO(#3006) enable extraData for preproc
+            // extraData: extra_data.into(),
         }
     }
     pub fn new_compressed(
         preproc_id: &RequestId,
         key_id: &RequestId,
         compressed_keyset_digest: Vec<u8>,
-        extra_data: Vec<u8>,
+        _extra_data: Vec<u8>,
     ) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
@@ -206,7 +208,8 @@ impl KeygenVerification {
                 keyType: KeyType::COMPRESSED_KEYSET,
                 digest: compressed_keyset_digest.into(),
             }],
-            extraData: extra_data.into(),
+            // TODO(#3006) enable extraData for preproc
+            // extraData: extra_data.into(),
         }
     }
 }
