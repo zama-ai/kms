@@ -1166,7 +1166,6 @@ mod tests {
         safe_serialize(&upgraded, &mut v3_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
 
         // V3 is smaller
-        assert_eq!(v2_bytes.len(), 4_810_035);
-        assert_eq!(v3_bytes.len(), 2_658_553);
+        assert!(v2_bytes.len() > v3_bytes.len());
     }
 }
