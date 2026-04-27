@@ -118,14 +118,58 @@ alloy_sol_types::sol! {
         /// @notice Extra data for client-specific context.
         bytes extraData;
     }
+}
 
-    struct KeygenVerificationQ126 {
-        /// @notice The ID of the preprocessing keygen request.
-        uint256 prepKeygenId;
-        /// @notice The ID of the generated key.
-        uint256 keyId;
-        /// @notice The generated digests of keys.
-        KeyDigest[] keyDigests;
+/// Pre-RFC005 (Q1 2026) layouts of the Solidity structs that grew an
+/// `extraData` field, kept available so the backward-compatibility harness
+/// can reproduce signatures that were generated before that change.
+///
+/// The Solidity struct names inside this module MUST stay identical to the
+/// pre-RFC005 names (`KeygenVerification`, `CrsgenVerification`,
+/// `PrepKeygenVerification`, …) — EIP-712 hashes the struct name into the
+/// `typeHash`, so any rename here would change the signature bytes and
+/// defeat the point of having a legacy companion. The types are kept in
+/// their own Rust module so the `sol!` macro can declare `KeygenVerification`,
+/// `KeyDigest`, and `KeyType` again without colliding with the current ones
+/// at the parent scope, then re-exported with a `Q126` suffix for callers.
+mod legacy_q126 {
+    alloy_sol_types::sol! {
+        enum KeyType {
+            SERVER,
+            PUBLIC,
+            COMPRESSED_PUBLIC,
+            COMPRESSED_KEYSET,
+        }
+
+        struct KeyDigest {
+            KeyType keyType;
+            bytes digest;
+        }
+
+        struct KeygenVerification {
+            uint256 prepKeygenId;
+            uint256 keyId;
+            KeyDigest[] keyDigests;
+        }
+
+        struct CrsgenVerification {
+            uint256 crsId;
+            uint256 maxBitLength;
+            bytes crsDigest;
+        }
+    }
+}
+
+pub use legacy_q126::CrsgenVerification as CrsgenVerificationQ126;
+pub use legacy_q126::KeygenVerification as KeygenVerificationQ126;
+
+impl CrsgenVerificationQ126 {
+    pub fn new(crs_id: &RequestId, max_bit_length: usize, crs_digest: Vec<u8>) -> Self {
+        Self {
+            crsId: U256::from_be_slice(crs_id.as_bytes()),
+            maxBitLength: U256::from_be_slice(&max_bit_length.to_be_bytes()),
+            crsDigest: crs_digest.into(),
+        }
     }
 }
 
@@ -185,12 +229,12 @@ impl KeygenVerificationQ126 {
             keyId: U256::from_be_slice(key_id.as_bytes()),
             // NOTE: order should be in the order of the enum KeyType
             keyDigests: vec![
-                KeyDigest {
-                    keyType: KeyType::SERVER,
+                legacy_q126::KeyDigest {
+                    keyType: legacy_q126::KeyType::SERVER,
                     digest: server_key_digest.into(),
                 },
-                KeyDigest {
-                    keyType: KeyType::PUBLIC,
+                legacy_q126::KeyDigest {
+                    keyType: legacy_q126::KeyType::PUBLIC,
                     digest: public_key_digest.into(),
                 },
             ],
@@ -205,8 +249,8 @@ impl KeygenVerificationQ126 {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
             keyId: U256::from_be_slice(key_id.as_bytes()),
             // NOTE: order should be in the order of the enum KeyType
-            keyDigests: vec![KeyDigest {
-                keyType: KeyType::COMPRESSED_KEYSET,
+            keyDigests: vec![legacy_q126::KeyDigest {
+                keyType: legacy_q126::KeyType::COMPRESSED_KEYSET,
                 digest: compressed_keyset_digest.into(),
             }],
         }

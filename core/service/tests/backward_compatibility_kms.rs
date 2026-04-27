@@ -24,7 +24,7 @@ use kms_grpc::{
     RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    solidity_types::{CrsgenVerification, KeygenVerificationQ126},
+    solidity_types::{CrsgenVerificationQ126, KeygenVerificationQ126},
 };
 use kms_lib::{
     backup::{
@@ -269,7 +269,11 @@ fn test_crs_gen_metadata(
     let crs_id: RequestId = RequestId::new_random(&mut rng);
     let digest = [12u8; 32].to_vec();
     let max_num_bits = test.max_num_bits;
-    let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone(), vec![]);
+    // Reproduce the pre-RFC005 signature: the stored vectors were produced by
+    // a generator pinned at a commit that did not yet have `extraData` on the
+    // Solidity struct. `CrsgenVerificationQ126` mirrors that layout (and keeps
+    // the EIP-712 struct name `CrsgenVerification` so the typeHash matches).
+    let sol_type = CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, digest.clone());
     let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
         .map_err(|e| {
             test.failure(
