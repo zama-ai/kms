@@ -5,6 +5,11 @@ on:
   release:
     types: [published]
   #=======================================================
+  # Manual trigger from the GitHub UI. The "Use workflow from" dropdown lets
+  # users pick a branch or tag; commit SHAs can be passed via
+  # `gh workflow run docker-build.yml --ref <sha>`.
+  workflow_dispatch:
+  #=======================================================
   workflow_call:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
