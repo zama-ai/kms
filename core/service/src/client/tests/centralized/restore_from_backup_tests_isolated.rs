@@ -15,6 +15,8 @@
 //! - Native KMS server spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
+use crate::client::tests::common::default_isolated_extra_data;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
@@ -22,6 +24,7 @@ use crate::testing::prelude::*;
 use crate::vault::storage::{StorageReader, StorageReaderExt, delete_all_at_request_id};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, FheParameter};
+use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use tonic::transport::Channel;
@@ -32,8 +35,6 @@ async fn key_gen_isolated(
     request_id: &RequestId,
     params: FheParameter,
 ) -> Result<()> {
-    use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
-
     // Preprocessing (required even for insecure mode)
     let preproc_id = derive_request_id(&format!("preproc-for-{:?}", request_id))?;
     let domain_msg = domain_to_msg(&dummy_domain());
@@ -42,8 +43,9 @@ async fn key_gen_isolated(
         params: params as i32,
         keyset_config: None,
         domain: Some(domain_msg.clone()),
-        context_id: None,
-        epoch_id: None,
+        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        extra_data: default_isolated_extra_data(),
     };
 
     let preproc_resp = client
@@ -73,9 +75,9 @@ async fn key_gen_isolated(
         domain: Some(domain_msg),
         keyset_config: None,
         keyset_added_info: None,
-        context_id: None,
-        epoch_id: None,
-        extra_data: vec![],
+        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        extra_data: default_isolated_extra_data(),
     };
 
     let keygen_resp = client.key_gen(tonic::Request::new(keygen_req)).await?;
@@ -272,9 +274,9 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
         params: FheParameter::Test as i32,
         max_num_bits: Some(16),
         domain: Some(domain_msg),
-        context_id: None,
+        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         epoch_id: Some(epoch_id.into()),
-        extra_data: vec![],
+        extra_data: default_isolated_extra_data(),
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
     assert_eq!(resp.into_inner(), Empty {});

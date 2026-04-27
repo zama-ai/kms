@@ -1,7 +1,7 @@
 use clap::Parser;
-use kms_grpc::kms::v1::{NewMpcEpochRequest, RequestId};
+use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::consts::DEFAULT_EPOCH_ID;
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data};
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use std::time::Duration;
@@ -44,14 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // TODO: the init epoch ID is currently fixed to DEFAULT_EPOCH_ID
             // change this once we want to trigger another init for a different context/epoch
-            let req_id = RequestId {
-                request_id: DEFAULT_EPOCH_ID.to_string(),
-            };
-
             let request = NewMpcEpochRequest {
-                epoch_id: Some(req_id.clone()),
-                context_id: None,
+                epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 previous_epoch: None,
+                extra_data: default_extra_data(),
                 // WARNING: domain is set to None here, as this CLI currently only supports
                 // initializing the KMS for the first epoch.
                 domain: None,
@@ -64,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for i in 0..max_retries {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 match kms_client
-                    .get_epoch_result(tonic::Request::new(req_id.clone()))
+                    .get_epoch_result(kms_grpc::kms::v1::RequestId::from(*DEFAULT_EPOCH_ID))
                     .await
                 {
                     Ok(_) => {

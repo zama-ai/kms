@@ -354,7 +354,7 @@ pub(crate) async fn do_new_epoch(
                         &key_id,
                         &signature,
                         &dummy_domain(),
-                        vec![], // TODO RFC005, once extra data is added to request we need it here to verify the signature
+                        request.extra_data.clone(),
                         kms_addrs,
                     )?;
                 } else {
@@ -369,7 +369,7 @@ pub(crate) async fn do_new_epoch(
                         &key_id,
                         &signature,
                         &dummy_domain(),
-                        vec![], // TODO RFC005, once extra data is added to request we need it here to verify the signature
+                        request.extra_data.clone(),
                         kms_addrs,
                     )?;
                 }

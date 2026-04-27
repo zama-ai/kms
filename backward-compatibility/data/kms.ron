@@ -1037,6 +1037,35 @@
     (
         kms_core_version_min: "0.13.20",
         kms_core_module: "kms",
+        metadata: KeyGenMetadataWithExtraData((
+            test_filename: "key_gen_metadata_with_extra_data",
+            state: 101,
+            extra_data: [
+                2,
+                170,
+                187,
+                204,
+            ],
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.20",
+        kms_core_module: "kms",
+        metadata: CrsGenMetadataWithExtraData((
+            test_filename: "crs_gen_metadata_with_extra_data",
+            state: 101,
+            max_num_bits: 2048,
+            extra_data: [
+                2,
+                221,
+                238,
+                255,
+            ],
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.20",
+        kms_core_module: "kms",
         metadata: TypedPlaintext((
             test_filename: "typed_plaintext",
             plaintext_bytes: [
