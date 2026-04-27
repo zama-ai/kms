@@ -1393,8 +1393,9 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
-    // Use Default material spec for production-like keys
-    let spec = TestMaterialSpec::threshold_default(4);
+    // Use Default material spec for production-like keys.
+    // PRSS is generated at server startup via `with_prss()`.
+    let spec = TestMaterialSpec::threshold_default_no_prss(4);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")
