@@ -1060,11 +1060,7 @@ async fn insecure_key_gen(
 // ============================================================================
 
 /// Helper to run CRS generation via CLI (isolated version)
-async fn crs_gen(
-    config_path: &Path,
-    test_path: &Path,
-    insecure_crs_gen: bool,
-) -> Result<String> {
+async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -> Result<String> {
     crs_gen_with_params(
         config_path,
         test_path,
@@ -1651,11 +1647,7 @@ async fn run_cmd_no_id(config: &CmdConfig, test_path: &Path, label: &str) -> Res
 }
 
 /// Create new MPC context via CLI (isolated version)
-async fn new_mpc_context(
-    config_path: &Path,
-    context_path: &Path,
-    test_path: &Path,
-) -> Result<()> {
+async fn new_mpc_context(config_path: &Path, context_path: &Path, test_path: &Path) -> Result<()> {
     let config = cmd_config(
         config_path,
         CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
@@ -2103,8 +2095,7 @@ async fn test_centralized_insecure() -> Result<()> {
 
     // Also exercise the default-key fast path separately.
     let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id)
-        .await?;
+    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
 
     Ok(())
 }
@@ -2291,8 +2282,7 @@ async fn test_threshold_insecure() -> Result<()> {
     integration_test_commands(&config_path, keys_folder, key_id).await?;
 
     let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id)
-        .await?;
+    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
 
     Ok(())
 }
