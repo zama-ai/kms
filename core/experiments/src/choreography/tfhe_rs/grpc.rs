@@ -1,9 +1,7 @@
 //! gRPC-based choreography.
 
-use threshold_networking::choreography_gen::choreography_server::{
-    Choreography, ChoreographyServer,
-};
-use threshold_networking::choreography_gen::{
+use crate::choreography_gen::choreography_server::{Choreography, ChoreographyServer};
+use crate::choreography_gen::{
     CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
     PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
     PrssInitRequest, PrssInitResponse, ReshareRequest, ReshareResponse, StatusCheckRequest,

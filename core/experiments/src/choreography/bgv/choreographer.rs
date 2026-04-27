@@ -6,11 +6,11 @@ use threshold_bgv::algebra::ntt::N65536;
 use threshold_bgv::bgv::basics::{LevelEllCiphertext, PublicKey};
 
 use crate::choreography::client_utils::ChoreoRuntime;
-use std::collections::HashMap;
-use threshold_networking::choreography_gen::{
+use crate::choreography_gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
+use std::collections::HashMap;
 use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 

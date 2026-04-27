@@ -1,10 +1,8 @@
 use crate::choreography::tfhe_rs::requests::Status;
+use crate::choreography_gen::{StatusCheckRequest, choreography_client::ChoreographyClient};
 use crate::conf::choreo::{ChoreoConf, NetworkTopology};
 use observability::telemetry::ContextPropagator;
 use std::collections::HashMap;
-use threshold_networking::choreography_gen::{
-    StatusCheckRequest, choreography_client::ChoreographyClient,
-};
 use threshold_networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG};
 use threshold_types::party::Identity;
 use threshold_types::role::Role;

@@ -71,6 +71,9 @@ thread-handles.workspace = true
 test-utils.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 
+[build-dependencies]
+tonic-prost-build.workspace = true
+
 [lib]
 crate-type = ["lib", "cdylib"]
 

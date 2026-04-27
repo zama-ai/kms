@@ -23,7 +23,7 @@ use super::requests::{
     TfheType, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
     ThroughtputParams,
 };
-use threshold_networking::choreography_gen::{
+use crate::choreography_gen::{
     CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, PreprocKeyGenRequest,
     PrssInitRequest, ReshareRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,

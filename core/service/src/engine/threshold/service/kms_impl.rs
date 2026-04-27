@@ -497,7 +497,7 @@ where
             ))
         })?;
         tracing::info!(
-            "core/experiments on {} shutdown completed successfully",
+            "Threshold core on {} shutdown completed successfully",
             mpc_socket_addr
         );
         Ok(())

@@ -3105,6 +3105,7 @@ dependencies = [
  "tokio-rustls 0.26.2",
  "tonic",
  "tonic-health",
+ "tonic-prost-build",
  "tower",
  "tower-http",
  "tracing",

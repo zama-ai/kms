@@ -4,13 +4,13 @@
 Remove the core/experiments reference below when we copy this file to experiments
 since core/experiments will be at the root.
 -->
-The code under `core/experiments` implements threshold multi-party computation protocols
+The code under `core/threshold-*` implements threshold multi-party computation protocols
 such as threshold key generation, threshold decryption
 and so on for TFHE, BFV and BGV.
 The protocols are designed to be both secure and robust when a fraction
 of the parties are malicious.
 This page describes how to run the benchmarks in a wide range of configurations on the threshold protocols.
-For the rest of this page, we assume the user is working under the `core/experiments` directory.
+For the rest of this page, we assume the user is working under the `core/experiments` directory, which implements a testing environment for the MPC protocols.
 
 ## Directory overview
 
@@ -23,9 +23,9 @@ For the rest of this page, we assume the user is working under the `core/experim
 - `experiments`
   - Other configuration files for benchmarks.
 - `protos`
-  - Protobuf files, both for testing/benchmarking and for communication between the MPC parties.
+  - Protobuf files, for testing/benchmarking.
 - `src`
-  - Source code for the actual server and actual MPC protocols.
+  - Source code for the actual server and clients for both tfhe-rs and bgv.
 - `test_scripts`
   - Bash scripts used for testing.
 - `tests`

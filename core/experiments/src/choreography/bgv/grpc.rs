@@ -13,6 +13,16 @@ use crate::choreography::server_utils::{
     fill_network_memory_info_single_session, gen_random_sid,
 };
 use crate::choreography::tfhe_rs::requests::Status;
+use crate::choreography_gen::choreography_server::{Choreography, ChoreographyServer};
+use crate::choreography_gen::{
+    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
+    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
+    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
+    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
+    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
+    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
+};
+use crate::choreography_gen::{ReshareRequest, ReshareResponse};
 use itertools::Itertools;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
@@ -40,18 +50,6 @@ use threshold_execution::runtime::sessions::small_session::SmallSession;
 use threshold_execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
-use threshold_networking::choreography_gen::choreography_server::{
-    Choreography, ChoreographyServer,
-};
-use threshold_networking::choreography_gen::{
-    CrsGenRequest, CrsGenResponse, CrsGenResultRequest, CrsGenResultResponse,
-    PreprocDecryptRequest, PreprocDecryptResponse, PreprocKeyGenRequest, PreprocKeyGenResponse,
-    PrssInitRequest, PrssInitResponse, StatusCheckRequest, StatusCheckResponse,
-    ThresholdDecryptRequest, ThresholdDecryptResponse, ThresholdDecryptResultRequest,
-    ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
-    ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
-};
-use threshold_networking::choreography_gen::{ReshareRequest, ReshareResponse};
 use threshold_networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use threshold_networking::grpc::GrpcNetworkingManager;
 use threshold_types::role::Role;
