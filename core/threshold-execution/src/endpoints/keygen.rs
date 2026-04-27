@@ -2564,6 +2564,29 @@ pub mod tests {
     /// Phase 2: keygen from the existing `PrivateKeySet` to regenerate public keys
     /// Saves the results (phase 1 private keys, phase 2 public keys) to file.
     #[cfg(feature = "slow_tests")]
+    fn assert_compressed_xof_keyset_decompression_matches_raw_parts(
+        compressed_pk: &tfhe::xof_key_set::CompressedXofKeySet,
+    ) {
+        let (public_key, server_key) = compressed_pk.clone().decompress().unwrap().into_raw_parts();
+        let decompressed_keyset = FhePubKeySet {
+            public_key,
+            server_key,
+        };
+
+        let (_seed, compressed_public_key, compressed_server_key) =
+            compressed_pk.clone().into_raw_parts();
+        let decompressed_raw_parts = FhePubKeySet {
+            public_key: compressed_public_key.decompress(),
+            server_key: compressed_server_key.decompress(),
+        };
+
+        assert_eq!(
+            decompressed_keyset, decompressed_raw_parts,
+            "decompressing CompressedXofKeySet must match decompressing its raw parts individually"
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
     async fn run_dkg_from_existing_sk_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         tag: tfhe::Tag,
@@ -2622,6 +2645,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
+                assert_compressed_xof_keyset_decompression_matches_raw_parts(&compressed_pk);
                 let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 FhePubKeySet {
                     public_key,
