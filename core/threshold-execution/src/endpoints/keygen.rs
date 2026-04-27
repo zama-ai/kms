@@ -2835,7 +2835,6 @@ pub mod tests {
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        // NOTE: it is not possible to use small parameters as that doesn't work for oprf
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1u8;
