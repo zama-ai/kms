@@ -99,16 +99,16 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_3::{ResiduePolyF3Z64, ResiduePolyF3Z128};
     use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-    #[cfg(feature = "extension_degree_5")]
+    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_5::{ResiduePolyF5Z64, ResiduePolyF5Z128};
-    #[cfg(feature = "extension_degree_6")]
+    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_6::{ResiduePolyF6Z64, ResiduePolyF6Z128};
-    #[cfg(feature = "extension_degree_7")]
+    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_7::{ResiduePolyF7Z64, ResiduePolyF7Z128};
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     use algebra::galois_rings::degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128};
     use algebra::{
         sharing::share::Share,
@@ -268,28 +268,28 @@ mod tests {
     test_bitgen![ResiduePolyF4Z64, u64];
     test_bitgen![ResiduePolyF4Z128, u128];
 
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF3Z64, u64];
-    #[cfg(feature = "extension_degree_3")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF3Z128, u128];
 
-    #[cfg(feature = "extension_degree_5")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF5Z64, u64];
-    #[cfg(feature = "extension_degree_5")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF5Z128, u128];
 
-    #[cfg(feature = "extension_degree_6")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF6Z64, u64];
-    #[cfg(feature = "extension_degree_6")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF6Z128, u128];
 
-    #[cfg(feature = "extension_degree_7")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF7Z64, u64];
-    #[cfg(feature = "extension_degree_7")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF7Z128, u128];
 
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF8Z64, u64];
-    #[cfg(feature = "extension_degree_8")]
+    #[cfg(feature = "slow_tests")]
     test_bitgen![ResiduePolyF8Z128, u128];
 }

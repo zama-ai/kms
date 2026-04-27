@@ -82,16 +82,14 @@ jobs:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
               - 'core/service/**'
-              - 'core/threshold/**'
-              - 'core/threshold-*/**'
+              - 'core/threshold*/**'
               - 'core/test-utils/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-threshold:
-              - 'core/threshold/**'
-              - 'core/threshold-*/**'
+              - 'core/threshold*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
@@ -515,9 +513,12 @@ jobs:
   # 3. Dependabot Tests: Simplified build for dependency updates
   ############################################################################
 
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
-  # threshold-fhe tests don't consume kms test material.
+  # experiments tests don't consume kms test material.
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
     # job permissions
@@ -532,11 +533,11 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
-      args-tests: '-F slow_tests --lib'
-      crate-names: '-p threshold-fhe'
+      args-tests: '--lib'
+      crate-names: '-p experiments'
       nextest-test-threads: 4
       skip-test-material: true
       # Availables runners:
@@ -551,10 +552,14 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
+
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
-  # threshold-fhe tests don't consume kms test material.
+  # experiments tests don't consume kms test material.
   test-core-threshold-main:
     name: main/test-core-threshold-main
     # job permissions
@@ -569,12 +574,12 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib'
+      args-tests: '--lib'
       run-redis: true
-      crate-names: '-p threshold-fhe'
+      crate-names: '-p experiments'
       nextest-test-threads: 4
       skip-test-material: true
       # Availables runners:
@@ -589,10 +594,13 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
+  # TODO: This is probably obsolete considering experiments
+  # (previous threshold-fhe) is now consuming the MPC library and not
+  # really part of it. (test-workspace-crate is now the important job)
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
-  # threshold-fhe tests don't consume kms test material.
+  # experiments tests don't consume kms test material.
   build-dependabot:
     name: main/build-dependabot
     # job permissions
@@ -607,9 +615,9 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: './core/experiments'
       args-tests: '--lib'
-      crate-names: '-p threshold-fhe'
+      crate-names: '-p experiments'
       skip-test-material: true
     secrets: inherit
 
@@ -644,7 +652,7 @@ jobs:
 
           # Most "normal" crates should be added here; runs with default features only.
           - group: crates-normies
-            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-experimental'
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv'
             # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
             # all its per-degree tests run.
             features: '-F threshold-algebra/all_extension_degrees'
@@ -661,11 +669,11 @@ jobs:
             runs-on: '64cpu-linux-x64'
 
           # Slow/heavy tests, 2/2. Big iron, lots of RAM.
-          # The `threshold-experimental` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
+          # The `threshold-bgv` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
           - group: crates-heavy-2
-            crates: '-p threshold-experimental -p threshold-networking'
-            features: '-F threshold-experimental/slow_tests'
+            crates: '-p threshold-bgv -p threshold-networking'
+            features: '-F threshold-bgv/slow_tests'
             threads: '8'
             runs-on: '64cpu-linux-x64'
 
