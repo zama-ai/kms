@@ -745,6 +745,7 @@ mod tests {
             crs_id,
             crs_digest: digest,
             max_num_bits: 64,
+            extra_data: None,
             external_signature: vec![],
         });
 
@@ -768,6 +769,7 @@ mod tests {
             crs_id,
             crs_digest: digest,
             max_num_bits: 64,
+            extra_data: None,
             external_signature: vec![],
         });
 

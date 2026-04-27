@@ -246,7 +246,8 @@ pub(crate) fn compute_info_crs(
     let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data);
+    let sol_type =
+        CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(CrsGenMetadata::new(
@@ -254,6 +255,7 @@ pub(crate) fn compute_info_crs(
         crs_digest,
         max_num_bits as u32,
         external_signature,
+        extra_data,
     ))
 }
 
@@ -968,7 +970,8 @@ impl KeyGenMetadata {
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataInnerVersioned {
-    V0(CrsGenMetadataInner),
+    V0(CrsGenMetadataInnerQ126),
+    V1(CrsGenMetadataInner),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
@@ -977,7 +980,30 @@ pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,
     pub(crate) crs_digest: Vec<u8>,
     pub(crate) max_num_bits: u32,
+    pub(crate) extra_data: Option<Vec<u8>>,
     pub(crate) external_signature: Vec<u8>,
+}
+
+impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerQ126 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
+        Ok(CrsGenMetadataInner {
+            crs_id: self.crs_id,
+            crs_digest: self.crs_digest,
+            max_num_bits: self.max_num_bits,
+            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
+            external_signature: self.external_signature,
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct CrsGenMetadataInnerQ126 {
+    pub crs_id: RequestId,
+    pub crs_digest: Vec<u8>,
+    pub max_num_bits: u32,
+    pub external_signature: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -1006,11 +1032,21 @@ impl CrsGenMetadata {
         crs_digest: Vec<u8>,
         max_num_bits: u32,
         external_signature: Vec<u8>,
+        extra_data: Vec<u8>,
     ) -> Self {
+        let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
+            tracing::warn!(
+                "Creating CrsGenMetadata with empty extra data. Will set use the legacy format"
+            );
+            None
+        } else {
+            Some(extra_data)
+        };
         CrsGenMetadata::Current(CrsGenMetadataInner {
             crs_id,
             crs_digest,
             max_num_bits,
+            extra_data: parsed_extra_data,
             external_signature,
         })
     }

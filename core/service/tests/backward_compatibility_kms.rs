@@ -281,7 +281,13 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+    let new_current = CrsGenMetadata::new(
+        crs_id,
+        digest,
+        max_num_bits,
+        external_signature.clone(),
+        vec![],
+    );
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
