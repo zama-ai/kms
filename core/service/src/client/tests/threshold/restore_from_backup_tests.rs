@@ -18,21 +18,22 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
-use crate::vault::storage::{StorageReader, StorageReaderExt, delete_all_at_request_id};
+use crate::vault::storage::{StorageReaderExt, delete_at_request_and_epoch_id};
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::rpc_types::PrivDataType;
 use tokio::task::JoinSet;
 
 /// Test threshold DKG backup and restore flow with decryption validation.
 ///
-/// Generates two threshold FHE keys, deletes them from private storage on all parties,
-/// restores from backup, and validates restoration by performing a decryption operation.
-/// Tests the complete backup/restore cycle for threshold key material.
+/// Generates two threshold FHE keys, deletes their private `FheKeyInfo` entries from
+/// all parties, restores from backup, and validates restoration by performing a
+/// decryption operation. Tests the complete backup/restore cycle for threshold key
+/// material.
 ///
 /// **Flow:**
 /// 1. Generate two keys using insecure DKG
-/// 2. Delete both keys from private storage (all parties)
-/// 3. Verify deletion
+/// 2. Delete both keys' `FheKeyInfo` entries from private storage (all parties)
+/// 3. Verify `FheKeyInfo` deletion
 /// 4. Restore from backup (all parties)
 /// 5. Verify restoration (checks FheKeyInfo exists)
 /// 6. Restart servers with restored keys
@@ -62,7 +63,8 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test).await?;
     threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test).await?;
 
-    // Delete private storage for both keys on all parties
+    // Delete threshold private key material for both keys on all parties
+    let fhe_key_info_type = PrivDataType::FheKeyInfo.to_string();
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
     for prefix in priv_storage_prefixes {
         let mut priv_storage = FileStorage::new(
@@ -70,21 +72,31 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
             StorageType::PRIV,
             prefix.as_deref(),
         )?;
-        let _ = delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-        let _ = delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
-    }
 
-    // Verify deletion
-    let priv_storage = FileStorage::new(
-        Some(material_dir.path()),
-        StorageType::PRIV,
-        priv_storage_prefixes[0].as_deref(),
-    )?;
-    assert!(
-        !priv_storage
-            .data_exists(&key_id_1, &PrivDataType::FhePrivateKey.to_string())
-            .await?
-    );
+        for key_id in [&key_id_1, &key_id_2] {
+            assert!(
+                priv_storage
+                    .data_exists_at_epoch(key_id, &DEFAULT_EPOCH_ID, &fhe_key_info_type)
+                    .await?,
+                "{key_id} should exist before deletion"
+            );
+
+            delete_at_request_and_epoch_id(
+                &mut priv_storage,
+                key_id,
+                &DEFAULT_EPOCH_ID,
+                &fhe_key_info_type,
+            )
+            .await?;
+
+            assert!(
+                !priv_storage
+                    .data_exists_at_epoch(key_id, &DEFAULT_EPOCH_ID, &fhe_key_info_type)
+                    .await?,
+                "{key_id} should be deleted before restore"
+            );
+        }
+    }
 
     // Restore from backup on all parties
     let mut restore_tasks = JoinSet::new();
@@ -102,21 +114,23 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
         tracing::info!("Backup restore response: {:?}", resp);
     }
 
-    // Verify restoration (threshold uses FheKeyInfo, not FhePrivateKey)
-    // Data is stored with epoch_id, so we need to check using all_data_ids_from_all_epochs
+    // Verify restoration (threshold uses FheKeyInfo, not FhePrivateKey).
+    // Data is stored under DEFAULT_EPOCH_ID, so use the epoch-aware storage check.
     for prefix in priv_storage_prefixes {
         let priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
             prefix.as_deref(),
         )?;
-        let all_ids = priv_storage
-            .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
-            .await?;
-        assert!(
-            all_ids.contains(&key_id_1),
-            "key_id_1 should exist in storage after restore"
-        );
+
+        for key_id in [&key_id_1, &key_id_2] {
+            assert!(
+                priv_storage
+                    .data_exists_at_epoch(key_id, &DEFAULT_EPOCH_ID, &fhe_key_info_type)
+                    .await?,
+                "{key_id} should exist in storage after restore"
+            );
+        }
     }
 
     // Shutdown original servers to restart with restored keys
@@ -360,7 +374,8 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
         result?;
     }
 
-    // Delete CRS from private storage on all parties
+    // Delete CRS metadata from private storage on all parties
+    let crs_info_type = PrivDataType::CrsInfo.to_string();
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
     for prefix in priv_storage_prefixes {
         let mut priv_storage = FileStorage::new(
@@ -368,12 +383,22 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
             StorageType::PRIV,
             prefix.as_deref(),
         )?;
-        let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
+
+        assert!(
+            priv_storage
+                .data_exists_at_epoch(&req_id, &epoch_id, &crs_info_type)
+                .await?,
+            "{req_id} should exist before deletion"
+        );
+
+        delete_at_request_and_epoch_id(&mut priv_storage, &req_id, &epoch_id, &crs_info_type)
+            .await?;
 
         assert!(
             !priv_storage
-                .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-                .await?
+                .data_exists_at_epoch(&req_id, &epoch_id, &crs_info_type)
+                .await?,
+            "{req_id} should be deleted before restore"
         );
     }
 

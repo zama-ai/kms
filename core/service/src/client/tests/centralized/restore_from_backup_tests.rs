@@ -12,7 +12,7 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
-use crate::vault::storage::{StorageReader, StorageReaderExt, delete_all_at_request_id};
+use crate::vault::storage::{StorageReaderExt, delete_at_request_and_epoch_id};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -92,14 +92,14 @@ async fn key_gen(
 
 /// Test centralized DKG backup and restore flow.
 ///
-/// Generates two FHE keys, deletes them from private storage, restores from backup,
-/// and verifies restoration by performing decryption. Tests the complete backup/restore
-/// cycle for centralized key material.
+/// Generates two FHE keys, deletes their private `FhePrivateKey` entries from
+/// private storage, restores from backup, and verifies restoration by performing
+/// decryption. Tests the complete backup/restore cycle for centralized key material.
 ///
 /// **Flow:**
 /// 1. Generate two keys using insecure DKG
-/// 2. Delete both keys from private storage
-/// 3. Verify deletion
+/// 2. Delete both keys' `FhePrivateKey` entries from private storage
+/// 3. Verify `FhePrivateKey` deletion
 /// 4. Restore from backup
 /// 5. Verify restoration via decryption test
 ///
@@ -123,26 +123,56 @@ async fn test_insecure_central_dkg_backup() -> Result<()> {
     key_gen(&mut client, &key_id_1, FheParameter::Test).await?;
     key_gen(&mut client, &key_id_2, FheParameter::Test).await?;
 
+    let fhe_private_key_type = PrivDataType::FhePrivateKey.to_string();
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    let _ = delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-    let _ = delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+    for key_id in [&key_id_1, &key_id_2] {
+        assert!(
+            priv_storage
+                .data_exists_at_epoch(
+                    key_id,
+                    &crate::consts::DEFAULT_EPOCH_ID,
+                    &fhe_private_key_type
+                )
+                .await?,
+            "{key_id} should exist before deletion"
+        );
 
-    assert!(
-        !priv_storage
-            .data_exists(&key_id_1, &PrivDataType::FhePrivateKey.to_string())
-            .await?,
-        "key_id_1 should be deleted"
-    );
-    assert!(
-        !priv_storage
-            .data_exists(&key_id_2, &PrivDataType::FhePrivateKey.to_string())
-            .await?,
-        "key_id_2 should be deleted"
-    );
+        delete_at_request_and_epoch_id(
+            &mut priv_storage,
+            key_id,
+            &crate::consts::DEFAULT_EPOCH_ID,
+            &fhe_private_key_type,
+        )
+        .await?;
+
+        assert!(
+            !priv_storage
+                .data_exists_at_epoch(
+                    key_id,
+                    &crate::consts::DEFAULT_EPOCH_ID,
+                    &fhe_private_key_type
+                )
+                .await?,
+            "{key_id} should be deleted before restore"
+        );
+    }
 
     let req = Empty {};
     let resp = client.restore_from_backup(tonic::Request::new(req)).await?;
     tracing::info!("Backup restore response: {:?}", resp);
+
+    for key_id in [&key_id_1, &key_id_2] {
+        assert!(
+            priv_storage
+                .data_exists_at_epoch(
+                    key_id,
+                    &crate::consts::DEFAULT_EPOCH_ID,
+                    &fhe_private_key_type
+                )
+                .await?,
+            "{key_id} should exist in storage after restore"
+        );
+    }
 
     // Verify key restoration by performing full decryption (matching original)
     {
@@ -283,11 +313,11 @@ async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
     assert_eq!(inner_resp.request_id, Some(req_id.into()));
 
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
+    let _ = crate::vault::storage::delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
     // CrsInfo is epoch-specific data, so delete_all_at_request_id skips it.
     // We need to delete it explicitly at the epoch level.
-    let _ = crate::vault::storage::delete_at_request_and_epoch_id(
+    let _ = delete_at_request_and_epoch_id(
         &mut priv_storage,
         &req_id,
         &epoch_id,
