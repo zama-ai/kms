@@ -1099,21 +1099,10 @@ impl PartialEq for FhePubKeySet {
 
         // TODO: Can't compare the sns compression keys, and can't call into_raw_parts on them either.
         let ok2 = sks.into_raw_parts() == other_sks.into_raw_parts()
-            && ksk.map(
-                |x: tfhe::integer::key_switching_key::KeySwitchingKeyMaterial| x.into_raw_parts(),
-            ) == other_ksk.map(
-                |x: tfhe::integer::key_switching_key::KeySwitchingKeyMaterial| x.into_raw_parts(),
-            )
-            && comp.map(|x: tfhe::integer::compression_keys::CompressionKey| x.into_raw_parts())
-                == other_comp
-                    .map(|x: tfhe::integer::compression_keys::CompressionKey| x.into_raw_parts())
-            && decomp
-                .map(|x: tfhe::integer::compression_keys::DecompressionKey| x.into_raw_parts())
-                == other_decomp
-                    .map(|x: tfhe::integer::compression_keys::DecompressionKey| x.into_raw_parts())
-            && sns.map(|x: tfhe::integer::noise_squashing::NoiseSquashingKey| x.into_raw_parts())
-                == other_sns
-                    .map(|x: tfhe::integer::noise_squashing::NoiseSquashingKey| x.into_raw_parts())
+            && ksk.map(|x| x.into_raw_parts()) == other_ksk.map(|x| x.into_raw_parts())
+            && comp.map(|x| x.into_raw_parts()) == other_comp.map(|x| x.into_raw_parts())
+            && decomp.map(|x| x.into_raw_parts()) == other_decomp.map(|x| x.into_raw_parts())
+            && sns.map(|x| x.into_raw_parts()) == other_sns.map(|x| x.into_raw_parts())
             && tag == other_tag;
 
         ok1 && ok2
@@ -1140,10 +1129,7 @@ pub fn run_decompression_test(
     );
 
     // Deconstruct to get access to blind_rotate_key
-    let (bsk_dec_1, ctxt_count_dec_1): (
-        tfhe::shortint::server_key::ShortintBootstrappingKey<u64>,
-        tfhe::core_crypto::prelude::LweCiphertextCount,
-    ) = decompression_key1.into_raw_parts();
+    let (bsk_dec_1, ctxt_count_dec_1) = decompression_key1.into_raw_parts();
     let (bsk_dec, ctxt_count_dec) = decompression_key.into_raw_parts();
 
     assert_eq!(

@@ -7702,6 +7702,7 @@ dependencies = [
  "rstest",
  "serde",
  "serial_test",
+ "sha3",
  "statrs",
  "strum",
  "tempfile",

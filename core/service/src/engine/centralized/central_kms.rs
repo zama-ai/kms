@@ -272,7 +272,7 @@ pub(crate) fn generate_fhe_keys(
     )?;
 
     let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
-    let (_, _, _, decompression_key, _, _, _, _) = server_key.into_raw_parts();
+    let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
