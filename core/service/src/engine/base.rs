@@ -930,7 +930,7 @@ impl KeyGenMetadata {
     ) -> Self {
         let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
             tracing::warn!(
-                "Creating KeyGenMetadata with empty extra data. Will set use the legacy format"
+                "Creating KeyGenMetadata with empty extra data. Will use the legacy format"
             );
             None
         } else {
@@ -1036,7 +1036,7 @@ impl CrsGenMetadata {
     ) -> Self {
         let parsed_extra_data = if extra_data.is_empty() || extra_data[0] == 0 {
             tracing::warn!(
-                "Creating CrsGenMetadata with empty extra data. Will set use the legacy format"
+                "Creating CrsGenMetadata with empty extra data. Will use the legacy format"
             );
             None
         } else {

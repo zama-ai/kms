@@ -1,4 +1,4 @@
-When reviewing changes — whether a single commit or an entire branch — perform the following steps:
+When reviewing changes — whether a single commit or an entire branch — ignore any changes merged in from `main`, and then perform the following steps:
 
 - Verify every rule in this file is satisfied.
 - Validate that every item on the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) can be checked off. Alert your human of any changes that you cannot personally verify.
