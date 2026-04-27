@@ -1,6 +1,6 @@
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
-    use crate::client::tests::common::standard_keygen_config;
+    use crate::client::tests::common::uncompressed_keygen_config;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 }}
 cfg_if::cfg_if! {
@@ -36,9 +36,11 @@ cfg_if::cfg_if! {
 }}
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::client::tests::common::compressed_keygen_config;
+use crate::client::tests::common::keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{TIME_TO_SLEEP_MS, decompression_keygen_config};
+use crate::client::tests::common::{
+    TIME_TO_SLEEP_MS, decompression_keygen_config, uncompressed_keygen_config,
+};
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 #[cfg(feature = "slow_tests")]
@@ -166,7 +168,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    let (keyset_config, keyset_added_info) = compressed_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -522,7 +524,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let keys1 = run_threshold_keygen(
         parameter,
         &kms_clients,
@@ -553,7 +555,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let keys2 = run_threshold_keygen(
         parameter,
         &kms_clients,
@@ -781,9 +783,9 @@ pub(crate) async fn preproc_and_keygen(
             let key_id = *key_id;
             let preproc_id = *preproc_id;
             let (keyset_config, keyset_added_info) = if compressed {
-                compressed_keygen_config()
+                keygen_config()
             } else {
-                standard_keygen_config()
+                uncompressed_keygen_config()
             };
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
@@ -863,9 +865,9 @@ pub(crate) async fn preproc_and_keygen(
         .await;
         for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
             let (keyset_config, keyset_added_info) = if compressed {
-                compressed_keygen_config()
+                keygen_config()
             } else {
-                standard_keygen_config()
+                uncompressed_keygen_config()
             };
             let keyset = run_threshold_keygen(
                 parameter,
@@ -1728,7 +1730,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()> {
-    use crate::client::tests::common::compressed_from_existing_keygen_config;
+    use crate::client::tests::common::keygen_config_from_existing;
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("compressed_from_existing_keygen")
@@ -1770,7 +1772,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
     let (keyset_config, keyset_added_info) =
-        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
+        keygen_config_from_existing(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
 
     threshold_key_gen_secure(
         clients,
