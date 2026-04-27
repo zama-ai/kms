@@ -1739,6 +1739,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
+        .force_isolated() // Prevent fixed request IDs from colliding with shared/generated material
         .build()
         .await?;
 
