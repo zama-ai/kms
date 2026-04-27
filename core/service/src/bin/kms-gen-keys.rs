@@ -680,7 +680,11 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
 ) {
     process_cmd(
         pub_storage,
-        vec![&PubDataType::PublicKey, &PubDataType::ServerKey],
+        vec![
+            &PubDataType::CompressedXofKeySet,
+            &PubDataType::PublicKey,
+            &PubDataType::ServerKey,
+        ],
         req_id,
         show_existing,
         overwrite,
@@ -688,7 +692,7 @@ async fn process_fhe_cmds<PubS: Storage, PrivS: Storage>(
     .await;
     process_cmd(
         priv_storage,
-        vec![&PrivDataType::FheKeyInfo, &PrivDataType::SigningKey],
+        vec![&PrivDataType::FhePrivateKey, &PrivDataType::FheKeyInfo],
         req_id,
         show_existing,
         overwrite,

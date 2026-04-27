@@ -216,7 +216,7 @@
 //! # Fast tests only (no PRSS)
 //! cargo nextest run --test integration_test_isolated --features testing
 //!
-//! # All threshold tests (requires pre-generated Default PRSS for nightly_full_gen_tests_*)
+//! # All threshold tests (ignored nightly Default-param cases remain extremely heavy)
 //! cargo nextest run --test integration_test_isolated --features threshold_tests
 //!
 //! # Specific test
@@ -246,7 +246,7 @@ use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
 #[cfg(feature = "threshold_tests")]
-use tfhe::zk::CompactPkeCrs;
+use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use tracing::info;
 use validator::Validate;
 
@@ -266,9 +266,7 @@ use kms_lib::engine::base::{
     DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned,
 };
 #[cfg(feature = "threshold_tests")]
-use kms_lib::util::key_setup::test_tools::{
-    load_material_from_pub_storage, load_pk_from_pub_storage,
-};
+use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
 // UTILITY HELPERS
@@ -580,14 +578,11 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
-/// This helper enables `ensure_default_prss=true` during server startup. The test material copy
-/// includes pre-generated PRSS (from `test-material`). At startup, the server checks
-/// whether the loaded PRSS profile matches the context shape; if it does, live MPC
-/// PRSS init is skipped entirely.
+/// This helper enables `ensure_default_prss=true` during server startup. For Test params,
+/// pre-generated PRSS from `test-material` may be copied and reused when present.
 ///
-/// With **Test params** (`FheParameter::Test`), missing PRSS can be initialized live.
-/// For **Default params**, use `setup_isolated_threshold_cli_test_with_prss_default`,
-/// which requires pre-generated PRSS material under `test-material/default`.
+/// With **Default params**, `setup_isolated_threshold_cli_test_with_prss_default` uses the
+/// same startup PRSS initialization path instead of requiring pre-generated PRSS blobs.
 ///
 /// # Example
 /// ```no_run
@@ -705,8 +700,9 @@ async fn setup_isolated_threshold_cli_test_default(
 ///
 /// Uses `ensure_default_prss=true` with `FheParameter::Default`.
 ///
-/// Requires pre-generated Default PRSS material in `test-material/default`
-/// (for example via `make generate-test-material-default`), otherwise setup fails fast.
+/// PRSS is ensured at server startup: if the default epoch is missing, startup initializes it;
+/// otherwise existing PRSS is reused. Default threshold context and key material still come
+/// from `test-material/default`, but `PrssSetupCombined` is not copied up front.
 #[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
@@ -854,11 +850,8 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
         .with_test_name(test_name)
         .with_party_count(party_count);
 
-    let default_material_spec = match (fhe_params, ensure_default_prss) {
-        (FheParameter::Default, true) => {
-            kms_lib::testing::material::TestMaterialSpec::threshold_default(party_count)
-        }
-        (FheParameter::Default, false) => {
+    let default_material_spec = match fhe_params {
+        FheParameter::Default => {
             kms_lib::testing::material::TestMaterialSpec::threshold_default_no_prss(party_count)
         }
         _ => kms_lib::testing::material::TestMaterialSpec::threshold_basic(party_count),
@@ -1283,7 +1276,7 @@ fn cipher_params(
     batch_size: usize,
     no_compression: bool,
     no_precompute_sns: bool,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
     ciphertext_output_path: Option<PathBuf>,
 ) -> CipherParameters {
     CipherParameters {
@@ -1299,7 +1292,7 @@ fn cipher_params(
         parallel_requests: 1,
         ciphertext_output_path,
         inter_request_delay_ms: 0,
-        compressed_keys,
+        uncompressed_keys,
         extra_data: None,
     }
 }
@@ -1308,13 +1301,13 @@ fn cipher_params(
 async fn insecure_key_gen_isolated(
     config_path: &Path,
     test_path: &Path,
-    compressed: bool,
+    uncompressed: bool,
 ) -> Result<String> {
     let config = cmd_config(
         config_path,
         CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
             shared_args: SharedKeyGenParameters {
-                compressed,
+                uncompressed,
                 ..Default::default()
             },
         }),
@@ -1573,13 +1566,13 @@ async fn integration_test_commands_isolated(
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
-                    compressed: key_gen_parameters.shared_args.compressed,
+                    uncompressed: key_gen_parameters.shared_args.uncompressed,
                 })
             }
             CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
-                    compressed: key_gen_parameters.shared_args.compressed,
+                    uncompressed: key_gen_parameters.shared_args.uncompressed,
                 })
             }
             CCCommand::PublicDecrypt(_) => CCCommand::PublicDecryptResult(ResultParameters {
@@ -1618,11 +1611,12 @@ async fn integration_test_commands_isolated(
     Ok(())
 }
 
-/// Run a subset of integration test commands using compressed keys.
+/// Run a subset of integration test commands using the default keyset format.
 ///
-/// Compressed keys only store `CompressedXofKeySet` (no separate `PublicKey`/`ServerKey`),
-/// so all commands must use `no_compression: false` to fetch the compressed keyset.
-async fn integration_test_commands_compressed_isolated(
+/// The default public material stores only `CompressedXofKeySet`
+/// (no separate `PublicKey`/`ServerKey`), so all commands must use
+/// `uncompressed_keys: false`.
+async fn integration_test_commands_default_keys_isolated(
     config_path: &Path,
     keys_folder: &Path,
     key_id: String,
@@ -1630,7 +1624,7 @@ async fn integration_test_commands_compressed_isolated(
     let key_id = KeyId::from_str(&key_id)?;
 
     let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, false, no_sns, true, None)
+        cipher_params(val, dt, key_id, bs, false, no_sns, false, None)
     };
 
     let commands = vec![
@@ -1788,14 +1782,14 @@ async fn real_preproc_and_keygen_isolated(
     config_path: &Path,
     test_path: &Path,
     max_iter: usize,
-    compressed: bool,
+    uncompressed: bool,
 ) -> Result<String> {
     let preproc_config = cmd_config(
         config_path,
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id: None,
             epoch_id: None,
-            compressed,
+            uncompressed,
             from_existing_shares: false,
         }),
         max_iter,
@@ -1813,7 +1807,7 @@ async fn real_preproc_and_keygen_isolated(
         CCCommand::KeyGen(KeyGenParameters {
             preproc_id,
             shared_args: SharedKeyGenParameters {
-                compressed,
+                uncompressed,
                 ..Default::default()
             },
         }),
@@ -1968,7 +1962,7 @@ async fn real_preproc_and_keygen_with_context_isolated(
         CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
-            compressed: false,
+            uncompressed: false,
             from_existing_shares: false,
         }),
         200,
@@ -2369,27 +2363,26 @@ async fn test_centralized_insecure() -> Result<()> {
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
 
-    // Also test with compressed keys
-    let compressed_key_id = insecure_key_gen_isolated(&config_path, keys_folder, true).await?;
-    integration_test_commands_compressed_isolated(&config_path, keys_folder, compressed_key_id)
+    // Also exercise the default-key fast path separately.
+    let default_key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
+    integration_test_commands_default_keys_isolated(&config_path, keys_folder, default_key_id)
         .await?;
 
     Ok(())
 }
 
-/// Test centralized insecure compressed key generation via CLI
+/// Test centralized insecure key generation via CLI using the default key format.
 ///
-/// Mirrors `test_centralized_insecure_compressed_keygen` in `integration_test.rs`.
-/// Runs insecure key generation with `compressed=true` against a native in-process server.
+/// Mirrors `test_centralized_insecure_default_keygen` in `integration_test.rs`.
 #[tokio::test]
-async fn test_centralized_insecure_compressed_keygen() -> Result<()> {
+async fn test_centralized_insecure_default_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure_compressed_keygen").await?;
+        setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen_isolated(&config_path, keys_folder, true).await?;
+    let key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
@@ -2545,9 +2538,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure key generation via CLI (Default FHE params, with PRSS)
-///
-/// Requires pre-generated Default PRSS material in `test-material/default`.
+/// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
@@ -2561,8 +2552,8 @@ async fn test_threshold_insecure() -> Result<()> {
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
 
-    let compressed_key_id = insecure_key_gen_isolated(&config_path, keys_folder, true).await?;
-    integration_test_commands_compressed_isolated(&config_path, keys_folder, compressed_key_id)
+    let default_key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
+    integration_test_commands_default_keys_isolated(&config_path, keys_folder, default_key_id)
         .await?;
 
     Ok(())
@@ -2718,46 +2709,42 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure compressed key generation via CLI (Test FHE params, with PRSS)
+/// Test threshold insecure key generation via CLI using the default key format.
 ///
-/// Mirrors `test_threshold_insecure_compressed_keygen` in integration_test.rs.
-/// Validates that insecure keygen with `compressed=true` produces a valid key ID
-/// on a threshold cluster using Test FHE parameters.
+/// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
-async fn test_threshold_insecure_compressed_keygen() -> Result<()> {
+async fn test_threshold_insecure_default_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_compressed_keygen", 4)
-            .await?;
+        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen_isolated(&config_path, keys_folder, true).await?;
+    let key_id = insecure_key_gen_isolated(&config_path, keys_folder, false).await?;
     assert!(!key_id.is_empty());
 
     Ok(())
 }
 
-/// Test threshold preprocessing and keygen with compressed keys via CLI (Test FHE params, with PRSS)
+/// Test threshold preprocessing and keygen with the default key format.
 ///
-/// Mirrors `test_threshold_compressed_preproc_keygen` in integration_test.rs.
-/// Runs two sequential preproc+keygen cycles with `compressed=true` and asserts
+/// Mirrors `test_threshold_default_preproc_keygen` in `integration_test.rs`.
+/// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
 #[serial]
-async fn test_threshold_compressed_preproc_keygen() -> Result<()> {
+async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_compressed_preproc_keygen", 4)
-            .await?;
+        setup_isolated_threshold_cli_test_with_prss("threshold_default_preproc_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen_isolated(&config_path, keys_folder, 200, true).await?;
-    let key_id_2 = real_preproc_and_keygen_isolated(&config_path, keys_folder, 200, true).await?;
+    let key_id_1 = real_preproc_and_keygen_isolated(&config_path, keys_folder, 200, false).await?;
+    let key_id_2 = real_preproc_and_keygen_isolated(&config_path, keys_folder, 200, false).await?;
 
     assert_ne!(key_id_1, key_id_2);
 
@@ -2969,8 +2956,8 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 /// The Test-param variant (`nightly_tests_threshold_sequential_preproc_keygen`) covers
 /// sequential 2-round behavior.
 ///
-// Extremely heavy test — requires dedicated infra with pre-generated Default-param
-// PRSS material and multi-hour runtime budget. Do NOT run in regular CI or local dev.
+// Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
+// Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
@@ -3297,7 +3284,7 @@ async fn test_threshold_reshare() -> Result<()> {
 
     let ids = fetch_public_elements(
         &key_id_str,
-        &[PubDataType::ServerKey, PubDataType::PublicKey],
+        &[PubDataType::CompressedXofKeySet],
         &cc_conf,
         test_path,
         false,
@@ -3308,23 +3295,17 @@ async fn test_threshold_reshare() -> Result<()> {
     let key_id = RequestId::from_str(&key_id_str)?;
     // Use first party's storage prefix for reading materials
     let storage_prefix = format!("PUB-p{}", ids[0].party_id);
-    let public_key =
-        load_pk_from_pub_storage(Some(test_path), &key_id, Some(&storage_prefix)).await;
-    let server_key: tfhe::ServerKey = load_material_from_pub_storage(
+    let compressed_keyset: CompressedXofKeySet = load_material_from_pub_storage(
         Some(test_path),
         &key_id,
-        PubDataType::ServerKey,
+        PubDataType::CompressedXofKeySet,
         Some(&storage_prefix),
     )
     .await;
 
-    let server_key_digest = hex::encode(safe_serialize_hash_element_versioned(
+    let compressed_keyset_digest = hex::encode(safe_serialize_hash_element_versioned(
         &DSEP_PUBDATA_KEY,
-        &server_key,
-    )?);
-    let public_key_digest = hex::encode(safe_serialize_hash_element_versioned(
-        &DSEP_PUBDATA_KEY,
-        &public_key,
+        &compressed_keyset,
     )?);
 
     let _ids =
@@ -3350,7 +3331,7 @@ async fn test_threshold_reshare() -> Result<()> {
     let previous_key_info = PreviousKeyInfo {
         key_id: key_id.into(),
         preproc_id,
-        key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
+        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
     };
     let previous_crs_info = PreviousCrsInfo {
         crs_id,

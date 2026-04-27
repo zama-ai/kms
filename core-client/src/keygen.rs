@@ -24,31 +24,45 @@ use tokio::task::JoinSet;
 use tonic::Code;
 use tonic::transport::Channel;
 
-/// Build a `KeySetConfig` from compressed and keyset_type parameters.
-/// Returns `None` when both `compressed` is false and `keyset_type` is `None`.
-pub(crate) fn build_keyset_config(
-    compressed: bool,
-    use_existing: bool,
-) -> Option<kms_grpc::kms::v1::KeySetConfig> {
-    if compressed || use_existing {
-        Some(kms_grpc::kms::v1::KeySetConfig {
-            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
-            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-                compute_key_type: 0, // CPU
-                secret_key_config: if use_existing {
-                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
-                } else {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PublicKeyConfig {
+    Compressed,
+    Uncompressed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SecretKeyConfig {
+    GenerateAll,
+    UseExisting,
+}
+
+/// Build an explicit standard `KeySetConfig`.
+pub(crate) fn build_standard_keyset_config(
+    public_key_config: PublicKeyConfig,
+    secret_key_config: SecretKeyConfig,
+) -> kms_grpc::kms::v1::KeySetConfig {
+    kms_grpc::kms::v1::KeySetConfig {
+        keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+        standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+            compute_key_type: 0, // CPU
+            secret_key_config: match secret_key_config {
+                SecretKeyConfig::GenerateAll => {
                     kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll as i32
-                },
-                compressed_key_config: if compressed {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
-                } else {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
-                },
-            }),
-        })
-    } else {
-        None
+                }
+                SecretKeyConfig::UseExisting => {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
+                }
+            },
+            compressed_key_config: match public_key_config {
+                PublicKeyConfig::Compressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll
+                }
+                PublicKeyConfig::Uncompressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone
+                }
+            }
+            .into(),
+        }),
     }
 }
 
@@ -80,7 +94,18 @@ pub(crate) async fn do_keygen(
     // NOTE: If we do not use dummy_domain here, then
     // this needs changing too in the KeyGenResult command.
     let use_existing = shared_config.existing_keyset_id.is_some();
-    let keyset_config = build_keyset_config(shared_config.compressed, use_existing);
+    let keyset_config = Some(build_standard_keyset_config(
+        if shared_config.uncompressed {
+            PublicKeyConfig::Uncompressed
+        } else {
+            PublicKeyConfig::Compressed
+        },
+        if use_existing {
+            SecretKeyConfig::UseExisting
+        } else {
+            SecretKeyConfig::GenerateAll
+        },
+    ));
     let keyset_added_info =
         shared_config
             .existing_keyset_id
@@ -167,7 +192,7 @@ pub(crate) async fn do_keygen(
         extra_data,
         resp_response_vec,
         cmd_conf.download_all,
-        shared_config.compressed,
+        shared_config.uncompressed,
     )
     .await?;
 
@@ -185,7 +210,7 @@ pub(crate) async fn fetch_and_check_keygen(
     extra_data: Vec<u8>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
-    compressed: bool,
+    uncompressed: bool,
 ) -> anyhow::Result<()> {
     if responses.len() < num_expected_responses {
         anyhow::bail!(
@@ -196,10 +221,10 @@ pub(crate) async fn fetch_and_check_keygen(
     }
 
     // Download the generated keys.
-    let key_types = if compressed {
-        vec![PubDataType::CompressedXofKeySet]
-    } else {
+    let key_types = if uncompressed {
         vec![PubDataType::PublicKey, PubDataType::ServerKey]
+    } else {
+        vec![PubDataType::CompressedXofKeySet]
     };
 
     let party_confs = fetch_public_elements(
@@ -219,7 +244,7 @@ pub(crate) async fn fetch_and_check_keygen(
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    if compressed {
+    if !uncompressed {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
             load_material_from_pub_storage(
                 Some(destination_prefix),
@@ -290,7 +315,7 @@ pub(crate) async fn fetch_and_check_keygen(
                     "No preprocessing ID in keygen response, cannot verify external signature"
                 )
             })?;
-            check_standard_keyset_ext_signature(
+            check_uncompressed_keyset_ext_signature(
                 &public_key,
                 &server_key,
                 &prep_id.try_into()?,
@@ -481,7 +506,7 @@ pub(crate) async fn do_abort_key_gen(
 
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn check_standard_keyset_ext_signature(
+pub(crate) fn check_uncompressed_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
     prep_id: &RequestId,
@@ -502,7 +527,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         prep_id,
         key_id,
         server_key_digest,
