@@ -815,3 +815,181 @@ pub(crate) async fn get_preproc_keygen_responses(
         .collect();
     Ok(resp_response_vec)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+    use kms_lib::{
+        consts::{
+            DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,
+            TEST_PARAM, default_extra_data,
+        },
+        cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
+        engine::base::INSECURE_PREPROCESSING_ID,
+        util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
+        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+    };
+    use std::str::FromStr;
+    use tfhe::xof_key_set::CompressedXofKeySet;
+
+    #[tokio::test]
+    async fn test_eip712_sigs() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        // make sure signing keys exist
+        ensure_central_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
+
+        // generate a small FHE keyset for testing
+        let key_id = &TEST_CENTRAL_KEY_ID;
+        let prep_id = &INSECURE_PREPROCESSING_ID;
+        ensure_central_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            TEST_PARAM,
+            key_id,
+            &OTHER_CENTRAL_TEST_ID,
+            &DEFAULT_EPOCH_ID,
+            true,
+            false,
+        )
+        .await;
+        let compressed_keyset: CompressedXofKeySet = read_versioned_at_request_id(
+            &pub_storage,
+            &RequestId::from_str(&key_id.to_string()).unwrap(),
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // read generated private signature key, derive public verification key and address from it
+        let sk: PrivateSigKey = read_versioned_at_request_id(
+            &priv_storage,
+            &RequestId::from_str(&SIGNING_KEY_ID.to_string()).unwrap(),
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let addr = sk.address();
+
+        // === compressed keyset signatures ===
+        let compressed_keyset_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)
+                .expect("serialization should succeed");
+        let compressed_sol_struct = KeygenVerification::new_compressed(
+            prep_id,
+            key_id,
+            compressed_keyset_digest.clone(),
+            vec![],
+        );
+        let compressed_sol_struct_extra_data = KeygenVerification::new_compressed(
+            prep_id,
+            key_id,
+            compressed_keyset_digest,
+            default_extra_data(),
+        );
+
+        let compressed_sig = compute_eip712_signature(&sk, &compressed_sol_struct, &dummy_domain())
+            .expect("signature computation should succeed");
+        let compressed_sig_extra_data =
+            compute_eip712_signature(&sk, &compressed_sol_struct_extra_data, &dummy_domain())
+                .expect("signature computation should succeed");
+
+        // check that the signature verifies and unwraps without error
+        check_compressed_keyset_ext_signature(
+            &compressed_keyset,
+            prep_id,
+            key_id,
+            &compressed_sig,
+            &dummy_domain(),
+            vec![],
+            &[addr],
+        )
+        .expect("signature should be valid");
+        check_compressed_keyset_ext_signature(
+            &compressed_keyset,
+            prep_id,
+            key_id,
+            &compressed_sig_extra_data,
+            &dummy_domain(),
+            default_extra_data(),
+            &[addr],
+        )
+        .expect("signature should be valid");
+
+        // check that verification fails for a wrong address
+        let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
+        assert!(
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                prep_id,
+                key_id,
+                &compressed_sig,
+                &dummy_domain(),
+                vec![],
+                &[wrong_address]
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("External signature verification failed for compressed keygen")
+        );
+
+        // check that verification fails for signature that is too short
+        let short_sig = [0_u8; 37];
+        assert!(
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                prep_id,
+                key_id,
+                &short_sig,
+                &dummy_domain(),
+                vec![],
+                &[addr]
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("Expected external signature of length 65 Bytes, but got 37")
+        );
+
+        // check that verification fails for a byte string that is not a signature
+        let malformed_sig = [23_u8; 65];
+        assert!(
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                prep_id,
+                key_id,
+                &malformed_sig,
+                &dummy_domain(),
+                vec![],
+                &[addr]
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("signature error")
+        );
+
+        // check that verification fails for a signature that does not match the message
+        let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
+        assert!(
+            check_compressed_keyset_ext_signature(
+                &compressed_keyset,
+                prep_id,
+                key_id,
+                &wrong_sig,
+                &dummy_domain(),
+                vec![],
+                &[addr]
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("External signature verification failed for compressed keygen")
+        );
+    }
+}
