@@ -291,7 +291,7 @@ pub(crate) fn compute_info_standard_keygen(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         prep_id,
         key_id,
         server_key_digest.clone(),
@@ -1028,7 +1028,7 @@ pub(crate) mod tests {
                 safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
-                gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
+                gen_centralized_crs, generate_client_fhe_key, generate_uncompressed_fhe_keys,
             },
         },
         util::key_setup::FhePublicKey,
@@ -1218,7 +1218,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1267,7 +1267,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1343,7 +1343,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1435,7 +1435,7 @@ pub(crate) mod tests {
 
         {
             // do the verification correctly
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1462,7 +1462,7 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1484,7 +1484,7 @@ pub(crate) mod tests {
         {
             // should fail if we use a wrong prep_id
             let bad_prep_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &bad_prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1505,7 +1505,7 @@ pub(crate) mod tests {
         {
             // should fail if we use the wrong key_id
             let bad_key_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &bad_key_id,
                 server_key_digest.clone(),
@@ -1527,7 +1527,7 @@ pub(crate) mod tests {
             // should fail if we use the wrong digest
             let mut bad_server_key_digest = server_key_digest.clone();
             bad_server_key_digest[0] ^= 1;
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 bad_server_key_digest.clone(),
@@ -1560,7 +1560,7 @@ pub(crate) mod tests {
             )
             .unwrap();
             let bad_signature = meta_data.external_signature();
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),

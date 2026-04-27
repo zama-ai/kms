@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::compressed_keygen_config;
+use crate::client::tests::common::keygen_config;
 use crate::client::tests::common::{OptKeySetConfigAccessor, TIME_TO_SLEEP_MS};
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
@@ -342,11 +342,12 @@ pub async fn run_key_gen_centralized(
             let client_key_1 = handles_1.client_key;
             let client_key_2 = handles_2.client_key;
 
-            // get the server key 1
-            let server_key_1: tfhe::ServerKey = internal_client
-                .get_key(&keyid_1, PubDataType::ServerKey, &pub_storage)
+            // get the server key 1 by loading and decompressing the compressed keyset
+            let compressed_keyset_1: tfhe::xof_key_set::CompressedXofKeySet = internal_client
+                .get_key(&keyid_1, PubDataType::CompressedXofKeySet, &pub_storage)
                 .await
                 .unwrap();
+            let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
             // get decompression key
             let decompression_key = internal_client
@@ -372,7 +373,7 @@ async fn test_compressed_key_gen_centralized() {
     let request_id = derive_request_id("test_compressed_key_gen_centralized").unwrap();
     let epoch_id = *DEFAULT_EPOCH_ID;
     purge(None, None, &request_id, &[None], &[None]).await;
-    let (keyset_config, keyset_added_info) = compressed_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     key_gen_centralized(
         &request_id,
         &epoch_id,

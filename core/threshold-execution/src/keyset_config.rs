@@ -9,11 +9,11 @@ pub enum ComputeKeyType {
 /// generating keys for compressing ciphertexts.
 #[derive(Copy, Clone, PartialEq, Default)]
 pub enum CompressedKeyConfig {
-    /// Do not use compressed keys.
+    /// Use compressed keys for the full keyset.
     #[default]
-    None,
-    /// Use compression keys for the full keyset.
     All,
+    /// Do not use compressed keys.
+    None,
 }
 
 /// Configure the contents of a keyset.

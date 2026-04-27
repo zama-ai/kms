@@ -129,11 +129,13 @@ enum KeyGenSecretKeyConfig {
 // Configuration for whether to generate compressed or uncompressed keys.
 // Compressed keys use XOF-seeded compression and are smaller but need
 // decompression before use.
+// TODO: @reviewers This is breaking!
+// The enum discriminants changed so the proto default maps to compressed keys.
 enum CompressedKeyConfig {
-  // Do not generate compressed keys (default).
-  CompressedNone = 0;
-  // Generate compressed keys for the full keyset.
-  CompressedAll = 1;
+  // Generate compressed keys for the full keyset (default).
+  CompressedAll = 0;
+  // Do not generate compressed keys.
+  CompressedNone = 1;
 }
 
 // This message is returned if keygen has completed.
@@ -601,7 +603,7 @@ message CustodianContext {
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
-  RequestId context_id = 2;
+  RequestId custodian_context_id = 2;
 
   // The corruption threshold for this context.
   // It does not need to match the KMS context threshold
@@ -625,7 +627,9 @@ message DestroyMpcContextRequest {
 
 message NewCustodianContextRequest {
   // The new custodian context to create.
-  CustodianContext new_context = 1;
+  CustodianContext new_custodian_context = 1;
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId mpc_context_id = 2;
 }
 
 message DestroyCustodianContextRequest {
@@ -652,6 +656,7 @@ message CustodianRecoveryOutput {
   // The 1-indexed role of the custodian
   uint64 custodian_role = 2;
   bytes operator_verification_key = 3;
+  RequestId mpc_context_id = 4;
 }
 
 // The recovery request which contains the needed recovery data from all the custodians,

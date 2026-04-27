@@ -13,7 +13,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self, DurationGuard},
     metrics_names::{
-        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+        OP_CRS_GEN_ABORT, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
+        TAG_PARTY_ID,
     },
 };
 use threshold_execution::{
@@ -225,9 +226,22 @@ impl<
                             Some(req_id),
                             anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
                         );
-                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
-                        let guarded_meta_store= meta_store_cancelled.write().await;
-                        crypto_storage_cancelled.purge_crs_material(&req_id, &epoch_id, guarded_meta_store).await;
+                        let del_res = crypto_storage_cancelled.inner.purge_crs_material(&req_id, &epoch_id).await;
+                        {
+                            let mut guarded_meta_store = meta_store_cancelled.write().await;
+                            let msg = if del_res {
+                                // Successful deletion
+                                let msg = format!("CRS generation aborted and crs material deleted successfully for request {}", req_id);
+                                tracing::info!(msg);
+                                msg
+                            } else {
+                                // Error during deletion
+                                let msg = format!("CRS generation aborted but failed to delete crs material for request {}", req_id);
+                                tracing::error!(msg);
+                                msg
+                            };
+                            update_err_req_in_meta_store(&mut guarded_meta_store, &req_id, msg, op_tag);
+                        }
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -293,6 +307,34 @@ impl<
                 }))
             }
         }
+    }
+
+    async fn inner_abort_crs_gen(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        let parsed_id: RequestId =
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)
+                .map_err(|e| {
+                    MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument)
+                })?;
+        // Find the token
+        let mut ongoing = self.ongoing.lock().await;
+        match ongoing.remove(&parsed_id) {
+            Some(token) => {
+                // Observe that the cancellation arm handles the abortion and clean-up
+                token.cancel();
+            }
+            None => {
+                return Err(MetricedError::new(
+                    OP_CRS_GEN_ABORT,
+                    Some(parsed_id),
+                    anyhow!("No ongoing CRS generation found for the supplied request ID"),
+                    tonic::Code::NotFound,
+                ));
+            }
+        }
+        Ok(Response::new(Empty {}))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -414,12 +456,18 @@ impl<
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         if let Err(e) = crypto_storage
+            .inner
             .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await
         {
             tracing::error!("Failed to write CRS for request {req_id}: {e}");
             return;
         }
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, op_tag)
+            .await;
 
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
@@ -449,6 +497,13 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
+    }
+
+    async fn abort_crs_gen(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.inner_abort_crs_gen(request).await
     }
 }
 
@@ -509,6 +564,13 @@ impl<
         self.real_crs_generator
             .inner_get_result(request, true)
             .await
+    }
+
+    async fn abort_crs_gen(
+        &self,
+        request: Request<v1::RequestId>,
+    ) -> Result<Response<Empty>, MetricedError> {
+        self.real_crs_generator.inner_abort_crs_gen(request).await
     }
 }
 
@@ -896,5 +958,57 @@ mod tests {
             .get_result(Request::new(req_id.into()))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_not_found() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+
+        let err = crs_gen
+            .abort_crs_gen(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn abort_during_crs_gen() {
+        let mut rng = AesRng::seed_from_u64(123);
+        // SlowCeremony keeps the background task running long enough for abort to land
+        let crs_gen = make_crs_gen::<SlowCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        };
+
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+        // We manage to abort successfully first time
+        assert!(
+            crs_gen
+                .abort_crs_gen(Request::new(req_id.into()))
+                .await
+                .is_ok()
+        );
+        // Second abort fails because the cancellation token has already been consumed
+        let err = crs_gen
+            .abort_crs_gen(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        // Try to get the result and see it has been aborted
+        let err = crs_gen
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

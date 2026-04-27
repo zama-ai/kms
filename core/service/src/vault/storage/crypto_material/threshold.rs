@@ -3,6 +3,7 @@
 //! This module provides the storage implementation for cryptographic material
 //! used in the threshold KMS variant.
 
+use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
@@ -20,15 +21,16 @@ use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::ThresholdFheKeys,
+        threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
     },
+    util::meta_store::update_err_req_in_meta_store,
     util::meta_store::{
         MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
     },
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, StorageReader, crypto_material::log_storage_success,
+            Storage, StorageExt, crypto_material::log_storage_success, read_all_data_versioned,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
     },
@@ -72,10 +74,46 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         Arc::clone(&self.inner.private_storage)
     }
 
-    /// Write the CRS to the storage backend.
+    /// Write the PRSS info to the storage backend.
+    /// No actions are taken on failure, but the error is returned to the caller for potential handling.
+    pub async fn write_prss_info(
+        &self,
+        epoch_id: &EpochId,
+        prss_info: &PRSSSetupCombined,
+    ) -> anyhow::Result<()> {
+        let mut priv_storage = self.inner.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_storage,
+            &(*epoch_id).into(),
+            prss_info,
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await?;
+        log_storage_success(
+            epoch_id,
+            priv_storage.info(),
+            &PrivDataType::PrssSetupCombined.to_string(),
+            false,
+            true,
+        );
+        Ok(())
+    }
+
+    /// Read all PRSS info from storage
+    pub async fn read_all_prss_info(
+        &self,
+    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
+        let priv_storage = self.inner.private_storage.lock().await;
+
+        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
+    }
+
+    /// Write the CRS to the storage backend (for use in connection with resharing).
+    /// Returns true if the write was successful, false otherwise.
+    ///
     /// On failure, the meta_store is used to purge dangling data.
     /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    pub(crate) async fn inner_write_crs<T: Clone>(
+    pub(crate) async fn resharing_crs_write<T: Clone>(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
@@ -83,28 +121,42 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<T>>>,
     ) -> bool {
-        self.inner
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info, meta_store)
+        if self
+            .inner
+            .inner_write_crs(crs_id, epoch_id, pp, crs_info)
             .await
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_crs_with_meta_store(crs_id, epoch_id, pp, crs_info, meta_store, op_metric_tag)
-            .await
+        {
+            true
+        } else {
+            // Some store op failed, we need to purge any potentially
+            // dangling data and update the meta store accordingly.
+            // Try to delete stored data to avoid anything dangling
+            // Ignore any failure to delete something since it might
+            // be because the data did not get created
+            // In any case, we can't do much.
+            if self.inner.purge_crs_material(crs_id, epoch_id).await {
+                // Successfully purged dangling data, now update meta store with error
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = update_err_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    crs_id,
+                    format!("Failed to write CRS to storage for epoch change to {epoch_id}"),
+                    OP_NEW_EPOCH,
+                );
+            } else {
+                // Failure in purging data
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = update_err_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    crs_id,
+                    format!(
+                        "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}"
+                    ),
+                    OP_NEW_EPOCH,
+                );
+            }
+            false
+        }
     }
 
     /// Check if the CRS under [req_id, epoch_id] exists in the storage.
@@ -124,14 +176,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             // Lock the storage components in the correct order to avoid deadlocks.
             let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -201,48 +249,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
                 pk_result.is_ok() && server_result.is_ok()
             };
-            let threshold_key_clone = threshold_fhe_keys.clone();
-            let f3 = async move {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            key_id,
-                            epoch_id,
-                            &threshold_key_clone,
-                            &PrivDataType::FheKeyInfo.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
-                            );
-                        } else {
-                            log_storage_success(
-                                key_id,
-                                guarded_backup_vault.info(),
-                                &PrivDataType::FheKeyInfo.to_string(),
-                                false,
-                                true,
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of key material for request {key_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
         // Try to store the new data
         tracing::info!("Storing Keys objects for key ID {}", key_id);
 
-        if r1 && r2 && r3 {
+        if r1 && r2 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
@@ -378,14 +390,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let guarded_meta_storage = meta_store.write().await;
-        let (r1, r2, r3) = {
+        let (r1, r2) = {
             // Lock the storage components in the correct order to avoid deadlocks.
             let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -441,48 +449,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
                 server_result.is_ok()
             };
-            let threshold_key_clone = threshold_fhe_keys.clone();
-            let f3 = async move {
-                match back_vault {
-                    Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_and_epoch_id(
-                            &mut (*guarded_backup_vault),
-                            key_id,
-                            epoch_id,
-                            &threshold_key_clone,
-                            &PrivDataType::FheKeyInfo.to_string(),
-                        )
-                        .await;
-
-                        if let Err(e) = &backup_result {
-                            tracing::error!(
-                                "Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}"
-                            );
-                        } else {
-                            log_storage_success(
-                                key_id,
-                                guarded_backup_vault.info(),
-                                &PrivDataType::FheKeyInfo.to_string(),
-                                false,
-                                true,
-                            );
-                        }
-                        backup_result.is_ok()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "No backup vault configured. Skipping backup of key material for request {key_id}"
-                        );
-                        true
-                    }
-                }
-            };
-            tokio::join!(f1, f2, f3)
+            tokio::join!(f1, f2)
         };
         // Try to store the new data
         tracing::info!("Storing compressed keys objects for key ID {}", key_id);
 
-        if r1 && r2 && r3 {
+        if r1 && r2 {
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
@@ -577,7 +549,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
-    /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material<T: Clone>(
         &self,
         req_id: &RequestId,
@@ -586,19 +557,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) {
         self.inner
             .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
-            .await
-    }
-
-    /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
-    pub async fn purge_crs_material(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
-    ) {
-        self.inner
-            .purge_crs_material(req_id, epoch_id, guarded_meta_store)
             .await
     }
 

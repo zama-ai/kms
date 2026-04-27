@@ -97,7 +97,7 @@ pub async fn setup_threshold_no_client<
     // use NoiseFloodSmall unless some other DecryptionMode was set as parameter
     let decryption_mode = decryption_mode.unwrap_or_default();
 
-    // a vector of sender that will trigger shutdown of core/threshold servers
+    // a vector of sender that will trigger shutdown of the threshold core servers
     let mut mpc_shutdown_txs = Vec::new();
 
     for (i, (mpc_listener, _mpc_port), cur_vault) in
@@ -113,7 +113,7 @@ pub async fn setup_threshold_no_client<
         };
         let mpc_conf = mpc_confs.clone();
 
-        // create channels that will trigger core/threshold shutdown
+        // create channels that will trigger core/experiments shutdown
         let (mpc_core_tx, mpc_core_rx): (
             tokio::sync::oneshot::Sender<()>,
             tokio::sync::oneshot::Receiver<()>,
@@ -299,7 +299,7 @@ pub async fn setup_threshold_with_custom_peers<
     // use NoiseFloodSmall unless some other DecryptionMode was set as parameter
     let decryption_mode = decryption_mode.unwrap_or_default();
 
-    // a vector of sender that will trigger shutdown of core/threshold servers
+    // a vector of sender that will trigger shutdown of core/experiments servers
     let mut mpc_shutdown_txs = Vec::new();
 
     for (
@@ -342,7 +342,7 @@ pub async fn setup_threshold_with_custom_peers<
             peer.address = ip_addr.to_string();
         }
 
-        // create channels that will trigger core/threshold shutdown
+        // create channels that will trigger core/experiments shutdown
         let (mpc_core_tx, mpc_core_rx): (
             tokio::sync::oneshot::Sender<()>,
             tokio::sync::oneshot::Receiver<()>,

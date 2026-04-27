@@ -3,14 +3,12 @@ use kms_lib::consts::{
     KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use kms_lib::vault::storage::{StorageType, file::FileStorage};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
-use threshold_fhe::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
@@ -561,65 +559,6 @@ mod kms_server_binary_test {
             .success();
         run_subcommand_no_args("config/default_1.toml");
     }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_cert_paths() {
-        // make a temporary directory for the certificates
-        let all_rwx = std::fs::Permissions::from_mode(0o777);
-        let temp_dir = tempfile::Builder::new()
-            .prefix(
-                &std::env::current_dir()
-                    .unwrap()
-                    .as_path()
-                    .join("cert-paths-test"),
-            )
-            .permissions(all_rwx)
-            .tempdir()
-            .unwrap();
-
-        // Note that we're testing the type `CertificatePaths`
-        // which is from core/threshold but using the binary in core/service.
-        Command::cargo_bin(KMS_GEN_TLS_CERTS)
-            .unwrap()
-            .args([
-                "--ca-prefix=p",
-                "--ca-count=4",
-                "-o",
-                temp_dir.path().to_str().unwrap(),
-            ])
-            .output()
-            .expect("failed to execute process");
-
-        let cert_path = temp_dir.path().join("cert_p1.pem");
-        let key_path = temp_dir.path().join("key_p1.pem");
-
-        let cert_paths = CertificatePaths {
-            cert: cert_path.to_str().unwrap().to_string(),
-            key: key_path.to_str().unwrap().to_string(),
-            calist: [
-                "cert_p1.pem,",
-                "cert_p2.pem,",
-                "cert_p3.pem,",
-                "cert_p4.pem",
-            ]
-            .map(|suffix| temp_dir.path().join(suffix).to_str().unwrap().to_string())
-            .concat(),
-        };
-
-        assert!(cert_paths.get_certificate().is_ok());
-        assert!(cert_paths.get_identity().is_ok());
-        assert!(cert_paths.get_flattened_ca_list().is_ok());
-        for i in 0..4 {
-            // note that party IDs start at 1
-            let pid = i + 1;
-            assert!(cert_paths.get_ca_by_name(&format!("p{pid}")).is_ok());
-        }
-        assert!(cert_paths.get_ca_by_name("p5").is_err());
-
-        // using localhost should fail too because it's not a part of the issuer
-        assert!(cert_paths.get_ca_by_name("localhost").is_err());
-    }
 }
 
 #[cfg(test)]
@@ -637,6 +576,7 @@ mod kms_custodian_binary_tests {
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
+        consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{
                 Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -790,6 +730,8 @@ mod kms_custodian_binary_tests {
                     custodian_index.to_string(),
                     "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
+                    "--mpc-context-id".to_string(),
+                    DEFAULT_MPC_CONTEXT.to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
@@ -907,7 +849,7 @@ mod kms_custodian_binary_tests {
                     .iter()
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
-                context_id: Some(backup_id.into()),
+                custodian_context_id: Some(backup_id.into()),
                 threshold: threshold as u32,
             },
             backup_pke,
@@ -918,6 +860,7 @@ mod kms_custodian_binary_tests {
             commitments.clone(),
             custodian_context,
             &signing_key,
+            *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
         let mut ciphertexts = BTreeMap::new();

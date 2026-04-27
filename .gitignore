@@ -1,5 +1,5 @@
-CLAUDE.md
-.claude/
+.claude/settings.local.json
+./CLAUDE.local.md
 /target*
 **/temp/*
 /keys
@@ -12,7 +12,6 @@ CLAUDE.md
 .vscode/launch.json
 .DS_Store
 .vscode/
-.claude
 .idea/
 *.eif
 .crates.toml
@@ -43,3 +42,4 @@ ci/kube-testing/kms/local-values-*.yaml
 
 .mcp.json
 .fastembed*
+core/grpc/proto/buf.yaml

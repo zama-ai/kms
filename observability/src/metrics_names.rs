@@ -2,9 +2,11 @@
 // These match the gRPC method names for better correlation.
 // Counters are incremented for each operation, and also used for error tracking.
 
+pub const OP_BOOT: &str = "boot";
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
+pub const OP_KEYGEN_ABORT: &str = "keygen_abort";
 pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
@@ -34,6 +36,7 @@ pub const OP_USER_DECRYPT_INNER: &str = "user_decrypt_inner";
 // CRS Operations
 pub const OP_CRS_GEN_REQUEST: &str = "crs_gen_request";
 pub const OP_CRS_GEN_RESULT: &str = "crs_gen_result";
+pub const OP_CRS_GEN_ABORT: &str = "crs_gen_abort";
 pub const OP_INSECURE_CRS_GEN_REQUEST: &str = "insecure_crs_gen_request";
 pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
 
@@ -80,6 +83,7 @@ pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
 /// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
 pub const ERR_ASYNC: &str = "async_call_error";
+pub const ERR_BACKUP: &str = "backup_error";
 
 // Common operation type values
 pub const OP_TYPE_TOTAL: &str = "total";

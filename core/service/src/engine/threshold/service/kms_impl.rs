@@ -1,5 +1,10 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    marker::PhantomData,
+    sync::{Arc, OnceLock},
+};
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
@@ -9,9 +14,19 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
-use observability::{conf::TelemetryConfig, metrics};
+use observability::{
+    conf::TelemetryConfig,
+    metrics::{self},
+    metrics_names::OP_BOOT,
+};
 use serde::{Deserialize, Serialize};
-use tfhe::{Versionize, core_crypto::prelude::LweKeyswitchKey, named::Named};
+use tfhe::{
+    Versionize,
+    core_crypto::prelude::LweKeyswitchKey,
+    integer::{ServerKey, compression_keys::DecompressionKey, noise_squashing::NoiseSquashingKey},
+    named::Named,
+    xof_key_set::CompressedXofKeySet,
+};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
@@ -29,6 +44,7 @@ use threshold_networking::{
     tls::AttestedVerifier,
 };
 
+use threshold_types::role::Role;
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -90,62 +106,127 @@ use super::{
 #[cfg(feature = "insecure")]
 use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
 
-/// Enum to hold either compressed or uncompressed public key material.
-/// This allows a single ThresholdFheKeys type to support both modes.
+/// Versioned envelope for PublicKeyMaterial.
+/// V0 is the fat variant (with decompressed keys), V1 is the slim variant.
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PublicKeyMaterialVersioned {
-    V0(PublicKeyMaterial),
+    V0(PublicKeyMaterialV0),
+    V1(PublicKeyMaterial),
 }
 
-#[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(PublicKeyMaterialVersioned)]
-pub enum PublicKeyMaterial {
-    /// Uncompressed keys - ready for immediate use
+/// V0: Fat public key material — stores both compressed keyset and decompressed keys.
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub enum PublicKeyMaterialV0 {
     Uncompressed {
         integer_server_key: Arc<tfhe::integer::ServerKey>,
         sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
         decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     },
-    /// Compressed keys - need decompression before use via XOF seed
     Compressed {
         compressed_keyset: Arc<tfhe::xof_key_set::CompressedXofKeySet>,
-        // We store duplicate of the integer keys for easy access, otherwise we'd need to decompress every time
         integer_server_key: Arc<tfhe::integer::ServerKey>,
         sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
         decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     },
 }
 
-impl PublicKeyMaterial {
-    pub fn new_compressed(
-        compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet,
-    ) -> anyhow::Result<Self> {
-        let compressed_keyset_cloned = compressed_keyset.clone();
-        let (_public_key, server_key) = compressed_keyset_cloned.decompress()?.into_raw_parts();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-            server_key.into_raw_parts();
-        Ok(Self::Compressed {
-            compressed_keyset: Arc::new(compressed_keyset),
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: decompression_key.map(Arc::new),
-        })
+/// Enum to hold either compressed or uncompressed public key material.
+/// This allows a single [`ThresholdFheKeys`] type to support both modes.
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(PublicKeyMaterialVersioned)]
+pub enum PublicKeyMaterial {
+    Uncompressed {
+        integer_server_key: Arc<ServerKey>,
+        sns_key: Option<Arc<NoiseSquashingKey>>,
+        decompression_key: Option<Arc<DecompressionKey>>,
+    },
+    Compressed {
+        keyset: Arc<CompressedXofKeySet>,
+    },
+}
+
+impl Upgrade<PublicKeyMaterial> for PublicKeyMaterialV0 {
+    type Error = Infallible;
+
+    fn upgrade(self) -> Result<PublicKeyMaterial, Self::Error> {
+        match self {
+            PublicKeyMaterialV0::Uncompressed {
+                integer_server_key,
+                sns_key,
+                decompression_key,
+            } => Ok(PublicKeyMaterial::Uncompressed {
+                integer_server_key,
+                sns_key,
+                decompression_key,
+            }),
+            PublicKeyMaterialV0::Compressed {
+                compressed_keyset, ..
+            } => Ok(PublicKeyMaterial::Compressed {
+                keyset: compressed_keyset,
+            }),
+        }
     }
+}
+
+impl PublicKeyMaterial {
+    pub fn new(keyset: CompressedXofKeySet) -> Self {
+        Self::Compressed {
+            keyset: Arc::new(keyset),
+        }
+    }
+
+    pub fn new_uncompressed(
+        integer_server_key: Arc<ServerKey>,
+        sns_key: Option<Arc<NoiseSquashingKey>>,
+        decompression_key: Option<Arc<DecompressionKey>>,
+    ) -> Self {
+        Self::Uncompressed {
+            integer_server_key,
+            sns_key,
+            decompression_key,
+        }
+    }
+}
+
+/// Uncompressed key material derived from a [`CompressedXofKeySet`].
+/// All fields are Arc-wrapped, so clones are cheap.
+#[derive(Clone)]
+struct UncompressedKeys {
+    integer_server_key: Arc<ServerKey>,
+    sns_key: Option<Arc<NoiseSquashingKey>>,
+    decompression_key: Option<Arc<DecompressionKey>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeysV0),
     V1(ThresholdFheKeysV1),
-    V2(ThresholdFheKeys),
+    V2(ThresholdFheKeysV2),
+    V3(ThresholdFheKeys),
 }
 
-/// V2: Unified key storage supporting both compressed and uncompressed keys.
+/// V3: Unified key storage supporting both compressed and uncompressed keys.
 /// These are the internal key materials (public and private)
-/// that's needed for decryption, user decryption and verifying a proven input.
+/// needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub public_material: PublicKeyMaterial,
+    pub meta_data: KeyGenMetadata,
+
+    #[versionize(skip)]
+    #[serde(skip)]
+    key_cache: OnceLock<UncompressedKeys>,
+}
+
+/// V2: Unified key storage supporting both compressed and uncompressed keys.
+/// Note: the field type is `PublicKeyMaterial` (the latest version), not a frozen V2-era copy.
+/// This is a consequence of `Versionize`: nested fields are serialized via their current dispatch
+/// type, so current code reads old nested `PublicKeyMaterialVersioned::V0` values by upgrading
+/// them during unversionizing, but cannot itself re-emit that old nested shape.
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct ThresholdFheKeysV2 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
@@ -178,7 +259,7 @@ pub struct ThresholdFheKeysV0 {
 }
 
 impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
 
     fn upgrade(self) -> Result<ThresholdFheKeysV1, Self::Error> {
         Ok(ThresholdFheKeysV1 {
@@ -193,11 +274,11 @@ impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
     }
 }
 
-impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV1 {
-    type Error = std::convert::Infallible;
+impl Upgrade<ThresholdFheKeysV2> for ThresholdFheKeysV1 {
+    type Error = Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
-        Ok(ThresholdFheKeys {
+    fn upgrade(self) -> Result<ThresholdFheKeysV2, Self::Error> {
+        Ok(ThresholdFheKeysV2 {
             private_keys: self.private_keys,
             public_material: PublicKeyMaterial::Uncompressed {
                 integer_server_key: self.integer_server_key,
@@ -209,54 +290,92 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV1 {
     }
 }
 
+impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV2 {
+    type Error = Infallible;
+
+    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+        Ok(ThresholdFheKeys {
+            private_keys: self.private_keys,
+            public_material: self.public_material,
+            meta_data: self.meta_data,
+            key_cache: OnceLock::new(),
+        })
+    }
+}
+
 impl ThresholdFheKeys {
-    /// Get the integer server key from the public material.
-    /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_integer_server_key(&self) -> Arc<tfhe::integer::ServerKey> {
-        match &self.public_material {
-            PublicKeyMaterial::Uncompressed {
-                integer_server_key, ..
-            } => integer_server_key.clone(),
-            PublicKeyMaterial::Compressed {
-                integer_server_key, ..
-            } => integer_server_key.clone(),
+    pub fn new(
+        private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+        public_material: PublicKeyMaterial,
+        meta_data: KeyGenMetadata,
+    ) -> Self {
+        Self {
+            private_keys,
+            public_material,
+            meta_data,
+            key_cache: OnceLock::new(),
         }
+    }
+
+    fn expand_keys(&self) -> &UncompressedKeys {
+        self.key_cache.get_or_init(|| {
+            match &self.public_material {
+                PublicKeyMaterial::Uncompressed {
+                    integer_server_key,
+                    sns_key,
+                    decompression_key,
+                } => UncompressedKeys {
+                    integer_server_key: integer_server_key.clone(),
+                    sns_key: sns_key.clone(),
+                    decompression_key: decompression_key.clone(),
+                },
+                PublicKeyMaterial::Compressed { keyset } => {
+                    let cloned = (**keyset).clone(); // TODO(dp): can possibly get rid of this later once tfhe-rs #3469 lands
+                    let (_pk, sk) = cloned
+                        .decompress()
+                        .expect("Call is infallible")
+                        .into_raw_parts();
+                    let (isk, _, _, decompk, snsk, _, _, _) = sk.into_raw_parts();
+                    UncompressedKeys {
+                        integer_server_key: Arc::new(isk),
+                        sns_key: snsk.map(Arc::new),
+                        decompression_key: decompk.map(Arc::new),
+                    }
+                }
+            }
+        })
+    }
+
+    /// Get the integer server key from the public material.
+    /// Compressed keys are lazily decompressed. The first access is expensive.
+    pub fn integer_server_key(&self) -> Arc<ServerKey> {
+        self.expand_keys().integer_server_key.clone()
     }
 
     /// Get the SNS key from the public material.
-    /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_sns_key(&self) -> Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>> {
-        match &self.public_material {
-            PublicKeyMaterial::Uncompressed { sns_key, .. } => sns_key.clone(),
-            PublicKeyMaterial::Compressed { sns_key, .. } => sns_key.clone(),
-        }
+    /// Compressed keys are lazily decompressed. The first access is expensive.
+    pub fn sns_key(&self) -> Option<Arc<NoiseSquashingKey>> {
+        self.expand_keys().sns_key.clone()
     }
 
     /// Get the decompression key from the public material.
-    /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_decompression_key(
-        &self,
-    ) -> Option<Arc<tfhe::integer::compression_keys::DecompressionKey>> {
-        match &self.public_material {
-            PublicKeyMaterial::Uncompressed {
-                decompression_key, ..
-            } => decompression_key.clone(),
-            PublicKeyMaterial::Compressed {
-                decompression_key, ..
-            } => decompression_key.clone(),
-        }
+    /// Compressed keys are lazily decompressed. The first access is expensive.
+    pub fn decompression_key(&self) -> Option<Arc<DecompressionKey>> {
+        self.expand_keys().decompression_key.clone()
     }
 
-    pub fn get_key_switching_key(&self) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>> {
-        let integer_server_key = self.get_integer_server_key();
+    pub fn key_switching_key(&self) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>> {
+        use tfhe::shortint::atomic_pattern::AtomicPatternServerKey::*;
+
+        let integer_server_key = self.integer_server_key();
         match &integer_server_key.as_ref().as_ref().atomic_pattern {
-            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
-                standard_atomic_pattern_server_key,
-            ) => Ok(standard_atomic_pattern_server_key.key_switching_key.clone()),
-            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
+            Standard(standard_atomic_pattern_server_key) => {
+                Ok(standard_atomic_pattern_server_key.key_switching_key.clone())
+            }
+            KeySwitch32(_) => {
                 anyhow::bail!("No support for KeySwitch32 server key")
             }
-            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(_) => {
+            Dynamic(_) => {
                 anyhow::bail!("No support for dynamic atomic pattern server key")
             }
         }
@@ -454,7 +573,7 @@ where
             // Observe that the following is the shut down of the core (which communicates with the other cores)
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
-                "Starting graceful shutdown of core/threshold {}",
+                "Starting graceful shutdown of core/experiments {}",
                 mpc_socket_addr
             );
             threshold_health_reporter
@@ -492,7 +611,7 @@ where
             ))
         })?;
         tracing::info!(
-            "core/threshold on {} shutdown completed successfully",
+            "Threshold core on {} shutdown completed successfully",
             mpc_socket_addr
         );
         Ok(())
@@ -562,7 +681,8 @@ where
         .await;
 
     let session_maker = SessionMaker::new_initialized(
-        &crypto_storage.inner,
+        threshold_config.my_id.map(Role::indexed_from_one),
+        &crypto_storage,
         networking_manager,
         verifier,
         base_kms.new_rng().await,
@@ -692,11 +812,17 @@ where
 
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
-    // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+    // Thus the vault gets automatically updated in case its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption hence
-    // existing values are not re-backed up
-    backup_operator.update_backup_vault(false).await?;
-
+    // existing values are not overwritten or backed up again
+    if !crypto_storage
+        .inner
+        .update_backup_vault(false, OP_BOOT)
+        .await
+    {
+        anyhow::bail!("Failed to update backup vault when booting");
+    }
+    tracing::info!("Successfully updated backup vault when booting");
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),
@@ -769,11 +895,91 @@ fn update_threshold_kms_system_metrics(
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+    use tfhe_versionable::Upgrade;
     use threshold_execution::tfhe_internals::{
-        public_keysets::FhePubKeySet, test_feature::gen_key_set,
+        public_keysets::FhePubKeySet,
+        test_feature::{gen_key_set, gen_uncompressed_key_set},
     };
 
+    use crate::consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM};
+
     use super::*;
+
+    // Minimal test-only wrapper for the historical V2 wire shape with the old fat nested
+    // `PublicKeyMaterial::Compressed` variant. We need this because the current types _can_ deserialize
+    // that payload, but due to `Versionize` limitations, they cannot serialize it anymore.
+    mod v2_legacy {
+        use super::*;
+
+        #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        pub enum PublicKeyMaterialVersioned {
+            V0(PublicKeyMaterial),
+        }
+
+        #[derive(Clone, Serialize, Deserialize, Versionize)]
+        #[versionize(PublicKeyMaterialVersioned)]
+        pub enum PublicKeyMaterial {
+            Uncompressed {
+                integer_server_key: Arc<ServerKey>,
+                sns_key: Option<Arc<NoiseSquashingKey>>,
+                decompression_key: Option<Arc<DecompressionKey>>,
+            },
+            Compressed {
+                compressed_keyset: Arc<CompressedXofKeySet>,
+                integer_server_key: Arc<ServerKey>,
+                sns_key: Option<Arc<NoiseSquashingKey>>,
+                decompression_key: Option<Arc<DecompressionKey>>,
+            },
+        }
+
+        #[derive(Clone, Serialize, Deserialize, Version)]
+        pub struct PlaceholderV0;
+
+        #[derive(Clone, Serialize, Deserialize, Version)]
+        pub struct PlaceholderV1;
+
+        impl Upgrade<PlaceholderV1> for PlaceholderV0 {
+            type Error = Infallible;
+
+            fn upgrade(self) -> Result<PlaceholderV1, Self::Error> {
+                unreachable!("placeholder variant is never serialized in this test")
+            }
+        }
+
+        impl Upgrade<ThresholdFheKeys> for PlaceholderV1 {
+            type Error = Infallible;
+
+            fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+                unreachable!("placeholder variant is never serialized in this test")
+            }
+        }
+
+        #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        pub enum ThresholdFheKeysVersioned {
+            V0(PlaceholderV0),
+            V1(PlaceholderV1),
+            V2(ThresholdFheKeys),
+        }
+
+        #[derive(Clone, Serialize, Deserialize, Versionize)]
+        #[versionize(ThresholdFheKeysVersioned)]
+        pub struct ThresholdFheKeys {
+            pub private_keys: Arc<
+                PrivateKeySet<
+                    { <ResiduePolyF4Z128 as algebra::structure_traits::Ring>::EXTENSION_DEGREE },
+                >,
+            >,
+            pub public_material: PublicKeyMaterial,
+            pub meta_data: KeyGenMetadata,
+        }
+
+        impl Named for ThresholdFheKeys {
+            const NAME: &'static str = "ThresholdFheKeys";
+        }
+    }
 
     impl ThresholdFheKeys {
         /// Initializes a dummy private keyset with the given parameters and returns it along with a public key set.
@@ -784,7 +990,9 @@ mod tests {
             tag: tfhe::Tag,
             rng: &mut R,
         ) -> (Self, FhePubKeySet) {
-            let keyset = gen_key_set(param, tag, rng);
+            // TODO(dp): need to rewrite/rethink this. Switching to compressed is probably better I think? Also consider
+            // moving to a test-helper as it's used in many places but not here?
+            let keyset = gen_uncompressed_key_set(param, tag, rng);
 
             let server_key = keyset.public_keys.server_key.clone();
             let (
@@ -807,20 +1015,155 @@ mod tests {
 
             let priv_key_set = Self {
                 private_keys: Arc::new(priv_key_set),
-                public_material: PublicKeyMaterial::Uncompressed {
-                    integer_server_key: Arc::new(integer_server_key),
-                    sns_key: sns_key.map(Arc::new),
-                    decompression_key: decompression_key.map(Arc::new),
-                },
+                public_material: PublicKeyMaterial::new_uncompressed(
+                    Arc::new(integer_server_key),
+                    sns_key.map(Arc::new),
+                    decompression_key.map(Arc::new),
+                ),
                 meta_data: KeyGenMetadata::new(
                     RequestId::zeros(),
                     RequestId::zeros(),
                     HashMap::new(),
                     vec![],
                 ),
+                key_cache: OnceLock::new(),
             };
 
             (priv_key_set, pub_key_set)
         }
+    }
+
+    /// Verify that upgrading a [`PublicKeyMaterialV0::Compressed`] produces a
+    /// [`PublicKeyMaterial::Compressed`] that only retains the keyset, discarding the
+    /// decompressed keys.
+    #[test]
+    fn upgrade_public_key_material_v0_compressed_drops_decompressed_keys() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (keyset, compressed_keyset) =
+            gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
+
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+            keyset.public_keys.server_key.into_raw_parts();
+
+        let v0 = PublicKeyMaterialV0::Compressed {
+            compressed_keyset: Arc::new(compressed_keyset),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        };
+
+        let v3: PublicKeyMaterial = v0.upgrade().unwrap();
+        assert!(matches!(v3, PublicKeyMaterial::Compressed { .. }));
+    }
+
+    /// Verify that a V3 ThresholdFheKeys with Compressed keys can roundtrip through
+    /// safe_serialize / safe_deserialize, and that lazy decompression works after.
+    #[test]
+    fn roundtrip_v3_compressed_and_lazy_decompress() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (_keyset, compressed_keyset) =
+            gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
+
+        let original = ThresholdFheKeys::new(
+            Arc::new(PrivateKeySet::init_dummy(TEST_PARAM)),
+            PublicKeyMaterial::new(compressed_keyset),
+            KeyGenMetadata::new(
+                RequestId::zeros(),
+                RequestId::zeros(),
+                HashMap::new(),
+                vec![],
+            ),
+        );
+        assert!(original.is_compressed());
+
+        // Decompress the original before serialization so we have reference values
+        let orig_srv_key = bc2wrap::serialize(&*original.integer_server_key()).unwrap();
+        let orig_sns_key = original.sns_key().map(|k| bc2wrap::serialize(&*k).unwrap());
+        let orig_dec_key = original
+            .decompression_key()
+            .map(|k| bc2wrap::serialize(&*k).unwrap());
+
+        // Roundtrip through safe_serialize / safe_deserialize
+        let mut buf = Vec::new();
+        safe_serialize(&original, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        let deserialized: ThresholdFheKeys =
+            safe_deserialize(&mut std::io::Cursor::new(&buf), SAFE_SER_SIZE_LIMIT).unwrap();
+
+        assert!(deserialized.is_compressed());
+        assert!(deserialized.key_cache.get().is_none());
+
+        // Lazy decompression on the deserialized value should produce identical keys
+        let srv_key = bc2wrap::serialize(&*deserialized.integer_server_key()).unwrap();
+        let sns_key = deserialized
+            .sns_key()
+            .map(|k| bc2wrap::serialize(&*k).unwrap());
+        let dec_key = deserialized
+            .decompression_key()
+            .map(|k| bc2wrap::serialize(&*k).unwrap());
+
+        assert_eq!(orig_srv_key, srv_key, "server key mismatch after roundtrip");
+        assert_eq!(orig_sns_key, sns_key, "sns key mismatch after roundtrip");
+        assert_eq!(orig_dec_key, dec_key, "decomp key mismatch after roundtrip");
+    }
+
+    #[test]
+    fn deser_v2_compressed_upgrades_and_reserializes_smaller() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (keyset, compressed_keyset) =
+            gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+            keyset.public_keys.server_key.into_raw_parts();
+
+        // V3 control
+        let expected_server_key = bc2wrap::serialize(&integer_server_key).unwrap();
+        let expected_sns_key = sns_key.as_ref().map(|key| bc2wrap::serialize(key).unwrap());
+        let expected_decompression_key = decompression_key
+            .as_ref()
+            .map(|key| bc2wrap::serialize(key).unwrap());
+
+        // V2
+        let legacy = v2_legacy::ThresholdFheKeys {
+            private_keys: Arc::new(PrivateKeySet::init_dummy(TEST_PARAM)),
+            public_material: v2_legacy::PublicKeyMaterial::Compressed {
+                compressed_keyset: Arc::new(compressed_keyset),
+                integer_server_key: Arc::new(integer_server_key),
+                sns_key: sns_key.map(Arc::new),
+                decompression_key: decompression_key.map(Arc::new),
+            },
+            meta_data: KeyGenMetadata::new(
+                RequestId::zeros(),
+                RequestId::zeros(),
+                HashMap::new(),
+                vec![],
+            ),
+        };
+
+        let mut v2_bytes = Vec::new();
+        safe_serialize(&legacy, &mut v2_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let upgraded: ThresholdFheKeys =
+            safe_deserialize(&mut std::io::Cursor::new(&v2_bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+
+        assert!(upgraded.is_compressed());
+
+        // No Eq/PartialEq so we're stuck comparing bytes.
+        let upgraded_server_key = bc2wrap::serialize(&*upgraded.integer_server_key()).unwrap();
+        let upgraded_sns_key = upgraded
+            .sns_key()
+            .map(|key| bc2wrap::serialize(&*key).unwrap());
+        let upgraded_decompression_key = upgraded
+            .decompression_key()
+            .map(|key| bc2wrap::serialize(&*key).unwrap());
+
+        assert_eq!(upgraded_server_key, expected_server_key);
+        assert_eq!(upgraded_sns_key, expected_sns_key);
+        assert_eq!(upgraded_decompression_key, expected_decompression_key);
+
+        let mut v3_bytes = Vec::new();
+        safe_serialize(&upgraded, &mut v3_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        // V3 is smaller
+        assert_eq!(v2_bytes.len(), 4_810_035);
+        assert_eq!(v3_bytes.len(), 2_658_553);
     }
 }

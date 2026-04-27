@@ -28,7 +28,9 @@ use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
+use observability::metrics_names::OP_BOOT;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
+use tokio_util::sync::CancellationToken;
 
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
@@ -69,7 +71,7 @@ use threshold_execution::{
     zk::ceremony::public_parameters_by_trusted_setup,
 };
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -110,7 +112,7 @@ pub(crate) async fn async_generate_fhe_keys(
 
     rayon::spawn_fifo(move || {
         let out = match keyset_config.compressed_key_config {
-            CompressedKeyConfig::None => generate_fhe_keys(
+            CompressedKeyConfig::None => generate_uncompressed_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -121,7 +123,7 @@ pub(crate) async fn async_generate_fhe_keys(
                 extra_data.clone(),
             )
             .map(|(keyset, handles)| CentralizedKeyGenResult::Uncompressed(keyset, handles)),
-            CompressedKeyConfig::All => generate_compressed_fhe_keys(
+            CompressedKeyConfig::All => generate_fhe_keys(
                 &sk_copy,
                 params,
                 keyset_config.secret_key_config,
@@ -219,7 +221,7 @@ pub(crate) async fn async_generate_crs(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_compressed_fhe_keys(
+pub(crate) fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
@@ -258,8 +260,8 @@ fn generate_compressed_fhe_keys(
         .unwrap_or(1.0);
 
     // unwrap is ok here because parameters should always have a correct pmax
-    let max_norm_hwt =
-        tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+    let max_norm_hwt = tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt)
+        .expect("Users are expected to set pmax correctly between ]0.5,1.0]");
 
     let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
         config,
@@ -270,8 +272,7 @@ fn generate_compressed_fhe_keys(
     )?;
 
     let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
-    let server_key_parts = server_key.into_raw_parts();
-    let decompression_key = server_key_parts.3.clone();
+    let (_, _, _, decompression_key, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -288,7 +289,7 @@ fn generate_compressed_fhe_keys(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_fhe_keys(
+pub fn generate_uncompressed_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
@@ -436,12 +437,16 @@ pub struct CentralizedKms<
     pub(crate) preprocessing_meta_store: Arc<RwLock<MetaStore<CentralizedPreprocBucket>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    // Map of ongoing key generation tasks, indexed by the preprocessing ID
+    pub(crate) ongoing_key_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
     pub(crate) user_dec_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+    // Map of ongoing CRS generation tasks, indexed by the CRS request ID
+    pub(crate) ongoing_crs_gen: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
@@ -952,8 +957,14 @@ impl<
         // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
         // Note however that the data in the vault is not checked for corruption hence
         // existing values are not re-backed up
-        backup_operator.update_backup_vault(false).await?;
-
+        if !crypto_storage
+            .inner
+            .update_backup_vault(false, OP_BOOT)
+            .await
+        {
+            anyhow::bail!("Failed to update backup vault when booting");
+        }
+        tracing::info!("Successfully updated backup vault when booting");
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store =
             Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE)));
@@ -980,9 +991,11 @@ impl<
                     HashMap::new(),
                 ))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
+                ongoing_key_gen: Arc::new(Mutex::new(HashMap::new())),
                 pub_dec_meta_store,
                 user_dec_meta_store,
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                ongoing_crs_gen: Arc::new(Mutex::new(HashMap::new())),
                 custodian_meta_map: Arc::clone(&custodian_meta_store),
                 context_manager,
                 backup_operator,
@@ -1097,7 +1110,10 @@ fn update_central_kms_system_metrics(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys};
+    use super::{
+        CentralizedKmsKeys, CentralizedTestingKeys, Storage, generate_fhe_keys,
+        generate_uncompressed_fhe_keys,
+    };
     use crate::conf::{CoreConfig, init_conf};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -1287,7 +1303,7 @@ pub(crate) mod tests {
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let domain = dummy_domain();
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(
+        let (pub_fhe_keys, key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1302,7 +1318,7 @@ pub(crate) mod tests {
         // check that key_info contains
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(
+        let (other_pub_fhe_keys, other_key_info) = generate_uncompressed_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1375,8 +1391,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_generate_compressed_fhe_keys() {
-        use super::generate_compressed_fhe_keys;
+    fn test_generate_fhe_keys() {
+        use super::generate_fhe_keys;
         use kms_grpc::rpc_types::PubDataType;
         use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 
@@ -1387,7 +1403,7 @@ pub(crate) mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let seed = Some(Seed(42));
 
-        let result = generate_compressed_fhe_keys(
+        let result = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,

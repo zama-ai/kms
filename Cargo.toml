@@ -7,10 +7,10 @@ members = [
     "core/service",
     "core/test-utils",
     "core/thread-handles",
-    "core/threshold",
+    "core/experiments",
     "core/threshold-algebra",
     "core/threshold-execution",
-    "core/threshold-experimental",
+    "core/threshold-bgv",
     "core/threshold-hashing",
     "core/threshold-networking",
     "core/threshold-types",
@@ -28,6 +28,7 @@ members = [
 # backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
 # backward-compatibility/generate-v0.13.0 - Data generation for v0.13.0 with old KMS version dependencies
 # backward-compatibility/generate-v0.13.10 - Data generation for v0.13.10 with old KMS version dependencies
+# backward-compatibility/generate-v0.13.20 - Data generation for v0.13.20 with old KMS version dependencies
 #
 # The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
@@ -36,7 +37,7 @@ members = [
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0", "backward-compatibility/generate-v0.13.10", "backward-compatibility/generate-v0.13.20"]
 
 [workspace.package]
 authors = ["Zama"]
@@ -80,7 +81,7 @@ backward-compatibility = { path = "./backward-compatibility" }  # Internal backw
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 error-utils = { path = "./core/error-utils", default-features = false }
 threshold-execution = { path = "./core/threshold-execution", default-features = false }
-experimental = { package = "threshold-experimental", path = "./core/threshold-experimental", default-features = false }
+threshold-bgv = { path = "./core/threshold-bgv", default-features = false }
 hashing = { package = "threshold-hashing", path = "./core/threshold-hashing", default-features = false }
 kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-core-client = { path = "./core-client" }  # Core KMS client library
@@ -88,7 +89,7 @@ kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interf
 threshold-networking = { path = "./core/threshold-networking", default-features = false }
 observability = { path = "./observability" }  # Internal observability module
 test-utils = { path = "./core/test-utils" }
-threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
+experiments = { path = "./core/experiments/", default-features = false }  # Threshold FHE experiments
 threshold-types = { path = "./core/threshold-types" } # Types share across the KMS
 thread-handles = { path = "./core/thread-handles" }
 

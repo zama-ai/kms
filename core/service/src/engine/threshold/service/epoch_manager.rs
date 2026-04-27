@@ -95,7 +95,6 @@ use crate::{
         crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
-        store_versioned_at_request_id,
     },
 };
 
@@ -277,7 +276,7 @@ impl<
 {
     /// This will load all PRSS setups from storage into session maker.
     pub async fn init_all_prss_from_storage(&self) -> anyhow::Result<()> {
-        let all_prss = self.crypto_storage.inner.read_all_prss_info().await?;
+        let all_prss = self.crypto_storage.read_all_prss_info().await?;
 
         for (epoch_id, prss) in all_prss {
             self.session_maker.add_epoch(epoch_id.into(), prss).await;
@@ -357,20 +356,13 @@ impl<
             threshold: base_session.parameters.threshold(),
         };
 
-        // serialize and write PRSS Setup to storage into private storage
-        let private_storage = Arc::clone(&crypto_storage.inner.private_storage);
-        let mut priv_storage = private_storage.lock().await;
-
-        // Ensure data can be stored before updating the model in ram
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            &(*epoch_id).into(),
-            &prss,
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await?;
-
+        crypto_storage.write_prss_info(epoch_id, &prss).await?;
         session_maker.add_epoch(*epoch_id, prss).await;
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
 
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
@@ -653,15 +645,15 @@ impl<
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
-                    let threshold_fhe_keys = ThresholdFheKeys {
-                        private_keys: Arc::new(new_private_keyset),
-                        public_material: PublicKeyMaterial::Uncompressed {
-                            integer_server_key: Arc::new(integer_server_key),
-                            sns_key: sns_key.map(Arc::new),
-                            decompression_key: decompression_key.map(Arc::new),
-                        },
-                        meta_data: info.clone(),
-                    };
+                    let threshold_fhe_keys = ThresholdFheKeys::new(
+                        Arc::new(new_private_keyset),
+                        PublicKeyMaterial::new_uncompressed(
+                            Arc::new(integer_server_key),
+                            sns_key.map(Arc::new),
+                            decompression_key.map(Arc::new),
+                        ),
+                        info.clone(),
+                    );
 
                     storage_tasks.push(
                         crypto_storage
@@ -695,14 +687,13 @@ impl<
                         }
                     };
 
-                    let public_material =
-                        PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
+                    let public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
-                    let threshold_fhe_keys = ThresholdFheKeys {
-                        private_keys: Arc::new(new_private_keyset),
+                    let threshold_fhe_keys = ThresholdFheKeys::new(
+                        Arc::new(new_private_keyset),
                         public_material,
-                        meta_data: info.clone(),
-                    };
+                        info.clone(),
+                    );
 
                     let meta_store = Arc::clone(&meta_store);
                     storage_tasks.push(
@@ -742,7 +733,7 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .inner_write_crs(
+                    .resharing_crs_write(
                         &crs_info.crs_id,
                         &new_epoch_id,
                         crs,
@@ -758,7 +749,13 @@ impl<
         meta_store.write().await.update(
             &new_epoch_id.into(),
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
-        )
+        )?;
+        // Update the backup and handle potential failures by incrementing backup errors in the metrics
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
+        Ok(())
     }
 
     async fn reshare_as_set_2(
@@ -1444,7 +1441,7 @@ pub(crate) mod tests {
             StorageType,
             file::FileStorage,
             ram::{self, RamStorage},
-            read_all_data_versioned,
+            read_all_data_versioned, store_versioned_at_request_id,
         },
     };
     use aes_prng::AesRng;

@@ -148,7 +148,7 @@ async fn do_context_switch(
         None,
         1,
         None,
-        false, // compressed_keys
+        false, // test material uses compressed keys
     )
     .await;
 
@@ -188,7 +188,7 @@ async fn do_context_switch(
         1,
         None,
         true,
-        false, // compressed_keys
+        false, // test material uses compressed keys
     )
     .await;
 
@@ -206,7 +206,7 @@ async fn do_context_switch(
         None,
         1,
         None,
-        false, // compressed_keys
+        false, // test material uses compressed keys
     )
     .await;
 

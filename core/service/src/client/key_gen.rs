@@ -252,7 +252,7 @@ impl Client {
             ));
         }
 
-        let sol_type = KeygenVerification::new_standard(
+        let sol_type = KeygenVerification::new_uncompressed(
             preproc_id,
             key_id,
             server_key_digest,

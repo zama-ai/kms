@@ -1,5 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_custodian_handles;
+use crate::consts::DEFAULT_MPC_CONTEXT;
 use crate::consts::SIGNING_KEY_ID;
 use crate::util::key_setup::test_tools::backup_exists;
 use crate::util::key_setup::test_tools::read_custodian_backup_files;
@@ -100,7 +101,12 @@ pub(crate) async fn run_new_cus_context(
     threshold: u32,
 ) -> Vec<String> {
     let (new_cus_req, mnemonics) = internal_client
-        .new_custodian_context_request(req_new_cus, amount_custodians, threshold)
+        .new_custodian_context_request(
+            req_new_cus,
+            &DEFAULT_MPC_CONTEXT,
+            amount_custodians,
+            threshold,
+        )
         .unwrap();
 
     let response = kms_client
