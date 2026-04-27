@@ -18,7 +18,7 @@ use crate::{
     client::{
         client_wasm::Client,
         tests::{
-            common::standard_keygen_config,
+            common::keygen_config,
             threshold::{
                 common::threshold_handles,
                 crs_gen_tests::run_crs,
@@ -172,7 +172,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         )
         .await;
 
-        let (keyset_config, keyset_added_info) = standard_keygen_config();
+        let (keyset_config, keyset_added_info) = keygen_config();
         let (keyset, all_private_keys) = run_threshold_keygen(
             parameters,
             &kms_clients,
@@ -187,35 +187,21 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
         )
         .await;
 
-        let (client_key, public_key, server_key) = keyset.get_standard();
+        let (client_key, compressed_keyset) = keyset.get_compressed();
 
-        // compute the key digests
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+        // compute the key digest for compressed keyset
+        let compressed_keyset_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
         keys_info.push(KeyInfo {
             key_id: Some((*key_req_id).into()),
             preproc_id: Some((*preproc_req_id).into()),
             key_parameters: parameters.into(),
-            key_digests: vec![
-                kms_grpc::kms::v1::KeyDigest {
-                    key_type: PubDataType::ServerKey.to_string(),
-                    digest: server_key_digest,
-                },
-                kms_grpc::kms::v1::KeyDigest {
-                    key_type: PubDataType::PublicKey.to_string(),
-                    digest: public_key_digest,
-                },
-            ],
+            key_digests: vec![kms_grpc::kms::v1::KeyDigest {
+                key_type: PubDataType::CompressedXofKeySet.to_string(),
+                digest: compressed_keyset_digest,
+            }],
         });
-        keysets.push((
-            key_req_id,
-            client_key,
-            public_key,
-            server_key,
-            all_private_keys,
-        ));
+        keysets.push((key_req_id, client_key, compressed_keyset, all_private_keys));
     }
 
     let mut crs_info = Vec::new();
@@ -265,12 +251,11 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
     for (
         (reshared_keyset, reshared_all_private_keys),
-        (key_req_id, client_key, public_key, server_key, all_private_keys),
+        (key_req_id, client_key, compressed_keyset, all_private_keys),
     ) in new_epoch_outputs.into_iter().zip_eq(keysets)
     {
         // Assert that the two keysets are identical (since this is only the public material here)
-        let (reshared_client_key, reshared_public_key, reshared_server_key) =
-            reshared_keyset.get_standard();
+        let (reshared_client_key, reshared_compressed_keyset) = reshared_keyset.get_compressed();
 
         // Check equality via serialization
         assert_eq!(
@@ -278,12 +263,8 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             bc2wrap::serialize(&client_key).unwrap()
         );
         assert_eq!(
-            bc2wrap::serialize(&reshared_public_key).unwrap(),
-            bc2wrap::serialize(&public_key).unwrap()
-        );
-        assert_eq!(
-            bc2wrap::serialize(&reshared_server_key).unwrap(),
-            bc2wrap::serialize(&server_key).unwrap()
+            bc2wrap::serialize(&reshared_compressed_keyset).unwrap(),
+            bc2wrap::serialize(&compressed_keyset).unwrap()
         );
 
         // Make sure the private keys ARE NOT the same
@@ -366,7 +347,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             None,
             1,
             None,
-            false, // compressed_keys
+            false, // use the default compressed keyset
         )
         .await;
     }
@@ -497,12 +478,13 @@ async fn run_new_epoch(
                 extra_data.clone(),
                 amount_parties,
                 Some(new_epoch_id.into()),
-                false, // compressed
+                true, // compressed
             )
             .await
             .expect("Failed to verify reshare responses");
 
-            let (client_key, _, server_key) = out.0.clone().get_standard();
+            let (client_key, compressed_keyset) = out.0.clone().get_compressed();
+            let (_pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
             outs.push(out);
         }

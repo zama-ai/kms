@@ -1,7 +1,7 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, dummy_domain,
-    keygen::check_standard_keyset_ext_signature, s3_operations::fetch_public_elements,
+    keygen::check_uncompressed_keyset_ext_signature, s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
     RequestId,
@@ -252,7 +252,6 @@ pub(crate) async fn do_new_epoch(
             );
             response_vec.push((core_conf, resp));
         }
-        let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
         for (key_id, preproc_id) in expected_key_ids.into_iter().zip(expected_preproc_ids) {
             // We try to download all because all parties needed to respond for a successful resharing
@@ -260,14 +259,28 @@ pub(crate) async fn do_new_epoch(
                 anyhow::anyhow!("Failed to convert grpc RequestId to internal RequestId: {e}")
             })?;
 
-            let party_confs_successful = fetch_public_elements(
+            let (party_confs_successful, is_compressed) = match fetch_public_elements(
                 &key_id.to_string(),
-                &key_types,
+                &[PubDataType::CompressedXofKeySet],
                 cc_conf,
                 destination_prefix,
                 true,
             )
-            .await?;
+            .await
+            {
+                Ok(party_confs_successful) => (party_confs_successful, true),
+                Err(_) => (
+                    fetch_public_elements(
+                        &key_id.to_string(),
+                        &[PubDataType::PublicKey, PubDataType::ServerKey],
+                        cc_conf,
+                        destination_prefix,
+                        true,
+                    )
+                    .await?,
+                    false,
+                ),
+            };
 
             anyhow::ensure!(
                 party_confs_successful.len() == num_parties,
@@ -281,30 +294,48 @@ pub(crate) async fn do_new_epoch(
                 .expect("unexpected error because we have previously checked that the array has length of num_parties").party_id;
             let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
-            let public_key =
-                load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix);
-            let server_key = load_material_from_pub_storage(
-                Some(destination_prefix),
-                &key_id,
-                PubDataType::ServerKey,
-                pub_storage_prefix,
-            );
-
-            let (public_key, server_key) = tokio::join!(public_key, server_key);
-
             let preproc_id: RequestId = preproc_id.try_into().map_err(|e| {
                 anyhow::anyhow!("Failed to convert grpc RequestId to internal RequestId: {e}")
             })?;
 
+            // Fetch keys, first try compressed, then fetch uncompressed (pub, srv) as fallback
+            let keyset = if is_compressed {
+                Some(
+                    load_material_from_pub_storage::<tfhe::xof_key_set::CompressedXofKeySet>(
+                        Some(destination_prefix),
+                        &key_id,
+                        PubDataType::CompressedXofKeySet,
+                        pub_storage_prefix,
+                    )
+                    .await,
+                )
+            } else {
+                None
+            };
+
+            let (public_key, server_key) = if keyset.is_none() {
+                let public_key =
+                    load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix);
+                let server_key = load_material_from_pub_storage(
+                    Some(destination_prefix),
+                    &key_id,
+                    PubDataType::ServerKey,
+                    pub_storage_prefix,
+                );
+                let (public_key, server_key) = tokio::join!(public_key, server_key);
+                (Some(public_key), Some(server_key))
+            } else {
+                (None, None)
+            };
+
+            let key_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(key_id.into());
+            let preproc_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(preproc_id.into());
             for (_, response) in response_vec.iter() {
-                let key_id_proto: kms_grpc::kms::v1::RequestId = key_id.into();
-                let preproc_id_proto: kms_grpc::kms::v1::RequestId = preproc_id.into();
                 let signature = response
                     .reshare_responses
                     .iter()
                     .find(|r| {
-                        r.request_id.as_ref() == Some(&key_id_proto)
-                            && r.preprocessing_id.as_ref() == Some(&preproc_id_proto)
+                        r.request_id == key_id_proto && r.preprocessing_id == preproc_id_proto
                     })
                     .ok_or_else(|| {
                         anyhow::anyhow!(
@@ -315,16 +346,33 @@ pub(crate) async fn do_new_epoch(
                     })?
                     .external_signature
                     .clone();
-                check_standard_keyset_ext_signature(
-                    &public_key,
-                    &server_key,
-                    &preproc_id,
-                    &key_id,
-                    &signature,
-                    &dummy_domain(),
-                    request.extra_data.clone(),
-                    kms_addrs,
-                )?;
+
+                if let Some(keyset) = keyset.as_ref() {
+                    crate::keygen::check_compressed_keyset_ext_signature(
+                        keyset,
+                        &preproc_id,
+                        &key_id,
+                        &signature,
+                        &dummy_domain(),
+                        request.extra_data.clone(),
+                        kms_addrs,
+                    )?;
+                } else {
+                    check_uncompressed_keyset_ext_signature(
+                        public_key
+                            .as_ref()
+                            .expect("legacy reshared key must have public key material"),
+                        server_key
+                            .as_ref()
+                            .expect("legacy reshared key must have server key material"),
+                        &preproc_id,
+                        &key_id,
+                        &signature,
+                        &dummy_domain(),
+                        request.extra_data.clone(),
+                        kms_addrs,
+                    )?;
+                }
             }
         }
     } else {

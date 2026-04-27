@@ -3,7 +3,6 @@ cfg_if::cfg_if! {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::common::standard_keygen_config;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
@@ -31,6 +30,8 @@ cfg_if::cfg_if! {
 use crate::backup::BackupCiphertext;
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
+#[cfg(feature = "insecure")]
+use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::DEFAULT_EPOCH_ID;
 #[cfg(feature = "insecure")]
@@ -339,7 +340,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -400,7 +401,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         1,
         env.test_path(),
-        keyset_config.is_compressed(),
+        !keyset_config.is_compressed(),
     )
     .await;
 }
@@ -526,7 +527,7 @@ async fn test_keygen_backup_presence_threshold() {
         derive_request_id("test_keygen_backup_presence_threshold_key").unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -578,7 +579,7 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
         derive_request_id("test_custodian_reencryption_threshold_key").unwrap();
 
     // Generate a key
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),
@@ -750,7 +751,7 @@ async fn test_backup_after_reshare_threshold() {
         .into();
 
     // Generate a key (so we have material to reshare)
-    let (keyset_config, keyset_added_info) = standard_keygen_config();
+    let (keyset_config, keyset_added_info) = uncompressed_keygen_config();
     let (keyset, _) = run_threshold_keygen(
         FheParameter::Test,
         env.kms_clients(),

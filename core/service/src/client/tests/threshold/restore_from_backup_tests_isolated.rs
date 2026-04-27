@@ -225,7 +225,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
         None, // party_ids_to_crash
         1,    // parallelism
         Some(material_dir.path()),
-        false,
+        false, // use the default compressed keyset
     )
     .await;
 

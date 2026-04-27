@@ -40,7 +40,7 @@ use threshold_execution::{
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 // === Internal Crate Imports ===
@@ -134,7 +134,7 @@ pub struct RealKeyGenerator<
     pub(crate) session_maker: ImmutableSessionMaker,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
-    // Map of ongoing key generation tasks
+    // Map of ongoing key generation tasks, indexed by the preprocessing ID
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
@@ -201,6 +201,12 @@ impl<
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.real_key_generator
             .inner_get_result(request, true)
+            .await
+    }
+
+    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
+        self.real_key_generator
+            .inner_abort_key_gen(preproc_id)
             .await
     }
 }
@@ -326,13 +332,29 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
-        let preproc_handle_w_mode_copy = preproc_handle_w_mode.clone();
+        let ongoing = Arc::clone(&self.ongoing);
 
+        let preproc_id = match &preproc_handle_w_mode {
+            PreprocHandleWithMode::Secure((preproc_id, _)) => *preproc_id,
+            PreprocHandleWithMode::Insecure => {
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!(
+                        "attempting to call insecure keygen when the insecure feature is not set"
+                    );
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    // NOTE that using a static preprocessing ID for the insecure keygen
+                    // This means that concurrent calls to the insecure keygen are not allowed!
+                    *INSECURE_PREPROCESSING_ID
+                }
+            }
+        };
         let token = CancellationToken::new();
         {
-            self.ongoing.lock().await.insert(req_id, token.clone());
+            self.ongoing.lock().await.insert(preproc_id, token.clone());
         }
-        let ongoing = Arc::clone(&self.ongoing);
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
@@ -351,7 +373,7 @@ impl<
         };
 
         let keygen_background = async move {
-            // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
+            // Remove the preprocessing material
             match &preproc_handle_w_mode {
                 PreprocHandleWithMode::Secure((preproc_id, _)) => {
                     tracing::info!(
@@ -385,7 +407,7 @@ impl<
                         dkg_sessions,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode_copy,
+                        preproc_handle_w_mode,
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
@@ -405,7 +427,7 @@ impl<
                         dkg_sessions.session_z128.base_session,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode_copy,
+                        preproc_handle_w_mode,
                         sk,
                         dkg_params,
                         internal_keyset_config
@@ -424,18 +446,21 @@ impl<
                 let _timer = timer.start();
                 tokio::select! {
                     () = keygen_background => {
-                        tracing::info!("Key generation of request {} exiting normally.", req_id);
+                        tracing::info!("Key generation of request {} with preproc id {} exiting normally.", req_id, preproc_id);
                         // Remove cancellation token since generation is now done.
-                        ongoing.lock().await.remove(&req_id);
+                        ongoing.lock().await.remove(&preproc_id);
                     },
                     () = token.cancelled() => {
-                         MetricedError::handle_unreturnable_error(
-                                    OP_KEYGEN_REQUEST,
-                                    Some(req_id),
-                                    "Key generation background failed since the task got cancelled".to_string(),
-                                );
-                        // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
-                        let guarded_meta_store = meta_store_cancelled.write().await;
+                        MetricedError::handle_unreturnable_error(
+                            OP_KEYGEN_REQUEST,
+                            Some(req_id),
+                            format!("Key generation background with preprocessing id {} failed since the task got aborted", preproc_id),
+                        );
+                        tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
+                        let mut guarded_meta_store = meta_store_cancelled.write().await;
+                        let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
+                        // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem. 
+                        // In connection with this the meta store update should be moved to AFTER the purging
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
                     },
                 }
@@ -524,6 +549,23 @@ impl<
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
+    }
+
+    async fn inner_abort_key_gen(&self, preproc_id: RequestId) -> Status {
+        match self.ongoing.lock().await.remove(&preproc_id) {
+            Some(cancellation_token) => {
+                // Observe that the cancellation arm handles the abortion and clean-up
+                cancellation_token.cancel();
+                tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
+                Status::ok("Key gen aborted successfully")
+            }
+            None => {
+                // No keygen happening — nothing to cancel
+                Status::not_found(
+                    "No ongoing key generation found for the supplied preprocessing ID",
+                )
+            }
+        }
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
@@ -1330,15 +1372,15 @@ impl<
                     )
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(private_keys),
-                    public_material: PublicKeyMaterial::Uncompressed {
-                        integer_server_key: Arc::new(integer_server_key),
-                        sns_key: sns_key.map(Arc::new),
-                        decompression_key: decompression_key.map(Arc::new),
-                    },
-                    meta_data: info,
-                };
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new_uncompressed(
+                        Arc::new(integer_server_key),
+                        sns_key.map(Arc::new),
+                        decompression_key.map(Arc::new),
+                    ),
+                    info,
+                );
 
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
@@ -1381,24 +1423,11 @@ impl<
                     }
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(private_keys),
-                    public_material: match PublicKeyMaterial::new_compressed(
-                        compressed_keyset.clone(),
-                    ) {
-                        Ok(x) => x,
-                        Err(e) => {
-                            update_err_req_in_meta_store(
-                                &mut meta_store.write().await,
-                                req_id,
-                                format!("Failed to create compressed keyset: {e}"),
-                                op_tag,
-                            );
-                            return;
-                        }
-                    },
-                    meta_data: info,
-                };
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    info,
+                );
 
                 if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store_compressed(
@@ -1480,18 +1509,24 @@ impl<
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
+
+    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
+        self.inner_abort_key_gen(preproc_id).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
-    use rand::rngs::OsRng;
+    use rand::SeedableRng;
     use threshold_execution::{
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
+            SlowOnlineDistributedKeyGen128,
         },
         online::preprocessing::dummy::DummyPreprocessing,
         small_execution::prss::PRSSSetup,
@@ -1572,7 +1607,8 @@ mod tests {
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
-        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(13371);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -1590,7 +1626,7 @@ mod tests {
         .await;
 
         let prep_ids: [RequestId; 4] = (0..4)
-            .map(|_| RequestId::new_random(&mut OsRng))
+            .map(|_| RequestId::new_random(&mut rng))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap();
@@ -1660,7 +1696,7 @@ mod tests {
         }
         {
             // bad domain
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(42));
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "bad_contract".to_string();
 
@@ -1683,7 +1719,7 @@ mod tests {
         }
         {
             // bad keyset_config
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(43));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let keyset_config = KeySetConfig {
                 keyset_type: 100, // bad keyset type
@@ -1716,8 +1752,9 @@ mod tests {
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
+        let mut rng = AesRng::seed_from_u64(11);
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let key_id = RequestId::new_random(&mut rng);
 
         // Set bucket size to zero, so no operations are allowed
         kg.set_bucket_size(0);
@@ -1743,15 +1780,16 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_prep_ids, kg) = setup_key_generator::<
+        let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-
+        let mut rng = AesRng::seed_from_u64(2);
         // use a random prep ID and it should be not found
         {
-            let key_id = RequestId::new_random(&mut OsRng);
-            let bad_prep_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut rng);
+            let bad_prep_id = RequestId::new_random(&mut rng);
+            assert!(!prep_ids.contains(&bad_prep_id));
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
@@ -1773,7 +1811,8 @@ mod tests {
 
         {
             // the result is not found since it's a fresh key ID
-            let key_id = RequestId::new_random(&mut OsRng);
+            let key_id = RequestId::new_random(&mut rng);
+            assert!(!prep_ids.contains(&key_id));
             assert_eq!(
                 kg.get_result(tonic::Request::new(key_id.into()))
                     .await
@@ -1791,7 +1830,8 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(123);
+        let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
@@ -1827,7 +1867,8 @@ mod tests {
         .await;
         let prep_id0 = prep_ids[0];
         let prep_id1 = prep_ids[1];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(22);
+        let key_id = RequestId::new_random(&mut rng);
 
         // do one keygen
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1883,8 +1924,9 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
-        let wrong_keyset_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(5);
+        let key_id = RequestId::new_random(&mut rng);
+        let wrong_keyset_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let keyset_config = KeySetConfig {
@@ -1930,7 +1972,8 @@ mod tests {
         >()
         .await;
         let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(6);
+        let key_id = RequestId::new_random(&mut rng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -1954,5 +1997,59 @@ mod tests {
         kg.get_result(tonic::Request::new(key_id.into()))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_key_gen_not_found() {
+        let (_prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+
+        // Abort with a preproc ID for which no key generation is running
+        let mut rng = AesRng::seed_from_u64(7);
+        let random_id = RequestId::new_random(&mut rng);
+        let status = kg.abort_key_gen(random_id).await;
+        assert_eq!(status.code(), tonic::Code::NotFound);
+    }
+
+    /// Dummy preprocessing (pre-populated into the bucket by [`setup_key_generator`]) is
+    /// consumed by the key generation, after which the slow DKG is aborted mid-execution.
+    #[tokio::test]
+    async fn abort_during_key_gen() {
+        let (prep_ids, kg) = setup_key_generator::<
+            SlowOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
+        let mut rng = AesRng::seed_from_u64(8);
+        let key_id = RequestId::new_random(&mut rng);
+
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let tonic_req = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(prep_id.into()),
+            domain: Some(domain),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
+            extra_data: vec![],
+        });
+        kg.key_gen(tonic_req).await.unwrap();
+
+        // The slow DKG is still running — abort should cancel it
+        let status = kg.abort_key_gen(prep_id).await;
+        assert_eq!(status.code(), tonic::Code::Ok);
+        // Check that a second abort returns NotFound
+        let status = kg.abort_key_gen(prep_id).await;
+        assert_eq!(status.code(), tonic::Code::NotFound);
+        // Try to get the result and see it has been aborted
+        let err = kg
+            .get_result(Request::new(key_id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

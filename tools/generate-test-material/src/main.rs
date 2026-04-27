@@ -127,16 +127,18 @@ async fn main() -> Result<()> {
 async fn generate_all_material(output_dir: &Path, force: bool) -> Result<()> {
     info!("Generating all test material...");
 
-    if !force && material_exists(output_dir).await? {
+    if force {
+        clean_material(output_dir).await?;
+    } else if material_exists(output_dir).await? {
         warn!("Test material already exists. Use --force to regenerate.");
         return Ok(());
     }
 
     // Generate testing material first (faster)
-    generate_testing_material(output_dir, force).await?;
+    generate_testing_material(output_dir, false).await?;
 
     // Generate default material (slower)
-    generate_default_material(output_dir, force).await?;
+    generate_default_material(output_dir, false).await?;
 
     info!("All test material generated successfully");
     Ok(())
@@ -153,6 +155,10 @@ async fn generate_testing_material(output_dir: &Path, force: bool) -> Result<()>
     if !force && testing_material_exists(output_dir).await? {
         info!("Testing material already exists, skipping generation");
         return Ok(());
+    }
+
+    if force {
+        remove_dir_if_present(&testing_dir).await?;
     }
 
     // Create testing subdirectory
@@ -182,6 +188,10 @@ async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()>
 
     let default_dir = output_dir.join("default");
 
+    if force {
+        remove_dir_if_present(&default_dir).await?;
+    }
+
     // Create default subdirectory
     fs::create_dir_all(&default_dir).await?;
 
@@ -198,7 +208,7 @@ async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()>
 }
 
 /// Generate material based on custom specifications
-async fn generate_custom_material(output_dir: &Path, spec_file: &Path, _force: bool) -> Result<()> {
+async fn generate_custom_material(output_dir: &Path, spec_file: &Path, force: bool) -> Result<()> {
     info!("Generating custom material from: {}", spec_file.display());
 
     // Read specification file
@@ -217,7 +227,7 @@ async fn generate_custom_material(output_dir: &Path, spec_file: &Path, _force: b
             i + 1,
             specs.len()
         );
-        generate_material_for_spec(output_dir, spec).await?;
+        generate_material_for_spec(output_dir, spec, force).await?;
     }
 
     info!("Custom material generated successfully");
@@ -225,7 +235,11 @@ async fn generate_custom_material(output_dir: &Path, spec_file: &Path, _force: b
 }
 
 /// Generate material for a specific specification
-async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) -> Result<()> {
+async fn generate_material_for_spec(
+    output_dir: &Path,
+    spec: &TestMaterialSpec,
+    force: bool,
+) -> Result<()> {
     info!("Generating material for spec: {:?}", spec);
 
     // Create subdirectory for this specification
@@ -234,6 +248,11 @@ async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) 
         spec.material_type,
         spec.party_count()
     ));
+
+    if force {
+        remove_dir_if_present(&spec_dir).await?;
+    }
+
     tokio::fs::create_dir_all(&spec_dir).await?;
 
     // Generate based on material type
@@ -254,6 +273,15 @@ async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) 
     // 3. Generating everything once is simpler and avoids partial state issues
 
     Ok(())
+}
+
+async fn remove_dir_if_present(path: &Path) -> Result<()> {
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to remove existing directory: {}", path.display())),
+    }
 }
 
 /// Validate existing test material

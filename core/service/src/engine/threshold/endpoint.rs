@@ -5,6 +5,7 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
+use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{metrics::METRICS, metrics_names::*};
@@ -92,13 +93,24 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
+        async fn abort_key_gen(&self, request: Request<RequestId>) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_KEYGEN_ABORT);
+            let preproc_id = parse_grpc_request_id(
+                &request.into_inner(),
+                RequestIdParsingErr::KeyGenAbort,
+            )?;
+            // First cancel the potential key generation, then use this in the preprocessing cancellation to return the appropriate error
+            let key_gen_abort_res = self.key_generator.abort_key_gen(preproc_id).await;
+            self.keygen_preprocessor.abort_key_gen_preproc(preproc_id, key_gen_abort_res).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
         async fn user_decrypt(
             &self,
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
             self.user_decryptor.user_decrypt(request).await.map_err(|e| e.into())
-
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -108,8 +120,6 @@ impl_endpoint! {
         ) -> Result<Response<UserDecryptionResponse>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
             self.user_decryptor.get_result(request).await.map_err(|e| e.into())
-
-
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -130,7 +140,6 @@ impl_endpoint! {
             self.decryptor.get_result(request).await.map_err(|e| e.into())
        }
 
-
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
@@ -144,6 +153,12 @@ impl_endpoint! {
         ) -> Result<Response<CrsGenResult>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
             self.crs_generator.get_result(request).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn abort_crs_gen(&self, request: Request<RequestId>) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_CRS_GEN_ABORT);
+            self.crs_generator.abort_crs_gen(request).await.map_err(|e| e.into())
         }
 
         #[cfg(feature = "insecure")]

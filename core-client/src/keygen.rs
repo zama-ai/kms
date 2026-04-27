@@ -21,33 +21,48 @@ use std::collections::HashMap;
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};
 use tokio::task::JoinSet;
+use tonic::Code;
 use tonic::transport::Channel;
 
-/// Build a `KeySetConfig` from compressed and keyset_type parameters.
-/// Returns `None` when both `compressed` is false and `keyset_type` is `None`.
-pub(crate) fn build_keyset_config(
-    compressed: bool,
-    use_existing: bool,
-) -> Option<kms_grpc::kms::v1::KeySetConfig> {
-    if compressed || use_existing {
-        Some(kms_grpc::kms::v1::KeySetConfig {
-            keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
-            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
-                compute_key_type: 0, // CPU
-                secret_key_config: if use_existing {
-                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
-                } else {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PublicKeyConfig {
+    Compressed,
+    Uncompressed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SecretKeyConfig {
+    GenerateAll,
+    UseExisting,
+}
+
+/// Build an explicit standard `KeySetConfig`.
+pub(crate) fn build_standard_keyset_config(
+    public_key_config: PublicKeyConfig,
+    secret_key_config: SecretKeyConfig,
+) -> kms_grpc::kms::v1::KeySetConfig {
+    kms_grpc::kms::v1::KeySetConfig {
+        keyset_type: kms_grpc::kms::v1::KeySetType::Standard as i32,
+        standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
+            compute_key_type: 0, // CPU
+            secret_key_config: match secret_key_config {
+                SecretKeyConfig::GenerateAll => {
                     kms_grpc::kms::v1::KeyGenSecretKeyConfig::GenerateAll as i32
-                },
-                compressed_key_config: if compressed {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll.into()
-                } else {
-                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone.into()
-                },
-            }),
-        })
-    } else {
-        None
+                }
+                SecretKeyConfig::UseExisting => {
+                    kms_grpc::kms::v1::KeyGenSecretKeyConfig::UseExisting as i32
+                }
+            },
+            compressed_key_config: match public_key_config {
+                PublicKeyConfig::Compressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedAll
+                }
+                PublicKeyConfig::Uncompressed => {
+                    kms_grpc::kms::v1::CompressedKeyConfig::CompressedNone
+                }
+            }
+            .into(),
+        }),
     }
 }
 
@@ -78,7 +93,18 @@ pub(crate) async fn do_keygen(
     // NOTE: If we do not use dummy_domain here, then
     // this needs changing too in the KeyGenResult command.
     let use_existing = shared_config.existing_keyset_id.is_some();
-    let keyset_config = build_keyset_config(shared_config.compressed, use_existing);
+    let keyset_config = Some(build_standard_keyset_config(
+        if shared_config.uncompressed {
+            PublicKeyConfig::Uncompressed
+        } else {
+            PublicKeyConfig::Compressed
+        },
+        if use_existing {
+            SecretKeyConfig::UseExisting
+        } else {
+            SecretKeyConfig::GenerateAll
+        },
+    ));
     let keyset_added_info =
         shared_config
             .existing_keyset_id
@@ -168,7 +194,7 @@ pub(crate) async fn do_keygen(
         extra_data,
         resp_response_vec,
         cmd_conf.download_all,
-        shared_config.compressed,
+        shared_config.uncompressed,
     )
     .await?;
 
@@ -186,7 +212,7 @@ pub(crate) async fn fetch_and_check_keygen(
     extra_data: Vec<u8>,
     responses: Vec<KeyGenResult>,
     download_all: bool,
-    compressed: bool,
+    uncompressed: bool,
 ) -> anyhow::Result<()> {
     if responses.len() < num_expected_responses {
         anyhow::bail!(
@@ -197,10 +223,10 @@ pub(crate) async fn fetch_and_check_keygen(
     }
 
     // Download the generated keys.
-    let key_types = if compressed {
-        vec![PubDataType::CompressedXofKeySet]
-    } else {
+    let key_types = if uncompressed {
         vec![PubDataType::PublicKey, PubDataType::ServerKey]
+    } else {
+        vec![PubDataType::CompressedXofKeySet]
     };
 
     let party_confs = fetch_public_elements(
@@ -220,7 +246,7 @@ pub(crate) async fn fetch_and_check_keygen(
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    if compressed {
+    if !uncompressed {
         let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
             load_material_from_pub_storage(
                 Some(destination_prefix),
@@ -291,7 +317,7 @@ pub(crate) async fn fetch_and_check_keygen(
                     "No preprocessing ID in keygen response, cannot verify external signature"
                 )
             })?;
-            check_standard_keyset_ext_signature(
+            check_uncompressed_keyset_ext_signature(
                 &public_key,
                 &server_key,
                 &prep_id.try_into()?,
@@ -318,13 +344,11 @@ pub(crate) async fn get_keygen_responses(
 ) -> anyhow::Result<Vec<KeyGenResult>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
             tokio::time::sleep(tokio::time::Duration::from_millis(
                 SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
@@ -411,9 +435,80 @@ pub(crate) async fn get_keygen_responses(
     Ok(resp_response_vec)
 }
 
+pub(crate) async fn do_abort_key_gen(
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    request_id: RequestId,
+    max_iter: usize,
+    num_expected_responses: usize,
+) -> anyhow::Result<Vec<String>> {
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    for (_core_conf, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+
+        resp_tasks.spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = cur_client
+                .abort_key_gen(tonic::Request::new(request_id.into()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries
+                if ctr >= max_iter {
+                    return Err(Code::Unavailable);
+                }
+                ctr += 1;
+                response = cur_client
+                    .abort_key_gen(tonic::Request::new(request_id.into()))
+                    .await;
+                tracing::info!("Got response for abort_key_gen: {:?}", response);
+            }
+            response.map_err(|e| e.code())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        match resp {
+            Ok(Ok(_)) => {
+                resp_response_vec.push(Code::Ok.description().to_string());
+            }
+            Ok(Err(code)) => {
+                resp_response_vec.push(code.description().to_string());
+            }
+            Err(e) => {
+                tracing::warn!("Join error in abort key gen response: {e}");
+            }
+        }
+        // break this loop and continue with the rest of the processing if we have enough responses
+        if resp_response_vec.len() >= num_expected_responses {
+            break;
+        }
+    }
+    if resp_response_vec.len() < num_expected_responses {
+        anyhow::bail!(
+            "Only got {}/{} abort key gen responses, need at least {}",
+            resp_response_vec.len(),
+            core_endpoints.len(),
+            num_expected_responses
+        );
+    }
+    Ok(resp_response_vec)
+}
+
 /// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn check_standard_keyset_ext_signature(
+pub(crate) fn check_uncompressed_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
     prep_id: &RequestId,
@@ -434,7 +529,7 @@ pub(crate) fn check_standard_keyset_ext_signature(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         prep_id,
         key_id,
         server_key_digest,
@@ -648,7 +743,6 @@ pub(crate) async fn get_preproc_keygen_responses(
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
     for (core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
         let core_conf = core_conf.clone(); // Copy the key so it is owned in the async block

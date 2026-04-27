@@ -132,11 +132,13 @@ enum KeyGenSecretKeyConfig {
 // Configuration for whether to generate compressed or uncompressed keys.
 // Compressed keys use XOF-seeded compression and are smaller but need
 // decompression before use.
+// TODO: @reviewers This is breaking!
+// The enum discriminants changed so the proto default maps to compressed keys.
 enum CompressedKeyConfig {
-  // Do not generate compressed keys (default).
-  CompressedNone = 0;
-  // Generate compressed keys for the full keyset.
-  CompressedAll = 1;
+  // Generate compressed keys for the full keyset (default).
+  CompressedAll = 0;
+  // Do not generate compressed keys.
+  CompressedNone = 1;
 }
 
 // This message is returned if keygen has completed.
