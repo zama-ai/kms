@@ -64,7 +64,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -93,7 +93,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg_isolated() -> Result<()> {
     // Use Default material spec for production-like keys
-    let spec = TestMaterialSpec::threshold_default(4);
+    let spec = TestMaterialSpec::threshold_default_no_prss(4);
 
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")
@@ -124,7 +124,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -187,7 +187,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // compressed
     )
     .await
     .expect("keygen verification failed");
@@ -436,7 +436,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<()> {
-    use crate::client::tests::common::compressed_from_existing_keygen_config;
+    use crate::client::tests::common::keygen_config_from_existing;
     use crate::consts::DEFAULT_EPOCH_ID;
 
     let env = ThresholdTestEnv::builder()
@@ -479,7 +479,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
     let (keyset_config, keyset_added_info) =
-        compressed_from_existing_keygen_config(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
+        keygen_config_from_existing(&keygen_id_1, &DEFAULT_EPOCH_ID, true);
 
     threshold_key_gen_secure_isolated(
         clients,
@@ -571,7 +571,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
         None,
         1,
         Some(material_path),
-        true,
+        false,
     )
     .await;
 
@@ -593,7 +593,7 @@ async fn secure_threshold_compressed_keygen_from_existing_isolated() -> Result<(
         None,
         1,
         Some(material_path),
-        false, // we do not used compressed_keys since that was the old public key
+        false, // pre-generated test material uses compressed keys
     )
     .await;
 
@@ -650,11 +650,12 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // default is compressed
     )
     .await
     .expect("keygen 1 verification failed");
-    let (client_key_1, _, server_key_1) = keys_1.get_standard();
+    let (client_key_1, compressed_keyset_1) = keys_1.get_compressed();
+    let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
@@ -669,11 +670,11 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         &dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true, // default is compressed
     )
     .await
     .expect("keygen 2 verification failed");
-    let (client_key_2, _, _) = keys_2.get_standard();
+    let (client_key_2, _compressed_keyset_2) = keys_2.get_compressed();
 
     // Step 3: Generate decompression key (secure mode - required for decompression)
     let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;

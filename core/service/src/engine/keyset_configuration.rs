@@ -75,8 +75,8 @@ pub(crate) struct WrappedCompressedKeyConfig(i32);
 impl From<WrappedCompressedKeyConfig> for ddec_keyset_config::CompressedKeyConfig {
     fn from(value: WrappedCompressedKeyConfig) -> Self {
         match value.0 {
-            1 => ddec_keyset_config::CompressedKeyConfig::All,
-            _ => ddec_keyset_config::CompressedKeyConfig::None, // 0 or invalid defaults to None
+            1 => ddec_keyset_config::CompressedKeyConfig::None,
+            _ => ddec_keyset_config::CompressedKeyConfig::All, // 0 or invalid defaults to All (compressed)
         }
     }
 }
@@ -106,7 +106,9 @@ impl InternalKeySetConfig {
         keyset_added_info: Option<KeySetAddedInfo>,
     ) -> anyhow::Result<Self> {
         if keyset_config.is_none() {
-            tracing::info!("No keyset config provided, defaulting to Standard KeySetConfig");
+            tracing::info!(
+                "No keyset config provided, defaulting to Standard KeySetConfig with compressed public keys"
+            );
         }
         let result = Self {
             keyset_config: preproc_proto_to_keyset_config(&keyset_config)
