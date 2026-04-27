@@ -235,7 +235,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass narrower
       # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
       #   centralized : central testing only (no threshold material)
