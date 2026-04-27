@@ -1,40 +1,25 @@
-//! Threshold backup and restore tests.
+//! Isolated threshold backup and restore tests
 //!
-//! These tests use the consolidated testing module and run in isolated
-//! temporary directories with pre-generated cryptographic material.
+//! These tests use the consolidated testing module. Each test runs
+//! in its own temporary directory with pre-generated cryptographic material.
 //!
 //! ## Tests Included
 //! - DKG backup and restore flow
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow
+//!
+//! ## Key Features
+//! - No Docker dependency
+//! - Each test uses isolated temporary directory
+//! - Pre-generated material copied per test
+//! - Native KMS servers spawned in-process
+//! - Automatic cleanup via RAII (Drop trait)
 
-<<<<<<< HEAD
 #[cfg(feature = "insecure")]
-use crate::client::tests::threshold::common::threshold_insecure_key_gen;
+use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-=======
-use crate::{
-    client::tests::{
-        common::keygen_config,
-        threshold::{common::threshold_handles, crs_gen_tests::run_crs},
-    },
-    consts::{
-        BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, DEFAULT_PARAM,
-        PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-    },
-    cryptography::internal_crypto_types::WrappedDKGParams,
-    engine::base::{INSECURE_PREPROCESSING_ID, derive_request_id},
-    util::key_setup::test_tools::{
-        EncryptionConfig, TestingPlaintext, file_backup_vault, purge, purge_backup, purge_priv,
-        purge_pub,
-    },
-    vault::storage::{
-        StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
-        file::FileStorage,
-    },
->>>>>>> main
 };
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -61,9 +46,10 @@ use tokio::task::JoinSet;
 /// 7. Perform public decryption to validate restored keys are functional
 ///
 /// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_dkg_backup_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
-async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
+async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_dkg_backup")
@@ -81,45 +67,11 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
 
-<<<<<<< HEAD
-    threshold_insecure_key_gen(&clients, &key_id_1, FheParameter::Test).await?;
-    threshold_insecure_key_gen(&clients, &key_id_2, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id_1, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
 
     // Delete private storage for both keys on all parties
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
-=======
-    let (keyset_config, keyset_added_info) = keygen_config();
-    let _keys_1 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id_1,
-        keyset_config,
-        keyset_added_info,
-        true,
-        test_path,
-        0,
-    )
-    .await;
-
-    let (keyset_config, keyset_added_info) = keygen_config();
-    let _keys_2 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id_2,
-        keyset_config,
-        keyset_added_info,
-        true,
-        test_path,
-        0,
-    )
-    .await;
-
-    // Generated key, delete private storage
->>>>>>> main
     for prefix in priv_storage_prefixes {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
@@ -175,82 +127,10 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
         );
     }
 
-<<<<<<< HEAD
     // Shutdown original servers to restart with restored keys
     drop(clients);
     for (_, server) in servers {
         server.assert_shutdown().await;
-=======
-    // And validate that we can still decrypt
-    crate::client::tests::threshold::public_decryption_tests::decryption_threshold(
-        DEFAULT_PARAM,
-        &key_id_2,
-        vec![TestingPlaintext::U8(42)],
-        EncryptionConfig {
-            compression: false,
-            precompute_sns: true,
-        },
-        1,
-        amount_parties,
-        None,
-        Some(DecryptionMode::NoiseFloodSmall),
-    )
-    .await;
-    purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
-    purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
-    // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
-    // because every party will load all the keys and each ServerKey is 1.5 GB
-    // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-    let amount_parties = 4;
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let param = FheParameter::Test;
-    let dkg_param: WrappedDKGParams = param.into();
-
-    let key_id: RequestId = derive_request_id(&format!(
-        "test_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
-    ))
-    .unwrap();
-    let test_path = None;
-    // Purge private to make the test run faster since there will be less data to back up.
-    purge_priv(test_path, priv_storage_prefixes).await;
-    purge(
-        test_path,
-        test_path,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    purge_backup(test_path, backup_storage_prefixes).await;
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-
-    let (keyset_config, keyset_added_info) = keygen_config();
-    let _keys = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id,
-        keyset_config,
-        keyset_added_info,
-        true,
-        test_path,
-        0,
-    )
-    .await;
-
-    // Reboot the servers
-    for (_, kms_server) in kms_servers {
-        kms_server.assert_shutdown().await;
->>>>>>> main
     }
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -344,7 +224,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
         None, // party_ids_to_crash
         1,    // parallelism
         Some(material_dir.path()),
-        false,
+        false, // use the default compressed keyset
     )
     .await;
 
@@ -367,9 +247,10 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
 /// 3. Verify backup was auto-created (checks FheKeyInfo in backup storage)
 ///
 /// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_autobackup_after_deletion_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
-async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
+async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_autobackup")
@@ -386,7 +267,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
-    threshold_insecure_key_gen(&clients, &key_id, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id, FheParameter::Test).await?;
 
     // Shutdown servers
     drop(clients);
@@ -431,8 +312,9 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
 /// 5. Restore from backup (all parties)
 /// 6. Verify both backup and restored CRS exist
 ///
+/// **Run with:** `cargo test --lib --features testing test_insecure_threshold_crs_backup_isolated`
 #[tokio::test]
-async fn test_insecure_threshold_crs_backup() -> Result<()> {
+async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
     // Setup using builder pattern with backup vault

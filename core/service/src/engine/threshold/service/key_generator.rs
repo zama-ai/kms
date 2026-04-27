@@ -1372,15 +1372,15 @@ impl<
                     )
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(private_keys),
-                    public_material: PublicKeyMaterial::Uncompressed {
-                        integer_server_key: Arc::new(integer_server_key),
-                        sns_key: sns_key.map(Arc::new),
-                        decompression_key: decompression_key.map(Arc::new),
-                    },
-                    meta_data: info,
-                };
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new_uncompressed(
+                        Arc::new(integer_server_key),
+                        sns_key.map(Arc::new),
+                        decompression_key.map(Arc::new),
+                    ),
+                    info,
+                );
 
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
@@ -1423,24 +1423,11 @@ impl<
                     }
                 };
 
-                let threshold_fhe_keys = ThresholdFheKeys {
-                    private_keys: Arc::new(private_keys),
-                    public_material: match PublicKeyMaterial::new_compressed(
-                        compressed_keyset.clone(),
-                    ) {
-                        Ok(x) => x,
-                        Err(e) => {
-                            update_err_req_in_meta_store(
-                                &mut meta_store.write().await,
-                                req_id,
-                                format!("Failed to create compressed keyset: {e}"),
-                                op_tag,
-                            );
-                            return;
-                        }
-                    },
-                    meta_data: info,
-                };
+                let threshold_fhe_keys = ThresholdFheKeys::new(
+                    Arc::new(private_keys),
+                    PublicKeyMaterial::new(compressed_keyset.clone()),
+                    info,
+                );
 
                 if let Err(e) = crypto_storage
                     .write_threshold_keys_with_dkg_meta_store_compressed(
