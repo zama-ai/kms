@@ -1333,8 +1333,8 @@ pub(crate) async fn verify_keygen_responses(
 
 /// Test insecure threshold DKG with Test parameters.
 ///
-/// Boots servers with PRSS, generates key using insecure mode,
-/// verifies key generation succeeded on all parties.
+/// Boots servers with PRSS, generates the default compressed keyset using insecure mode,
+/// and verifies key generation succeeded on all parties.
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
@@ -1365,7 +1365,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         &crate::dummy_domain(),
         env.clients.len(),
         None,
-        false,
+        true,
     )
     .await
     .expect("keygen verification failed");
