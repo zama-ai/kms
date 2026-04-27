@@ -126,7 +126,7 @@ pub async fn create_test_context_info_from_core_config(
 
         let mpc_identity = identity.mpc_identity();
         let (_ca_cert_ki, ca_cert, _ca_cert_params) =
-            threshold_fhe::tls_certs::create_ca_cert_from_ca_keypair(
+            threshold_networking::tls_certs::create_ca_cert_from_ca_keypair(
                 mpc_identity.as_ref(),
                 true,
                 &ca_keypair,

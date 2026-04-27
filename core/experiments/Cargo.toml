@@ -1,0 +1,239 @@
+[package]
+name = "experiments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
+aes-prng.workspace = true
+algebra = { workspace = true, default-features = false }
+anyhow.workspace = true
+async-trait.workspace = true
+bc2wrap.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+dashmap.workspace = true
+error-utils.workspace = true
+threshold-execution = { workspace = true, features = ["malicious_strategies"] }
+futures.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+itertools.workspace = true
+minijinja = { workspace = true, optional = true }
+observability.workspace = true
+threshold-networking.workspace = true
+peak_alloc = { workspace = true, optional = true }
+prost.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+sha2.workspace = true
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+] }
+tfhe-csprng.workspace = true
+tfhe-zk-pok.workspace = true
+tokio = { workspace = true, features = [
+    "sync",
+    "rt",
+    "macros",
+    "time",
+] }
+tokio-rustls.workspace = true
+tonic = { workspace = true, features = ["tls-ring"] }
+tonic-health.workspace = true
+tonic-prost.workspace = true
+tower = { workspace = true, features = ["retry", "timeout"] }
+tower-http = { workspace = true, features = ["trace"] }
+threshold-bgv.workspace = true
+threshold-types.workspace = true
+tracing = { workspace = true, features = ["log"] }
+x509-parser.workspace = true
+
+[dev-dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
+criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
+crypto-bigint.workspace = true
+threshold-execution = { workspace = true, features = ["testing"] }
+threshold-bgv.workspace = true
+paste.workspace = true
+pprof.workspace = true
+rayon.workspace = true
+redis.workspace = true
+serial_test.workspace = true
+thread-handles.workspace = true
+test-utils.workspace = true
+tfhe-zk-pok = { workspace = true, features = ["experimental"] }
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "gen-experiment"
+path = "src/bin/benches/gen-experiment.rs"
+required-features = ["templating"]
+
+[[bin]]
+name = "threshold-gen-tls-certs"
+path = "src/bin/threshold-gen-tls-certs.rs"
+
+[[bin]]
+name = "non-threshold-tfhe-kat"
+path = "src/bin/non-threshold/tfhe-kat.rs"
+
+[[bin]]
+name = "non-threshold-zk-pok-kat"
+path = "src/bin/non-threshold/zk-pok-kat.rs"
+
+[[bin]]
+name = "moby"
+path = "src/bin/threshold-tfhe/moby.rs"
+
+[[bin]]
+name = "mobygo"
+path = "src/bin/threshold-tfhe/mobygo.rs"
+
+[[bin]]
+name = "stairway"
+path = "src/bin/threshold-bgv/stairway.rs"
+
+[[bin]]
+name = "stairwayctl"
+path = "src/bin/threshold-bgv/stairwayctl.rs"
+
+[[bench]]
+name = "ddec"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "bench_switch_and_squash"
+harness = false
+
+[[bench]]
+name = "bench_prss"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "prep"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "bit_dec"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "ceremony"
+harness = false
+required-features = ["extension_degree_8"]
+
+
+# BGV benchmarks
+[[bench]]
+name = "bgv"
+harness = false
+
+[[bench]]
+name = "algebra"
+harness = false
+
+[[bench]]
+name = "decoding"
+harness = false
+required-features = ["extension_degree_8"]
+
+[[bench]]
+name = "non-threshold_bgv_basic-ops_speed"
+path = "benches/non-threshold/bgv/speed/basic_ops.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_speed"
+path = "benches/non-threshold/bgv/speed/keygen.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_basic-ops_memory"
+path = "benches/non-threshold/bgv/memory/basic_ops.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_bgv_keygen_memory"
+path = "benches/non-threshold/bgv/memory/keygen.rs"
+required-features = ["measure_memory"]
+harness = false
+
+
+# TFHE-rs benchmarks
+[[bench]]
+name = "non-threshold_tfhe-rs_erc20_speed"
+path = "benches/non-threshold/tfhe-rs/speed/erc20.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-rs_basic-ops_speed"
+path = "benches/non-threshold/tfhe-rs/speed/basic_ops.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-rs_keygen_speed"
+path = "benches/non-threshold/tfhe-rs/speed/keygen.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-rs_erc20_memory"
+path = "benches/non-threshold/tfhe-rs/memory/erc20.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-rs_basic-ops_memory"
+path = "benches/non-threshold/tfhe-rs/memory/basic_ops.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-rs_keygen_memory"
+path = "benches/non-threshold/tfhe-rs/memory/keygen.rs"
+required-features = ["measure_memory"]
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-zk-pok_speed"
+path = "benches/non-threshold/tfhe-zk-pok/speed.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_tfhe-zk-pok_memory"
+path = "benches/non-threshold/tfhe-zk-pok/memory.rs"
+required-features = ["measure_memory"]
+harness = false
+
+
+
+[features]
+default = ["extension_degree_4"]
+templating = ["minijinja"]
+measure_memory = ["dep:peak_alloc"]
+
+extension_degree_3 = ["algebra/extension_degree_3"]
+extension_degree_4 = ["algebra/extension_degree_4"]
+extension_degree_5 = ["algebra/extension_degree_5"]
+extension_degree_6 = ["algebra/extension_degree_6"]
+extension_degree_7 = ["algebra/extension_degree_7"]
+extension_degree_8 = ["algebra/extension_degree_8"]
