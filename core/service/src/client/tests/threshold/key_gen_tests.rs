@@ -79,7 +79,7 @@ use tonic::{Response, Status};
 #[derive(Clone)]
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
-    Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
+    Uncompressed((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
     Compressed((tfhe::ClientKey, tfhe::xof_key_set::CompressedXofKeySet)),
 }
 
@@ -93,10 +93,12 @@ impl TestKeyGenResult {
         }
     }
 
-    pub(crate) fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
+    pub(crate) fn get_uncompressed(
+        self,
+    ) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
         match self {
-            TestKeyGenResult::Standard(inner) => inner,
-            _ => panic!("expected to find standard"),
+            TestKeyGenResult::Uncompressed(inner) => inner,
+            _ => panic!("expected to find uncompressed keys"),
         }
     }
 
@@ -117,7 +119,7 @@ impl TestKeyGenResult {
                 /* cannot sanity check */
                 return;
             }
-            TestKeyGenResult::Standard((client_key, public_key, server_key)) => {
+            TestKeyGenResult::Uncompressed((client_key, public_key, server_key)) => {
                 (client_key, public_key.clone(), server_key.clone())
             }
             TestKeyGenResult::Compressed((client_key, keyset)) => {
@@ -186,8 +188,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     // Verify we got compressed keys
     let _ = keys.clone().get_compressed();
 
-    // Verify it panics when trying to get as standard or decompression
-    let panic_res = std::panic::catch_unwind(|| keys.clone().get_standard());
+    // Verify it panics when trying to get as uncompressed or decompression
+    let panic_res = std::panic::catch_unwind(|| keys.clone().get_uncompressed());
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
@@ -538,7 +540,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
+    let (client_key_1, _public_key_1, server_key_1) = keys1.get_uncompressed();
 
     if !insecure {
         run_preproc(
@@ -569,7 +571,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     )
     .await
     .0;
-    let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
+    let (client_key_2, _public_key_2, _server_key_2) = keys2.get_uncompressed();
 
     // We always need to run preproc for the last keygen
     run_preproc(
@@ -634,7 +636,7 @@ pub(crate) async fn preproc_and_keygen(
             let (public_key, server_key) = keyset.decompress().unwrap().into_raw_parts();
             (client_key, public_key, server_key)
         } else {
-            keyset.get_standard()
+            keyset.get_uncompressed()
         };
         let tag: tfhe::Tag = (*key_id).into();
         assert_eq!(&tag, client_key.tag());
@@ -836,7 +838,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                compressed,
+                !compressed,
             )
             .await;
         }
@@ -902,7 +904,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
-                compressed,
+                !compressed,
             )
             .await;
         }
@@ -1315,7 +1317,7 @@ pub(crate) async fn verify_keygen_responses(
 
     let result = match final_keys.unwrap() {
         RetrievedKeysForVerification::Standard(server_key, public_key) => {
-            TestKeyGenResult::Standard((client_key, public_key, server_key))
+            TestKeyGenResult::Uncompressed((client_key, public_key, server_key))
         }
         RetrievedKeysForVerification::Compressed(keyset) => {
             TestKeyGenResult::Compressed((client_key, keyset))
@@ -1861,7 +1863,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         None,
         1,
         Some(material_path),
-        true,
+        false, // encryption uses keygen_id_2, which is stored as a compressed keyset
     )
     .await;
 
@@ -1883,7 +1885,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         None,
         1,
         Some(material_path),
-        false, // we do not used compressed_keys since that was the old public key
+        false, // encryption uses keygen_id_1, which is also stored as a compressed keyset
     )
     .await;
 

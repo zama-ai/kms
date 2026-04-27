@@ -766,7 +766,7 @@ async fn test_backup_after_reshare_threshold() {
     .await;
 
     // Compute key digests needed for the reshare request
-    let (_, public_key, server_key) = keyset.get_standard();
+    let (_, public_key, server_key) = keyset.get_uncompressed();
     let server_key_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
     let public_key_digest =
