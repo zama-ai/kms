@@ -162,12 +162,28 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             _ => (None, None),
         };
 
-        // TODO(tfhe-1.6): `CompressedReRandomizationKey` is not re-exported at the
-        // public API boundary of tfhe-rs 1.6, so we cannot construct it here.
-        // Until a public constructor is exposed upstream, the rerand key is not
-        // attached to the compressed server key when it is built from raw parts.
-        let _ = &self.cpk_re_randomization_ksk;
-        let rerand_ksk = None;
+        let cpk_re_randomization_key =
+            self.cpk_re_randomization_ksk.as_ref().map(|rerand_ksk| {
+                let ksk = match rerand_ksk {
+                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
+                        tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
+                    }
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(ksk) => {
+                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(
+                            tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                                tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                                    ksk.clone(),
+                                    0,
+                                    tfhe::shortint::EncryptionKeyChoice::Big,
+                                    KeySwitchingKeyDestinationAtomicPattern::Standard,
+                                ),
+                            ),
+                        )
+                    }
+                };
+
+                tfhe::CompressedReRandomizationKey::LegacyDedicatedCPK { ksk }
+            });
 
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),
@@ -184,7 +200,7 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             }),
             noise_squashing_key,
             noise_squashing_compression_key,
-            rerand_ksk,
+            cpk_re_randomization_key,
             None,
             tag,
         )
