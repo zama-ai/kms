@@ -1083,7 +1083,11 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::{
+        CrsGenMetadataInner, CrsGenMetadataInnerQ126, KeyGenMetadataInner, KeyGenMetadataInnerQ126,
+    };
     use super::{TypedPlaintext, deserialize_to_low_level};
+    use crate::cryptography::signatures::compute_eip712_signature;
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
@@ -1102,15 +1106,19 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
+    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::solidity_types::{CrsgenVerificationQ126, KeygenVerificationQ126};
     use kms_grpc::{
         RequestId,
         kms::v1::CiphertextFormat,
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
     };
     use rand::{RngCore, SeedableRng};
+    use std::collections::HashMap;
     use tfhe::{
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
+    use tfhe_versionable::Upgrade;
     use threshold_execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
@@ -1988,5 +1996,95 @@ pub(crate) mod tests {
                 actual_address
             );
         }
+    }
+
+    #[test]
+    fn keygen_metadata_q126_upgrade() {
+        let mut rng = AesRng::seed_from_u64(888);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let domain = dummy_domain();
+
+        let key_id = RequestId::new_random(&mut rng);
+        let preprocessing_id = RequestId::new_random(&mut rng);
+        let server_key_digest = vec![0xAAu8; 32];
+        let public_key_digest = vec![0xBBu8; 32];
+
+        let legacy_sol = KeygenVerificationQ126::new_standard(
+            &preprocessing_id,
+            &key_id,
+            server_key_digest.clone(),
+            public_key_digest.clone(),
+        );
+        let external_signature = compute_eip712_signature(&sig_key, &legacy_sol, &domain).unwrap();
+
+        let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+        key_digest_map.insert(PubDataType::ServerKey, server_key_digest.clone());
+        key_digest_map.insert(PubDataType::PublicKey, public_key_digest.clone());
+
+        let q126 = KeyGenMetadataInnerQ126 {
+            key_id,
+            preprocessing_id,
+            key_digest_map: key_digest_map.clone(),
+            external_signature: external_signature.clone(),
+        };
+
+        // Verify upgrade sets extra_data as None
+        let upgraded: KeyGenMetadataInner = q126.clone().upgrade().unwrap();
+        assert_eq!(upgraded.extra_data, None);
+        // Upgraded serialization
+        let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
+
+        let deserialized_upgraded: KeyGenMetadataInner =
+            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+        assert_eq!(deserialized_upgraded.extra_data, None);
+        assert_eq!(deserialized_upgraded.key_id, q126.key_id);
+        assert_eq!(
+            deserialized_upgraded.preprocessing_id,
+            q126.preprocessing_id
+        );
+        assert_eq!(&deserialized_upgraded.key_digest_map, &q126.key_digest_map);
+        assert_eq!(
+            deserialized_upgraded.external_signature,
+            q126.external_signature
+        );
+    }
+
+    #[test]
+    fn crs_gen_metadata_q126_upgrade() {
+        let mut rng = AesRng::seed_from_u64(889);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let domain = dummy_domain();
+
+        let crs_id = RequestId::new_random(&mut rng);
+        let crs_digest = vec![0x12u8; 32];
+        let max_num_bits: u32 = 64;
+
+        let legacy_sol =
+            CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+        let external_signature = compute_eip712_signature(&sig_key, &legacy_sol, &domain).unwrap();
+
+        let q126 = CrsGenMetadataInnerQ126 {
+            crs_id,
+            crs_digest: crs_digest.clone(),
+            max_num_bits,
+            external_signature: external_signature.clone(),
+        };
+
+        // Verify upgrade sets extra_data as None
+        let upgraded: CrsGenMetadataInner = q126.clone().upgrade().unwrap();
+        assert_eq!(upgraded.extra_data, None);
+        // Upgraded serialization
+        let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
+
+        let deserialized_upgraded: CrsGenMetadataInner =
+            bc2wrap::deserialize_safe(&upgraded_bytes).unwrap();
+        assert_eq!(deserialized_upgraded.extra_data, None);
+        assert_eq!(deserialized_upgraded.crs_id, q126.crs_id);
+        assert_eq!(deserialized_upgraded.max_num_bits, q126.max_num_bits);
+        assert_eq!(&deserialized_upgraded.crs_digest, &q126.crs_digest);
+        assert_eq!(
+            deserialized_upgraded.external_signature,
+            q126.external_signature
+        );
     }
 }
