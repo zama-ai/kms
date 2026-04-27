@@ -475,7 +475,7 @@ fn sanity_check_extra_data_helper(
         }
         _ => {
             return Some(format!(
-                "Unknown extra data version: {}. Highest version understood is 2",
+                "Unknown extra data version: {}. Highest version understood is {MAX_EXTRA_DATA_VERSION}",
                 version
             ));
         }
