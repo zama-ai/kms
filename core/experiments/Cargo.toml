@@ -27,6 +27,7 @@ minijinja = { workspace = true, optional = true }
 observability.workspace = true
 threshold-networking.workspace = true
 peak_alloc = { workspace = true, optional = true }
+prost.workspace = true
 rand.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 sha2.workspace = true
@@ -47,6 +48,7 @@ tokio = { workspace = true, features = [
 tokio-rustls.workspace = true
 tonic = { workspace = true, features = ["tls-ring"] }
 tonic-health.workspace = true
+tonic-prost.workspace = true
 tower = { workspace = true, features = ["retry", "timeout"] }
 tower-http = { workspace = true, features = ["trace"] }
 threshold-bgv.workspace = true
