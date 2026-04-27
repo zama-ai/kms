@@ -17,7 +17,7 @@ use threshold_execution::{
     runtime::test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     tfhe_internals::{
         parameters::BC_PARAMS_SNS,
-        test_feature::{KeySet, gen_key_set, keygen_all_party_shares_from_keyset},
+        test_feature::{KeySet, gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
         utils::expanded_encrypt,
     },
 };
@@ -30,7 +30,7 @@ async fn main() {
     let mut rng = AesRng::from_entropy();
 
     // Generate the keys normally, we'll secret share them later.
-    let keyset: KeySet = gen_key_set(BC_PARAMS_SNS, tfhe::Tag::default(), &mut rng);
+    let keyset: KeySet = gen_uncompressed_key_set(BC_PARAMS_SNS, tfhe::Tag::default(), &mut rng);
     set_server_key(keyset.public_keys.server_key.clone());
 
     let params = keyset.get_cpu_params().unwrap();

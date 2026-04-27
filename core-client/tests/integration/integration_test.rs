@@ -21,7 +21,6 @@ use kms_lib::engine::base::DSEP_PUBDATA_KEY;
 use kms_lib::engine::base::derive_request_id;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
-use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
 use serial_test::serial;
 use std::fs::create_dir_all;
 use std::io::Write;
@@ -35,6 +34,7 @@ use test_context::{AsyncTestContext, test_context};
 use test_utils::test_logging::init_test_logging as init_logging;
 use test_utils_cc::{DockerCompose, KMSMode};
 use tfhe::safe_serialization;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
 
 // IMPORTANT: These integration tests require Docker running and images build.
@@ -252,12 +252,12 @@ impl AsyncTestContext for DockerComposeThresholdCustodianTest {
 async fn insecure_key_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
-    compressed: bool,
+    uncompressed: bool,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-    let shared_args = if compressed {
+    let shared_args = if uncompressed {
         SharedKeyGenParameters {
-            compressed: true,
+            uncompressed: true,
             ..Default::default()
         }
     } else {
@@ -272,14 +272,14 @@ async fn insecure_key_gen<T: DockerComposeManager>(
         download_all: false,
     };
 
-    println!("Doing insecure key-gen (compressed: {compressed})");
+    println!("Doing insecure key-gen (uncompressed: {uncompressed})");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Insecure key-gen done (compressed: {compressed})");
+    println!("Insecure key-gen done (uncompressed: {uncompressed})");
 
     assert_eq!(key_gen_results.len(), 1);
     let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
-        _ => panic!("Error doing insecure keygen (compressed: {compressed})"),
+        _ => panic!("Error doing insecure keygen (uncompressed: {uncompressed})"),
     };
 
     key_id.to_string()
@@ -376,7 +376,7 @@ async fn real_preproc(
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id: shared_args.context_id,
             epoch_id: shared_args.epoch_id,
-            compressed: shared_args.compressed,
+            uncompressed: shared_args.uncompressed,
             from_existing_shares: shared_args.existing_keyset_id.is_some(),
         }),
         logs: true,
@@ -405,7 +405,7 @@ async fn real_preproc_and_keygen(
         .await
         .unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
-    let compressed = shared_args.compressed;
+    let uncompressed = shared_args.uncompressed;
     let config = CmdConfig {
         file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::KeyGen(KeyGenParameters {
@@ -417,17 +417,71 @@ async fn real_preproc_and_keygen(
         expect_all_responses: true,
         download_all: false,
     };
-    println!("Doing key-gen (compressed: {compressed})");
+    println!("Doing key-gen (uncompressed: {uncompressed})");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
-    println!("Key-gen done (compressed: {compressed})");
+    println!("Key-gen done (uncompressed: {uncompressed})");
     assert_eq!(key_gen_results.len(), 1);
 
     let key_id = match key_gen_results.first().unwrap() {
         (Some(value), _) => value,
-        _ => panic!("Error doing keygen (compressed: {compressed})"),
+        _ => panic!("Error doing keygen (uncompressed: {uncompressed})"),
     };
 
     (key_id.to_string(), preproc_id.unwrap().to_string())
+}
+
+async fn abort_key_gen<T: DockerComposeManager>(
+    ctx: &T,
+    test_path: &Path,
+    request_id: RequestId,
+) -> Vec<String> {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let config = CmdConfig {
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
+        command: CCCommand::AbortKeyGen(AbortParameters { request_id }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Aborting key-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path).await.unwrap();
+    println!("Abort key-gen done");
+    results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect()
+}
+
+async fn abort_crs_gen<T: DockerComposeManager>(
+    ctx: &T,
+    test_path: &Path,
+    request_id: RequestId,
+) -> Vec<String> {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let config = CmdConfig {
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
+        command: CCCommand::AbortCrsGen(AbortParameters { request_id }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Aborting CRS-gen with request_id={request_id}");
+    let results = execute_cmd(&config, test_path).await.unwrap();
+    println!("Abort CRS-gen done");
+    results
+        .iter()
+        .map(|cur_res| {
+            assert_eq!(cur_res.0, Some(request_id));
+            cur_res.1.clone()
+        })
+        .collect()
 }
 
 async fn restore_from_backup<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
@@ -492,13 +546,13 @@ async fn test_template<T: DockerComposeManager>(
             CCCommand::KeyGen(ref key_gen_parameters) => {
                 CCCommand::KeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
-                    compressed: key_gen_parameters.shared_args.compressed,
+                    uncompressed: key_gen_parameters.shared_args.uncompressed,
                 })
             }
             CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
-                    compressed: key_gen_parameters.shared_args.compressed,
+                    uncompressed: key_gen_parameters.shared_args.uncompressed,
                 })
             }
             CCCommand::PublicDecrypt(_cipher_arguments) => {
@@ -1028,6 +1082,21 @@ async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
     assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
 
+#[test_context(DockerComposeCentralized)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized_abort_crs_gen(ctx: &DockerComposeCentralized) {
+    init_logging();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd02")
+            .unwrap();
+    let res = abort_crs_gen(ctx, keys_folder, request_id).await;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+}
+
 // Test restore without custodians
 #[test_context(DockerComposeCentralized)]
 #[tokio::test]
@@ -1126,7 +1195,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1142,7 +1211,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1158,7 +1227,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1174,7 +1243,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1190,7 +1259,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1207,7 +1276,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1224,7 +1293,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::Encrypt(CipherParameters {
@@ -1241,7 +1310,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
@@ -1276,7 +1345,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1292,7 +1361,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1308,7 +1377,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1324,7 +1393,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1341,7 +1410,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1358,7 +1427,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: None,
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         })),
         CCCommand::Encrypt(CipherParameters {
@@ -1375,7 +1444,7 @@ async fn integration_test_commands<T: DockerComposeManager>(
             parallel_requests: 1,
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
             inter_request_delay_ms: 0,
-            compressed_keys: false,
+            uncompressed_keys: false,
             extra_data: extra_data.clone(),
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
@@ -1489,6 +1558,21 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
     assert_ne!(res[0], res[1]);
 }
 
+#[test_context(DockerComposeThresholdDefault)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_abort_key_gen(ctx: &DockerComposeThresholdDefault) {
+    init_logging();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let request_id =
+        RequestId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b0000abcd11")
+            .unwrap();
+    let res = abort_key_gen(ctx, keys_folder, request_id).await;
+    // No ongoing key generation, so NotFound should be returned by all servers
+    res.iter().for_each(|r| assert!(r.contains("not found")));
+}
+
 // Test restore without custodians
 #[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
@@ -1590,7 +1674,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
         parallel_requests: 1,
         ciphertext_output_path: None,
         inter_request_delay_ms: 0,
-        compressed_keys: false,
+        uncompressed_keys: false,
         extra_data: None,
     }));
     test_template(ctx, vec![ddec_command], test_path).await;
@@ -1705,7 +1789,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
             &SharedKeyGenParameters {
                 context_id: Some(context_id_2),
                 epoch_id: Some(epoch_id_2),
-                compressed: false,
+                uncompressed: false,
                 existing_keyset_id: None,
                 existing_epoch_id: None,
                 use_existing_key_tag: false,
@@ -1808,7 +1892,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     let party_confs = fetch_public_elements(
         &key_id,
-        &[PubDataType::ServerKey, PubDataType::PublicKey],
+        &[PubDataType::CompressedXofKeySet],
         &cc_conf,
         test_path,
         false,
@@ -1819,20 +1903,18 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     // read the key materials from file
     let key_id = RequestId::from_str(&key_id).unwrap();
     let object_folder = &cc_conf.cores[party_confs[0].party_id - 1].object_folder;
-    let public_key = load_pk_from_pub_storage(Some(test_path), &key_id, Some(object_folder)).await;
-    let server_key: tfhe::ServerKey = load_material_from_pub_storage(
+    let compressed_keyset: CompressedXofKeySet = load_material_from_pub_storage(
         Some(test_path),
         &key_id,
-        PubDataType::ServerKey,
+        PubDataType::CompressedXofKeySet,
         Some(object_folder),
     )
     .await;
 
     // compute the digests
-    let server_key_digest =
-        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap());
-    let public_key_digest =
-        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
+    let compressed_keyset_digest = hex::encode(
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap(),
+    );
 
     let _ = fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false)
         .await
@@ -1877,7 +1959,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
             previous_keys: vec![PreviousKeyInfo {
                 key_id: key_id.into(),
                 preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-                key_digest: DigestKeySet::NonCompressedKeySet(server_key_digest, public_key_digest),
+                key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
             }],
             previous_crs: vec![PreviousCrsInfo {
                 crs_id,
@@ -1915,7 +1997,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         ciphertext_output_path: None,
         parallel_requests: 1,
         inter_request_delay_ms: 0,
-        compressed_keys: false,
+        uncompressed_keys: false,
         extra_data: None,
     }));
 
@@ -1942,7 +2024,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         &SharedKeyGenParameters {
             context_id: Some(context_id_set_1),
             epoch_id: Some(epoch_id_set_1),
-            compressed: false,
+            uncompressed: false,
             existing_keyset_id: None,
             existing_epoch_id: None,
             use_existing_key_tag: false,
@@ -2014,29 +2096,29 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs(
 #[test_context(DockerComposeCentralized)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_insecure_compressed_keygen(ctx: &DockerComposeCentralized) {
+async fn test_centralized_insecure_default_keygen(ctx: &DockerComposeCentralized) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder, true).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
     assert!(!key_id.is_empty());
 }
 
 #[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_insecure_compressed_keygen(ctx: &DockerComposeThresholdTest) {
+async fn test_threshold_insecure_default_keygen(ctx: &DockerComposeThresholdTest) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let key_id = insecure_key_gen(ctx, keys_folder, true).await;
+    let key_id = insecure_key_gen(ctx, keys_folder, false).await;
     assert!(!key_id.is_empty());
 }
 
 #[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTest) {
+async fn test_threshold_default_preproc_keygen(ctx: &DockerComposeThresholdTest) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -2045,7 +2127,7 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
         &config_path,
         keys_folder,
         SharedKeyGenParameters {
-            compressed: true,
+            uncompressed: false,
             ..Default::default()
         },
         200,
@@ -2055,7 +2137,7 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
         &config_path,
         keys_folder,
         SharedKeyGenParameters {
-            compressed: true,
+            uncompressed: false,
             ..Default::default()
         },
         200,
@@ -2067,31 +2149,31 @@ async fn test_threshold_compressed_preproc_keygen(ctx: &DockerComposeThresholdTe
 #[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_compressed_keygen_from_existing(ctx: &DockerComposeThresholdTest) {
+async fn test_threshold_default_keygen_from_existing(ctx: &DockerComposeThresholdTest) {
     init_logging();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
 
-    // Step 1: Normal compressed keygen to establish a keyset with secret shares
+    // Step 1: Default keygen to establish a keyset with secret shares
     let (key_id_1, _) = real_preproc_and_keygen(
         &config_path,
         keys_folder,
         SharedKeyGenParameters {
-            compressed: true,
+            uncompressed: false,
             ..Default::default()
         },
         200,
     )
     .await;
 
-    // Step 2: Compressed keygen reusing existing secret shares from keygen 1
+    // Step 2: Default keygen reusing existing secret shares from keygen 1
     let existing_keyset_id = RequestId::from_str(&key_id_1).unwrap();
     let (key_id_2, _) = real_preproc_and_keygen(
         &config_path,
         keys_folder,
         SharedKeyGenParameters {
-            compressed: true,
+            uncompressed: false,
             existing_keyset_id: Some(existing_keyset_id),
             ..Default::default()
         },

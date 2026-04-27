@@ -513,11 +513,16 @@ async fn handle_res_metriced_with_timeout<T: Clone>(
                             "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
                         );
                         tracing::warn!(msg);
+                        let code = if e.to_ascii_lowercase().contains("abort") {
+                            tonic::Code::Aborted
+                        } else {
+                            tonic::Code::Internal
+                        };
                         Err(MetricedError::new(
                             metric_scope,
                             Some(*req_id),
                             anyhow!(msg),
-                            tonic::Code::Internal,
+                            code,
                         ))
                     }
                 }

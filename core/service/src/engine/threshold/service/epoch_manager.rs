@@ -645,15 +645,15 @@ impl<
                     let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
-                    let threshold_fhe_keys = ThresholdFheKeys {
-                        private_keys: Arc::new(new_private_keyset),
-                        public_material: PublicKeyMaterial::Uncompressed {
-                            integer_server_key: Arc::new(integer_server_key),
-                            sns_key: sns_key.map(Arc::new),
-                            decompression_key: decompression_key.map(Arc::new),
-                        },
-                        meta_data: info.clone(),
-                    };
+                    let threshold_fhe_keys = ThresholdFheKeys::new(
+                        Arc::new(new_private_keyset),
+                        PublicKeyMaterial::new_uncompressed(
+                            Arc::new(integer_server_key),
+                            sns_key.map(Arc::new),
+                            decompression_key.map(Arc::new),
+                        ),
+                        info.clone(),
+                    );
 
                     storage_tasks.push(
                         crypto_storage
@@ -687,14 +687,13 @@ impl<
                         }
                     };
 
-                    let public_material =
-                        PublicKeyMaterial::new_compressed(compressed_keyset.clone())?;
+                    let public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
-                    let threshold_fhe_keys = ThresholdFheKeys {
-                        private_keys: Arc::new(new_private_keyset),
+                    let threshold_fhe_keys = ThresholdFheKeys::new(
+                        Arc::new(new_private_keyset),
                         public_material,
-                        meta_data: info.clone(),
-                    };
+                        info.clone(),
+                    );
 
                     let meta_store = Arc::clone(&meta_store);
                     storage_tasks.push(
@@ -734,7 +733,7 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .inner_write_crs(
+                    .resharing_crs_write(
                         &crs_info.crs_id,
                         &new_epoch_id,
                         crs,
