@@ -52,7 +52,6 @@ pub(crate) async fn do_crsgen(
         Some(param),
         &dummy_domain(),
     )?;
-    // The request builder computes extra_data; mirror it for signature verification.
     let extra_data = crs_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain

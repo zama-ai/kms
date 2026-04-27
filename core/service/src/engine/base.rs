@@ -889,8 +889,8 @@ impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerQ126 {
             key_id: self.key_id,
             preprocessing_id: self.preprocessing_id,
             key_digest_map: self.key_digest_map,
-            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
             external_signature: self.external_signature,
+            extra_data: None, // extra_data was not present in the Q126 version, so we set it to None
         })
     }
 }

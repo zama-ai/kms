@@ -353,7 +353,7 @@ pub async fn threshold_key_gen_secure_isolated(
     use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
     use tokio::task::JoinSet;
 
-    // Isolated callers always use the default context/epoch; if that ever changes
+    // Note: Isolated callers always use the default context/epoch; if that ever changes
     // we'd need to resolve `context_id` / `epoch_id` to concrete ids and rebuild
     // extra_data via `make_extra_data` so the signed bytes stay consistent.
     assert!(

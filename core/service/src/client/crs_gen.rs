@@ -21,11 +21,8 @@ use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
     /// `context_id` and `epoch_id` are optional: when the caller does not
-    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
-    /// — the same defaults the server resolves during validation — and bind
-    /// those resolved ids into the `extra_data` the KMS will sign. This is the
-    /// current desired behaviour so that the request and the EIP-712 signature
-    /// agree on the context/epoch regardless of whether the caller passed them.
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`],
+    /// these will then be used in the `extra_data` the KMS will sign.
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,

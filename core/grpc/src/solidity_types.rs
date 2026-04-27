@@ -120,18 +120,12 @@ alloy_sol_types::sol! {
     }
 }
 
-/// Pre-RFC005 (Q1 2026) layouts of the Solidity structs that grew an
-/// `extraData` field, kept available so the backward-compatibility harness
+/// Version 13.20 (Q2 2026) layouts of the Solidity structs grew an
+/// `extraData` field. The Q1 26 versions below reflect the old version,
+/// kept available so the backward-compatibility harness
 /// can reproduce signatures that were generated before that change.
 ///
-/// The Solidity struct names inside this module MUST stay identical to the
-/// pre-RFC005 names (`KeygenVerification`, `CrsgenVerification`,
-/// `PrepKeygenVerification`, …) — EIP-712 hashes the struct name into the
-/// `typeHash`, so any rename here would change the signature bytes and
-/// defeat the point of having a legacy companion. The types are kept in
-/// their own Rust module so the `sol!` macro can declare `KeygenVerification`,
-/// `KeyDigest`, and `KeyType` again without colliding with the current ones
-/// at the parent scope, then re-exported with a `Q126` suffix for callers.
+/// The Solidity struct names inside this module MUST hence NOT be changed!
 mod legacy_q126 {
     alloy_sol_types::sol! {
         enum KeyType {

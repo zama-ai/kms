@@ -36,9 +36,7 @@ pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
 /// - v2: 32 bytes of context_id followed by 32 bytes of epoch_id
 ///
 /// Errors when `version` is above [`MAX_EXTRA_DATA_VERSION`], when v1 is requested without a
-/// `context_id`, or when v2 is requested without both a `context_id` and an `epoch_id`. Callers
-/// are responsible for resolving unset ids to the KMS defaults (e.g. `DEFAULT_MPC_CONTEXT`,
-/// `DEFAULT_EPOCH_ID`) before calling this helper, if that is the intended behavior.
+/// `context_id`, or when v2 is requested without both a `context_id` and an `epoch_id`.
 #[cfg(feature = "non-wasm")]
 pub(crate) fn make_extra_data(
     version: u8,
@@ -83,7 +81,6 @@ pub(crate) mod tests {
     #[cfg(any(test, feature = "testing"))]
     mod testing_infra_tests;
     mod threshold;
-
     use super::make_extra_data;
     use kms_grpc::{ContextId, EpochId};
 

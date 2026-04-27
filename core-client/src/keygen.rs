@@ -124,8 +124,6 @@ pub(crate) async fn do_keygen(
         keyset_added_info,
         dummy_domain(),
     )?;
-    // Mirror the extra_data the request builder embedded, so signature verification uses
-    // the same bytes that the server signed.
     let extra_data = dkg_req.extra_data.clone();
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
@@ -607,8 +605,6 @@ pub(crate) async fn do_preproc(
         keyset_config,
         &domain,
     )?;
-    // Extra data is computed by the request builder; mirror it here so we verify the response
-    // signature against the same bytes the server signed.
     let extra_data = pp_req.extra_data.clone();
 
     // make parallel requests by calling insecure keygen in a thread
