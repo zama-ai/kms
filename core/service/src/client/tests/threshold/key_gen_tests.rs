@@ -1,6 +1,5 @@
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
-    use crate::client::tests::common::uncompressed_keygen_config;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 }}
 cfg_if::cfg_if! {
