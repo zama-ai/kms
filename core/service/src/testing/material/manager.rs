@@ -13,6 +13,7 @@ use crate::consts::{
 };
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
+use futures_util::future::{Either, ready};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
@@ -295,34 +296,42 @@ impl TestMaterialManager {
         let source_base_ref = source_base.as_deref();
         let dest_base = temp_dir.path();
 
-        // Copy client keys if required
-        if spec.requires_key_type(KeyType::ClientKeys) {
-            self.copy_client_keys(source_base_ref, dest_base).await?;
-        }
-
-        // Copy signing keys if required (client or server signing keys)
-        if spec.requires_key_type(KeyType::SigningKeys)
+        let copy_client_keys = if spec.requires_key_type(KeyType::ClientKeys) {
+            Either::Left(self.copy_client_keys(source_base_ref, dest_base))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_signing_keys = if spec.requires_key_type(KeyType::SigningKeys)
             || spec.requires_key_type(KeyType::ServerSigningKeys)
         {
-            self.copy_signing_keys(source_base_ref, dest_base, spec)
-                .await?;
-        }
+            Either::Left(self.copy_signing_keys(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_fhe_keys = if spec.requires_key_type(KeyType::FheKeys) {
+            Either::Left(self.copy_fhe_keys(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
+        let copy_crs_keys =
+            if spec.requires_key_type(KeyType::CrsKeys) && spec.include_slow_material {
+                Either::Left(self.copy_crs_keys(source_base_ref, dest_base, spec))
+            } else {
+                Either::Right(ready(Ok(())))
+            };
+        let copy_prss_setup = if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
+            Either::Left(self.copy_prss_setup(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
 
-        // Copy FHE keys if required
-        if spec.requires_key_type(KeyType::FheKeys) {
-            self.copy_fhe_keys(source_base_ref, dest_base, spec).await?;
-        }
-
-        // Copy CRS keys if required
-        if spec.requires_key_type(KeyType::CrsKeys) && spec.include_slow_material {
-            self.copy_crs_keys(source_base_ref, dest_base, spec).await?;
-        }
-
-        // Copy PRSS setup for threshold tests
-        if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
-            self.copy_prss_setup(source_base_ref, dest_base, spec)
-                .await?;
-        }
+        tokio::try_join!(
+            copy_client_keys,
+            copy_signing_keys,
+            copy_fhe_keys,
+            copy_crs_keys,
+            copy_prss_setup
+        )?;
 
         Ok(())
     }
