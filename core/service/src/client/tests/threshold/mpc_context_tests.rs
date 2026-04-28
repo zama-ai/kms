@@ -28,7 +28,6 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial]
 async fn test_context_switch_4p() {
     do_context_switch(TEST_PARAM, 4, None).await;
 }

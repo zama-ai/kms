@@ -52,7 +52,6 @@ use alloy_primitives::Address;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
-use serial_test::serial;
 use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -150,7 +149,6 @@ impl ThresholdBackupTestEnv {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     auto_update_backup(custodians, threshold).await;
 }
@@ -199,7 +197,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
 }
@@ -317,7 +314,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     decrypt_after_recovery(custodians, threshold).await;
 }
@@ -409,7 +405,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 /// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
 #[cfg(feature = "insecure")]
 #[tokio::test]
-#[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
 }
@@ -488,7 +483,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 /// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
 /// after server startup with `ensure_default_prss: true`.
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_prss_in_custodian_backup_threshold() {
     let mut env =
         ThresholdBackupTestEnv::new("test_prss_in_custodian_backup_threshold", 3, 1).await;
@@ -519,7 +513,6 @@ async fn test_prss_in_custodian_backup_threshold() {
 /// immediately after key generation (not just after recovery).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_keygen_backup_presence_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_keygen_backup_presence_threshold", 3, 1).await;
     let req_key_id: RequestId =
@@ -568,7 +561,6 @@ async fn test_keygen_backup_presence_threshold() {
 /// results in re-encrypted backup entries (different ciphertexts).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_custodian_reencryption_with_existing_data_threshold() {
     // env already creates the first custodian context (env.req_new_cus)
     let mut env = ThresholdBackupTestEnv::new("test_custodian_reencryption_threshold", 3, 1).await;
@@ -647,7 +639,6 @@ async fn test_custodian_reencryption_with_existing_data_threshold() {
 /// being backed up in the custodian backup vault (threshold mode).
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_mpc_context_backup_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_mpc_context_backup_threshold", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
@@ -738,7 +729,6 @@ async fn test_mpc_context_backup_threshold() {
 /// after `store_reshared_keys` completes.
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_backup_after_reshare_threshold() {
     let mut env = ThresholdBackupTestEnv::new("test_backup_after_reshare_threshold", 3, 1).await;
     let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;

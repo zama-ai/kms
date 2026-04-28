@@ -5,9 +5,8 @@ use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::EncryptionConfig;
-use crate::util::key_setup::test_tools::{TestingPlaintext, purge};
+use crate::util::key_setup::test_tools::TestingPlaintext;
 use kms_grpc::kms::v1::FheParameter;
-use serial_test::serial;
 
 #[cfg(feature = "slow_tests")]
 #[rstest::rstest]
@@ -25,7 +24,6 @@ use serial_test::serial;
 #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32),TestingPlaintext::U128(99887766)], 1)] // test mixed types in batch
 #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_centralized(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -59,7 +57,6 @@ async fn default_decryption_centralized(
 #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32),TestingPlaintext::U128(99887766)], 1)] // test mixed types in batch
 #[case(vec![TestingPlaintext::U8(0), TestingPlaintext::U64(999), TestingPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_centralized_precompute_sns(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -93,7 +90,6 @@ async fn default_decryption_centralized_precompute_sns(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_centralized(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -129,7 +125,6 @@ async fn default_user_decryption_centralized(
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_user_decryption_centralized_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
@@ -154,21 +149,26 @@ async fn default_user_decryption_centralized_precompute_sns(
 // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_insecure_crs_gen_centralized() {
+async fn default_insecure_crs_gen_centralized() -> anyhow::Result<()> {
     let crs_req_id = derive_request_id("default_insecure_crs_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, &crs_req_id, &[None], &[None]).await;
-
-    crs_gen_centralized(&crs_req_id, FheParameter::Default, true, None).await;
+    crs_gen_centralized(
+        &crs_req_id,
+        "default_insecure_crs_gen_centralized",
+        FheParameter::Default,
+        true,
+    )
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_crs_gen_centralized() {
+async fn default_crs_gen_centralized() -> anyhow::Result<()> {
     let crs_req_id = derive_request_id("default_crs_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
-    crs_gen_centralized(&crs_req_id, FheParameter::Default, false, None).await;
+    crs_gen_centralized(
+        &crs_req_id,
+        "default_crs_gen_centralized",
+        FheParameter::Default,
+        false,
+    )
+    .await
 }

@@ -573,13 +573,15 @@ impl TestMaterialManager {
         key_id: &str,
     ) -> Result<()> {
         let source_type_dir = source_dir.join(key_type);
-        let dest_type_dir = dest_dir.join(key_type);
-
-        fs::create_dir_all(&dest_type_dir).await?;
-
         let source_file = source_type_dir.join(key_id);
-        let dest_file = dest_type_dir.join(key_id);
 
+        if !fs::try_exists(&source_file).await? {
+            return Ok(());
+        }
+
+        let dest_type_dir = dest_dir.join(key_type);
+        let dest_file = dest_type_dir.join(key_id);
+        fs::create_dir_all(&dest_type_dir).await?;
         fs::copy(&source_file, &dest_file).await.with_context(|| {
             format!(
                 "Failed to copy {} from {} to {}",
@@ -603,15 +605,11 @@ impl TestMaterialManager {
         let source_type_dir = source_dir.join(key_type);
         let dest_type_dir = dest_dir.join(key_type);
 
-        // Iterate through epoch subdirectories
-        let mut entries = fs::read_dir(&source_type_dir).await.with_context(|| {
-            format!(
-                "Failed to read epoch directory for {} at {}",
-                key_type,
-                source_type_dir.display()
-            )
-        })?;
-        let mut copied = false;
+        let mut entries = match fs::read_dir(&source_type_dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
         while let Some(entry) = entries.next_entry().await? {
             let epoch_path = entry.path();
             if epoch_path.is_dir() {
@@ -629,24 +627,8 @@ impl TestMaterialManager {
                             dest_file.display()
                         )
                     })?;
-                    copied = true;
-                    tracing::debug!(
-                        "Copied epoch-based key {} from {} to {}",
-                        key_id,
-                        source_file.display(),
-                        dest_file.display()
-                    );
                 }
             }
-        }
-
-        if !copied {
-            return Err(anyhow!(
-                "Failed to find {} for {} under {}",
-                key_id,
-                key_type,
-                source_type_dir.display()
-            ));
         }
 
         Ok(())

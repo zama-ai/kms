@@ -473,16 +473,25 @@ where
     // with different digests that don't match the existing PUB data (since
     // store_data doesn't overwrite). The missing PRIV data will be restored
     // from backup.
-    let pub_type = PubDataType::CompressedXofKeySet.to_string();
+    // Storage is "complete" only when both CompressedXofKeySet *and* PublicKey
+    // are present for both key ids.
+    let compressed_xof_keyset_type = PubDataType::CompressedXofKeySet.to_string();
+    let public_key_type = PubDataType::PublicKey.to_string();
     let pub_types_to_purge = [
-        PubDataType::CompressedXofKeySet.to_string(),
-        PubDataType::PublicKey.to_string(),
+        compressed_xof_keyset_type.clone(),
+        public_key_type.clone(),
         PubDataType::ServerKey.to_string(),
     ];
-    let pub_complete = data_exists(pub_storage, key_id, &pub_type)
+    let pub_complete = data_exists(pub_storage, key_id, &compressed_xof_keyset_type)
         .await
         .unwrap_or(false)
-        && data_exists(pub_storage, other_key_id, &pub_type)
+        && data_exists(pub_storage, other_key_id, &compressed_xof_keyset_type)
+            .await
+            .unwrap_or(false)
+        && data_exists(pub_storage, key_id, &public_key_type)
+            .await
+            .unwrap_or(false)
+        && data_exists(pub_storage, other_key_id, &public_key_type)
             .await
             .unwrap_or(false);
     if pub_complete {

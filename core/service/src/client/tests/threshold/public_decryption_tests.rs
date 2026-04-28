@@ -24,7 +24,6 @@ use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use serial_test::serial;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
@@ -35,7 +34,6 @@ use tonic::transport::Channel;
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
 async fn test_decryption_threshold_no_decompression(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -66,7 +64,6 @@ async fn test_decryption_threshold_no_decompression(
 #[case(10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
-#[serial]
 async fn test_decryption_threshold(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -95,7 +92,6 @@ async fn test_decryption_threshold(
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[serial]
 async fn test_decryption_threshold_precompute_sns(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
@@ -126,7 +122,6 @@ async fn test_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true), TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_threshold(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -153,7 +148,6 @@ async fn default_decryption_threshold(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn default_decryption_threshold_precompute_sns(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
@@ -181,7 +175,6 @@ async fn default_decryption_threshold_precompute_sns(
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, 4,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
 async fn default_decryption_threshold_with_crash(
     #[case] msg: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
