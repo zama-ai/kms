@@ -133,8 +133,7 @@ impl TestKeyGenResult {
                 (client_key, public_key.clone(), server_key.clone())
             }
             TestKeyGenResult::Compressed((client_key, keyset, public_key)) => {
-                let (_derived_pk, server_key) =
-                    keyset.clone().decompress().unwrap().into_raw_parts();
+                let (_derived_pk, server_key) = keyset.decompress().unwrap().into_raw_parts();
                 (client_key, public_key.clone(), server_key)
             }
         };
@@ -1852,11 +1851,7 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
-            let (pk, server_key) = compressed_keyset
-                .clone()
-                .decompress()
-                .unwrap()
-                .into_raw_parts();
+            let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
             assert_eq!(
                 pk.tag(),
                 &expected_tag,
