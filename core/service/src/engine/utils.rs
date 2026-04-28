@@ -421,6 +421,10 @@ fn sanity_check_extra_data_helper(
     epoch_id: &EpochId,
     context_id: &ContextId,
 ) -> Option<String> {
+    if extra_data.is_empty() {
+        // Empty input is allowed and treated as version 0 (no extra data)
+        return None;
+    }
     let version = extra_data[0];
     match version {
         0 => {
@@ -961,6 +965,14 @@ mod tests {
             sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
             "well-formed version 2 payload should not produce a warning"
         );
+    }
+
+    #[test]
+    fn sanity_check_extra_data_empty() {
+        let epoch_id = EpochId::from_bytes([0x00; 32]);
+        let context_id = ContextId::from_bytes([0x00; 32]);
+
+        assert!(sanity_check_extra_data_helper(&[], &epoch_id, &context_id).is_none());
     }
 
     #[test]
