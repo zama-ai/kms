@@ -77,12 +77,33 @@ data:
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
       {{- end }}
     {{- end }}
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
+    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
+    [enclave_bootstrap.network_tunnel]
+    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
+    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
+    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    {{- end }}
   kms-server.toml: |
     [service]
     listen_address = "0.0.0.0"
     listen_port = {{ int .Values.kmsCore.ports.client }}
     timeout_secs = {{ int .Values.kmsCore.resources.limits.grpcTimeout }}
     grpc_max_message_size = {{ int .Values.kmsCore.resources.limits.grpcMaxMessageSize }}
+
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    [enclave_bootstrap]
+    web_identity_token_port = {{ int .Values.kmsCore.nitroEnclave.webIdentityTokenPort }}
+    resolv_conf_port = {{ int .Values.kmsCore.nitroEnclave.resolvConfPort }}
+    [enclave_bootstrap.network_tunnel]
+    subnet = {{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
+    parent_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    enclave_address = {{ .Values.kmsCore.nitroEnclave.networkTunnel.enclaveAddress | quote }}
+    vsock_port = {{ int .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort }}
+    {{- end }}
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
