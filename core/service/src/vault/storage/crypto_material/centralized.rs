@@ -194,7 +194,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ///
     /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
     /// Instead of storing separate public_key and server_key, we store the compressed keyset.
-    #[expect(clippy::too_many_arguments)]
     pub async fn write_centralized_compressed_keys_with_meta_store(
         &self,
         key_id: &RequestId,
