@@ -1270,7 +1270,6 @@ pub(crate) async fn verify_keygen_responses(
                 )
                 .await
                 .inspect_err(|e| tracing::error!("error retrieving compressed keyset: {e}"))
-                .unwrap()
                 .unwrap();
 
             RetrievedKeysForVerification::Compressed(compressed_keyset, stored_public_key)

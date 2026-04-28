@@ -272,7 +272,6 @@ pub async fn run_key_gen_centralized(
                     &pub_storage,
                 )
                 .await
-                .unwrap()
                 .unwrap();
             let (derived_public_key, server_key) =
                 compressed_keyset.decompress().unwrap().into_raw_parts();

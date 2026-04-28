@@ -286,34 +286,26 @@ impl Client {
         domain: &Eip712Domain,
         _extra_data: Vec<u8>,
         storage: &R,
-    ) -> anyhow::Result<Option<(tfhe::xof_key_set::CompressedXofKeySet, CompactPublicKey)>> {
-        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
+    ) -> anyhow::Result<(tfhe::xof_key_set::CompressedXofKeySet, CompactPublicKey)> {
+        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
             .await?
-        {
-            Some(keyset) => keyset,
-            None => {
-                tracing::warn!(
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                     "Compressed keyset not found with request ID {:?}",
                     key_gen_result.request_id
-                );
-                return Ok(None);
-            }
-        };
+                )
+            })?;
 
-        let compact_public_key: CompactPublicKey = match self
+        let compact_public_key: CompactPublicKey = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
             .await?
-        {
-            Some(pk) => pk,
-            None => {
-                tracing::warn!(
+            .ok_or_else(|| {
+                anyhow::anyhow!(
                     "Compact public key not found with request ID {:?}",
                     key_gen_result.request_id
-                );
-                return Ok(None);
-            }
-        };
+                )
+            })?;
 
         let compressed_keyset_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
@@ -393,7 +385,7 @@ impl Client {
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
-        Ok(Some((compressed_keyset, compact_public_key)))
+        Ok((compressed_keyset, compact_public_key))
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
