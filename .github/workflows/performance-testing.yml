@@ -389,7 +389,7 @@ jobs:
           echo "Collecting logs from KMS Core pods..."
           for i in {1..13}; do
             echo "Collecting logs from KMS Core pod ${i}/13..."
-            POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
+            POD_NAME="${HELM_RELEASE_PREFIX:-kms-core}-${i}-core-${i}"
             LOG_FILE="kms-core-${i}-logs.txt"
 
             # Get pod logs and save to file
