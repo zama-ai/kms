@@ -64,19 +64,24 @@ args:
 	      "to" .to) }}
 {{- end -}}
 
-{{/* takes the chart root context and renders the pod-local parent-side TUN bridge
-      and DNS proxy used for enclave egress as a native Kubernetes sidecar.
-      TCP ingress is DNATed into the enclave over the TUN. The tunnel values
-      must match init_enclave.sh. */}}
+{{/* takes a (dict "image" kms-core-image-values
+                   "networkTunnel" nitro-network-tunnel-values
+                   "ingressPorts" list-of-tcp-ports)
+      and renders the pod-local parent-side TUN bridge and DNS proxy used for
+      enclave egress as a native Kubernetes sidecar. When ingressPorts is not
+      empty, TCP ingress is DNATed into the enclave over the TUN. The tunnel
+      values must match init_enclave.sh. */}}
 {{- define "enclaveNetworkTunnelContainer" -}}
 name: enclave-network-tunnel
-image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
-imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+image: {{ .image.name }}:{{ .image.tag }}
+imagePullPolicy: {{ .image.pullPolicy }}
+{{- if gt (len .ingressPorts) 0 }}
 env:
   - name: POD_IP
     valueFrom:
       fieldRef:
         fieldPath: status.podIP
+{{- end }}
 securityContext:
   allowPrivilegeEscalation: true
   privileged: true
@@ -88,12 +93,12 @@ args:
   - -c
   - |
     set -eu
-    TUN_IF={{ .Values.kmsCore.nitroEnclave.networkTunnel.interfaceName | quote }}
-    TUN_ADDR={{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    TUN_IF={{ .networkTunnel.interfaceName | quote }}
+    TUN_ADDR={{ .networkTunnel.parentAddress | quote }}
     TUN_HOST="${TUN_ADDR%/*}"
-    ENCLAVE_TUN_IP="10.118.0.2"
-    TUN_SUBNET={{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
-    VSOCK_PORT={{ .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort | quote }}
+    ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
+    TUN_SUBNET={{ .networkTunnel.subnet | quote }}
+    VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
     UPSTREAM_DNS=""
     SOCAT_PID=""
     DNSPROXY_PID=""
@@ -110,10 +115,12 @@ args:
       exit 1
     fi
 
+    {{- if gt (len .ingressPorts) 0 }}
     if [ -z "${POD_IP:-}" ]; then
       echo "enclave-network-tunnel: POD_IP is not set" >&2
       exit 1
     fi
+    {{- end }}
 
     cleanup() {
       if [ -n "$SOCAT_PID" ]; then
@@ -152,6 +159,7 @@ args:
       exit 1
     fi
 
+    {{- if gt (len .ingressPorts) 0 }}
     add_ingress_dnat() {
       port="$1"
       iptables -t nat -C PREROUTING -i eth0 -d "$POD_IP" -p tcp --dport "$port" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$port" 2>/dev/null || \
@@ -160,10 +168,9 @@ args:
         iptables -A FORWARD -i eth0 -o "$TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$port" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT
     }
 
-    add_ingress_dnat {{ .Values.kmsCore.ports.metrics | quote }}
-    add_ingress_dnat {{ .Values.kmsCore.ports.client | quote }}
-    {{- if .Values.kmsCore.thresholdMode.enabled }}
-    add_ingress_dnat {{ .Values.kmsCore.ports.peer | quote }}
+    {{- range .ingressPorts }}
+    add_ingress_dnat {{ . | quote }}
+    {{- end }}
     {{- end }}
 
     dnsproxy -l "$TUN_HOST" -u "$UPSTREAM_DNS" &
