@@ -168,25 +168,6 @@ jobs:
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
 
       # ======================================================================
-      - name: Get Rust version
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
-        env:
-          GH_WORKSPACE: ${{ github.workspace }}
-        run: |
-          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
-          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Set up Rust and Protoc
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
-        uses: ./.github/actions/setup-rust-and-protoc
-        with:
-          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
-          rust-cache: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # ======================================================================
       # KUBERNETES & HELM SETUP
       # ======================================================================
       - name: Setup kubeconfig
