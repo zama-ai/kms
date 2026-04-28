@@ -619,6 +619,10 @@ pub struct SharedKeyGenParameters {
     /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub use_existing_key_tag: bool,
+    /// Copy a compressed keygen from existing shares back to the existing keyset ID.
+    /// This is only valid with --existing-keyset-id and compressed keygen.
+    #[clap(long, default_value_t = false)]
+    pub copy_compressed_key_to_original: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
     /// Optional extra data (hex-encoded) to include in the request.
