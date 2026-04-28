@@ -3123,7 +3123,7 @@ async fn test_threshold_reshare() -> Result<()> {
 
     let ids = fetch_public_elements(
         &key_id_str,
-        &[PubDataType::CompressedXofKeySet],
+        &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
         &cc_conf,
         test_path,
         false,
@@ -3189,6 +3189,28 @@ async fn test_threshold_reshare() -> Result<()> {
 
     info!("Resharing result: {:?}", resharing_result);
     assert_eq!(resharing_result.len(), 2);
+    let ddec_config = cmd_config(
+        &config_path,
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x123456".to_string(),
+            data_type: FheType::Euint64,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
+            context_id: Some(context_id),
+            epoch_id: Some(new_epoch_id),
+            batch_size: 1,
+            num_requests: 1,
+            ciphertext_output_path: None,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
+            uncompressed_keys: false,
+            extra_data: None,
+        })),
+        200,
+    );
+    let decrypt_result = execute_cmd(&ddec_config, test_path).await.unwrap();
+    info!("Decrypt in reshared epoch succeeded: {:?}", decrypt_result);
 
     // The second element is the previous epoch_id used for reshare
     assert_eq!(resharing_result[1].0.unwrap(), epoch_id.into());

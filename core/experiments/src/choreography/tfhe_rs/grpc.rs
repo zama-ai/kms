@@ -176,7 +176,7 @@ impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
         keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
         params: DKGParams,
     ) -> Self {
-        let (public_key, server_key) = keys.0.clone().decompress().unwrap().into_raw_parts();
+        let (public_key, server_key) = keys.0.decompress().unwrap().into_raw_parts();
         Self {
             pub_keyset: Arc::new(Some(keys.0)),
             pub_keyset_decompressed: Arc::new(FhePubKeySet {

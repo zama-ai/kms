@@ -524,7 +524,7 @@ where
 
     // Generate two sets of compressed FHE keys
     let domain = dummy_domain();
-    let (compressed_keyset_1, key_info_1) = match generate_fhe_keys(
+    let (compressed_keyset_1, public_key_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default().secret_key_config,
@@ -540,7 +540,7 @@ where
             return false; // Cannot proceed without keys
         }
     };
-    let (compressed_keyset_2, key_info_2) = match generate_fhe_keys(
+    let (compressed_keyset_2, public_key_2, key_info_2) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default().secret_key_config,
@@ -559,8 +559,8 @@ where
 
     let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
     let pub_fhe_map = HashMap::from([
-        (*key_id, compressed_keyset_1),
-        (*other_key_id, compressed_keyset_2),
+        (*key_id, (compressed_keyset_1, public_key_1)),
+        (*other_key_id, (compressed_keyset_2, public_key_2)),
     ]);
 
     // Store private key data
@@ -608,8 +608,8 @@ where
         }
     }
 
-    // Store compressed keyset as public key data
-    for (req_id, compressed_keyset) in pub_fhe_map {
+    // Store compressed keyset and the public key derived from it as public key data
+    for (req_id, (compressed_keyset, public_key)) in pub_fhe_map {
         tracing::info!("Storing compressed keyset");
         if let Err(e) = store_versioned_at_request_id(
             pub_storage,
@@ -627,6 +627,23 @@ where
             continue; // Skip this key but try others
         }
         log_storage_success(req_id, pub_storage.info(), "compressed keyset", true, false);
+
+        if let Err(e) = store_versioned_at_request_id(
+            pub_storage,
+            &req_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to store public key for request ID {}: {}",
+                req_id,
+                e
+            );
+            continue;
+        }
+        log_storage_success(req_id, pub_storage.info(), "public key", true, false);
     }
     true
 }
@@ -1074,6 +1091,16 @@ where
         }
     };
 
+    // Derive the CompactPublicKey from the compressed keyset once; store and sign it along
+    // with the compressed keyset for each party.
+    let compact_public_key = match compressed_keyset.decompress() {
+        Ok(ks) => ks.into_raw_parts().0,
+        Err(e) => {
+            tracing::error!("Failed to decompress compressed keyset: {}", e);
+            return false;
+        }
+    };
+
     // Store keys for each party
     let domain = dummy_domain();
     for i in 1..=amount_parties {
@@ -1088,6 +1115,7 @@ where
             &INSECURE_PREPROCESSING_ID,
             key_id,
             &compressed_keyset,
+            &compact_public_key,
             &domain,
             vec![],
         ) {
@@ -1127,6 +1155,24 @@ where
             true,
             true,
         );
+
+        // Store the compact public key alongside the compressed keyset
+        if let Err(store_err) = store_versioned_at_request_id(
+            &mut pub_storages[i - 1],
+            key_id,
+            &compact_public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to store public key for party {}: {}",
+                { i },
+                store_err
+            );
+            continue;
+        }
+        log_storage_success(key_id, pub_storages[i - 1].info(), "public key", true, true);
 
         // Store private key data
         if let Err(store_err) = store_versioned_at_request_and_epoch_id(

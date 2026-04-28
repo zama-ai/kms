@@ -2567,7 +2567,7 @@ pub mod tests {
     fn assert_compressed_xof_keyset_decompression_matches_raw_parts(
         compressed_pk: &tfhe::xof_key_set::CompressedXofKeySet,
     ) {
-        let (public_key, server_key) = compressed_pk.clone().decompress().unwrap().into_raw_parts();
+        let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
         let decompressed_keyset = FhePubKeySet {
             public_key,
             server_key,

@@ -111,7 +111,6 @@ pub(crate) async fn do_keygen(
             .existing_keyset_id
             .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
                 existing_keyset_id: Some(id.into()),
-                existing_epoch_id: shared_config.existing_epoch_id.map(Into::into),
                 use_existing_key_tag: shared_config.use_existing_key_tag,
                 ..Default::default()
             });
@@ -224,7 +223,7 @@ pub(crate) async fn fetch_and_check_keygen(
     let key_types = if uncompressed {
         vec![PubDataType::PublicKey, PubDataType::ServerKey]
     } else {
-        vec![PubDataType::CompressedXofKeySet]
+        vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey]
     };
 
     let party_confs = fetch_public_elements(
@@ -253,6 +252,9 @@ pub(crate) async fn fetch_and_check_keygen(
                 pub_storage_prefix,
             )
             .await;
+        let compact_public_key =
+            load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix)
+                .await;
 
         for response in responses {
             let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -274,6 +276,7 @@ pub(crate) async fn fetch_and_check_keygen(
             })?;
             check_compressed_keyset_ext_signature(
                 &compressed_keyset,
+                &compact_public_key,
                 &prep_id.try_into()?,
                 &request_id,
                 &external_signature,
@@ -548,8 +551,10 @@ pub(crate) fn check_uncompressed_keyset_ext_signature(
 }
 
 /// Check external signature for compressed keyset
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_compressed_keyset_ext_signature(
     compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
+    public_key: &CompactPublicKey,
     prep_id: &RequestId,
     key_id: &RequestId,
     external_sig: &[u8],
@@ -559,18 +564,23 @@ pub(crate) fn check_compressed_keyset_ext_signature(
 ) -> anyhow::Result<()> {
     let keyset_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
+    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
-        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={}",
+        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={},public_key_digest={}",
         key_id,
         prep_id,
-        hex::encode(&keyset_digest)
+        hex::encode(&keyset_digest),
+        hex::encode(&public_key_digest)
     );
 
     let sol_type = KeygenVerification::new_compressed(
         prep_id,
         key_id,
-        keyset_digest, /* TODO: reenable for RFC005 extra_data */
+        keyset_digest,
+        public_key_digest,
+        // TODO: reenable for RFC005
+        // extra_data,
     );
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
