@@ -69,8 +69,8 @@ args:
                    "ingressPorts" list-of-tcp-ports)
       and renders the pod-local parent-side TUN bridge and DNS proxy used for
       enclave egress as a native Kubernetes sidecar. When ingressPorts is not
-      empty, TCP ingress is DNATed into the enclave over the TUN. The tunnel
-      values must match init_enclave.sh. */}}
+      empty, TCP ingress is DNATed into the enclave over the TUN. The vsock port
+      must match init_enclave.sh. */}}
 {{- define "enclaveNetworkTunnelContainer" -}}
 name: enclave-network-tunnel
 image: {{ .image.name }}:{{ .image.tag }}

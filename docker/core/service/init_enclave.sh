@@ -3,18 +3,12 @@
 set -o pipefail
 
 PARENT_CID=3
-TUN_NET=10.118.0.0/24
-GW_ADDR=10.118.0.1
-TUN_ADDR=10.118.0.2/24
 TUN_IF=vsocktun
 
 # Don't bind to port 9000 as it is reserved by the AWS Nitro hypervisor for
 # communicating with the enclave.
-NET_PORT=2100
 LOG_PORT=3000
 CONFIG_PORT=4000
-TOKEN_PORT=4100
-RESOLVCONF_PORT=4200
 
 KMS_SERVER_CONFIG_FILE="config.toml"
 AWS_WEB_IDENTITY_TOKEN_FILE="token"
@@ -61,9 +55,24 @@ socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
 	log "received kms-server config with sha256 $KMS_SERVER_CONFIG_HASH"
     }
 
+# extract bootstrap settings from the received config
+TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
+RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
+TUN_NET="$(get_value "enclave_bootstrap.network_tunnel.subnet" | tr -d '"')"
+PARENT_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
+ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
+NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
+GW_ADDR="${PARENT_TUN_ADDR%/*}"
+CIDR_PREFIX="${PARENT_TUN_ADDR#*/}"
+[ "$GW_ADDR" != "$PARENT_TUN_ADDR" ] || fail "parent tunnel address missing CIDR prefix: $PARENT_TUN_ADDR"
+case "$ENCLAVE_TUN_IP" in
+    */*) fail "enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP" ;;
+esac
+TUN_ADDR="${ENCLAVE_TUN_IP}/${CIDR_PREFIX}"
+
 # receive /etc/resolv.conf from the parent
 log "requesting /etc/resolv.conf"
-socat -u VSOCK-CONNECT:$PARENT_CID:$RESOLVCONF_PORT \
+socat -u VSOCK-CONNECT:$PARENT_CID:"$RESOLVCONF_PORT" \
       CREATE:resolv.conf \
     |& logger || fail "cannot receive /etc/resolv.conf"
 [ -f "resolv.conf" ] || fail "did not receive /etc/resolv.conf"
@@ -95,8 +104,8 @@ do
     sleep 1
 done
 ifconfig "$TUN_IF" |& logger || fail "cannot setup tunnel interface"
-route add -net $TUN_NET dev $TUN_IF |& logger || fail "cannot add route to gateway"
-route add default gw $GW_ADDR |& logger || fail "cannot add default route"
+route add -net "$TUN_NET" dev $TUN_IF |& logger || fail "cannot add route to gateway"
+route add default gw "$GW_ADDR" |& logger || fail "cannot add default route"
 
 # DNS runs on the parent side of the tunnel, so point the enclave resolver at
 # the tunnel gateway while preserving the search domains and options copied from
@@ -115,7 +124,7 @@ has_value "aws.role_arn" && \
 	while true;
 	do
 	    socat -U PIPE:$AWS_WEB_IDENTITY_TOKEN_FILE \
-		  VSOCK-CONNECT:$PARENT_CID:$TOKEN_PORT \
+		  VSOCK-CONNECT:$PARENT_CID:"$TOKEN_PORT" \
 		|& logger || fail "cannot receive web identity token"
 	done &
     }
@@ -200,8 +209,6 @@ has_value "keygen" || \
 
 has_value "service" && \
     {
-	# TCP ingress is DNATed by the parent-side tunnel onto the enclave TUN.
-	# showtime!
 	log "starting kms-server"
 	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
     }

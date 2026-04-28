@@ -5,25 +5,17 @@
 # standalone EC2 instance. There might be better ways to start proxies in larger
 # production environments, like K8S.
 
-RESOLVCONF_PORT=4200
 KMS_SERVER_TUN_IF=vsocktun
 
-if [ "$#" -ne 9 ]; then
-    echo "usage: start_parent_proxies.sh ENCLAVE_CID ENCLAVE_NET_PORT ENCLAVE_TUN_ADDR KMS_SERVER_TUN_ADDR ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT ENCLAVE_TOKEN_PORT KMS_SERVER_CONFIG_FILE WEB_IDENTITY_TOKEN_FILE"
+if [ "$#" -ne 4 ]; then
+    echo "usage: start_parent_proxies.sh ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT KMS_SERVER_CONFIG_FILE WEB_IDENTITY_TOKEN_FILE"
     exit 1
 fi
 
-ENCLAVE_CID="$1"
-ENCLAVE_NET_PORT="$2"
-ENCLAVE_TUN_ADDR="$3"
-KMS_SERVER_TUN_ADDR="$4"
-ENCLAVE_LOG_PORT="$5"
-ENCLAVE_CONFIG_PORT="$6"
-ENCLAVE_TOKEN_PORT="$7"
-KMS_SERVER_CONFIG_FILE="$8"
-WEB_IDENTITY_TOKEN_FILE="$9"
-ENCLAVE_TUN_IP="${ENCLAVE_TUN_ADDR%/*}"
-KMS_SERVER_TUN_IP="${KMS_SERVER_TUN_ADDR%/*}"
+ENCLAVE_LOG_PORT="$1"
+ENCLAVE_CONFIG_PORT="$2"
+KMS_SERVER_CONFIG_FILE="$3"
+WEB_IDENTITY_TOKEN_FILE="$4"
 UPSTREAM_DNS=""
 PARENT_IF=""
 PARENT_IP=""
@@ -50,6 +42,27 @@ get_value() {
 is_threshold() {
     yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
 }
+
+ENCLAVE_TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
+RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
+ENCLAVE_NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
+KMS_SERVER_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
+ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
+
+if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
+    echo "start_proxies: parent tunnel address missing CIDR prefix: $KMS_SERVER_TUN_ADDR"
+    exit 1
+fi
+
+case "$ENCLAVE_TUN_IP" in
+    */*)
+        echo "start_proxies: enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP"
+        exit 1
+        ;;
+esac
+
+ENCLAVE_TUN_ADDR="${ENCLAVE_TUN_IP}/${KMS_SERVER_TUN_ADDR#*/}"
+KMS_SERVER_TUN_IP="${KMS_SERVER_TUN_ADDR%/*}"
 
 add_ingress_dnat() {
     local PORT="$1"
