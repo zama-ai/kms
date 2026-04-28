@@ -1,6 +1,7 @@
 use algebra::{
     PRSSConversions,
     error_correction::error_correction,
+    galois_fields::lagrange::{LagrangeMap, build_lagrange_map},
     poly::Poly,
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
@@ -21,8 +22,8 @@ use itertools::Itertools;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::{iter::Sum, sync::OnceLock};
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
@@ -346,11 +347,11 @@ macro_rules! impl_field_level {
                 }
             }
 
+            static [<LAGRANGE_STORE_BGV_ $name:upper>]: OnceLock<LagrangeMap<$name>> = OnceLock::new();
+
             impl Field for $name {
-                fn cached_lagrange_polys(_points: &[Self]) -> Option<&'static [Poly<Self>]> {
-                    // BGV level types are experimental; no pre-computed store.
-                    // Falls back to direct computation in lagrange_interpolation.
-                    None
+                fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+                    [<LAGRANGE_STORE_BGV_ $name:upper>].get()?.get(points).map(|v| v.as_slice())
                 }
 
                 fn invert(&self) -> Self {
@@ -1355,6 +1356,65 @@ impl_field_level!(
     ConstMontyFormR,
     "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"
 );
+
+pub fn init_lagrange_cache_all_fields(
+    num_parties: std::num::NonZero<usize>,
+    min_threshold: usize,
+) -> anyhow::Result<()> {
+    LAGRANGE_STORE_BGV_LEVELONE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTWO
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTHREE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFOUR
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFIVE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDSIX
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDSEVEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDEIGHT
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDEIGHT
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDNINE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDELEVEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTWELVE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTHIRTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFOURTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFIFTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDR
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+
+    Ok(())
+}
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {

@@ -1,12 +1,14 @@
 use std::num::NonZero;
 
-use super::LagrangeMap;
 use crate::{poly::lagrange_polynomials, structure_traits::Field};
 use itertools::Itertools;
 
+/// Map from evaluation points to their precomputed Lagrange polynomials.
+pub type LagrangeMap<F> = std::collections::HashMap<Vec<F>, Vec<crate::poly::Poly<F>>>;
+
 /// Builds a LagrangeMap containing pre-computed Lagrange polynomials for all sorted subsets
 /// of `{embed(1), ..., embed(num_parties)}` with size ≥ `min_threshold + 1`.
-pub(crate) fn build_lagrange_map<F: Field>(
+pub fn build_lagrange_map<F: Field>(
     num_parties: NonZero<usize>,
     min_threshold: usize,
 ) -> anyhow::Result<LagrangeMap<F>> {

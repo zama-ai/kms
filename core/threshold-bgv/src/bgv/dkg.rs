@@ -184,7 +184,7 @@ where
 
 #[cfg(all(test, feature = "slow_tests"))]
 mod tests {
-    use std::time::Duration;
+    use std::num::NonZero;
 
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
@@ -193,7 +193,7 @@ mod tests {
     use crate::{
         algebra::{
             cyclotomic::{TernaryElement, TernaryEntry},
-            levels::{LevelEll, LevelKsw, LevelOne},
+            levels::{LevelEll, LevelKsw, LevelOne, init_lagrange_cache_all_fields},
             ntt::{Const, N65536, ntt_inv},
         },
         bgv::{
@@ -205,10 +205,9 @@ mod tests {
     use algebra::structure_traits::{One, Ring, ZConsts, Zero};
     use threshold_execution::{
         online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
-        runtime::sessions::{base_session::GenericBaseSessionHandles, small_session::SmallSession},
+        runtime::sessions::small_session::SmallSession,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
-    use threshold_networking::constants::NETWORK_TIMEOUT_ASYNC;
     use threshold_types::network::NetworkMode;
 
     #[allow(clippy::type_complexity)]
@@ -293,25 +292,18 @@ mod tests {
     // gate this test on it?
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dkg_with_offline() {
-        let parties = 5;
+        let parties = 4;
         let threshold = 1;
+        init_lagrange_cache_all_fields(NonZero::new(parties).unwrap(), threshold).unwrap();
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
             let mut dummy_preproc = DummyPreprocessing::new(0, &session);
 
-            session
-                .network()
-                .set_timeout_for_next_round(Duration::from_secs(600))
-                .await;
             let mut bgv_preproc = InMemoryBGVDkgPreprocessing::default();
             bgv_preproc
                 .fill_from_base_preproc(N65536::VALUE, &mut session, &mut dummy_preproc)
                 .await
                 .unwrap();
 
-            session
-                .network()
-                .set_timeout_for_next_round(NETWORK_TIMEOUT_ASYNC)
-                .await;
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
                 &mut bgv_preproc,
@@ -325,12 +317,12 @@ mod tests {
             (pk, sk_opened)
         };
 
-        //This is Sync because Sync of the preproc takes priority over Async of the actual DKG
+        //This is Async because preproc is dummy for triple gen (and also we know all parties will answer cause that's a test)
         let mut results = execute_protocol_small::<_, _, _, { LevelKsw::EXTENSION_DEGREE }>(
             parties,
-            threshold,
+            threshold as u8,
             None,
-            NetworkMode::Sync,
+            NetworkMode::Async,
             None,
             &mut task,
             None,
