@@ -241,11 +241,22 @@ pub(crate) fn compute_info_crs(
     crs_id: &RequestId,
     pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<CrsGenMetadata> {
+    let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
+    let max_num_bits = max_num_bits_from_crs(pp);
+    compute_info_crs_from_digest(sk, crs_id, crs_digest, max_num_bits, domain, extra_data)
+}
+
+/// Sign a CRS using a precomputed digest.
+pub(crate) fn compute_info_crs_from_digest(
+    sk: &PrivateSigKey,
+    crs_id: &RequestId,
+    crs_digest: Vec<u8>,
+    max_num_bits: usize,
+    domain: &alloy_sol_types::Eip712Domain,
     _extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
-    let max_num_bits = max_num_bits_from_crs(pp);
-    let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
-
     let sol_type = CrsgenVerification::new(
         crs_id,
         max_num_bits,
@@ -278,8 +289,25 @@ pub(crate) fn compute_info_standard_keygen(
     key_id: &RequestId,
     keyset: &FhePubKeySet,
     domain: &alloy_sol_types::Eip712Domain,
-    _extra_data: Vec<u8>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
+    let (server_key_digest, public_key_digest) = compute_keygen_digests(domain_separator, keyset)?;
+    compute_info_standard_keygen_from_digests(
+        sk,
+        prep_id,
+        key_id,
+        server_key_digest,
+        public_key_digest,
+        domain,
+        extra_data,
+    )
+}
+
+/// Hash the server key and public key for handle/signature derivation.
+pub(crate) fn compute_keygen_digests(
+    domain_separator: &DomainSep,
+    keyset: &FhePubKeySet,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let server_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
     let public_key_digest =
@@ -291,6 +319,19 @@ pub(crate) fn compute_info_standard_keygen(
         hex::encode(&public_key_digest)
     );
 
+    Ok((server_key_digest, public_key_digest))
+}
+
+/// Sign a keygen using precomputed digests.
+pub(crate) fn compute_info_standard_keygen_from_digests(
+    sk: &PrivateSigKey,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    server_key_digest: Vec<u8>,
+    public_key_digest: Vec<u8>,
+    domain: &alloy_sol_types::Eip712Domain,
+    _extra_data: Vec<u8>,
+) -> anyhow::Result<KeyGenMetadata> {
     let sol_type = KeygenVerification::new_standard(
         prep_id,
         key_id,
