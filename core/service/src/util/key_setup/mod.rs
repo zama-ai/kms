@@ -1093,7 +1093,7 @@ where
 
     // Derive the CompactPublicKey from the compressed keyset once; store and sign it along
     // with the compressed keyset for each party.
-    let compact_public_key = match compressed_keyset.clone().decompress() {
+    let compact_public_key = match compressed_keyset.decompress() {
         Ok(ks) => ks.into_raw_parts().0,
         Err(e) => {
             tracing::error!("Failed to decompress compressed keyset: {}", e);

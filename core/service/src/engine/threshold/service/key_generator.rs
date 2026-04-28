@@ -1431,7 +1431,7 @@ impl<
                 // derived from the newly generated compressed keyset.
                 let compact_pk = match existing_compact_pk {
                     Some(old_pk) => old_pk,
-                    None => match compressed_keyset.clone().decompress() {
+                    None => match compressed_keyset.decompress() {
                         Ok(ks) => ks.into_raw_parts().0,
                         Err(e) => {
                             update_err_req_in_meta_store(
