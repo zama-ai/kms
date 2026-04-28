@@ -122,12 +122,12 @@ kmsCore:
       enabled: true
       # These values must match the enclave-side constants in
       # docker/core/service/init_enclave.sh until that script is made dynamic.
-      # DNAT ingress also assumes the enclave-side TUN address stays at
-      # 10.118.0.2.
       vsockPort: 2100
       interfaceName: vsocktun
       subnet: 10.118.0.0/24
       parentAddress: 10.118.0.1/24
+      # Must match the host portion of init_enclave.sh TUN_ADDR.
+      enclaveAddress: 10.118.0.2
       resources: {}
         # requests:
         #   memory: 256Mi
