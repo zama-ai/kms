@@ -438,29 +438,14 @@ impl TestMaterialManager {
                     compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
                 for key_id in &key_ids.fhe_keys {
-                    // Copy various FHE key types
                     self.copy_key_files(
                         &source_pub,
                         &dest_pub,
-                        &PubDataType::PublicKey.to_string(),
+                        &PubDataType::CompressedXofKeySet.to_string(),
                         key_id,
                     )
                     .await?;
-                    self.copy_key_files(
-                        &source_pub,
-                        &dest_pub,
-                        &PubDataType::ServerKey.to_string(),
-                        key_id,
-                    )
-                    .await?;
-                    self.copy_epoch_key_files(
-                        &source_priv,
-                        &dest_priv,
-                        &PrivDataType::FhePrivateKey.to_string(),
-                        key_id,
-                    )
-                    .await?;
-                    // Threshold servers store key shares under FheKeyInfo
+                    // Threshold servers store key shares under FheKeyInfo.
                     self.copy_epoch_key_files(
                         &source_priv,
                         &dest_priv,
@@ -491,14 +476,7 @@ impl TestMaterialManager {
                 self.copy_key_files(
                     &source_pub,
                     &dest_pub,
-                    &PubDataType::PublicKey.to_string(),
-                    key_id,
-                )
-                .await?;
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &PubDataType::ServerKey.to_string(),
+                    &PubDataType::CompressedXofKeySet.to_string(),
                     key_id,
                 )
                 .await?;
@@ -590,8 +568,20 @@ impl TestMaterialManager {
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
             // Copy PRSS setup files
-            self.copy_key_files(&source_priv, &dest_priv, "PrssSetup", PRSS_INIT_REQ_ID)
-                .await?;
+            self.copy_key_files(
+                &source_priv,
+                &dest_priv,
+                &PrivDataType::PrssSetupCombined.to_string(),
+                PRSS_INIT_REQ_ID,
+            )
+            .await?;
+            self.copy_key_files(
+                &source_priv,
+                &dest_priv,
+                &PrivDataType::ContextInfo.to_string(),
+                PRSS_INIT_REQ_ID,
+            )
+            .await?;
         }
 
         Ok(())
@@ -608,34 +598,19 @@ impl TestMaterialManager {
         let source_type_dir = source_dir.join(key_type);
         let dest_type_dir = dest_dir.join(key_type);
 
-        if !source_type_dir.exists() {
-            tracing::warn!(
-                "Source directory does not exist, skipping copy: {}",
-                source_type_dir.display()
-            );
-            return Ok(());
-        }
-
         fs::create_dir_all(&dest_type_dir).await?;
 
         let source_file = source_type_dir.join(key_id);
         let dest_file = dest_type_dir.join(key_id);
 
-        if source_file.exists() {
-            fs::copy(&source_file, &dest_file).await.with_context(|| {
-                format!(
-                    "Failed to copy {} from {} to {}",
-                    key_type,
-                    source_file.display(),
-                    dest_file.display()
-                )
-            })?;
-        } else {
-            tracing::warn!(
-                "Source file does not exist, skipping: {}",
-                source_file.display()
-            );
-        }
+        fs::copy(&source_file, &dest_file).await.with_context(|| {
+            format!(
+                "Failed to copy {} from {} to {}",
+                key_type,
+                source_file.display(),
+                dest_file.display()
+            )
+        })?;
 
         Ok(())
     }
@@ -651,25 +626,23 @@ impl TestMaterialManager {
         let source_type_dir = source_dir.join(key_type);
         let dest_type_dir = dest_dir.join(key_type);
 
-        if !source_type_dir.exists() {
-            tracing::warn!(
-                "Source directory does not exist, skipping copy: {}",
-                source_type_dir.display()
-            );
-            return Ok(());
-        }
-
         // Iterate through epoch subdirectories
-        let mut entries = fs::read_dir(&source_type_dir).await?;
+        let mut entries = fs::read_dir(&source_type_dir).await.with_context(|| {
+            format!(
+                "Failed to read epoch directory for {} at {}",
+                key_type,
+                source_type_dir.display()
+            )
+        })?;
+        let mut copied = false;
         while let Some(entry) = entries.next_entry().await? {
             let epoch_path = entry.path();
             if epoch_path.is_dir() {
                 let epoch_name = entry.file_name();
                 let source_file = epoch_path.join(key_id);
-                let dest_epoch_dir = dest_type_dir.join(&epoch_name);
-                let dest_file = dest_epoch_dir.join(key_id);
-
-                if source_file.exists() {
+                if source_file.is_file() {
+                    let dest_epoch_dir = dest_type_dir.join(&epoch_name);
+                    let dest_file = dest_epoch_dir.join(key_id);
                     fs::create_dir_all(&dest_epoch_dir).await?;
                     fs::copy(&source_file, &dest_file).await.with_context(|| {
                         format!(
@@ -679,6 +652,7 @@ impl TestMaterialManager {
                             dest_file.display()
                         )
                     })?;
+                    copied = true;
                     tracing::debug!(
                         "Copied epoch-based key {} from {} to {}",
                         key_id,
@@ -687,6 +661,15 @@ impl TestMaterialManager {
                     );
                 }
             }
+        }
+
+        if !copied {
+            return Err(anyhow!(
+                "Failed to find {} for {} under {}",
+                key_id,
+                key_type,
+                source_type_dir.display()
+            ));
         }
 
         Ok(())
@@ -781,10 +764,11 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
     async fn test_setup_centralized_material() {
-        let manager = TestMaterialManager::default();
+        let manager = create_test_material_manager();
         let spec = TestMaterialSpec::centralized_basic();
 
         let temp_dir = manager
@@ -805,7 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_threshold_material() {
-        let manager = TestMaterialManager::default();
+        let manager = create_test_material_manager();
         let spec = TestMaterialSpec::threshold_basic(4);
 
         let temp_dir = manager

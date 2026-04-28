@@ -122,7 +122,7 @@ alloy_sol_types::sol! {
 }
 
 impl KeygenVerification {
-    pub fn new_standard(
+    pub fn new_uncompressed(
         preproc_id: &RequestId,
         key_id: &RequestId,
         server_key_digest: Vec<u8>,

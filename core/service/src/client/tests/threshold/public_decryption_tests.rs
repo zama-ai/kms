@@ -248,7 +248,7 @@ pub async fn decryption_threshold(
         party_ids_to_crash,
         parallelism,
         None,
-        false, // compressed_keys
+        false, // use the default compressed keyset
     )
     .await;
 }
@@ -266,7 +266,8 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
-    compressed_keys: bool,
+    // TODO(dp): this should have stayed "compressed" and not been renamed. Mea culpa.
+    uncompressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(
         amount_parties,
@@ -282,7 +283,7 @@ pub async fn run_decryption_threshold(
         parallelism,
         data_root_path,
         false,
-        compressed_keys,
+        uncompressed_keys,
     )
     .await
 }
@@ -304,7 +305,7 @@ pub async fn run_decryption_threshold_optionally_fail(
     parallelism: usize,
     data_root_path: Option<&Path>,
     expect_request_failure: bool,
-    compressed_keys: bool,
+    uncompressed_keys: bool,
 ) {
     let encryption_key_id = encryption_key_id.unwrap_or(key_id);
     assert_eq!(kms_clients.len(), kms_servers.len());
@@ -318,7 +319,7 @@ pub async fn run_decryption_threshold_optionally_fail(
             encryption_key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
-            compressed_keys,
+            uncompressed_keys,
         )
         .await;
         let ctt = TypedCiphertext {

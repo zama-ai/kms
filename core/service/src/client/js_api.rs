@@ -15,7 +15,7 @@
 //! a part of the client code (along with other dependencies)
 //! into wasm and then using wasm-pack to generate the JS bindings.
 //! Care must be taken when new code is introduced to core/service
-//! or core/threshold since wasm does not support every feature
+//! or core/threshold-* since wasm does not support every feature
 //! that Rust supports. Specifically, for our use-case, we will not
 //! try to compile async, multi-threaded or IO code.
 //!

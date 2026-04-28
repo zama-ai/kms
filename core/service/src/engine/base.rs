@@ -322,7 +322,7 @@ pub(crate) fn compute_keygen_digests(
     Ok((server_key_digest, public_key_digest))
 }
 
-/// Sign a keygen using precomputed digests.
+/// Sign an uncompressed keygen using precomputed digests.
 pub(crate) fn compute_info_standard_keygen_from_digests(
     sk: &PrivateSigKey,
     prep_id: &RequestId,
@@ -332,7 +332,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
     domain: &alloy_sol_types::Eip712Domain,
     _extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         prep_id,
         key_id,
         server_key_digest.clone(),
@@ -387,16 +387,21 @@ pub(crate) fn compute_info_compressed_keygen(
     key_id: &RequestId,
     compressed_keyset: &CompressedXofKeySet,
     domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<KeyGenMetadata> {
+    let digest = safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
+    compute_info_compressed_keygen_from_digest(sk, prep_id, key_id, digest, domain, extra_data)
+}
+
+/// Sign a compressed keygen using a precomputed digest.
+pub(crate) fn compute_info_compressed_keygen_from_digest(
+    sk: &PrivateSigKey,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    compressed_keyset_digest: Vec<u8>,
+    domain: &alloy_sol_types::Eip712Domain,
     _extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let compressed_keyset_digest =
-        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
-
-    tracing::info!(
-        "Computed xof keyset digest: {}",
-        hex::encode(&compressed_keyset_digest),
-    );
-
     let sol_type = KeygenVerification::new_compressed(
         prep_id,
         key_id,
@@ -1069,7 +1074,7 @@ pub(crate) mod tests {
                 safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
-                gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
+                gen_centralized_crs, generate_client_fhe_key, generate_uncompressed_fhe_keys,
             },
         },
         util::key_setup::FhePublicKey,
@@ -1259,7 +1264,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1308,7 +1313,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1384,7 +1389,7 @@ pub(crate) mod tests {
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let (pubkeyset, _sk) = generate_fhe_keys(
+        let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -1404,6 +1409,7 @@ pub(crate) mod tests {
             _noise_squashing_key,
             _noise_squashing_compression_key,
             _rerand_key,
+            _oprf_key,
             _tag,
         ) = pubkeyset.server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
@@ -1476,7 +1482,7 @@ pub(crate) mod tests {
 
         {
             // do the verification correctly
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1503,7 +1509,7 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1525,7 +1531,7 @@ pub(crate) mod tests {
         {
             // should fail if we use a wrong prep_id
             let bad_prep_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &bad_prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1546,7 +1552,7 @@ pub(crate) mod tests {
         {
             // should fail if we use the wrong key_id
             let bad_key_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &bad_key_id,
                 server_key_digest.clone(),
@@ -1568,7 +1574,7 @@ pub(crate) mod tests {
             // should fail if we use the wrong digest
             let mut bad_server_key_digest = server_key_digest.clone();
             bad_server_key_digest[0] ^= 1;
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 bad_server_key_digest.clone(),
@@ -1601,7 +1607,7 @@ pub(crate) mod tests {
             )
             .unwrap();
             let bad_signature = meta_data.external_signature();
-            let sol_struct = KeygenVerification::new_standard(
+            let sol_struct = KeygenVerification::new_uncompressed(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),

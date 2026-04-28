@@ -18,7 +18,7 @@ use tfhe::{core_crypto::prelude::NormalizedHammingWeightBound, xof_key_set::Comp
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
-    test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
+    test_feature::{gen_uncompressed_key_set, keygen_all_party_shares_from_keyset},
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -716,9 +716,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         req_id.into(),
     )
     .unwrap();
-    threshold_fhe_keys.public_material =
-        PublicKeyMaterial::new_compressed(compressed_keyset.clone())
-            .expect("compressed material should be valid");
+    threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let result = crypto_storage
@@ -819,23 +817,24 @@ fn setup_threshold_store(
         .to_classic_pbs_parameters();
 
     let mut rng = AesRng::seed_from_u64(100);
-    let keyset = gen_key_set(TEST_PARAM, req_id.into(), &mut rng);
+    // TODO(dp): should probably switch over to compressed keys here (and below).
+    let keyset = gen_uncompressed_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
         keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
 
     let fhe_key_set = keyset.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _, _, _) =
+    let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
-    let threshold_fhe_keys = ThresholdFheKeys {
-        private_keys: Arc::new(key_shares[0].to_owned()),
-        public_material: PublicKeyMaterial::Uncompressed {
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: None,
-        },
-        meta_data: dummy_info(),
-    };
+    let threshold_fhe_keys = ThresholdFheKeys::new(
+        Arc::new(key_shares[0].to_owned()),
+        PublicKeyMaterial::new_uncompressed(
+            Arc::new(integer_server_key),
+            sns_key.map(Arc::new),
+            None,
+        ),
+        dummy_info(),
+    );
     (crypto_storage, threshold_fhe_keys, fhe_key_set)
 }

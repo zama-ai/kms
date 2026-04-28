@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use tfhe::{
     core_crypto::{
         commons::traits::Numeric,
         entities::{GlweSecretKey, LweSecretKey},
-        prelude::UnsignedInteger,
+        prelude::{NormalizedHammingWeightBound, UnsignedInteger},
     },
     integer::compression_keys::DecompressionKey,
     prelude::{FheDecrypt, FheEncrypt, ParameterSetConformant, SquashNoise, Tagged},
@@ -20,6 +21,7 @@ use tfhe::{
         },
         parameters::CompressionParameters,
     },
+    xof_key_set::CompressedXofKeySet,
     zk::CompactPkeCrs,
 };
 use tokio::{task::JoinSet, time::timeout_at};
@@ -64,7 +66,7 @@ pub struct KeySet {
 
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -84,7 +86,7 @@ impl KeySet {
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
@@ -94,7 +96,7 @@ impl KeySet {
     }
 
     pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, compression_sk, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -104,7 +106,7 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -119,7 +121,7 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, noise_squashing_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
@@ -129,7 +131,7 @@ impl KeySet {
     }
 
     pub fn get_raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, _, sns_compression_key, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, _, sns_compression_key, _, _, _) = self.client_key.clone().into_raw_parts();
         sns_compression_key
             .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
     }
@@ -154,7 +156,10 @@ impl KeySet {
     }
 }
 
-pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, tag: tfhe::Tag, rng: &mut R) -> KeySet {
+pub fn gen_uncompressed_key_set<R>(params: DKGParams, tag: tfhe::Tag, rng: &mut R) -> KeySet
+where
+    R: Rng + CryptoRng,
+{
     let config = params.to_tfhe_config();
     let seed = Seed(rng.r#gen());
     let mut client_key = ClientKey::generate_with_seed(config, seed);
@@ -171,6 +176,53 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, tag: tfhe::Tag, rng: &
         client_key,
         public_keys,
     }
+}
+
+/// Generate the default [`CompressedXofKeySet`] together with the decompressed [`KeySet`]
+/// needed by the test helpers.
+///
+/// The compressed keyset is decompressed once internally to build the `KeySet`.
+// TODO(dp): Not convinced we need two key gen methods (this and gen_uncompressed_key_set). There's something weird with
+// this method: why do we need to return both compressed and uncompressed keys? Re-visit once the tests are sorted.
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_error_return)]
+pub fn gen_key_set<R>(
+    params: DKGParams,
+    tag: tfhe::Tag,
+    rng: &mut R,
+) -> anyhow::Result<(KeySet, CompressedXofKeySet)>
+where
+    R: Rng + CryptoRng,
+{
+    let config = params.to_tfhe_config();
+    let seed_bytes = Seed(rng.r#gen()).0.to_le_bytes().to_vec();
+    let security_bits = params.get_params_basics_handle().get_sec() as u32;
+
+    // If pmax is not set (e.g. test parameters), use 1.0 to allow any HW.
+    let pmax = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+    let max_norm_hwt = NormalizedHammingWeightBound::new(pmax)
+        .ok_or_else(|| anyhow!("Invalid Hamming Weight bound, range must be ]0.5,1.0]"))?;
+
+    // TODO(dp): It's a bit annoying that `generate` can't return the `ServerKey` we need, forcing us to clone +
+    // decompress to get it. Should be possible to get all 4 keys in one go?
+    let (client_key, compressed_keyset) =
+        CompressedXofKeySet::generate(config, seed_bytes, security_bits, max_norm_hwt, tag)?;
+
+    // Decompress once to get the public keys needed for KeySet / share generation.
+    let (public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
+
+    let keyset = KeySet {
+        client_key,
+        public_keys: FhePubKeySet {
+            public_key,
+            server_key,
+        },
+    };
+    Ok((keyset, compressed_keyset))
 }
 
 /// Helper struct to hold raw key containers extracted from a ClientKey.
@@ -532,7 +584,7 @@ where
 
     let keyset = if own_role.one_based() == INPUT_PARTY_ID {
         tracing::info!("Keyset generated by input party {}", own_role);
-        Some(gen_key_set(params, tag, &mut session.rng()))
+        Some(gen_uncompressed_key_set(params, tag, &mut session.rng()))
     } else {
         None
     };
@@ -860,7 +912,8 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        regular_params.get_rerand_params(),
+        regular_params.get_rerand_params().map(Into::into),
+        None,
         tag,
     ))
 }
@@ -903,7 +956,8 @@ where
 ///
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
-pub fn keygen_all_party_shares_from_keyset<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
+// TODO(dp): is this slow?
+pub fn keygen_all_party_shares_from_keyset<R, const EXTENSION_DEGREE: usize>(
     keyset: &KeySet,
     parameters: ClassicPBSParameters,
     rng: &mut R,
@@ -913,6 +967,7 @@ pub fn keygen_all_party_shares_from_keyset<R: Rng + CryptoRng, const EXTENSION_D
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    R: Rng + CryptoRng,
 {
     let lwe_secret_key = keyset.get_raw_lwe_client_key();
 
@@ -1028,7 +1083,7 @@ impl PartialEq for FhePubKeySet {
             pk.into_raw_parts() == other_pk.into_raw_parts() && tag == other_tag
         };
 
-        let (sks, ksk, comp, decomp, sns, _sns_comp, _rerand_key, tag) =
+        let (sks, ksk, comp, decomp, sns, _sns_comp, _rerand_key, _oprf, tag) =
             self.server_key.clone().into_raw_parts();
         let (
             other_sks,
@@ -1038,6 +1093,7 @@ impl PartialEq for FhePubKeySet {
             other_sns,
             _other_sns_comp,
             _other_rerand_key,
+            _other_oprf,
             other_tag,
         ) = other.server_key.clone().into_raw_parts();
 
@@ -1064,7 +1120,7 @@ pub fn run_decompression_test(
         Some(inner) => inner,
         None => &keyset1_client_key.generate_server_key(),
     };
-    let (_, _, _, decompression_key1, _, _, _, _) = server_key1.clone().into_raw_parts();
+    let (_, _, _, decompression_key1, _, _, _, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
 
     assert_eq!(
@@ -1162,6 +1218,7 @@ pub fn combine_and_run_sns_compression_test(
         Some(int_sns_compression_private_key),
         client_key_parts.5,
         client_key_parts.6,
+        client_key_parts.7,
     );
 
     let server_key = match server_key {
@@ -1191,6 +1248,7 @@ pub fn combine_and_run_sns_compression_test(
         Some(int_sns_compression_key),
         server_key_parts.6,
         server_key_parts.7,
+        server_key_parts.8,
     );
 
     run_sns_compression_test(new_client_key, new_server_key);
