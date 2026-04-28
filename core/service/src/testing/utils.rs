@@ -510,12 +510,6 @@ pub mod setup {
         }
 
         let max_supported_parties = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL.len();
-        if party_counts.contains(&0) {
-            bail!(
-                "Unsupported party count 0. Centralized material is generated implicitly, so threshold party counts must start at 2."
-            );
-        }
-
         let unique_party_counts = party_counts.iter().copied().collect::<BTreeSet<_>>();
 
         for party_count in unique_party_counts {
