@@ -217,34 +217,6 @@ spec:
           {{- toYaml . | nindent 12 }}
           {{- end }}
         {{- end }}
-        {{- /* Init Metrics Endpoint Proxy Socket */}}
-        - {{ include "proxyToEnclaveTcp"
-               (dict "name" "metrics-endpoint-proxy"
-                     "image" .Values.kubeUtils.image
-                     "cid" .Values.kmsCore.nitroEnclave.cid
-                     "port" .Values.kmsCore.ports.metrics
-                ) | indent 10 | trim }}
-        {{- /* Init GRPC Client Proxy Socket */}}
-        - {{ include "proxyToEnclaveTcp"
-               (dict "name" "grpc-client-proxy"
-                     "image" .Values.kubeUtils.image
-                     "cid" .Values.kmsCore.nitroEnclave.cid
-                     "port" .Values.kmsCore.ports.client
-                ) | indent 10 | trim }}
-        {{- if .Values.kmsCore.thresholdMode.enabled }}
-        {{- /* Init GRPC Local Peer Proxy Socket */}}
-        - {{ include "proxyToEnclaveTcp"
-               (dict "name" "grpc-peer-proxy"
-                     "image" .Values.kubeUtils.image
-                     "cid" .Values.kmsCore.nitroEnclave.cid
-                     "port" .Values.kmsCore.ports.peer
-                     "timeout" (int $.Values.kmsCore.nitroEnclave.socat.timeout)
-                ) | indent 10 | trim }}
-          {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
-          resources:
-          {{- toYaml . | nindent 12 }}
-          {{- end }}
-        {{- end }}
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}

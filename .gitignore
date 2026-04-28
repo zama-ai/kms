@@ -47,3 +47,4 @@ core/grpc/proto/buf.yaml
 .devcontainer
 *.pem
 /.agent-shell/
+.devenv/

@@ -22,8 +22,11 @@ ENCLAVE_CONFIG_PORT="$6"
 ENCLAVE_TOKEN_PORT="$7"
 KMS_SERVER_CONFIG_FILE="$8"
 WEB_IDENTITY_TOKEN_FILE="$9"
+ENCLAVE_TUN_IP="${ENCLAVE_TUN_ADDR%/*}"
 KMS_SERVER_TUN_IP="${KMS_SERVER_TUN_ADDR%/*}"
 UPSTREAM_DNS=""
+PARENT_IF=""
+PARENT_IP=""
 
 while read -r key value _; do
     if [ "$key" = "nameserver" ]; then
@@ -34,7 +37,9 @@ done < /etc/resolv.conf
 
 get_configured_port() {
     local SERVICE_NAME="$1"
-    get_value "$SERVICE_NAME" | cut -d ":" -f 3
+    local SERVICE_URL
+    SERVICE_URL=$(get_value "$SERVICE_NAME" | tr -d '"')
+    echo "${SERVICE_URL##*:}"
 }
 
 get_value() {
@@ -46,12 +51,39 @@ is_threshold() {
     yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
 }
 
-start_tcp_proxy_in() {
-    local NAME="$1"
-    local PORT="$2"
-    echo "start_proxies: starting parent-side $NAME proxy"
-    socat -T180 TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
+add_ingress_dnat() {
+    local PORT="$1"
+    sudo iptables -t nat -C PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT" 2>/dev/null || \
+        sudo iptables -t nat -A PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT"
+    sudo iptables -C FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        sudo iptables -A FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT
 }
+
+delete_ingress_dnat() {
+    local PORT="$1"
+    if [ -n "$PARENT_IF" ] && [ -n "$PARENT_IP" ]; then
+        sudo iptables -t nat -D PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT" 2>/dev/null || true
+        sudo iptables -D FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    fi
+}
+
+cleanup() {
+    if [ -f "$KMS_SERVER_CONFIG_FILE" ]; then
+        delete_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
+        delete_ingress_dnat "$(get_configured_port "service.listen_port")"
+        if is_threshold; then
+            delete_ingress_dnat "$(get_configured_port "threshold.listen_port")"
+        fi
+    fi
+    if [ -n "$PARENT_IF" ]; then
+        sudo iptables -t nat -D POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || true
+    fi
+    sudo iptables -D FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || true
+    sudo iptables -D FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    kill $(jobs -p) 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
 
 # start the log stream for the enclave
 echo "start_proxies: starting enclave log stream"
@@ -73,7 +105,6 @@ socat -T180 VSOCK-LISTEN:"$RESOLVCONF_PORT",fork,reuseaddr OPEN:/etc/resolv.conf
 echo "start_proxies: starting enclave network tunnel interface"
 sudo socat VSOCK-LISTEN:"$ENCLAVE_NET_PORT",fork,reuseaddr TUN:"$KMS_SERVER_TUN_ADDR",tun-name=$KMS_SERVER_TUN_IF,iff-up &
 sudo sysctl -w net.ipv4.ip_forward=1
-sudo iptables -t nat -A POSTROUTING -s "$ENCLAVE_TUN_ADDR" -j MASQUERADE
 
 for _ in $(seq 1 30);
 do
@@ -92,15 +123,43 @@ if [ -z "$UPSTREAM_DNS" ]; then
     exit 1
 fi
 
-echo "start_proxies: starting dnsproxy on $KMS_SERVER_TUN_IP via $UPSTREAM_DNS"
-sudo dnsproxy -v -l "$KMS_SERVER_TUN_IP" -u "$UPSTREAM_DNS" &
+set -- $(ip route get 1.1.1.1)
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        dev)
+            PARENT_IF="$2"
+            shift 2
+            ;;
+        src)
+            PARENT_IP="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
-# if needed, start a TCP proxy for incoming threshold peer-to-peer connections
-if is_threshold; then
-    start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
+if [ -z "$PARENT_IF" ] || [ -z "$PARENT_IP" ]; then
+    echo "start_proxies: cannot determine parent interface or IP"
+    exit 1
 fi
 
-# start a TCP proxy to let the world access the gRPC API in the enclave
-start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")" &
+sudo iptables -t nat -C POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || \
+    sudo iptables -t nat -A POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE
+sudo iptables -C FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || \
+    sudo iptables -A FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT
+sudo iptables -C FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+    sudo iptables -A FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+echo "start_proxies: DNATing metrics, client, and peer ingress to $ENCLAVE_TUN_IP over $KMS_SERVER_TUN_IF"
+add_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
+add_ingress_dnat "$(get_configured_port "service.listen_port")"
+if is_threshold; then
+    add_ingress_dnat "$(get_configured_port "threshold.listen_port")"
+fi
+
+echo "start_proxies: starting dnsproxy on $KMS_SERVER_TUN_IP via $UPSTREAM_DNS"
+sudo dnsproxy -v -l "$KMS_SERVER_TUN_IP" -u "$UPSTREAM_DNS" &
 
 wait
