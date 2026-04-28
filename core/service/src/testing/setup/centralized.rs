@@ -150,6 +150,9 @@ impl CentralizedTestEnvBuilder {
 
         // For `Testing` material we (re)generate centralized keys to guarantee freshness;
         // for `Default` we trust the pre-generated `test-material/default/` fixture as-is.
+        // TODO(dp): runs even when the just-copied fixture is already valid.
+        // Could be skipped if `regenerate_central_keys`'s outputs are already
+        // present in the dest tempdir.
         if spec.material_type == MaterialType::Testing {
             regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
         }

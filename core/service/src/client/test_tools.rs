@@ -807,6 +807,9 @@ pub(crate) async fn setup_centralized<
 /// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
 /// server, client end-point connection (which is needed to communicate with the server) and
 /// an internal client (for constructing requests and validating responses).
+// TODO(dp): with `test_data_path = None` this falls back to global `core/service/keys/` and
+// races every concurrent test. Only `centralized_custodian_handles` still calls this (with a
+// non-None path, fine). Once `centralized_handles` is gone, this can be inlined or deleted.
 pub async fn central_handle_w_vault(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -836,6 +839,8 @@ pub async fn central_handle_w_vault(
 /// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
 /// server, client end-point connection (which is needed to communicate with the server) and
 /// an internal client (for constructing requests and validating responses).
+// TODO(dp): orphaned after centralized helpers were ported to `CentralizedTestEnv::builder()`.
+// No external callers remain — delete once we confirm CI is green.
 pub async fn centralized_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,

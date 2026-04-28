@@ -473,6 +473,9 @@ where
     // with different digests that don't match the existing PUB data (since
     // store_data doesn't overwrite). The missing PRIV data will be restored
     // from backup.
+    // TODO(dp): defense-in-depth — these PublicKey checks only matter for the
+    // legacy `centralized_handles` path against `core/service/keys/`. Drop them
+    // (revert to a single CompressedXofKeySet probe) once that path is deleted.
     // Storage is "complete" only when both CompressedXofKeySet *and* PublicKey
     // are present for both key ids.
     let compressed_xof_keyset_type = PubDataType::CompressedXofKeySet.to_string();

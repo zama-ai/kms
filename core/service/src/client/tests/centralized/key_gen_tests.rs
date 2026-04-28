@@ -191,6 +191,10 @@ async fn preproc_centralized(
     assert_eq!(inner_resp.preprocessing_id, Some((*preproc_id).into()));
 }
 
+// TODO(dp): the explicit `test_name: &str` is repetitive — every caller passes
+// a string that mirrors its own fn name. A `test_name!()` macro using
+// `function_name!()` (or similar) would shave the boilerplate; applies to all
+// the migrated `*_centralized` helpers in this directory.
 pub(crate) async fn key_gen_centralized(
     request_id: &RequestId,
     epoch_id: &EpochId,
