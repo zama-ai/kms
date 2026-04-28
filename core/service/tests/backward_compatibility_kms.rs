@@ -272,7 +272,7 @@ fn test_crs_gen_metadata(
     let crs_id: RequestId = RequestId::new_random(&mut rng);
     let digest = [12u8; 32].to_vec();
     let max_num_bits = test.max_num_bits;
-    // Reproduce the old verificationsignature (before 13.20).
+    // Reproduce the old verification signature (before 13.20).
     // The stored vectors were produced by a generator pinned at a commit that did not yet have `extraData` on the
     // Solidity struct. `CrsgenVerificationQ126` mirrors that layout (and keeps
     // the EIP-712 struct name `CrsgenVerification` so the typeHash matches).

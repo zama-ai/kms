@@ -364,6 +364,10 @@ pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
 ///
 /// Errors when `version` is above [`MAX_EXTRA_DATA_VERSION`], when v1 is requested without a
 /// `context_id`, or when v2 is requested without both a `context_id` and an `epoch_id`.
+///
+/// NOTE: This method should only be used in testing and CLIs. The KMS should always read `extra_data` verbatim from a request
+/// in order to ensure forward compatibility with the contracts. This method is only for convenience to construct `extra_data`
+/// in the expected format for tests and CLIs.
 pub fn make_extra_data(
     version: u8,
     context_id: Option<&ContextId>,
@@ -417,12 +421,6 @@ fn sanity_check_extra_data_helper(
     epoch_id: &EpochId,
     context_id: &ContextId,
 ) -> Option<String> {
-    if extra_data.is_empty() {
-        return Some(
-            "Extra data is empty, expected at least 1 byte to indicate the version".to_string(),
-        );
-    }
-
     let version = extra_data[0];
     match version {
         0 => {
@@ -962,19 +960,6 @@ mod tests {
         assert!(
             sanity_check_extra_data_helper(&extra_data, &epoch_id, &context_id).is_none(),
             "well-formed version 2 payload should not produce a warning"
-        );
-    }
-
-    #[test]
-    fn sanity_check_extra_data_empty() {
-        let epoch_id = EpochId::from_bytes([0x00; 32]);
-        let context_id = ContextId::from_bytes([0x00; 32]);
-
-        let warning = sanity_check_extra_data_helper(&[], &epoch_id, &context_id)
-            .expect("empty input should produce a warning");
-        assert!(
-            warning.contains("Extra data is empty"),
-            "unexpected warning: {warning}"
         );
     }
 

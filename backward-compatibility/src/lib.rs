@@ -297,7 +297,7 @@ impl TestType for CrsGenMetadataTest {
     }
 }
 
-// KMS test — same shape as `KeyGenMetadataTest` but for for version 13.20 with extra data.
+// KMS test — same shape as `KeyGenMetadataTest` but for version 13.20 with extra data.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KeyGenMetadataWithExtraDataTest {
     pub test_filename: Cow<'static, str>,
@@ -319,7 +319,7 @@ impl TestType for KeyGenMetadataWithExtraDataTest {
     }
 }
 
-// KMS test — same shape as `CrsGenMetadataTest` but for for version 13.20 with extra data.
+// KMS test — same shape as `CrsGenMetadataTest` but for version 13.20 with extra data.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CrsGenMetadataWithExtraDataTest {
     pub test_filename: Cow<'static, str>,
