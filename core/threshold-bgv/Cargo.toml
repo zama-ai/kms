@@ -1,0 +1,38 @@
+[package]
+name = "threshold-bgv"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Experimental BGV/BFV FHE schemes with distributed key generation, threshold decryption, and supporting algebraic primitives (NTT, cyclotomic rings, CRT)."
+
+[dependencies]
+aes-prng.workspace = true
+algebra.workspace = true
+anyhow.workspace = true
+bc2wrap.workspace = true
+crypto-bigint.workspace = true
+error-utils.workspace = true
+threshold-execution = { workspace = true, features = ["non-wasm"] }
+hashing.workspace = true
+itertools.workspace = true
+threshold-networking.workspace = true
+num-integer.workspace = true
+paste.workspace = true
+rand.workspace = true
+serde.workspace = true
+tfhe-csprng.workspace = true
+tfhe.workspace = true
+thread-handles.workspace = true
+threshold-types.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rayon.workspace = true
+threshold-execution = { workspace = true, features = ["non-wasm", "testing"] }
+
+[features]
+slow_tests = []

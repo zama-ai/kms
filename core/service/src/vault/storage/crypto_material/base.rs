@@ -880,21 +880,6 @@ where
         .await
     }
 
-    /// Read the server key
-    /// from the public storage backend.
-    #[cfg(test)]
-    pub(crate) async fn read_cloned_server_key(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<tfhe::ServerKey> {
-        Self::read_cloned_crypto_material::<tfhe::ServerKey, _>(
-            Arc::new(RwLock::new(HashMap::new())),
-            req_id,
-            self.public_storage.clone(),
-        )
-        .await
-    }
-
     #[cfg(test)]
     pub(crate) async fn read_cloned_crypto_material<T, S>(
         cache: Arc<RwLock<HashMap<RequestId, T>>>,

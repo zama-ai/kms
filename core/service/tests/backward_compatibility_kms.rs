@@ -198,7 +198,7 @@ fn test_key_gen_metadata(
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-    let sol_type = KeygenVerification::new_standard(
+    let sol_type = KeygenVerification::new_uncompressed(
         &preprocessing_id,
         &key_id,
         server_key_digest.clone(),
@@ -898,7 +898,7 @@ fn test_kms_fhe_key_handles(
     let original_versionized: KmsFheKeyHandles = load_and_unversionize(dir, test, format)?;
 
     // Retrieve the key parameters from the original KMS handle
-    let (original_integer_key, _, _, _, _, _, _) =
+    let (original_integer_key, _, _, _, _, _, _, _) =
         original_versionized.client_key.clone().into_raw_parts();
     let original_key_params = original_integer_key.parameters();
 
@@ -937,7 +937,8 @@ fn test_kms_fhe_key_handles(
     .unwrap();
 
     // Retrieve the key parameters from the new KMS handle
-    let (new_integer_key, _, _, _, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
+    let (new_integer_key, _, _, _, _, _, _, _) =
+        new_versionized.client_key.clone().into_raw_parts();
     let new_key_params = new_integer_key.parameters();
 
     // Compare the key parameters and the public key info. We cannot directly compare KmsFheKeyHandles
@@ -981,15 +982,15 @@ fn test_threshold_fhe_keys(
 
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
 
-    let new_versionized = ThresholdFheKeys {
-        private_keys: Arc::new(private_keys),
-        public_material: PublicKeyMaterial::Uncompressed {
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: decompression_key.map(Arc::new),
-        },
-        meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
-    };
+    let new_versionized = ThresholdFheKeys::new(
+        Arc::new(private_keys),
+        PublicKeyMaterial::new_uncompressed(
+            Arc::new(integer_server_key),
+            sns_key.map(Arc::new),
+            decompression_key.map(Arc::new),
+        ),
+        KeyGenMetadata::LegacyV0(pk_meta_data),
+    );
 
     // Retrieve the key parameters from the new KMS handle
     let new_key_params = new_versionized.private_keys.parameters;
