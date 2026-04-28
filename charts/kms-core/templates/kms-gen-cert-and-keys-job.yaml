@@ -107,20 +107,20 @@ spec:
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        {{- /* Init Enclave Web Identity Token Socket */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
                      "image" .Values.kubeUtils.image
-                     "vsockPort" 4100
-          "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-          ) | indent 10 | trim }}
-        {{- /* Init Enclave resolv.conf Socket, hardcoded to 4200 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+                     "vsockPort" .Values.kmsCore.nitroEnclave.webIdentityTokenPort
+           "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+           ) | indent 10 | trim }}
+        {{- /* Init Enclave resolv.conf Socket */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-resolv-conf"
                      "image" .Values.kubeUtils.image
-                     "vsockPort" 4200
+                     "vsockPort" .Values.kmsCore.nitroEnclave.resolvConfPort
                      "to" "OPEN:/etc/resolv.conf,rdonly"
-                  ) | indent 10 | trim }}
+                   ) | indent 10 | trim }}
         {{- if .Values.kmsCore.nitroEnclave.networkTunnel.enabled }}
         - {{ include "enclaveNetworkTunnelContainer" (dict "image" .Values.kmsCore.image "networkTunnel" .Values.kmsCore.nitroEnclave.networkTunnel "ingressPorts" (list)) | indent 10 | trim }}
           volumeMounts:
