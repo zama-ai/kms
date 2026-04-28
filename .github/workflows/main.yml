@@ -73,7 +73,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-client-k8s-tests:
-              - 'core-client/tests/**'
+              - 'core-client/tests/kind-testing/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -82,14 +82,14 @@ jobs:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
               - 'core/service/**'
-              - 'core/threshold*/**'
+              - 'core/threshold-*/**'
               - 'core/test-utils/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             core-threshold:
-              - 'core/threshold*/**'
+              - 'core/threshold-*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
@@ -235,29 +235,19 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass narrower
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
       # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
       #   centralized : central testing only (no threshold material)
       - name: Set matrix
         id: set-matrix
         run: |
-          # Threshold tests: PRSS tests (sequential via #[serial]).
-          # Centralized tests: basic keygen, CRS, backup/restore workflows.
-          # Both skip: full_gen_tests (nightly), nightly_* (scheduled),
-          # k8s_* (cluster tests), isolated_test_example (demo).
-          # The docker-tls test runs in its own dedicated job — skip it here.
-          THRESHOLD_ARGS="--features threshold_tests -- threshold --skip full_gen_tests --skip nightly"
-          THRESHOLD_ARGS="${THRESHOLD_ARGS} --skip k8s_ --skip centralized --skip isolated_test_example"
-          THRESHOLD_ARGS="${THRESHOLD_ARGS} --skip test_threshold_mpc_context_switch_6_docker"
-
-          CENTRALIZED_ARGS="--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_"
-          CENTRALIZED_ARGS="${CENTRALIZED_ARGS} --skip threshold --skip isolated_test_example"
-
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"${THRESHOLD_ARGS}\",\"generate_default_material\":true},"
-          MATRIX="${MATRIX}{\"args-tests\":\"${CENTRALIZED_ARGS}\",\"generate_default_material\":false}"
-          MATRIX="${MATRIX}]}"
+                    # Threshold tests: includes PRSS tests (sequential execution via #[serial])
+          # Centralized tests: basic keygen, CRS, backup/restore workflows
+          # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
+          MATRIX="${MATRIX}{\"args-tests\":\"--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\",\"generate_default_material\":true},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\",\"generate_default_material\":false}"
+          MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
 
@@ -293,6 +283,11 @@ jobs:
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
+      # 11 integration_test tests, each isolated (tempdir + OS-assigned ports).
+      # Measured 49.5min total at 6-way; the slowest test
+      # (`test_threshold_mpc_context_switch_6`, ~20min) is the floor, so
+      # going past 6 is diminishing returns.
+      nextest-test-threads: "6"
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -324,115 +319,14 @@ jobs:
     with:
       working-directory: './core-client'
       crate-names: '-p kms-core-client'
-      # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
-      # and the docker-tls test which has its own dedicated job.
-      # nightly_* and nightly_full_gen_tests_* are intentionally included here
-      # (they're skipped only in the regular-CI profile via --skip).
-      args-tests: >-
-        --features threshold_tests -- --skip k8s_ --skip isolated_test_example
-        --skip test_threshold_mpc_context_switch_6_docker
+      # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
+      # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
+      args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
       generate-default-material: true
       nextest-profile: 'ci-nightly'
-      runs-on: '32cpu-linux-x64'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
     secrets: inherit
-
-  # Docker-Compose integration test.
-  test-core-client-docker-tls:
-    name: main/test-core-client-docker-tls
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
-    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-    timeout-minutes: 60
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: 0
-      DOCKER_BUILDKIT: 1
-      DOCKER_BUILD_TEST_CORE_CLIENT: 1
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Setup Runs-on
-        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
-        with:
-          metrics: cpu,network,memory,disk,io
-
-      - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
-          persist-credentials: true
-
-      - name: Get Rust version
-        env:
-          GH_WORKSPACE: ${{ github.workspace }}
-        run: |
-          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
-          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Login to GitHub Container Registry
-        uses: ./.github/actions/docker-login
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Chainguard Container Registry
-        uses: ./.github/actions/docker-login
-        with:
-          registry: cgr.dev
-          username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
-          password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
-
-      - name: Set up Docker Buildx
-        uses: ./.github/actions/docker-setup-buildx
-
-      - name: Set up Rust and Protoc
-        uses: ./.github/actions/setup-rust-and-protoc
-        with:
-          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          rust-components: llvm-tools-preview, llvm-tools
-          rust-cache: "false"
-          protoc-version: '26.1'
-          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
-        with:
-          save-if: false # read-only; our job never poisons the cache
-
-      - name: Install nextest
-        run: cargo install cargo-nextest@0.9.124 --locked --force
-
-      - name: Setup usage of private repo
-        env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
-        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
-      - name: Run TLS-over-Docker integration test
-        working-directory: ./core-client
-        run: |
-          RUST_BACKTRACE=full cargo nextest run \
-            --profile ci \
-            --no-fail-fast \
-            --features threshold_tests \
-            --test integration_test \
-            -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
 
   # Core client unit tests. Integration filters below skip everything that
   # consumes kms test material, so `skip-test-material: true` is safe.
@@ -510,7 +404,7 @@ jobs:
   # Core Service Pipeline
   # Testing triggered by:
   # - Changes to core/service/**
-  # - Changes to core/threshold/**
+  # - Changes to core/experiments/**
   # - Changes to core/grpc/**
   # - Changes to observability/**
   # - Changes to workflow file
@@ -560,7 +454,7 @@ jobs:
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
-            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -608,14 +502,45 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
-      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
+      # 6-way at 50.9min total (vs 57.4min at 4-way). Floor is the slowest
+      # test (`test_new_epoch_with_reshare`, ~13min), so going past 6 is
+      # diminishing returns.
+      nextest-test-threads: "6"
       enable-shared-material: true  # Use shared material mode (no copying)
+    secrets: inherit
+
+  # threshold-flavored tests with `slow_tests`.
+  test-core-service-slow-threshold:
+    name: main/test-core-service-slow-threshold
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core/service'
+      args-tests: '-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
+      run-minio: true
+      crate-names: '-p kms'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
+      runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "10"
+      enable-shared-material: true
     secrets: inherit
 
   ############################################################################
   # Core Threshold Pipeline
   # Testing triggered by:
-  # - Changes to core/threshold/**
+  # - Changes to core/experiments/**
   # - Changes to observability/**
   # - Changes to workflow file
   #
@@ -625,9 +550,6 @@ jobs:
   # 3. Dependabot Tests: Simplified build for dependency updates
   ############################################################################
 
-  # TODO: This is probably obsolete considering experiments
-  # (previous threshold-fhe) is now consuming the MPC library and not
-  # really part of it. (test-workspace-crate is now the important job)
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
   # experiments tests don't consume kms test material.
@@ -648,7 +570,7 @@ jobs:
       working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
-      args-tests: '--lib'
+      args-tests: '-F slow_tests --lib'
       crate-names: '-p experiments'
       nextest-test-threads: 4
       skip-test-material: true
@@ -664,10 +586,6 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
-
-  # TODO: This is probably obsolete considering experiments
-  # (previous threshold-fhe) is now consuming the MPC library and not
-  # really part of it. (test-workspace-crate is now the important job)
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
@@ -689,7 +607,7 @@ jobs:
       working-directory: './core/experiments'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: '--lib'
+      args-tests: '-F slow_tests --lib'
       run-redis: true
       crate-names: '-p experiments'
       nextest-test-threads: 4
@@ -706,9 +624,6 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
-  # TODO: This is probably obsolete considering experiments
-  # (previous threshold-fhe) is now consuming the MPC library and not
-  # really part of it. (test-workspace-crate is now the important job)
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
@@ -814,6 +729,7 @@ jobs:
       - test-core-client-unit
       - test-grpc
       - test-core-service
+      - test-core-service-slow-threshold
       - test-core-threshold-pr
       - test-core-threshold-main
       - test-workspace-crates

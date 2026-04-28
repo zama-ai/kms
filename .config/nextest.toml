@@ -6,8 +6,11 @@ nextest-version = { required = "0.9.48" }
 # nextest runs each test in a separate process, so #[serial] attributes alone
 # are insufficient to prevent parallel execution across binaries.
 [test-groups]
-# integration_test spin up full KMS servers; running them in parallel could cause port/resource contention, hence we
-# force serialization.
+# The `kms` package's `integration_test` binary has `#[serial]`-marked
+# tests that write to global default paths (in
+# `core/service/tests/integration_test.rs`) and must run sequentially.
+# `kms-core-client`'s `integration_test` binary is excluded — each of its
+# tests uses its own tempdir and OS-assigned ports.
 integration-serial = { max-threads = 1 }
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
@@ -28,16 +31,12 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# Long timeout for tests that use production-sized FHE parameters (Default +
-# SnS). Give them a 2h window before termination.
+# Serialize `kms` package's integration_test binary (the nightly slow-test
+# names in `default-filter` above live only in `kms-core-client`, so no
+# slow-timeout override is needed in the `ci` profile — those tests are
+# excluded here).
 [[profile.ci.overrides]]
-filter = 'binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
-slow-timeout = { period = "600s", terminate-after = 12 }
-test-group = "integration-serial"
-
-# Serialize remaining integration_test binaries.
-[[profile.ci.overrides]]
-filter = "binary(=integration_test)"
+filter = "package(kms) & binary(=integration_test)"
 test-group = "integration-serial"
 
 # Serialize all K8s test binaries (kubernetes_test_threshold*,
@@ -58,16 +57,16 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# Long timeout + serialization for slow Default-param tests (same as ci profile).
-# IMPORTANT: Must come before integration-serial catch-all (first match wins).
+# Long timeout for slow production-param nightly tests. They live in
+# `kms-core-client` and are isolated per-test (tempdirs + OS-assigned ports),
+# so no `test-group` — they can run in parallel.
 [[profile.ci-nightly.overrides]]
-filter = 'binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
+filter = 'package(kms-core-client) & binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
-test-group = "integration-serial"
 
-# Serialize remaining integration_test binaries.
+# Serialize `kms` package's integration_test binary (has `#[serial]` to cover for tests writing to global storage).
 [[profile.ci-nightly.overrides]]
-filter = "binary(=integration_test)"
+filter = "package(kms) & binary(=integration_test)"
 test-group = "integration-serial"
 
 # Serialize K8s tests (same as ci profile).

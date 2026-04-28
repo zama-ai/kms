@@ -45,8 +45,8 @@ on:
         default: '-F wasm_tests'
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
-        # Injected verbatim into `cargo clippy` (and effectively into nextest
-        # via `args-tests`).
+        # Injected verbatim into cargo invocations that need explicit package
+        # scoping (`cargo clippy`, `cargo nextest`).
         type: string
         required: true
       skip-test-material:
@@ -56,14 +56,6 @@ on:
         type: boolean
         required: false
         default: false
-      test-coverage:
-        type: boolean
-        required: false
-        default: false
-      test-minimum-coverage:
-        type: string
-        required: false
-        default: 0
       npm-release:
         type: boolean
         required: false
@@ -207,12 +199,9 @@ jobs:
         with:
           save-if: false
 
-      - name: Install nextest and grcov
+      - name: Install nextest
         run: |
-          # Force reinstall nextest to ensure we have the required version (0.9.124+)
-          # The cache may contain an older version that doesn't support test-groups
-          cargo install cargo-nextest@0.9.124 --locked --force
-          cargo install grcov --locked
+          cargo install cargo-nextest@0.9.133 --locked --force
 
       - name: Setup usage of private repo
         env:
@@ -253,6 +242,11 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
+      # TODO(dp) dead code? double check!
+      # No caller in main.yml passes `use-pregenerated-material: true`, so
+      # both download/decompress steps appear unused. Note: If revived, they also need the
+      # btrfs-loopback preamble below (otherwise tests on the loopback
+      # won't find the decompressed material under ./test-material).
       # Download pre-generated default test material if available (for slow_tests jobs)
       - name: Download Test Material (Default)
         if: ${{ inputs.use-pregenerated-material }}
@@ -274,6 +268,9 @@ jobs:
       # Generate test material. Subcommand is `all` (testing + default) when
       # the job uses slow_tests or explicitly requests default; otherwise
       # `testing` only. Must run from workspace root, not working-directory.
+      #
+      # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
+      # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
         if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
         working-directory: .
@@ -281,53 +278,66 @@ jobs:
           GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
           ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq btrfs-progs
+          sudo truncate -s 110G /tmp/cow-scratch.img
+          sudo mkfs.btrfs -q /tmp/cow-scratch.img
+          sudo mkdir -p /mnt/cow-scratch
+          sudo mount -o loop /tmp/cow-scratch.img /mnt/cow-scratch
+          sudo chown "$USER" /mnt/cow-scratch
+          mkdir -p /mnt/cow-scratch/test-material /mnt/cow-scratch/tmp
+          rm -rf ./test-material
+          ln -s /mnt/cow-scratch/test-material ./test-material
+          echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
+
+          # TODO(dp): keep?
+          # Confirms btrfs is mounted at /mnt/cow-scratch (vs falling back to ext4
+          # silently). If this line is missing or shows a non-btrfs FS, the
+          # preamble didn't take effect.
+          findmnt /mnt/cow-scratch
+
           if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
             SUBCOMMAND=all
           else
             SUBCOMMAND=testing
           fi
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
-          cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+          # Build the generator in Cargo's built-in `test` profile so nextest
+          # can reuse more of the same optimized artifacts later in the job.
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+
+          # TODO(dp): keep?
+          # Confirms material landed on the btrfs mount (via the symlink) rather
+          # than on workspace ext4. Expect ~200MB for `testing` only, ~20-80GB
+          # for `all`.
+          du -sh /mnt/cow-scratch/test-material
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
         run: |
-          echo "EXECUTING: cargo build --package kms --bin kms-custodian"
-          cargo build --package kms --bin kms-custodian
+          # Cargo's built-in `test` profile still emits into `target/debug`, so
+          # integration tests can keep resolving the sibling binary there.
+          echo "EXECUTING: cargo build --profile test --package kms --bin kms-custodian"
+          cargo build --profile test --package kms --bin kms-custodian
 
       # Test execution
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
         id: tests
-        if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
-          # some integration tests run docker compose
-          # which builds images which need git access
-          # building images in every integration test run is bad
-          #
-          # If we want to enable the coverage again we can use the snippets below:
-          # COVERAGE
-          # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
-          #   export RUSTFLAGS="-Cinstrument-coverage"
-          #   export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          #   ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${RUNNER_TEMP}/lcov" -t lcov
-          # else
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
-          # fi
           AWS_ACCESS_KEY_ID: 'minioadmin'
           AWS_SECRET_ACCESS_KEY: 'minioadmin'
           AWS_DEFAULT_REGION: 'eu-north-1'
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_RETRIES: 3
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
-          RUNNER_TEMP: ${{ runner.temp }}
           RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
           # Build the env-var prefix for the nextest invocation so the printed
@@ -363,11 +373,24 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config
-          # Intentional word-splitting on CMD_ENV and ARGS_TESTS.
+          # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+
+      # TODO(dp): keep?
+      # Did reflinks actually happen? Compare the logical size of all per-test
+      # tempdirs (apparent) against the disk blocks used on the btrfs mount.
+      # If reflinks worked, apparent >> used (e.g., 200 GB logical / 25 GB used).
+      # If they didn't, apparent ≈ used and we got byte copies for nothing.
+      - name: Verify CoW reflinks
+        if: ${{ always() && ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
+        run: |
+          echo "--- logical size of per-test tempdirs (apparent) ---"
+          du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
+          echo "--- actual blocks used on the btrfs mount ---"
+          df -h /mnt/cow-scratch
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
@@ -394,15 +417,6 @@ jobs:
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
-      # COVERAGE
-      # - name: Upload coverage to Codecov
-      #   if: github.event_name == 'schedule'
-      #   uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
-      #     files: '${{ runner.temp }}/lcov'
-      #     fail_ci_if_error: true
 
       - name: Set Slack color
         id: slack_color
