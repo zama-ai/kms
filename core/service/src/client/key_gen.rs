@@ -287,68 +287,16 @@ impl Client {
         _extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<(tfhe::xof_key_set::CompressedXofKeySet, CompactPublicKey)> {
-        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = self
+        let (compressed_keyset, compressed_keyset_digest): (
+            tfhe::xof_key_set::CompressedXofKeySet,
+            Vec<u8>,
+        ) = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Compressed keyset not found with request ID {:?}",
-                    key_gen_result.request_id
-                )
-            })?;
+            .await?;
 
-        let compact_public_key: CompactPublicKey = self
+        let (compact_public_key, public_key_digest): (CompactPublicKey, Vec<u8>) = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Compact public key not found with request ID {:?}",
-                    key_gen_result.request_id
-                )
-            })?;
-
-        let compressed_keyset_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
-        let public_key_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key)?;
-
-        let expected_keyset_digest = key_gen_result
-            .key_digests
-            .iter()
-            .find(|kd| kd.key_type == PubDataType::CompressedXofKeySet.to_string())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Compressed keyset digest not found in key generation result for key ID {}",
-                    key_id
-                )
-            })?;
-
-        if compressed_keyset_digest != *expected_keyset_digest.digest {
-            return Err(anyhow::anyhow!(
-                "Computed compressed keyset digest {} does not match expected digest {}",
-                hex::encode(&compressed_keyset_digest),
-                hex::encode(&expected_keyset_digest.digest),
-            ));
-        }
-
-        let expected_public_key_digest = key_gen_result
-            .key_digests
-            .iter()
-            .find(|kd| kd.key_type == PubDataType::PublicKey.to_string())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Public key digest not found in key generation result for key ID {}",
-                    key_id
-                )
-            })?;
-
-        if public_key_digest != *expected_public_key_digest.digest {
-            return Err(anyhow::anyhow!(
-                "Computed public key digest {} does not match expected digest {}",
-                hex::encode(&public_key_digest),
-                hex::encode(&expected_public_key_digest.digest),
-            ));
-        }
+            .await?;
 
         let actual_preproc_id: RequestId = some_or_err(
             key_gen_result.preprocessing_id.clone(),
@@ -389,15 +337,14 @@ impl Client {
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
+    /// Returns an error if the stored key's digest does not match the digest in
+    /// `key_gen_result.key_digests`.
     pub async fn retrieve_decompression_key<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<tfhe::integer::compression_keys::DecompressionKey>> {
-        let decompression_key = self
+    ) -> anyhow::Result<tfhe::integer::compression_keys::DecompressionKey> {
+        let (decompression_key, _digest) = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::DecompressionKey, storage)
             .await?;
         Ok(decompression_key)
@@ -416,7 +363,7 @@ impl Client {
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
         storage: &R,
-    ) -> anyhow::Result<Option<S>> {
+    ) -> anyhow::Result<(S, Vec<u8>)> {
         let mut key_digests = key_gen_result.key_digests.clone();
         let key_type_s = key_type.to_string();
         let key_digest = key_digests
@@ -436,14 +383,13 @@ impl Client {
         let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &key)?;
 
         if actual_digest != *key_digest.digest {
-            tracing::warn!(
-                "Computed key handle {} of retrieved key does not match expected key handle {}",
+            return Err(anyhow::anyhow!(
+                "Computed {key_type} digest {} does not match expected digest {}",
                 hex::encode(&actual_digest),
                 hex::encode(&key_digest.digest),
-            );
-            return Ok(None);
+            ));
         }
-        Ok(Some(key))
+        Ok((key, actual_digest))
     }
 
     /// Get a key from a public storage depending on the data type

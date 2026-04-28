@@ -369,7 +369,6 @@ pub async fn run_key_gen_centralized(
                 .retrieve_decompression_key(&inner_resp, &pub_storage)
                 .await
                 .unwrap()
-                .unwrap()
                 .into_raw_parts();
             run_decompression_test(
                 &client_key_1,

@@ -204,8 +204,8 @@ where
     /// Check if FHE keys exist (for central server).
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
-    /// This checks for both standard keys (`PublicKey` + `ServerKey`) and the current
-    /// compressed layout (`CompressedXofKeySet` + `PublicKey`).
+    /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
+    /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
     pub async fn fhe_keys_exist(
         &self,
         key_id: &RequestId,

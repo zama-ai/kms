@@ -1,6 +1,9 @@
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+    use crate::engine::base::KeyGenMetadata;
+    use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+    use kms_grpc::rpc_types::PrivDataType;
 }}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
@@ -387,24 +390,20 @@ async fn wait_for_keygen_result(
             let storage =
                 FileStorage::new(data_root_path, StorageType::PUB, storage_prefix.as_deref())
                     .unwrap();
-            let decompression_key: Option<DecompressionKey> = internal_client
+            let (decompression_key, _digest): (DecompressionKey, Vec<u8>) = internal_client
                 .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
                 .unwrap();
-            assert!(decompression_key.is_some());
             if role.one_based() == 1 {
-                serialized_ref_decompression_key =
-                    bc2wrap::serialize(decompression_key.as_ref().unwrap()).unwrap();
+                serialized_ref_decompression_key = bc2wrap::serialize(&decompression_key).unwrap();
             } else {
                 assert_eq!(
                     serialized_ref_decompression_key,
-                    bc2wrap::serialize(decompression_key.as_ref().unwrap()).unwrap()
+                    bc2wrap::serialize(&decompression_key).unwrap()
                 )
             }
             if out.is_none() {
-                out = Some(TestKeyGenResult::DecompressionOnly(
-                    decompression_key.unwrap(),
-                ))
+                out = Some(TestKeyGenResult::DecompressionOnly(decompression_key))
             }
         }
     } else {
@@ -1889,12 +1888,9 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
 
             // The digest of the stored (old) CompactPublicKey must appear in the signed
             // KeyGenMetadata for keygen_id_2 under PubDataType::PublicKey.
-            use crate::engine::base::KeyGenMetadata;
-            use crate::vault::storage::read_versioned_at_request_and_epoch_id;
-            use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-            let priv_storage = crate::vault::storage::file::FileStorage::new(
+            let priv_storage = FileStorage::new(
                 Some(material_path),
-                crate::vault::storage::StorageType::PRIV,
+                StorageType::PRIV,
                 PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[(party_id as usize) - 1].as_deref(),
             )?;
             let threshold_keys: crate::engine::threshold::service::ThresholdFheKeys =
@@ -2158,8 +2154,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     )?;
     let decompression_key = internal_client
         .retrieve_decompression_key(&keygen_result_3.unwrap(), &pub_storage)
-        .await?
-        .expect("decompression key not found in storage");
+        .await?;
 
     for (_, server) in env.servers {
         server.assert_shutdown().await;

@@ -1259,20 +1259,21 @@ pub async fn fetch_ctxt_from_file(
 /// Try to fetch keys for the given key ID, auto-detecting whether they use the default
 /// compressed storage or the legacy uncompressed layout.
 ///
-/// If `uncompressed_keys` is explicitly `true`, fetches `[PublicKey, ServerKey]` only.
-/// Otherwise, tries the current compressed layout `[CompressedXofKeySet, PublicKey]`
-/// first; on failure, falls back to the legacy `[PublicKey, ServerKey]`.
+/// If `compressed_keys` is `true`, tries the compressed layout
+/// `[CompressedXofKeySet, PublicKey]` first; on failure, falls back to the
+/// legacy `[PublicKey, ServerKey]`. If `compressed_keys` is `false`, fetches
+/// `[PublicKey, ServerKey]` only.
 /// Returns the fetched party confs and a boolean indicating whether uncompressed keys were found.
 async fn fetch_keys_auto_detect(
     key_id: &str,
-    uncompressed_keys: bool,
+    compressed_keys: bool,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
 ) -> anyhow::Result<(Vec<CoreConf>, bool)> {
     let compressed_key_types = vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey];
     let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-    if uncompressed_keys {
+    if !compressed_keys {
         let confs =
             fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await?;
         return Ok((confs, true));
@@ -1661,7 +1662,7 @@ pub async fn execute_cmd(
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.uncompressed_keys,
+                        !cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1738,7 +1739,7 @@ pub async fn execute_cmd(
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.uncompressed_keys,
+                        !cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1989,7 +1990,7 @@ pub async fn execute_cmd(
         CCCommand::Encrypt(cipher_parameters) => {
             let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
-                cipher_parameters.uncompressed_keys,
+                !cipher_parameters.uncompressed_keys,
                 &cc_conf,
                 destination_prefix,
             )
@@ -2637,14 +2638,10 @@ mod tests {
             fhe_params: Some(FheParameter::Test),
         };
 
-        let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
-            &key_id.to_string(),
-            false,
-            &cc_conf,
-            destination_root.path(),
-        )
-        .await
-        .unwrap();
+        let (party_confs, detected_uncompressed) =
+            fetch_keys_auto_detect(&key_id.to_string(), true, &cc_conf, destination_root.path())
+                .await
+                .unwrap();
 
         assert_eq!(party_confs.len(), 1);
         assert!(
