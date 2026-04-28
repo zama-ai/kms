@@ -139,7 +139,7 @@ enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual 
 futures = "=0.3.31"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.31"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
-getrandom = { version = "=0.2.15", features = ["js"] }  # Random number generation for WASM - LOW RISK: rust-random team
+getrandom = { version = "=0.2.17", features = ["js"] }  # Random number generation for WASM - LOW RISK: rust-random team
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
 http-legacy = { package = "http", version = "=0.2.12" }  # HTTP types (older version for compatibility) - LOW RISK: hyperium team
@@ -196,10 +196,10 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.5.4"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.8.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe = "=1.6.1"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.9.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.8.0"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+tfhe-zk-pok = "=0.8.1"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.49.0", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
@@ -221,7 +221,7 @@ typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maint
 url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
-wasm-bindgen = { version = "=0.2.108", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
+wasm-bindgen = { version = "=0.2.114", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
 x509-parser = { version = "=0.18.0", features = ["verify-aws"] }  # X.509 certificate parsing - LOW RISK: rusticata team
 zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management
 

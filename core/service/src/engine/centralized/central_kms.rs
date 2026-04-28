@@ -81,7 +81,11 @@ use tonic_health::server::HealthReporter;
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum CentralizedKeyGenResult {
     Uncompressed(FhePubKeySet, KmsFheKeyHandles),
-    Compressed(CompressedXofKeySet, KmsFheKeyHandles),
+    Compressed(
+        CompressedXofKeySet,
+        tfhe::CompactPublicKey,
+        KmsFheKeyHandles,
+    ),
 }
 
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
@@ -133,7 +137,9 @@ pub(crate) async fn async_generate_fhe_keys(
                 &eip712_domain,
                 extra_data.clone(),
             )
-            .map(|(keyset, handles)| CentralizedKeyGenResult::Compressed(keyset, handles)),
+            .map(|(keyset, public_key, handles)| {
+                CentralizedKeyGenResult::Compressed(keyset, public_key, handles)
+            }),
         };
         let _ = send.send(out);
     });
@@ -164,13 +170,13 @@ where
         .await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset2_id, epoch_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _, _, _) = storage
         .read_centralized_fhe_keys(keyset1_id, epoch_id)
         .await?
         .client_key
@@ -230,7 +236,11 @@ pub(crate) fn generate_fhe_keys(
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<(CompressedXofKeySet, KmsFheKeyHandles)> {
+) -> anyhow::Result<(
+    CompressedXofKeySet,
+    tfhe::CompactPublicKey,
+    KmsFheKeyHandles,
+)> {
     match keyset_config {
         KeyGenSecretKeyConfig::GenerateAll => { /* ok */ }
         KeyGenSecretKeyConfig::UseExisting => {
@@ -271,8 +281,8 @@ pub(crate) fn generate_fhe_keys(
         tag,
     )?;
 
-    let (_public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
-    let (_, _, _, decompression_key, _, _, _, _) = server_key.into_raw_parts();
+    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
+    let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -280,12 +290,13 @@ pub(crate) fn generate_fhe_keys(
         key_id,
         preproc_id,
         &compressed_keyset,
+        &public_key,
         decompression_key,
         eip712_domain,
         extra_data,
     )?;
 
-    Ok((compressed_keyset, handles))
+    Ok((compressed_keyset, public_key, handles))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -320,6 +331,7 @@ pub fn generate_uncompressed_fhe_keys(
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -1415,9 +1427,9 @@ pub(crate) mod tests {
         );
 
         assert!(result.is_ok(), "Compressed key generation should succeed");
-        let (compressed_keyset, handles) = result.unwrap();
+        let (compressed_keyset, _public_key, handles) = result.unwrap();
 
-        // Verify the handles contain the correct key type
+        // Verify the handles contain both digest types
         match &handles.public_key_info {
             crate::engine::base::KeyGenMetadata::Current(inner) => {
                 assert!(
@@ -1425,6 +1437,10 @@ pub(crate) mod tests {
                         .key_digest_map
                         .contains_key(&PubDataType::CompressedXofKeySet),
                     "Should contain CompressedXofKeySet digest"
+                );
+                assert!(
+                    inner.key_digest_map.contains_key(&PubDataType::PublicKey),
+                    "Should contain PublicKey digest"
                 );
             }
             _ => panic!("Expected Current variant of KeyGenMetadata"),

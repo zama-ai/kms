@@ -74,11 +74,12 @@ pub(crate) async fn generate_compressed_sns_compression_keys<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<CompressedNoiseSquashingCompressionKey>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Snapshot the XOF generator state before any mask bytes are consumed.
+    let compression_seed = mpc_encryption_rng.current_compression_seed();
     let packing_key_switching_key_shares = generate_sns_compression_key_shares(
         glwe_secret_key_share_sns_as_lwe,
         private_key,
@@ -88,7 +89,7 @@ where
     )?;
 
     let packing_key_switching_key = packing_key_switching_key_shares
-        .open_to_tfhers_seeded_type::<u128, _>(seed, session)
+        .open_to_tfhers_seeded_type::<u128, _>(compression_seed, session)
         .await
         .inspect_err(|e| tracing::error!("failed to open tfhers type u128: {e}"))?;
 

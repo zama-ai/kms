@@ -642,7 +642,7 @@ impl<
                         }
                     };
 
-                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
@@ -669,12 +669,27 @@ impl<
                     fhe_key_infos.push(info);
                 }
                 VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                    // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
+                    // Resharing currently signs and stores the CompactPublicKey derived
+                    // from the newly generated compressed keyset. Revisit whether it should
+                    // instead preserve the old keyset's CompactPublicKey to keep the
+                    // externally visible public key stable across epochs of the same key_id.
+                    let compact_public_key = compressed_keyset
+                        .clone()
+                        .decompress()
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to decompress reshared compressed keyset: {e}")
+                        })?
+                        .into_raw_parts()
+                        .0;
+
                     let info = match compute_info_compressed_keygen(
                         sk,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,
                         &key_info.key_id,
                         &compressed_keyset,
+                        &compact_public_key,
                         eip712_domain,
                         key_info.extra_data.clone(),
                     ) {
@@ -699,12 +714,14 @@ impl<
                     storage_tasks.push(
                         async move {
                             let compressed_keyset = compressed_keyset;
+                            let compact_public_key = compact_public_key;
                             crypto_storage
                                 .inner_write_threshold_keys_compressed(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
                                     &compressed_keyset,
+                                    &compact_public_key,
                                     meta_store,
                                 )
                                 .await

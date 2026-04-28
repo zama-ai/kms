@@ -102,7 +102,6 @@ pub(crate) async fn generate_compressed_decompression_keys<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<CompressedDecompressionKey>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -114,7 +113,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -183,11 +181,12 @@ pub(crate) async fn generate_compressed_compression_decompression_keys<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<(CompressedCompressionKey, CompressedDecompressionKey)>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Snapshot the XOF state before the packing-KSK's mask bytes start being consumed.
+    let packing_ksk_compression_seed = mpc_encryption_rng.current_compression_seed();
     let packing_key_switching_key_shares =
         generate_packing_key_switching_key_shares_for_compression(
             private_glwe_compute_key_as_lwe,
@@ -198,7 +197,7 @@ where
         )?;
 
     let packing_key_switching_key = packing_key_switching_key_shares
-        .open_to_tfhers_seeded_type::<u64, _>(seed, session)
+        .open_to_tfhers_seeded_type::<u64, _>(packing_ksk_compression_seed, session)
         .await?;
 
     let compression_key = CompressedCompressionKey {
@@ -214,7 +213,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 

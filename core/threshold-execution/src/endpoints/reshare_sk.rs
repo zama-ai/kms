@@ -1326,6 +1326,7 @@ mod tests {
             new_sns_private_key,
             None,
             None,
+            None,
             tfhe::Tag::default(),
         );
         keyset.client_key = ck;
