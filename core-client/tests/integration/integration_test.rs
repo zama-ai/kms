@@ -89,6 +89,7 @@ fn build_test_core_config(
             timeout_secs: 30,
             grpc_max_message_size: 104_857_600,
         },
+        enclave_bootstrap: None,
         telemetry: None,
         aws: Some(AWSConfig {
             region: "us-east-1".to_string(),

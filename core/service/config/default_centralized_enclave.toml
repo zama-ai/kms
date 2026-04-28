@@ -29,9 +29,11 @@ scheduled_delay_ms = 500
 
 [aws]
 region = "eu-west-3"
-imds_endpoint = "http://localhost:5000"
-s3_endpoint = "https://localhost:6000"
-awskms_endpoint = "https://localhost:7000"
+# Optional mock/test overrides. For localstack-style mocks, keep these on HTTP
+# unless the endpoint presents a certificate valid for its actual hostname.
+# imds_endpoint = "http://127.0.0.1:5000"
+# s3_endpoint = "http://127.0.0.1:4566"
+# awskms_endpoint = "http://127.0.0.1:4566"
 
 [public_vault]
 [public_vault.storage.s3]
