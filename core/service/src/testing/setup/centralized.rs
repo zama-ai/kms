@@ -10,6 +10,7 @@ use crate::util::key_setup::ensure_client_keys_exist;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+use std::collections::HashMap;
 use tempfile::TempDir;
 use tonic::transport::Channel;
 
@@ -26,10 +27,56 @@ pub struct CentralizedTestEnv {
     pub client: CoreServiceEndpointClient<Channel>,
 }
 
+/// Lifetime guard returned by [`CentralizedTestEnv::into_parts`].
+///
+/// Owns the tempdir handle. Must be held until the test body finishes — dropping it deletes the
+/// tempdir the server reads from.
+pub struct CentralizedTestMaterialGuard {
+    _material_dir: TempDir,
+}
+
 impl CentralizedTestEnv {
     /// Create a new builder for centralized test environment
     pub fn builder() -> CentralizedTestEnvBuilder {
         CentralizedTestEnvBuilder::default()
+    }
+
+    /// Build an internal client backed by this env's isolated storage.
+    ///
+    /// Mirrors the threshold side's [`crate::testing::setup::ThresholdTestEnv::create_internal_client`].
+    pub async fn create_internal_client(
+        &self,
+        params: &threshold_execution::tfhe_internals::parameters::DKGParams,
+    ) -> Result<crate::client::client_wasm::Client> {
+        let material_path = self.material_dir.path();
+        let pub_storage = FileStorage::new(Some(material_path), StorageType::PUB, None)?;
+        let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
+        crate::client::client_wasm::Client::new_client(
+            client_storage,
+            HashMap::from([(1u32, pub_storage)]),
+            params,
+            None,
+        )
+        .await
+    }
+
+    /// Destructure the env into parts.
+    ///
+    /// Returns `(server, client, material_path, guard)`. The guard owns the tempdir and must
+    /// outlive the running server.
+    pub fn into_parts(
+        self,
+    ) -> (
+        ServerHandle,
+        CoreServiceEndpointClient<Channel>,
+        std::path::PathBuf,
+        CentralizedTestMaterialGuard,
+    ) {
+        let material_path = self.material_dir.path().to_path_buf();
+        let guard = CentralizedTestMaterialGuard {
+            _material_dir: self.material_dir,
+        };
+        (self.server, self.client, material_path, guard)
     }
 }
 
