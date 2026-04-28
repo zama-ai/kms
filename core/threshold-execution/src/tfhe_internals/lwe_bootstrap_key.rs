@@ -1,27 +1,21 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 
 use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
-    Seed,
     core_crypto::{
         commons::{
-            generators::MaskRandomGenerator,
             math::random::CompressionSeed,
             parameters::GlweSize,
-            traits::{ByteRandomGenerator, ContiguousEntityContainerMut, UnsignedInteger},
+            traits::{ContiguousEntityContainerMut, UnsignedInteger},
         },
         entities::LweBootstrapKeyOwned,
-        prelude::{
-            SeededLweBootstrapKeyOwned, UnsignedTorus,
-            decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator,
-        },
+        prelude::SeededLweBootstrapKeyOwned,
     },
     shortint::parameters::{
         CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, LweDimension,
         PolynomialSize,
     },
 };
-use tfhe_csprng::seeders::XofSeed;
 
 use crate::{online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles};
 use algebra::{
@@ -95,7 +89,7 @@ where
 {
     pub async fn open_to_tfhers_seeded_type<Scalar: UnsignedInteger, S: BaseSessionHandles>(
         self,
-        seed: u128,
+        compression_seed: CompressionSeed,
         session: &S,
     ) -> anyhow::Result<SeededLweBootstrapKeyOwned<Scalar>> {
         let encryption_type = self.encryption_type();
@@ -144,7 +138,7 @@ where
             decomp_base_log,
             decomp_level_count,
             input_lwe_dimension,
-            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+            compression_seed,
             CoreCiphertextModulus::new_native(),
         );
 
@@ -304,38 +298,4 @@ where
 
         Ok(bootstrap_key)
     }
-}
-
-pub fn par_decompress_into_lwe_bootstrap_key_generated_from_xof<
-    Scalar: UnsignedTorus,
-    Gen: ByteRandomGenerator,
->(
-    seeded_key_generate_with_xof: SeededLweBootstrapKeyOwned<Scalar>,
-    xof_dsep: [u8; 8],
-) -> LweBootstrapKeyOwned<Scalar> {
-    //Init the XOF
-    let seed = seeded_key_generate_with_xof
-        .deref()
-        .compression_seed()
-        .seed
-        .0;
-    let mut rng = MaskRandomGenerator::<Gen>::new(XofSeed::new_u128(seed, xof_dsep));
-
-    let mut decompressed_bsk = LweBootstrapKeyOwned::new(
-        Scalar::ZERO,
-        seeded_key_generate_with_xof.glwe_size(),
-        seeded_key_generate_with_xof.polynomial_size(),
-        seeded_key_generate_with_xof.decomposition_base_log(),
-        seeded_key_generate_with_xof.decomposition_level_count(),
-        seeded_key_generate_with_xof.input_lwe_dimension(),
-        seeded_key_generate_with_xof.ciphertext_modulus(),
-    );
-
-    decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator::<Scalar, _, _, Gen>(
-        &mut decompressed_bsk,
-        &seeded_key_generate_with_xof,
-        &mut rng,
-    );
-
-    decompressed_bsk
 }

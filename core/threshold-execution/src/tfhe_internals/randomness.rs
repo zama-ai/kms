@@ -4,13 +4,16 @@ use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use tfhe::{
     core_crypto::commons::{
-        math::random::{RandomGenerable, RandomGenerator, Uniform},
+        math::random::{CompressionSeed, RandomGenerable, RandomGenerator, Uniform},
         parameters::{GlweSize, LweCiphertextCount, LweSize},
         traits::ParallelByteRandomGenerator,
     },
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
 };
-use tfhe_csprng::{generators::ForkError, seeders::XofSeed};
+use tfhe_csprng::{
+    generators::{ForkError, aes_ctr::AesCtrParams},
+    seeders::{SeedKind, XofSeed},
+};
 
 use super::parameters::EncryptionType;
 
@@ -40,6 +43,7 @@ pub struct MPCNoiseRandomGenerator<Z: BaseRing, const EXTENSION_DEGREE: usize> {
 
 pub struct MPCMaskRandomGenerator<Gen: ParallelByteRandomGenerator> {
     pub generator: RandomGenerator<Gen>,
+    seed: SeedKind,
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE> {
@@ -111,9 +115,29 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
 impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     pub fn new_from_seed(seed: XofSeed) -> Self {
         Self {
-            generator: RandomGenerator::<Gen>::new(seed),
+            generator: RandomGenerator::<Gen>::new(seed.clone()),
+            seed: SeedKind::Xof(seed),
         }
     }
+
+    /// Snapshot of the XOF generator state suitable for storing on a
+    /// `SeededLwe*`/`SeededGlwe*` type — captures the underlying seed and the
+    /// generator's current `TableIndex`, so that a decompressor can
+    /// deterministically reproduce the mask bytes that will be sampled next.
+    ///
+    /// Mirrors `tfhe::core_crypto::commons::generators::MaskRandomGenerator::current_compression_seed`.
+    pub fn current_compression_seed(&self) -> CompressionSeed {
+        CompressionSeed {
+            inner: AesCtrParams {
+                seed: self.seed.clone(),
+                first_index: self
+                    .generator
+                    .next_table_index()
+                    .expect("MPC mask generator exhausted"),
+            },
+        }
+    }
+
     pub fn fill_slice_with_random_mask_custom_mod<Z: BaseRing>(
         &mut self,
         output_mask: &mut [Z],
@@ -180,9 +204,13 @@ impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         n_child: usize,
         mask_bytes: usize,
     ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
+        let seed = self.seed.clone();
         let mask_iter = self.generator.par_try_fork(n_child, mask_bytes)?;
         // We return a proper iterator.
-        Ok(mask_iter.map(|generator| Self { generator }))
+        Ok(mask_iter.map(move |generator| Self {
+            generator,
+            seed: seed.clone(),
+        }))
     }
 }
 
@@ -194,6 +222,10 @@ impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usiz
             mask: MPCMaskRandomGenerator::<Gen>::new_from_seed(seed),
             noise: Default::default(),
         }
+    }
+
+    pub fn current_compression_seed(&self) -> CompressionSeed {
+        self.mask.current_compression_seed()
     }
 
     pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>) {
@@ -393,4 +425,81 @@ fn noise_elements_per_glwe(poly_size: PolynomialSize) -> usize {
 
 fn noise_elements_per_polynomial(poly_size: PolynomialSize) -> usize {
     poly_size.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use algebra::base_ring::Z64;
+    use tfhe::core_crypto::commons::math::random::RandomGenerator;
+    use tfhe_csprng::{
+        generators::{SoftwareRandomGenerator, aes_ctr::TableIndex},
+        seeders::{SeedKind, XofSeed},
+    };
+
+    /// Regression test for the tfhe-rs 1.6 `TableIndex` bug. Proves that the
+    /// `CompressionSeed` snapshot captured *after* the XOF mask generator has
+    /// already advanced past the start can be fed into a fresh tfhe-rs
+    /// `RandomGenerator` (the same one stock decompression builds internally
+    /// from `SeededLwe*::compression_seed()`) and will reproduce the exact
+    /// mask bytes our generator produces next.
+    ///
+    /// The assertions `SeedKind::Xof` + `first_index != TableIndex::FIRST`
+    /// are what make this test *specifically* guard the bug: the old code
+    /// stored `SeedKind::Ctr(seed)` with `first_index = FIRST` on every key,
+    /// so it passed the round-trip only for the first key in the stream.
+    #[test]
+    fn current_compression_seed_reproduces_advanced_xof_state() {
+        let xof_seed = XofSeed::new_u128(0xdead_beef_cafe_f00d, *b"TEST_SNP");
+        let mut ours = MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(xof_seed);
+
+        // Consume some bytes so the generator's TableIndex is past the start —
+        // this simulates having generated an earlier key with the same shared
+        // XOF generator, which is the scenario the old code got wrong.
+        let mut throwaway = vec![Z64::default(); 256];
+        ours.fill_slice_with_random_mask_custom_mod(&mut throwaway, EncryptionType::Bits64);
+
+        let cs = ours.current_compression_seed();
+
+        // Guard #1: seed kind must be Xof (matching how the key was written).
+        assert!(
+            matches!(cs.inner.seed, SeedKind::Xof(_)),
+            "compression seed must use Xof variant, not Ctr"
+        );
+        // Guard #2: the snapshot must actually be past the start; otherwise
+        // this test wouldn't exercise the TableIndex bug.
+        assert_ne!(
+            cs.inner.first_index,
+            TableIndex::FIRST,
+            "snapshot must be past TableIndex::FIRST or the test isn't guarding the bug"
+        );
+
+        // Core invariant: a fresh tfhe-rs RandomGenerator built from the
+        // snapshot — identical to what stock decompression does when it reads
+        // `SeededLwe*::compression_seed()` — must agree byte-for-byte with our
+        // advanced generator on the next output.
+        let mut reference = RandomGenerator::<SoftwareRandomGenerator>::new(cs);
+        for i in 0..1024 {
+            let ours_byte = ours.generator.generate_next();
+            let ref_byte = reference.generate_next();
+            assert_eq!(
+                ours_byte, ref_byte,
+                "divergence at byte {i}: ours={ours_byte} ref={ref_byte}"
+            );
+        }
+    }
+
+    /// Sanity-check the other direction: a fresh generator, snapshotted
+    /// immediately, must produce `first_index = TableIndex::FIRST` so the
+    /// top-level public-key path (which takes its compression seed right after
+    /// `new_from_seed`) lines up with `CompressedXofKeySet`'s `XofSeedStart`.
+    #[test]
+    fn current_compression_seed_is_first_on_fresh_generator() {
+        let xof_seed = XofSeed::new_u128(1, *b"TEST_SNP");
+        let ours = MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(xof_seed);
+        let cs = ours.current_compression_seed();
+
+        assert!(matches!(cs.inner.seed, SeedKind::Xof(_)));
+        assert_eq!(cs.inner.first_index, TableIndex::FIRST);
+    }
 }

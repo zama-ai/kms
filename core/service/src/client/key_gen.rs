@@ -462,6 +462,7 @@ pub(crate) mod tests {
                                     _noise_squashing_key,
                                     _noise_squashing_compression_key,
                                     _rerand_parameters,
+                                    _oprf_private_key,
                                     _tag,
                                 ) = client_key.into_raw_parts();
 

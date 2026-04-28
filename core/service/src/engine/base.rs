@@ -1363,6 +1363,7 @@ pub(crate) mod tests {
             _noise_squashing_key,
             _noise_squashing_compression_key,
             _rerand_key,
+            _oprf_key,
             _tag,
         ) = pubkeyset.server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
