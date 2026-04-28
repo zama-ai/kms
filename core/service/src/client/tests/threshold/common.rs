@@ -238,7 +238,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
 // module (kms_lib::testing). They provide simplified interfaces for common
 // threshold operations without requiring the full test setup infrastructure.
 
-/// Helper to generate threshold key using insecure mode (for isolated tests)
+/// Helper to generate threshold key using insecure mode.
 ///
 /// This function sends insecure_key_gen requests to all clients and waits for
 /// key generation to complete. It's designed for use with ThresholdTestEnv.
@@ -252,7 +252,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// * `Ok(responses)` - per-party `(party_id, KeyGenResult)` for use with `verify_keygen_responses`
 /// * `Err` if any party failed
 #[cfg(feature = "insecure")]
-pub async fn threshold_insecure_key_gen_isolated(
+pub async fn threshold_insecure_key_gen(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
@@ -316,7 +316,7 @@ pub async fn threshold_insecure_key_gen_isolated(
     Ok(responses)
 }
 
-/// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
+/// Helper to generate threshold key using secure mode with preprocessing.
 ///
 /// This function runs the full preprocessing + key generation flow using secure mode.
 /// It's designed for use with ThresholdTestEnv when PRSS is enabled.
@@ -332,7 +332,7 @@ pub async fn threshold_insecure_key_gen_isolated(
 /// * `Err` if any party failed
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_key_gen_secure_isolated(
+pub async fn threshold_key_gen_secure(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     preproc_id: &kms_grpc::RequestId,
     keygen_id: &kms_grpc::RequestId,

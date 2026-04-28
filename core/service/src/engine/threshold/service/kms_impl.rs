@@ -335,7 +335,7 @@ impl ThresholdFheKeys {
                         .decompress()
                         .expect("Call is infallible")
                         .into_raw_parts();
-                    let (isk, _, _, decompk, snsk, _, _, _) = sk.into_raw_parts();
+                    let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
                     UncompressedKeys {
                         integer_server_key: Arc::new(isk),
                         sns_key: snsk.map(Arc::new),
@@ -1003,6 +1003,7 @@ mod tests {
                 sns_key,
                 _sns_compression_key,
                 _rerand_key,
+                _oprf_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
@@ -1043,7 +1044,7 @@ mod tests {
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         let v0 = PublicKeyMaterialV0::Compressed {
@@ -1113,7 +1114,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         // V3 control
@@ -1165,7 +1166,11 @@ mod tests {
         let mut v3_bytes = Vec::new();
         safe_serialize(&upgraded, &mut v3_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        // V3 is smaller
-        assert!(v2_bytes.len() > v3_bytes.len());
+        assert!(
+            v3_bytes.len() < v2_bytes.len(),
+            "V3 should be smaller than V2, but V2 is {} bytes and V3 is {} bytes",
+            v2_bytes.len(),
+            v3_bytes.len()
+        );
     }
 }

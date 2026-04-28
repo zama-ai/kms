@@ -266,6 +266,7 @@ pub async fn run_decryption_threshold(
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
+    // TODO(dp): this should have stayed "compressed" and not been renamed. Mea culpa.
     uncompressed_keys: bool,
 ) {
     run_decryption_threshold_optionally_fail(

@@ -175,11 +175,12 @@ pub(crate) async fn generate_compressed_key_switch_key<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<SeededLweKeyswitchKey<Vec<u64>>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Snapshot the XOF generator state before any mask bytes are consumed.
+    let compression_seed = mpc_encryption_rng.current_compression_seed();
     let ksk_share = generate_ksk_share(
         input_lwe_sk,
         output_lwe_sk,
@@ -190,7 +191,9 @@ where
     )?;
 
     //Open the KSK and cast it to TFHE-RS seeded type
-    ksk_share.open_to_tfhers_seeded_type(seed, session).await
+    ksk_share
+        .open_to_tfhers_seeded_type(compression_seed, session)
+        .await
 }
 
 #[cfg(test)]
