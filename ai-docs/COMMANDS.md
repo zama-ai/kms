@@ -2,7 +2,7 @@
 
 Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
 
-Toolchain is pinned to Rust `1.94.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+Toolchain is pinned to Rust `1.95.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
 
 ## Build and lint
 

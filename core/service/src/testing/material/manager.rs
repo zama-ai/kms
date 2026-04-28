@@ -445,6 +445,13 @@ impl TestMaterialManager {
                         key_id,
                     )
                     .await?;
+                    self.copy_key_files(
+                        &source_pub,
+                        &dest_pub,
+                        &PubDataType::PublicKey.to_string(),
+                        key_id,
+                    )
+                    .await?;
                     // Threshold servers store key shares under FheKeyInfo.
                     self.copy_epoch_key_files(
                         &source_priv,
@@ -477,6 +484,13 @@ impl TestMaterialManager {
                     &source_pub,
                     &dest_pub,
                     &PubDataType::CompressedXofKeySet.to_string(),
+                    key_id,
+                )
+                .await?;
+                self.copy_key_files(
+                    &source_pub,
+                    &dest_pub,
+                    &PubDataType::PublicKey.to_string(),
                     key_id,
                 )
                 .await?;
@@ -764,6 +778,7 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::DEFAULT_EPOCH_ID;
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
@@ -785,6 +800,32 @@ mod tests {
         let priv_path = compute_storage_path(Some(base_path), StorageType::PRIV, None);
         assert!(pub_path.exists());
         assert!(priv_path.exists());
+
+        let epoch_id = DEFAULT_EPOCH_ID.to_string();
+        for key_id in [
+            TEST_CENTRAL_KEY_ID.to_string(),
+            OTHER_CENTRAL_TEST_ID.to_string(),
+        ] {
+            assert!(
+                pub_path
+                    .join(PubDataType::CompressedXofKeySet.to_string())
+                    .join(&key_id)
+                    .exists()
+            );
+            assert!(
+                pub_path
+                    .join(PubDataType::PublicKey.to_string())
+                    .join(&key_id)
+                    .exists()
+            );
+            assert!(
+                priv_path
+                    .join(PrivDataType::FhePrivateKey.to_string())
+                    .join(&epoch_id)
+                    .join(&key_id)
+                    .exists()
+            );
+        }
     }
 
     #[tokio::test]
@@ -805,6 +846,28 @@ mod tests {
             let priv_path = compute_storage_path(Some(base_path), StorageType::PRIV, Some(role));
             assert!(pub_path.exists());
             assert!(priv_path.exists());
+
+            let key_id = TEST_THRESHOLD_KEY_ID_4P.to_string();
+            let epoch_id = DEFAULT_EPOCH_ID.to_string();
+            assert!(
+                pub_path
+                    .join(PubDataType::CompressedXofKeySet.to_string())
+                    .join(&key_id)
+                    .exists()
+            );
+            assert!(
+                pub_path
+                    .join(PubDataType::PublicKey.to_string())
+                    .join(&key_id)
+                    .exists()
+            );
+            assert!(
+                priv_path
+                    .join(PrivDataType::FheKeyInfo.to_string())
+                    .join(&epoch_id)
+                    .join(&key_id)
+                    .exists()
+            );
         }
 
         let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))

@@ -207,13 +207,13 @@ where
     let max_norm_hwt = NormalizedHammingWeightBound::new(pmax)
         .ok_or_else(|| anyhow!("Invalid Hamming Weight bound, range must be ]0.5,1.0]"))?;
 
-    // TODO(dp): It's a bit annoying that `generate` can't return the `ServerKey` we need, forcing us to clone +
+    // TODO(dp): It's a bit annoying that `generate` can't return the `ServerKey` we need, forcing us to
     // decompress to get it. Should be possible to get all 4 keys in one go?
     let (client_key, compressed_keyset) =
         CompressedXofKeySet::generate(config, seed_bytes, security_bits, max_norm_hwt, tag)?;
 
     // Decompress once to get the public keys needed for KeySet / share generation.
-    let (public_key, server_key) = compressed_keyset.clone().decompress()?.into_raw_parts();
+    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
 
     let keyset = KeySet {
         client_key,
