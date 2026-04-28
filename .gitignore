@@ -45,3 +45,5 @@ ci/kube-testing/kms/local-values-*.yaml
 .fastembed*
 core/grpc/proto/buf.yaml
 /.agent-shell/
+.codex
+.devenv/

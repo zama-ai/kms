@@ -37,10 +37,8 @@ centralized
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
-     	     	   "timeout" int
      	     	   "from" string
-		      "to" string
-		      "timeout" int (optional, defaults to 60)) */}}
+		      "to" string */}}
 {{- define "socatContainer" -}}
 name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
@@ -50,9 +48,6 @@ command:
   - socat
 args:
   - -d0
-{{- if and (eq .name "grpc-peer-proxy") .timeout }}
-  - -T{{ .timeout }}
-{{- end }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -69,56 +64,19 @@ args:
 	      "to" .to) }}
 {{- end -}}
 
-{{/* takes a (dict "name" string
-                   "image" (dict "name" string "tag" string)
-                   "vsockPort" int
-		           "address" string
-		           "port" int) */}}
-{{- define "proxyFromEnclaveTcp" -}}
-{{- include "proxyFromEnclave"
-      (dict "name" .name
-            "image" .image
-            "vsockPort" .vsockPort
-	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
-{{- end -}}
-
-{{/* takes a (dict "name" string
-     	     	   "image" (dict "name" string "tag" string)
-		           "from" string
-		           "cid" int
-                   "port" int
-                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
-{{- define "proxyToEnclave" -}}
-{{- include "socatContainer"
-      (dict "name" .name
-            "image" .image
-            "from" .from
-            "timeout" .timeout
-	      "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
-{{- end -}}
-
-{{/* takes a (dict "name" string
-     	     	   "image" (dict "name" string "tag" string)
-		           "cid" int
-                   "port" int
-                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
-{{- define "proxyToEnclaveTcp" -}}
-{{- include "proxyToEnclave"
-      (dict "name" .name
-            "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
-            "cid" .cid
-            "port" .port
-            "timeout" .timeout) }}
-{{- end -}}
-
 {{/* takes the chart root context and renders the pod-local parent-side TUN bridge
       and DNS proxy used for enclave egress as a native Kubernetes sidecar.
-      The tunnel values must match init_enclave.sh. */}}
+      TCP ingress is DNATed into the enclave over the TUN. The tunnel values
+      must match init_enclave.sh. */}}
 {{- define "enclaveNetworkTunnelContainer" -}}
 name: enclave-network-tunnel
 image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
 imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
 securityContext:
   allowPrivilegeEscalation: true
   privileged: true
@@ -133,6 +91,7 @@ args:
     TUN_IF={{ .Values.kmsCore.nitroEnclave.networkTunnel.interfaceName | quote }}
     TUN_ADDR={{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
     TUN_HOST="${TUN_ADDR%/*}"
+    ENCLAVE_TUN_IP="10.118.0.2"
     TUN_SUBNET={{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
     VSOCK_PORT={{ .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort | quote }}
     UPSTREAM_DNS=""
@@ -148,6 +107,11 @@ args:
 
     if [ -z "$UPSTREAM_DNS" ]; then
       echo "enclave-network-tunnel: cannot determine upstream nameserver from /etc/resolv.conf" >&2
+      exit 1
+    fi
+
+    if [ -z "${POD_IP:-}" ]; then
+      echo "enclave-network-tunnel: POD_IP is not set" >&2
       exit 1
     fi
 
@@ -187,6 +151,20 @@ args:
       echo "enclave-network-tunnel: tunnel interface $TUN_IF did not come up" >&2
       exit 1
     fi
+
+    add_ingress_dnat() {
+      port="$1"
+      iptables -t nat -C PREROUTING -i eth0 -d "$POD_IP" -p tcp --dport "$port" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$port" 2>/dev/null || \
+        iptables -t nat -A PREROUTING -i eth0 -d "$POD_IP" -p tcp --dport "$port" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$port"
+      iptables -C FORWARD -i eth0 -o "$TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$port" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -i eth0 -o "$TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$port" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT
+    }
+
+    add_ingress_dnat {{ .Values.kmsCore.ports.metrics | quote }}
+    add_ingress_dnat {{ .Values.kmsCore.ports.client | quote }}
+    {{- if .Values.kmsCore.thresholdMode.enabled }}
+    add_ingress_dnat {{ .Values.kmsCore.ports.peer | quote }}
+    {{- end }}
 
     dnsproxy -l "$TUN_HOST" -u "$UPSTREAM_DNS" &
     DNSPROXY_PID=$!
