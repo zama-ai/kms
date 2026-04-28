@@ -34,13 +34,6 @@ fail() {
     exit
 }
 
-get_configured_port() {
-    local SERVICE_NAME="$1"
-    local SERVICE_URL
-    SERVICE_URL=$(get_value "$SERVICE_NAME")
-    echo "${SERVICE_URL##*:}"
-}
-
 get_value() {
     local KEY="$1"
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" || fail "$KEY not present in config"
@@ -49,16 +42,6 @@ get_value() {
 has_value() {
     local KEY="$1"
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" &>/dev/null
-}
-
-start_tcp_proxy_in() {
-    local NAME="$1"
-    local PORT="$2"
-    log "starting incoming enclave-side $NAME proxy"
-    socat -T180 \
-	VSOCK-LISTEN:"$PORT",fork,reuseaddr \
-	TCP:127.0.0.1:"$PORT",nodelay \
-	|& logger &
 }
 
 export PATH="/app/kms/core/service/bin:$PATH"
@@ -219,14 +202,7 @@ has_value "keygen" || \
 
 has_value "service" && \
     {
-	# telemetry proxy
-	has_value "telemetry.metrics_bind_address" || log "metrics endpoint not set"
-	has_value "telemetry.metrics_bind_address" && \
-	    start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
-
-	# gRPC proxies
-	start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
-	has_value "threshold" && start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")"
+	# TCP ingress is DNATed by the parent-side tunnel onto the enclave TUN.
 	# showtime!
 	log "starting kms-server"
 	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
