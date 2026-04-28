@@ -229,6 +229,43 @@ jobs:
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
 
+      # VERIFY IMAGE TAGS EXIST IN REGISTRY
+      # Fail fast if requested tags are missing, instead of waiting ~40min for
+      # helm pre-install hooks to time out on ImagePullBackOff.
+      # ======================================================================
+      - name: Verify image tags exist in registry
+        env:
+          IMAGE_REPO: hub.zama.org/ghcr/zama-ai/kms
+        run: |
+          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+            CORE_IMAGE_NAME="core-service-enclave"
+          else
+            CORE_IMAGE_NAME="core-service"
+          fi
+
+          images=(
+            "${IMAGE_REPO}/${CORE_IMAGE_NAME}:${KMS_CORE_IMAGE_TAG}"
+            "${IMAGE_REPO}/core-client:${KMS_CORE_CLIENT_IMAGE_TAG}"
+          )
+
+          missing=0
+          for img in "${images[@]}"; do
+            echo "Checking ${img}..."
+            if docker manifest inspect "${img}" > /dev/null 2>&1; then
+              echo "  ✅ found"
+            else
+              echo "  ❌ not found in registry"
+              missing=1
+            fi
+          done
+
+          if [[ "${missing}" -eq 1 ]]; then
+            echo "ERROR: One or more required image tags are missing from the registry."
+            echo "If you dispatched manually with build=false, check that the provided"
+            echo "image tags were actually pushed; otherwise re-run with build=true."
+            exit 1
+          fi
+
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
