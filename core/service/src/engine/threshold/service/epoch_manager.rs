@@ -1753,12 +1753,7 @@ pub(crate) mod tests {
                         context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                         previous_epoch: None,
                         domain: None,
-                        extra_data: make_extra_data(
-                            2,
-                            Some(&DEFAULT_MPC_CONTEXT),
-                            Some(&(bad_epoch_id.try_into().unwrap()))
-                        )
-                        .unwrap(),
+                        extra_data: vec![], // Not important for this test
                     }))
                     .await
                     .unwrap_err()
@@ -1767,11 +1762,12 @@ pub(crate) mod tests {
             );
         }
         {
+            //
             assert_eq!(
                 epoch_manager
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-                        context_id: Some((*DEFAULT_EPOCH_ID).into()),
+                        epoch_id: None,
+                        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                         previous_epoch: None,
                         domain: None,
                         extra_data: default_extra_data(),

@@ -105,6 +105,7 @@ pub async fn init_impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
+    use kms_grpc::kms::v1::RequestId;
     use rand::SeedableRng;
 
     use super::*;
@@ -172,7 +173,9 @@ mod tests {
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = NewMpcEpochRequest {
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            context_id: Some(RequestId {
+                request_id: "not a valid context".to_string(),
+            }),
             previous_epoch: None,
             domain: None,
             extra_data: default_extra_data(),
