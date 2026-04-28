@@ -548,9 +548,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         eip712_domain: &alloy_sol_types::Eip712Domain,
         dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
-        // Lock order: pub -> priv -> backup -> fhe_keys (see base.rs lock-ordering
-        // convention). Hold them for the whole read-and-write, so concurrent
-        // callers observe either the pre- or post-migration state, never a mix.
+        // Lock order: meta_store -> pub -> priv -> backup -> fhe_keys.
+        let mut guarded_meta_store = dkg_pubinfo_meta_store.write().await;
         let mut pub_storage = self.inner.public_storage.lock().await;
         let mut priv_storage = self.inner.private_storage.lock().await;
         let mut back_vault = match self.inner.backup_vault {
@@ -744,19 +743,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         // --- Phase C: refresh dkg_pubinfo_meta_store for old_key_id. ---
         // `MetaStore::update` only accepts pending entries, so replace the
         // existing completed entry with delete + insert + update, all under
-        // the same write guard.
-        {
-            let mut guarded_meta_store = dkg_pubinfo_meta_store.write().await;
-            let _ = guarded_meta_store.delete(old_key_id);
-            guarded_meta_store.insert(old_key_id).map_err(|e| {
-                anyhow::anyhow!("Failed to insert {old_key_id} into keygen meta-store: {e}")
+        // the meta_store write guard already held since the top of the function.
+        let _ = guarded_meta_store.delete(old_key_id);
+        guarded_meta_store.insert(old_key_id).map_err(|e| {
+            anyhow::anyhow!("Failed to insert {old_key_id} into keygen meta-store: {e}")
+        })?;
+        guarded_meta_store
+            .update(old_key_id, Ok(new_metadata))
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to update {old_key_id} in keygen meta-store: {e}")
             })?;
-            guarded_meta_store
-                .update(old_key_id, Ok(new_metadata))
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to update {old_key_id} in keygen meta-store: {e}")
-                })?;
-        }
 
         tracing::info!(
             "Copied compressed key from {new_key_id} to original {old_key_id} \
