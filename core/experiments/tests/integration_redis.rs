@@ -1,3 +1,9 @@
+// TODO(dp): the only redis-touching test in the workspace. If we don't plan
+// to extend coverage of the `threshold-execution` redis preprocessing path,
+// consider deleting this test (and the `redis` workspace dep on
+// `experiments`) rather than maintaining a dedicated CI job +
+// redis sidecar (`main/test-core-threshold-redis`).
+
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::degree_4::ResiduePolyF4,
