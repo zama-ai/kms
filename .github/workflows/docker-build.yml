@@ -191,7 +191,6 @@ jobs:
       - golden-image-tag
       - golden-image
     if: |
-      always() &&
       !cancelled() &&
       needs.golden-image-tag.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
@@ -240,7 +239,6 @@ jobs:
       # - start-amd64-runner
       - golden-image-latest
     if: |
-      always() &&
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
@@ -279,7 +277,6 @@ jobs:
       # - start-amd64-runner
       - golden-image-latest
     if: |
-      always() &&
       !cancelled() &&
       needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
