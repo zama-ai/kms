@@ -27,10 +27,12 @@ use kms_grpc::kms::v1::FheParameter;
 async fn default_decryption_centralized(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
-) {
+) -> anyhow::Result<()> {
     decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "nightly_default_decryption_centralized",
+        crate::testing::material::MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression: true,
@@ -38,7 +40,7 @@ async fn default_decryption_centralized(
         },
         parallelism,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
@@ -61,10 +63,12 @@ async fn default_decryption_centralized_precompute_sns(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
     #[values(true, false)] compression: bool,
-) {
+) -> anyhow::Result<()> {
     decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "nightly_default_decryption_centralized_precompute_sns",
+        crate::testing::material::MaterialType::Default,
         msgs,
         EncryptionConfig {
             compression,
@@ -72,7 +76,7 @@ async fn default_decryption_centralized_precompute_sns(
         },
         parallelism,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
@@ -94,10 +98,12 @@ async fn default_user_decryption_centralized(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[values(true, false)] secure: bool,
-) {
+) -> anyhow::Result<()> {
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "nightly_default_user_decryption_centralized",
+        crate::testing::material::MaterialType::Default,
         false,
         msg,
         EncryptionConfig {
@@ -107,7 +113,7 @@ async fn default_user_decryption_centralized(
         parallelism,
         secure,
     )
-    .await;
+    .await
 }
 
 #[cfg(feature = "slow_tests")]
@@ -130,10 +136,12 @@ async fn default_user_decryption_centralized_precompute_sns(
     #[case] parallelism: usize,
     #[values(true, false)] secure: bool,
     #[values(true, false)] compression: bool,
-) {
+) -> anyhow::Result<()> {
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
+        "nightly_default_user_decryption_centralized_precompute_sns",
+        crate::testing::material::MaterialType::Default,
         false,
         msg,
         EncryptionConfig {
@@ -143,7 +151,7 @@ async fn default_user_decryption_centralized_precompute_sns(
         parallelism,
         secure,
     )
-    .await;
+    .await
 }
 
 // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
