@@ -356,7 +356,7 @@ jobs:
       needs.check-changes.outputs.changes-tools == 'true' ||
       github.ref == 'refs/heads/main'
     runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
