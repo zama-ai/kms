@@ -104,10 +104,19 @@ jobs:
         with:
           metrics: cpu,network,memory,disk,io
 
+      # LFS files (backward-compat fixtures) are only needed by `-p kms`
+      # backward_compatibility_*.rs tests; other callers pass skip-test-material.
+      - name: Install git-lfs
+        if: ${{ ! inputs.skip-test-material }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git-lfs
+
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
+          lfs: ${{ ! inputs.skip-test-material }}
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
 
@@ -117,19 +126,6 @@ jobs:
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      # LFS files are needed for backward compatibility tests
-      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
-      # need to do it right after and then manually pull LFS files
-      - name: setup gitlfs from binary
-        if: ${{ ! inputs.skip-test-material }}
-        env:
-          GIT_LFS_VERSION: '3.6.1'
-        run: |
-          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
-          git lfs pull
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
