@@ -531,7 +531,12 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      # PR matrix has two disjoint entries (verified by find-test-duplicates tool):
+      # TODO(dp): this is very problematic. We can't live with this manual feature-juggling
+      # long-term. We need a cleaner split that is maintainable long term. The below split
+      # is the outcome of custom-tooling running `cargo nextest list` for all jobs in the pipeline
+      # and then comparing the lists looking for dupes. Not ok.
+      #
+      # PR matrix has two disjoint entries:
       #   entry 1: kind(lib), --skip nightly  → all kms lib tests minus nightly-named.
       #   entry 2: kind(test), --skip threshold --skip nightly  → integration tests
       #     not matching threshold/nightly. Threshold-named integration tests
