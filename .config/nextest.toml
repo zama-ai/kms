@@ -31,10 +31,12 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# Serialize `kms` package's integration_test binary (the nightly slow-test
-# names in `default-filter` above live only in `kms-core-client`, so no
-# slow-timeout override is needed in the `ci` profile — those tests are
-# excluded here).
+# TODO(dp): this `integration-serial` group filter is likely no longer
+# needed — `core/service/tests/integration_test.rs` was audited: most
+# tests use `tempdir()`, the gen_key helper was migrated to tempdir, and
+# the `subcommand_dev_*` tests now kill their own spawned PID instead of
+# every `kms-server` by name. Drop this override once a green parallel
+# run confirms it's safe.
 [[profile.ci.overrides]]
 filter = "package(kms) & binary(=integration_test)"
 test-group = "integration-serial"
