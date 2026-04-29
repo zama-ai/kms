@@ -112,12 +112,18 @@ jobs:
 
   ############################################################################
   # Start AMD64 Runner
-  # Waits for docker-build if it's running, but always executes
+  # Waits for docker-build if required, then starts the test runner
   ############################################################################
   start-amd64-runner:
     name: performance-testing/start-amd64-runner
     needs: [docker-build]
-    if: always()
+    if: |
+      always() &&
+      !cancelled() &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
@@ -139,7 +145,14 @@ jobs:
   ############################################################################
   performance-testing:
     needs: [docker-build, start-amd64-runner]
-    if: always() && needs.start-amd64-runner.result == 'success' && !cancelled()
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.start-amd64-runner.result == 'success' &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
     name: performance-testing
     runs-on: ${{ needs.start-amd64-runner.outputs.label }}
     timeout-minutes: 1800
@@ -498,7 +511,7 @@ jobs:
     name: performance-testing/stop-amd64-runner
     needs: [start-amd64-runner, performance-testing]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && needs.start-amd64-runner.result == 'success'
     steps:
       - name: Stop AMD64 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
