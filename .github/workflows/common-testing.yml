@@ -163,11 +163,6 @@ jobs:
         run: |
           cargo install cargo-nextest@0.9.133 --locked --force
 
-      - name: Setup usage of private repo
-        env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
       # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
       - name: Setup Redis
         if: ${{ inputs.run-redis }}
