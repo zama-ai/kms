@@ -207,7 +207,7 @@ jobs:
       - name: Configure deployment parameters
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-          TLS: ${{ inputs.tls || 'true' }}
+          TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
