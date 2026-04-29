@@ -50,7 +50,8 @@ use crate::{
     engine::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
-            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
+            compute_info_decompression_keygen, compute_info_uncompressed_keygen,
+            retrieve_parameters,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
@@ -1356,7 +1357,7 @@ impl<
         match dkg_result {
             ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
                 //Compute all the info required for storing
-                let info = match compute_info_standard_keygen(
+                let info = match compute_info_uncompressed_keygen(
                     &sk,
                     &DSEP_PUBDATA_KEY,
                     &prep_id,

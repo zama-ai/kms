@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     engine::base::{
-        DSEP_PUBDATA_KEY, compute_info_compressed_keygen, compute_info_standard_keygen,
+        DSEP_PUBDATA_KEY, compute_info_compressed_keygen, compute_info_uncompressed_keygen,
     },
     vault::{
         Vault,
@@ -86,23 +86,27 @@ async fn store_migrated_compressed_material(
 fn assert_current_compressed_metadata(meta_data: &KeyGenMetadata, key_id: &RequestId) {
     match meta_data {
         KeyGenMetadata::Current(inner) => {
-            assert_eq!(inner.key_id, *key_id);
+            assert_eq!(
+                inner.key_id, *key_id,
+                "metadata key_id mismatch: actual={}, expected={key_id}",
+                inner.key_id
+            );
             assert!(
                 inner
                     .key_digest_map
                     .contains_key(&PubDataType::CompressedXofKeySet),
-                "metadata should contain CompressedXofKeySet digest"
+                "metadata should contain CompressedXofKeySet digest for key_id={key_id}"
             );
             assert!(
                 inner.key_digest_map.contains_key(&PubDataType::PublicKey),
-                "metadata should contain PublicKey digest"
+                "metadata should contain PublicKey digest for key_id={key_id}"
             );
             assert!(
                 !inner.key_digest_map.contains_key(&PubDataType::ServerKey),
-                "new metadata should not contain ServerKey digest"
+                "new metadata should not contain ServerKey digest for key_id={key_id}"
             );
         }
-        _ => panic!("expected Current metadata"),
+        _ => panic!("expected Current metadata for key_id={key_id}, instead got {meta_data:?}"),
     }
 }
 
@@ -118,28 +122,28 @@ async fn assert_migrated_public_material(
             .data_exists(old_key_id, &PubDataType::CompressedXofKeySet.to_string())
             .await
             .unwrap(),
-        "CompressedXofKeySet should exist at old_key_id"
+        "CompressedXofKeySet should exist at old_key_id={old_key_id} after migration from new_key_id={new_key_id}"
     );
     assert!(
         pub_storage
             .data_exists(old_key_id, &PubDataType::ServerKey.to_string())
             .await
             .unwrap(),
-        "ServerKey should be preserved at old_key_id after migration"
+        "ServerKey should be preserved at old_key_id={old_key_id} after migration from new_key_id={new_key_id}"
     );
     assert!(
         pub_storage
             .data_exists(old_key_id, &PubDataType::PublicKey.to_string())
             .await
             .unwrap(),
-        "PublicKey should be preserved at old_key_id after migration"
+        "PublicKey should be preserved at old_key_id={old_key_id} after migration from new_key_id={new_key_id}"
     );
     assert!(
         pub_storage
             .data_exists(new_key_id, &PubDataType::PublicKey.to_string())
             .await
             .unwrap(),
-        "PublicKey should also exist at new_key_id after migration"
+        "PublicKey should also exist at new_key_id={new_key_id} after migration to old_key_id={old_key_id}"
     );
     let old_pk_bytes = pub_storage
         .load_bytes(old_key_id, &PubDataType::PublicKey.to_string())
@@ -151,7 +155,7 @@ async fn assert_migrated_public_material(
         .unwrap();
     assert_eq!(
         old_pk_bytes, new_pk_bytes,
-        "compact PK bytes at old_key_id and new_key_id must be identical"
+        "compact PK bytes at old_key_id={old_key_id} and new_key_id={new_key_id} must be identical"
     );
     let old_server_key_bytes = pub_storage
         .load_bytes(old_key_id, &PubDataType::ServerKey.to_string())
@@ -159,7 +163,7 @@ async fn assert_migrated_public_material(
         .unwrap();
     assert_eq!(
         old_server_key_bytes, expected_server_key_bytes,
-        "ServerKey bytes at old_key_id must be preserved by migration"
+        "ServerKey bytes at old_key_id={old_key_id} must be preserved by migration from new_key_id={new_key_id}"
     );
 }
 
@@ -193,7 +197,7 @@ async fn setup_pre_migration_uncompressed(
     let compact_pk = fhe_key_set.public_key.clone();
 
     // Compute real metadata that matches what we'll actually store in pub storage.
-    let info = compute_info_standard_keygen(
+    let info = compute_info_uncompressed_keygen(
         sk,
         &DSEP_PUBDATA_KEY,
         prep_id,
@@ -302,7 +306,10 @@ async fn test_copy_compressed_key_to_original_success() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_ok(), "copy should succeed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "copy should succeed for old_key_id={old_key_id}, new_key_id={new_key_id}: {result:?}"
+    );
 
     // ServerKey left over from the original uncompressed keyset is retained for
     // legacy/direct-storage consumers. PublicKey is in both the old and new
@@ -326,7 +333,7 @@ async fn test_copy_compressed_key_to_original_success() {
             .unwrap();
         assert!(
             guarded.is_compressed(),
-            "ThresholdFheKeys should have Compressed public_material"
+            "ThresholdFheKeys should have Compressed public_material at old_key_id={old_key_id}"
         );
         assert_current_compressed_metadata(&guarded.meta_data, &old_key_id);
     }
@@ -336,9 +343,13 @@ async fn test_copy_compressed_key_to_original_success() {
         let guard = meta_store.read().await;
         let cell = guard
             .get_cell(&old_key_id)
-            .expect("meta_store entry should exist");
-        let value = cell.try_get().expect("meta_store entry should be set");
-        let meta = value.expect("meta_store should hold Ok(metadata)");
+            .unwrap_or_else(|| panic!("meta_store entry should exist for old_key_id={old_key_id}"));
+        let value = cell.try_get().unwrap_or_else(|| {
+            panic!("meta_store entry should be set for old_key_id={old_key_id}")
+        });
+        let meta = value.unwrap_or_else(|err| {
+            panic!("meta_store should hold Ok(metadata) for old_key_id={old_key_id}: {err:?}")
+        });
         assert_current_compressed_metadata(&meta, &old_key_id);
     }
 }
@@ -398,7 +409,11 @@ async fn test_copy_compressed_key_overwrite() {
             meta_store.clone(),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|err| {
+            panic!(
+                "first copy should succeed for old_key_id={old_key_id}, new_key_id={new_key_id_1}: {err:?}"
+            )
+        });
     assert_migrated_public_material(
         &crypto_storage,
         &old_key_id,
@@ -439,7 +454,10 @@ async fn test_copy_compressed_key_overwrite() {
             meta_store.clone(),
         )
         .await;
-    assert!(result.is_ok(), "second copy should succeed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "second copy should succeed for old_key_id={old_key_id}, new_key_id={new_key_id_2}: {result:?}"
+    );
     assert_migrated_public_material(
         &crypto_storage,
         &old_key_id,
@@ -453,7 +471,10 @@ async fn test_copy_compressed_key_overwrite() {
             .read_guarded_threshold_fhe_keys(&old_key_id, &epoch_id)
             .await
             .unwrap();
-        assert!(guarded.is_compressed());
+        assert!(
+            guarded.is_compressed(),
+            "ThresholdFheKeys should stay compressed at old_key_id={old_key_id} after copy from new_key_id={new_key_id_2}"
+        );
         assert_current_compressed_metadata(&guarded.meta_data, &old_key_id);
     }
 }
@@ -481,7 +502,10 @@ async fn test_copy_compressed_key_missing_source() {
             meta_store,
         )
         .await;
-    assert!(result.is_err(), "should fail when source key is missing");
+    assert!(
+        result.is_err(),
+        "should fail when source key is missing for old_key_id={old_key_id}, new_key_id={new_key_id}"
+    );
 }
 
 #[tokio::test]
@@ -536,11 +560,14 @@ async fn test_copy_compressed_key_legacy_metadata_fails() {
             meta_store,
         )
         .await;
-    assert!(result.is_err(), "should fail with LegacyV0 metadata");
+    assert!(
+        result.is_err(),
+        "should fail with LegacyV0 metadata for old_key_id={old_key_id}, new_key_id={new_key_id}"
+    );
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("LegacyV0"),
-        "error should mention LegacyV0, got: {err}"
+        "error should mention LegacyV0 for old_key_id={old_key_id}, new_key_id={new_key_id}, got: {err}"
     );
 }
 
@@ -600,7 +627,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
         .await;
     assert!(
         result.is_err(),
-        "copy should fail when migrated metadata is missing the CompressedXofKeySet digest"
+        "copy should fail when migrated metadata is missing the CompressedXofKeySet digest for old_key_id={old_key_id}, new_key_id={new_key_id}"
     );
 
     // Pub storage at old_key_id must still hold the original ServerKey/PublicKey
@@ -612,21 +639,21 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
                 .data_exists(&old_key_id, &PubDataType::ServerKey.to_string())
                 .await
                 .unwrap(),
-            "pre-migration ServerKey must survive a validation failure"
+            "pre-migration ServerKey must survive a validation failure at old_key_id={old_key_id} while copying from new_key_id={new_key_id}"
         );
         assert!(
             pub_storage
                 .data_exists(&old_key_id, &PubDataType::PublicKey.to_string())
                 .await
                 .unwrap(),
-            "pre-migration PublicKey must survive a validation failure"
+            "pre-migration PublicKey must survive a validation failure at old_key_id={old_key_id} while copying from new_key_id={new_key_id}"
         );
         assert!(
             !pub_storage
                 .data_exists(&old_key_id, &PubDataType::CompressedXofKeySet.to_string())
                 .await
                 .unwrap(),
-            "CompressedXofKeySet must not be written to old_key_id on validation failure"
+            "CompressedXofKeySet must not be written to old_key_id={old_key_id} on validation failure while copying from new_key_id={new_key_id}"
         );
     }
 
@@ -639,12 +666,13 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
             .unwrap();
         assert!(
             !guarded.is_compressed(),
-            "original uncompressed ThresholdFheKeys must survive a validation failure"
+            "original uncompressed ThresholdFheKeys must survive a validation failure at old_key_id={old_key_id} while copying from new_key_id={new_key_id}"
         );
         // Compare by metadata signature (cheap proxy for "unchanged").
         assert_eq!(
             guarded.meta_data.external_signature(),
             original_old_meta.external_signature(),
+            "metadata signature at old_key_id={old_key_id} must survive validation failure while copying from new_key_id={new_key_id}"
         );
     }
 
@@ -653,7 +681,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
         let guard = meta_store.read().await;
         assert!(
             guard.get_cell(&old_key_id).is_none(),
-            "meta_store must not be mutated on validation failure"
+            "meta_store must not be mutated for old_key_id={old_key_id} on validation failure while copying from new_key_id={new_key_id}"
         );
     }
 }
@@ -719,7 +747,11 @@ async fn test_copy_compressed_key_updates_backup_vault() {
             meta_store,
         )
         .await
-        .expect("copy should succeed with backup vault configured");
+        .unwrap_or_else(|err| {
+            panic!(
+                "copy should succeed with backup vault configured for old_key_id={old_key_id}, new_key_id={new_key_id}: {err:?}"
+            )
+        });
 
     // Backup vault must now hold the migrated ThresholdFheKeys at
     // (old_key_id, epoch_id).
@@ -727,7 +759,7 @@ async fn test_copy_compressed_key_updates_backup_vault() {
         .inner
         .backup_vault
         .as_ref()
-        .expect("backup vault should be configured");
+        .unwrap_or_else(|| panic!("backup vault should be configured for old_key_id={old_key_id}"));
     let vault_guard = backup_vault.lock().await;
     let backed_up: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
         &*vault_guard,
@@ -736,10 +768,12 @@ async fn test_copy_compressed_key_updates_backup_vault() {
         &PrivDataType::FheKeyInfo.to_string(),
     )
     .await
-    .expect("migrated ThresholdFheKeys should exist in backup vault");
+    .unwrap_or_else(|err| {
+        panic!("migrated ThresholdFheKeys should exist in backup vault for old_key_id={old_key_id}: {err:?}")
+    });
     assert!(
         backed_up.is_compressed(),
-        "backup vault must hold the migrated (compressed) keys, not the pre-migration uncompressed ones"
+        "backup vault must hold the migrated (compressed) keys, not the pre-migration uncompressed ones for old_key_id={old_key_id}, new_key_id={new_key_id}"
     );
     assert_current_compressed_metadata(&backed_up.meta_data, &old_key_id);
 }
