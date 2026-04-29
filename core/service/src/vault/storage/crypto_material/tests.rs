@@ -49,12 +49,6 @@ fn dummy_info() -> KeyGenMetadata {
     KeyGenMetadata::new(req_id, req_id, HashMap::new(), vec![])
 }
 
-fn signing_context(seed: u64) -> (PrivateSigKey, alloy_sol_types::Eip712Domain) {
-    let mut rng = AesRng::seed_from_u64(seed);
-    let (_pk, sk) = gen_sig_keys(&mut rng);
-    (sk, dummy_domain())
-}
-
 fn ram_threshold_storage(
     backup_vault: Option<crate::vault::Vault>,
 ) -> ThresholdCryptoMaterialStorage<RamStorage, RamStorage> {
@@ -69,20 +63,30 @@ fn ram_threshold_storage(
 fn generate_compressed_keys(
     req_id: &RequestId,
     prep_id: &RequestId,
-    sk: &PrivateSigKey,
-    domain: &alloy_sol_types::Eip712Domain,
-) -> (CompressedXofKeySet, CompactPublicKey, KmsFheKeyHandles) {
-    generate_fhe_keys(
-        sk,
+    signing_seed: u64,
+) -> (
+    PrivateSigKey,
+    alloy_sol_types::Eip712Domain,
+    CompressedXofKeySet,
+    CompactPublicKey,
+    KmsFheKeyHandles,
+) {
+    let mut rng = AesRng::seed_from_u64(signing_seed);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+    let domain = dummy_domain();
+    let (compressed_keyset, compact_pk, key_info) = generate_fhe_keys(
+        &sk,
         TEST_PARAM,
         KeyGenSecretKeyConfig::GenerateAll,
         req_id,
         prep_id,
         Some(Seed(42)),
-        domain,
+        &domain,
         vec![],
     )
-    .unwrap()
+    .unwrap();
+
+    (sk, domain, compressed_keyset, compact_pk, key_info)
 }
 
 #[tokio::test]
@@ -739,9 +743,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         .unwrap()
         .into();
     let (crypto_storage, mut threshold_fhe_keys, _fhe_key_set) = setup_threshold_store(&req_id);
-    let (sk, domain) = signing_context(42);
-    let (compressed_keyset, compact_pk, _) =
-        generate_compressed_keys(&req_id, &req_id, &sk, &domain);
+    let (_, _, compressed_keyset, compact_pk, _) = generate_compressed_keys(&req_id, &req_id, 42);
     threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
@@ -807,9 +809,8 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         None,
         HashMap::new(),
     );
-    let (sk, domain) = signing_context(50);
-    let (compressed_keyset, compact_pk, key_info) =
-        generate_compressed_keys(&req_id, &req_id, &sk, &domain);
+    let (_, _, compressed_keyset, compact_pk, key_info) =
+        generate_compressed_keys(&req_id, &req_id, 50);
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     {

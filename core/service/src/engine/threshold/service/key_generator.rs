@@ -1296,7 +1296,7 @@ impl<
                         ) => {
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
-                                .expect("validated");
+                                .expect("Standard UseExisting keygen must have a validated keyset_added_info.existing_keyset_id");
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
@@ -1317,7 +1317,7 @@ impl<
                         ) => {
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
-                                .expect("validated");
+                                .expect("Standard UseExisting compressed keygen must have a validated keyset_added_info.existing_keyset_id");
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::compressed_key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
@@ -1515,7 +1515,7 @@ impl<
                 {
                     let old_key_id = internal_keyset_config
                         .get_existing_keyset_id()
-                        .expect("validated");
+                        .expect("copy_compressed_key_to_original requires the validated UseExisting keyset_added_info.existing_keyset_id");
                     // UseExisting reads the old private shares at the current
                     // epoch_id (see key_gen_from_existing_private_keyset), so
                     // the copy targets the same (old_key_id, epoch_id) pair.

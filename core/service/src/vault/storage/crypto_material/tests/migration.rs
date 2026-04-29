@@ -11,37 +11,35 @@ use crate::{
     },
 };
 
-/// Helper to generate a CompressedXofKeySet and matching ThresholdFheKeys with proper metadata.
+/// Helper to build ThresholdFheKeys for a compressed keyset with proper metadata.
 /// Takes the `compact_pk` explicitly so tests can reproduce the production invariant that
 /// the old CompactPublicKey bytes are preserved at the new key ID during migration.
-fn generate_compressed_keyset_and_fhe_keys(
+fn threshold_fhe_keys_for_compressed_keyset(
     req_id: &RequestId,
     prep_id: &RequestId,
     private_keys: Arc<threshold_execution::tfhe_internals::private_keysets::PrivateKeySet<4>>,
     compact_pk: &tfhe::CompactPublicKey,
     sk: &PrivateSigKey,
     domain: &alloy_sol_types::Eip712Domain,
-) -> (CompressedXofKeySet, ThresholdFheKeys) {
-    let (compressed_keyset, _generated_pk, _key_info) =
-        generate_compressed_keys(req_id, prep_id, sk, domain);
+    compressed_keyset: &CompressedXofKeySet,
+) -> ThresholdFheKeys {
     let info = compute_info_compressed_keygen(
         sk,
         &DSEP_PUBDATA_KEY,
         prep_id,
         req_id,
-        &compressed_keyset,
+        compressed_keyset,
         compact_pk,
         domain,
         vec![],
     )
     .unwrap();
 
-    let threshold_fhe_keys = ThresholdFheKeys::new(
+    ThresholdFheKeys::new(
         private_keys,
         PublicKeyMaterial::new(compressed_keyset.clone()),
         info,
-    );
-    (compressed_keyset, threshold_fhe_keys)
+    )
 }
 
 async fn store_migrated_compressed_material(
@@ -256,7 +254,8 @@ async fn test_copy_compressed_key_to_original_success() {
     let prep_id = derive_request_id("copy_compressed_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_compressed_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(200);
+    let (sk, domain, compressed_keyset, _generated_pk, _) =
+        generate_compressed_keys(&new_key_id, &prep_id, 200);
     let crypto_storage = ram_threshold_storage(None);
 
     let (old_fhe_keys, compact_pk) = setup_pre_migration_uncompressed(
@@ -271,13 +270,14 @@ async fn test_copy_compressed_key_to_original_success() {
     let old_server_key_bytes =
         load_public_material_bytes(&crypto_storage, &old_key_id, PubDataType::ServerKey).await;
 
-    let (compressed_keyset, new_fhe_keys) = generate_compressed_keyset_and_fhe_keys(
+    let new_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
         &new_key_id,
         &prep_id,
         old_fhe_keys.private_keys.clone(),
         &compact_pk,
         &sk,
         &domain,
+        &compressed_keyset,
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -351,7 +351,8 @@ async fn test_copy_compressed_key_overwrite() {
     let prep_id = derive_request_id("copy_overwrite_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_overwrite_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(300);
+    let (sk, domain, compressed_1, _generated_pk_1, _) =
+        generate_compressed_keys(&new_key_id_1, &prep_id, 300);
     let crypto_storage = ram_threshold_storage(None);
     let (old_fhe_keys, compact_pk) = setup_pre_migration_uncompressed(
         &crypto_storage,
@@ -365,13 +366,14 @@ async fn test_copy_compressed_key_overwrite() {
     let old_server_key_bytes =
         load_public_material_bytes(&crypto_storage, &old_key_id, PubDataType::ServerKey).await;
 
-    let (compressed_1, fhe_keys_1) = generate_compressed_keyset_and_fhe_keys(
+    let fhe_keys_1 = threshold_fhe_keys_for_compressed_keyset(
         &new_key_id_1,
         &prep_id,
         old_fhe_keys.private_keys.clone(),
         &compact_pk,
         &sk,
         &domain,
+        &compressed_1,
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -405,13 +407,16 @@ async fn test_copy_compressed_key_overwrite() {
     )
     .await;
 
-    let (compressed_2, fhe_keys_2) = generate_compressed_keyset_and_fhe_keys(
+    let (_, _, compressed_2, _generated_pk_2, _) =
+        generate_compressed_keys(&new_key_id_2, &prep_id, 300);
+    let fhe_keys_2 = threshold_fhe_keys_for_compressed_keyset(
         &new_key_id_2,
         &prep_id,
         old_fhe_keys.private_keys.clone(),
         &compact_pk,
         &sk,
         &domain,
+        &compressed_2,
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -459,7 +464,7 @@ async fn test_copy_compressed_key_missing_source() {
     let new_key_id = derive_request_id("copy_missing_new").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_missing_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(400);
+    let (sk, domain, _, _, _) = generate_compressed_keys(&new_key_id, &new_key_id, 400);
     let crypto_storage = ram_threshold_storage(None);
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
@@ -486,7 +491,8 @@ async fn test_copy_compressed_key_legacy_metadata_fails() {
     let prep_id = derive_request_id("copy_legacy_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_legacy_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(500);
+    let (sk, domain, compressed_keyset, _generated_pk, _) =
+        generate_compressed_keys(&new_key_id, &prep_id, 500);
     let crypto_storage = ram_threshold_storage(None);
 
     // We need a pre-existing old_fhe_keys at (old_key_id, epoch_id) so Phase A
@@ -500,9 +506,6 @@ async fn test_copy_compressed_key_legacy_metadata_fails() {
         &domain,
     )
     .await;
-
-    let (compressed_keyset, _generated_pk, _) =
-        generate_compressed_keys(&new_key_id, &prep_id, &sk, &domain);
 
     let legacy_fhe_keys = ThresholdFheKeys::new(
         old_fhe_keys.private_keys.clone(),
@@ -550,7 +553,8 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     let prep_id = derive_request_id("copy_atomic_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_atomic_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(700);
+    let (sk, domain, compressed_keyset, _generated_pk, _) =
+        generate_compressed_keys(&new_key_id, &prep_id, 700);
     let crypto_storage = ram_threshold_storage(None);
 
     let (old_fhe_keys, compact_pk) = setup_pre_migration_uncompressed(
@@ -566,9 +570,6 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
 
     // Generate a valid compressed keyset at new_key_id, but store ThresholdFheKeys
     // with Current metadata whose key_digest_map is empty (no CompressedXofKeySet).
-    let (compressed_keyset, _generated_pk, _) =
-        generate_compressed_keys(&new_key_id, &prep_id, &sk, &domain);
-
     // Current variant with empty digest map — triggers "missing CompressedXofKeySet digest".
     let bad_fhe_keys = ThresholdFheKeys::new(
         old_fhe_keys.private_keys.clone(),
@@ -666,7 +667,8 @@ async fn test_copy_compressed_key_updates_backup_vault() {
     let prep_id = derive_request_id("copy_backup_prep").unwrap();
     let epoch_id: EpochId = derive_request_id("copy_backup_epoch").unwrap().into();
 
-    let (sk, domain) = signing_context(800);
+    let (sk, domain, compressed_keyset, _generated_pk, _) =
+        generate_compressed_keys(&new_key_id, &prep_id, 800);
 
     // Construct a Vault backed by RamStorage (no keychain — unencrypted backup).
     let backup_vault = Vault {
@@ -686,13 +688,14 @@ async fn test_copy_compressed_key_updates_backup_vault() {
     )
     .await;
 
-    let (compressed_keyset, new_fhe_keys) = generate_compressed_keyset_and_fhe_keys(
+    let new_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
         &new_key_id,
         &prep_id,
         old_fhe_keys.private_keys.clone(),
         &compact_pk,
         &sk,
         &domain,
+        &compressed_keyset,
     );
     store_migrated_compressed_material(
         &crypto_storage,

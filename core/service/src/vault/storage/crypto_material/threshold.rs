@@ -536,7 +536,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// metadata does not advertise it, so legacy or direct-storage consumers can
     /// continue fetching it from the original key id while new flows prefer the
     /// signed compressed layout.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub async fn copy_compressed_key_to_original(
         &self,
         new_key_id: &RequestId,
@@ -702,12 +702,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             );
         }
 
-        // In-memory cache.
-        {
-            let mut guarded_fhe_keys = self.fhe_keys.write().await;
-            guarded_fhe_keys.insert((*old_key_id, *old_epoch_id), updated_fhe_keys);
-        }
-
         // --- Phase C: refresh dkg_pubinfo_meta_store for old_key_id. ---
         // `MetaStore::update` only accepts pending entries, so replace the
         // existing completed entry with delete + insert + update, all under
@@ -726,6 +720,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             "Copied compressed key from {new_key_id} to original {old_key_id} \
              and updated metadata"
         );
+
+        // In-memory cache.
+        {
+            let mut guarded_fhe_keys = self.fhe_keys.write().await;
+            guarded_fhe_keys.insert((*old_key_id, *old_epoch_id), updated_fhe_keys);
+        }
 
         Ok(())
     }

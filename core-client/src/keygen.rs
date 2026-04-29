@@ -94,12 +94,6 @@ pub(crate) async fn do_keygen(
     // NOTE: If we do not use dummy_domain here, then
     // this needs changing too in the KeyGenResult command.
     let use_existing = shared_config.existing_keyset_id.is_some();
-    if shared_config.copy_compressed_key_to_original && !use_existing {
-        anyhow::bail!("--copy-compressed-key-to-original requires --existing-keyset-id to be set");
-    }
-    if shared_config.copy_compressed_key_to_original && shared_config.uncompressed {
-        anyhow::bail!("--copy-compressed-key-to-original cannot be used with --uncompressed");
-    }
     let keyset_config = Some(build_standard_keyset_config(
         if shared_config.uncompressed {
             PublicKeyConfig::Uncompressed
