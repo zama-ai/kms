@@ -1,6 +1,4 @@
 use crate::client::client_wasm::{Client, ServerIdentities};
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
@@ -19,7 +17,6 @@ use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
-#[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
@@ -389,17 +386,50 @@ pub(crate) async fn user_decryption_threshold(
     malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
-        threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
+
+    // Spec: pre-gen FHE keys for `key_id` plus signing + PRSS. Material
+    // type follows the DKG params.
+    let spec = {
+        let mut s = if dkg_params == TEST_PARAM {
+            TestMaterialSpec::threshold_basic(amount_parties)
+        } else {
+            TestMaterialSpec::threshold_default(amount_parties)
+        };
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("user_decryption_threshold_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .force_isolated();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-        None,
+        Some(&material_path),
         msg,
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
         enc_config,
-        false, // use the default compressed keyset
+        false, // compressed_keys
     )
     .await;
 

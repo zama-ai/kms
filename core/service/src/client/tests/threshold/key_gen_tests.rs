@@ -53,10 +53,12 @@ use crate::consts::TEST_PARAM;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 #[cfg(feature = "slow_tests")]
 use crate::testing::helpers::domain_to_msg;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::material::TestMaterialSpec;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::material::{KeyType, TestMaterialSpec};
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::testing::setup::threshold::ThresholdTestEnv;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
@@ -162,23 +164,31 @@ impl TestKeyGenResult {
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::Result<()> {
     let key_id: RequestId = derive_request_id(&format!(
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    ))?;
+
+    // Test generates its own FHE keys; only signing material + PRSS are needed pre-generated.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_insecure_compressed_dkg")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .force_isolated()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
     let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
@@ -189,7 +199,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
         keyset_config,
         keyset_added_info,
         true,
-        None,
+        Some(&material_path),
         0,
     )
     .await
@@ -203,6 +213,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
+
+    Ok(())
 }
 
 /// Test compressed keygen with test parameters and 4 parties.

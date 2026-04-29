@@ -3,8 +3,7 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::tests::threshold::common::threshold_handles;
+use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
@@ -210,7 +209,6 @@ pub async fn decryption_threshold(
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * parallelism,
         pub_decrypt: 100,
@@ -220,14 +218,41 @@ pub async fn decryption_threshold(
         keygen: 1,
         new_epoch: 1,
     };
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
-        dkg_params,
-        amount_parties,
-        true,
-        Some(rate_limiter_conf),
-        decryption_mode,
-    )
-    .await;
+
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus
+    // signing keys + PRSS. Material type follows the DKG params.
+    let spec = {
+        let mut s = if dkg_params == TEST_PARAM {
+            TestMaterialSpec::threshold_basic(amount_parties)
+        } else {
+            TestMaterialSpec::threshold_default(amount_parties)
+        };
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(format!("decryption_threshold_{amount_parties}p"))
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_rate_limiter(rate_limiter_conf)
+        .with_prss()
+        .force_isolated();
+    if let Some(mode) = decryption_mode {
+        builder = builder.with_decryption_mode(mode);
+    }
+    let env = builder
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+
+    let mut internal_client = env
+        .create_internal_client(&dkg_params, decryption_mode)
+        .await
+        .expect("create_internal_client failed");
+    let (mut kms_clients, mut kms_servers, material_path, _guards) = env.into_parts();
+
     run_decryption_threshold(
         amount_parties,
         &mut kms_servers,
@@ -240,8 +265,8 @@ pub async fn decryption_threshold(
         enc_config,
         party_ids_to_crash,
         parallelism,
-        None,
-        false, // use the default compressed keyset
+        Some(&material_path),
+        false, // compressed_keys
     )
     .await;
 }
