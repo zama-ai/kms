@@ -72,12 +72,14 @@ jobs:
               - 'core/thread-handles/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-client-k8s-tests:
               - 'core-client/tests/kind-testing/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-service:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
@@ -88,12 +90,14 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-threshold:
               - 'core/threshold-*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             # Workspace crates that have no dedicated CI job of their own.
             # Used by `test-workspace-crates` to run their unit tests grouped
             # across a few runners.
@@ -106,6 +110,7 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             docs:
               - 'docs/**'
             helm-chart:
