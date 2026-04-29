@@ -76,6 +76,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: performance-testing-kms-ci
+  cancel-in-progress: false
+
 jobs:
   ############################################################################
   # Docker Build Job (Conditional)
