@@ -408,9 +408,250 @@ where
         }
     }
 
-    // =========================
-    // Ensure_xxx_existence Methods
-    // =========================
+    /// Helper method to purge material.
+    /// Returns true if purge is successful, false otherwise.
+    async fn purge_material<T: Clone>(
+        &self,
+        req_id: &RequestId,
+        epoch_id: Option<&EpochId>,
+        private_types: Vec<PrivDataType>,
+        public_types: Vec<PubDataType>,
+    ) -> bool {
+        // Lock both stores up front to enforce the public-then-private locking order.
+        let mut pub_storage = self.public_storage.lock().await;
+        let mut priv_storage = self.private_storage.lock().await;
+
+        let f_pub = async {
+            let mut failed = false;
+            for cur_pub_type in &public_types {
+                // Note that no public data is epoched
+                let del_res =
+                    delete_at_request_id(&mut (*pub_storage), req_id, &cur_pub_type.to_string())
+                        .await;
+                if let Err(e) = &del_res {
+                    failed = true;
+                    tracing::warn!(
+                        "Failed to delete public type {cur_pub_type} for request {req_id}: {e}"
+                    );
+                }
+            }
+            failed
+        };
+
+        let f_priv = async {
+            let mut failed = false;
+            for cur_priv_type in &private_types {
+                match cur_priv_type {
+                    // For FHE keys and CRS info, we need to delete at epoch level
+                    PrivDataType::FheKeyInfo
+                    | PrivDataType::FhePrivateKey
+                    | PrivDataType::CrsInfo => {
+                        if let Some(inner_epoch) = epoch_id {
+                            let del_res = delete_at_request_and_epoch_id(
+                                &mut (*priv_storage),
+                                req_id,
+                                inner_epoch,
+                                &cur_priv_type.to_string(),
+                            )
+                            .await;
+                            if let Err(e) = &del_res {
+                                failed = true;
+                                tracing::warn!(
+                                    "Failed to delete private type {cur_priv_type} for request {req_id} and epoch {inner_epoch}: {e}"
+                                );
+                            }
+                        } else {
+                            // TODO should we return error here instead?
+                            failed = true;
+                            tracing::error!(
+                                "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
+                            );
+                        }
+                    }
+                    // For other private data, we can delete at request level
+                    // Observe we make the types explicit to ensure a compile error when a new type is added
+                    #[allow(deprecated)]
+                    PrivDataType::SigningKey
+                    | PrivDataType::PrssSetup
+                    | PrivDataType::PrssSetupCombined
+                    | PrivDataType::ContextInfo => {
+                        let del_res = delete_at_request_id(
+                            &mut (*priv_storage),
+                            req_id,
+                            &cur_priv_type.to_string(),
+                        )
+                        .await;
+                        if let Err(e) = &del_res {
+                            failed = true;
+                            tracing::warn!(
+                                "Failed to delete private type {cur_priv_type} for request {req_id}: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+            // Negate since we return true if things went well
+            !failed
+        };
+
+        let (pub_failed, priv_failed) = tokio::join!(f_pub, f_priv);
+        !(pub_failed || priv_failed)
+    }
+
+    /// Write both public and private data to storage in an atomic manner.
+    /// Returns true if both writes are successful, false otherwise.
+    /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type` nor `priv_data` matches `priv_data_type`.
+    async fn write_data_pair<
+        'a,
+        PubData: Serialize + Versionize + Named + Send + Sync,
+        PrivData: Serialize + Versionize + Named + Send + Sync,
+    >(
+        &self,
+        req_id: &RequestId,
+        epoch_id: Option<&EpochId>,
+        pub_data: Vec<(&'a PubData, PubDataType)>,
+        priv_data: Vec<(&'a PrivData, PrivDataType)>,
+    ) -> bool
+    where
+        <PubData as Versionize>::Versioned<'a>: Send + Sync,
+        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        let mut pub_storage_guard = self.public_storage.lock().await;
+        let mut priv_storage_guard = self.private_storage.lock().await;
+        let pub_write = async {
+            let mut failed = false;
+            for (pub_d, pub_t) in pub_data {
+                if !CryptoMaterialStorage::<PubS, PrivS>::write_pub_data(
+                    &mut (*pub_storage_guard),
+                    req_id,
+                    pub_d,
+                    &pub_t,
+                )
+                .await
+                {
+                    failed = true;
+                    tracing::error!("Failed to write public type {pub_t} for request {req_id}");
+                }
+            }
+            !failed
+        };
+        let priv_write = async {
+            let mut failed = false;
+            for (priv_d, priv_t) in priv_data {
+                if !CryptoMaterialStorage::<PubS, PrivS>::write_priv_data(
+                    &mut (*priv_storage_guard),
+                    req_id,
+                    epoch_id,
+                    priv_d,
+                    &priv_t,
+                )
+                .await
+                {
+                    failed = true;
+                    tracing::error!("Failed to write private type {priv_t} for request {req_id}");
+                }
+            }
+            !failed
+        };
+        let (pub_ok, priv_ok) = tokio::join!(pub_write, priv_write);
+        pub_ok && priv_ok
+    }
+
+    /// Write data to the public storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type`.
+    async fn write_pub_data<'a, PubData: Serialize + Versionize + Named + Send + Sync, S: Storage>(
+        pub_storage_guard: &mut S,
+        req_id: &RequestId,
+        pub_data: &'a PubData,
+        pub_data_type: &PubDataType,
+    ) -> bool
+    where
+        <PubData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        // Observe that there is no epoched version for public data
+        if let Err(e) = store_versioned_at_request_id(
+            pub_storage_guard,
+            req_id,
+            pub_data,
+            &pub_data_type.to_string(),
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to store public type {pub_data_type} for request {req_id}: {e}"
+            );
+            return false;
+        }
+        true
+    }
+
+    /// Write data to the private storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
+    async fn write_priv_data<
+        'a,
+        PrivData: Serialize + Versionize + Named + Send + Sync,
+        S: StorageExt,
+    >(
+        priv_storage_guard: &mut S,
+        req_id: &RequestId,
+        epoch_id: Option<&EpochId>,
+        priv_data: &'a PrivData,
+        priv_data_type: &PrivDataType,
+    ) -> bool
+    where
+        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        match priv_data_type {
+            // For FHE keys and CRS info, we need to delete at epoch level
+            PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => {
+                if let Some(inner_epoch) = epoch_id {
+                    if let Err(e) = store_versioned_at_request_and_epoch_id(
+                        priv_storage_guard,
+                        req_id,
+                        inner_epoch,
+                        priv_data,
+                        &priv_data_type.to_string(),
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
+                        );
+                        return false;
+                    }
+                } else {
+                    tracing::error!(
+                        "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
+                    );
+                    return false;
+                }
+            }
+            // For other private data, we can delete at request level
+            // Observe we make the types explicit to ensure a compile error when a new type is added
+            #[allow(deprecated)]
+            PrivDataType::SigningKey
+            | PrivDataType::PrssSetup
+            | PrivDataType::PrssSetupCombined
+            | PrivDataType::ContextInfo => {
+                if let Err(e) = store_versioned_at_request_id(
+                    priv_storage_guard,
+                    req_id,
+                    priv_data,
+                    &priv_data_type.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to store private type {priv_data_type} for request {req_id}: {e}"
+                    );
+                    return false;
+                }
+            }
+        };
+        true
+    }
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material<T: Clone>(
