@@ -196,16 +196,23 @@ impl KeygenVerification {
         preproc_id: &RequestId,
         key_id: &RequestId,
         compressed_keyset_digest: Vec<u8>,
+        public_key_digest: Vec<u8>,
         extra_data: Vec<u8>,
     ) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
             keyId: U256::from_be_slice(key_id.as_bytes()),
             // NOTE: order should be in the order of the enum KeyType
-            keyDigests: vec![KeyDigest {
-                keyType: KeyType::COMPRESSED_KEYSET,
-                digest: compressed_keyset_digest.into(),
-            }],
+            keyDigests: vec![
+                KeyDigest {
+                    keyType: KeyType::PUBLIC,
+                    digest: public_key_digest.into(),
+                },
+                KeyDigest {
+                    keyType: KeyType::COMPRESSED_KEYSET,
+                    digest: compressed_keyset_digest.into(),
+                },
+            ],
             extraData: extra_data.into(),
         }
     }
@@ -232,21 +239,6 @@ impl KeygenVerificationQ126 {
                     digest: public_key_digest.into(),
                 },
             ],
-        }
-    }
-    pub fn new_compressed(
-        preproc_id: &RequestId,
-        key_id: &RequestId,
-        compressed_keyset_digest: Vec<u8>,
-    ) -> Self {
-        Self {
-            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
-            keyId: U256::from_be_slice(key_id.as_bytes()),
-            // NOTE: order should be in the order of the enum KeyType
-            keyDigests: vec![legacy_q126::KeyDigest {
-                keyType: legacy_q126::KeyType::COMPRESSED_KEYSET,
-                digest: compressed_keyset_digest.into(),
-            }],
         }
     }
 }

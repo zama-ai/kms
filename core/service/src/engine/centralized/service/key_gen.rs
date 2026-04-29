@@ -458,13 +458,14 @@ pub(crate) async fn key_gen_background<
                         return;
                     }
                 }
-                CentralizedKeyGenResult::Compressed(compressed_keyset, key_info) => {
+                CentralizedKeyGenResult::Compressed(compressed_keyset, public_key, key_info) => {
                     if let Err(e) = crypto_storage
                         .write_centralized_compressed_keys_with_meta_store(
                             req_id,
                             epoch_id,
                             key_info,
                             &compressed_keyset,
+                            &public_key,
                             meta_store,
                         )
                         .await

@@ -263,7 +263,7 @@ pub async fn run_key_gen_centralized(
         let client_key = handle.client_key;
 
         let (server_key, public_key) = if compressed {
-            let compressed_keyset = internal_client
+            let (compressed_keyset, stored_public_key) = internal_client
                 .retrieve_compressed_keyset(
                     &preproc_id,
                     key_req_id,
@@ -273,10 +273,25 @@ pub async fn run_key_gen_centralized(
                     &pub_storage,
                 )
                 .await
-                .unwrap()
                 .unwrap();
-            let (public_key, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
-            (server_key, public_key)
+            let (derived_public_key, server_key) =
+                compressed_keyset.decompress().unwrap().into_raw_parts();
+            // For fresh compressed keygen the stored public key must match the one we derive
+            // from the compressed keyset (migration flow would differ, but this test path is
+            // always a fresh keygen). CompactPublicKey does not implement PartialEq, so we
+            // compare via domain-separated digests.
+            let stored_digest = crate::engine::base::safe_serialize_hash_element_versioned(
+                &crate::engine::base::DSEP_PUBDATA_KEY,
+                &stored_public_key,
+            )
+            .unwrap();
+            let derived_digest = crate::engine::base::safe_serialize_hash_element_versioned(
+                &crate::engine::base::DSEP_PUBDATA_KEY,
+                &derived_public_key,
+            )
+            .unwrap();
+            assert_eq!(stored_digest, derived_digest);
+            (server_key, stored_public_key)
         } else {
             let (server_key, public_key) = internal_client
                 .retrieve_server_key_and_public_key(
@@ -354,7 +369,6 @@ pub async fn run_key_gen_centralized(
             let decompression_key = internal_client
                 .retrieve_decompression_key(&inner_resp, &pub_storage)
                 .await
-                .unwrap()
                 .unwrap()
                 .into_raw_parts();
             run_decompression_test(
