@@ -1,6 +1,12 @@
 //! CLI Integration Tests
 //!
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
+//
+// TODO(dp): unfinished — `#[serial]` was stripped from these tests but they
+// haven't been audited end-to-end against the post-PR-518/532 world the way
+// the centralized helpers in `core/service/src/client/tests/centralized/`
+// were. Expect failures under parallel execution; verify each
+// `setup_isolated_*` chain actually scopes all server state to its tempdir.
 
 use anyhow::Result;
 use futures::future::join_all;
@@ -313,7 +319,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///
 /// # Note
 /// Requires `threshold_tests` feature. Tests using this must be marked with:
-/// - `#[serial]` - Sequential execution required (PRSS network coordination)
 /// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
 ///
 /// This helper enables `ensure_default_prss=true` during server startup. For Test params,
@@ -325,7 +330,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// # Example
 /// ```no_run
 /// #[tokio::test]
-/// #[serial]
 /// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
@@ -1790,6 +1794,12 @@ async fn generate_custodian_keys_to_file(
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
 
+    // TODO(dp): use `escargot` (or similar) to build the binary on demand.
+    // `kms-custodian` lives in the `kms` package while this test is in
+    // `kms-core-client`, so cargo's `[[bin]]` autobuild doesn't reach it
+    // and CI has to do an explicit `cargo build -p kms --bin kms-custodian`
+    // step. `escargot::CargoBuild::new().bin("kms-custodian").package("kms").run()?`
+    // would handle build + path lookup cleanly.
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -1896,6 +1906,9 @@ async fn custodian_reencrypt(
 ) -> Vec<PathBuf> {
     let mut response_paths = Vec::new();
 
+    // TODO(dp): same autobuild concern as `generate_custodian_keys_to_file` —
+    // see that fn's TODO. Both call sites should switch to `escargot` (or
+    // similar) once we factor this out.
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -2270,7 +2283,6 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2290,7 +2302,6 @@ async fn test_threshold_insecure() -> Result<()> {
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2312,7 +2323,6 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 /// Test threshold concurrent preprocessing and keygen operations
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2442,7 +2452,6 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
 /// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_insecure_default_keygen() -> Result<()> {
     init_logging();
 
@@ -2463,7 +2472,6 @@ async fn test_threshold_insecure_default_keygen() -> Result<()> {
 /// that both produce distinct key IDs.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2488,7 +2496,6 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 3. A public-decrypt request succeeds in the new context
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2689,7 +2696,6 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Only execute when a fully prepared full-generation environment is available.
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2776,7 +2782,6 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
@@ -2840,7 +2845,6 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
 #[tokio::test]
-#[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
@@ -3069,7 +3073,6 @@ mod docker_harness {
 /// 7. Execute resharing command
 #[cfg(feature = "threshold_tests")]
 #[tokio::test]
-#[serial]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 

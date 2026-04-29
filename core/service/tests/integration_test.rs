@@ -6,7 +6,6 @@ use kms_lib::vault::storage::{StorageType, file::FileStorage};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
-use sysinfo::System;
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
 
@@ -14,36 +13,6 @@ const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
-
-/// Kill processes based on the executable name.
-/// Note that tests using this function should run in serial mode
-/// otherwise this function may kill processes in other tests.
-fn kill_process(process_name: &str) {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-
-    for (pid, process) in sys.processes() {
-        // exe returns the path to the process
-        if let Some(path) = process.exe()
-            && let Some(s) = path.to_str()
-            && s.contains(process_name)
-        {
-            if process.kill() {
-                tracing::info!(
-                    process_name = %process_name,
-                    pid = %pid,
-                    "Killed matching process during integration test cleanup"
-                );
-            } else {
-                tracing::warn!(
-                    process_name = %process_name,
-                    pid = %pid,
-                    "Failed to kill matching process during integration test cleanup"
-                );
-            }
-        }
-    }
-}
 
 fn purge_file_storage(storage: &FileStorage) {
     let dir = storage.root_dir();
@@ -165,10 +134,17 @@ mod kms_gen_keys_binary_test {
     }
 
     fn gen_key(arg: &str) {
-        purge_all();
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg(arg)
             .output()
             .unwrap()
@@ -177,7 +153,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     #[persistent_traces]
     fn gen_key_centralized() {
@@ -185,7 +160,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     #[persistent_traces]
     fn gen_key_threshold() {
@@ -235,11 +209,20 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn central_signing_keys_overwrite() {
+        // Both invocations must share storage so the second run sees the keys
+        // written by the first.
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
         let output = kms_gen_keys_command()
             .arg("--param-test")
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("centralized")
@@ -255,6 +238,12 @@ mod kms_gen_keys_binary_test {
 
         let new_output = kms_gen_keys_command()
             .arg("--param-test")
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("--cmd=signing-keys")
             .arg("centralized")
             .output()
@@ -265,7 +254,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn central_signing_address_format() {
         let temp_dir_priv = tempdir().unwrap();
@@ -305,7 +293,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn threshold_wrong_num_parties() {
         let temp_dir_priv = tempdir().unwrap();
@@ -334,7 +321,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn threshold_signing_key_wrong_party_id() {
         let temp_dir_priv = tempdir().unwrap();
@@ -364,7 +350,6 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     #[persistent_traces]
     fn threshold_signing_key() {
@@ -395,13 +380,24 @@ mod kms_gen_keys_binary_test {
 
     #[cfg(feature = "s3_tests")]
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn central_s3() {
         use kms_lib::vault::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
+        // Unique S3 prefix per run so concurrent CI invocations of this test
+        // don't fight each other on the shared bucket.
+        let s3_prefix = format!(
+            "central_s3_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let temp_dir_priv = tempdir().unwrap();
+
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=central_s3 --private-storage=file --private-file-path=./temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=<unique> --private-storage=file --private-file-path=<tempdir> --cmd=signing-keys --overwrite --deterministic
         let output = kms_gen_keys_command()
             .arg("--param-test")
             .arg(format!("--aws-region={AWS_REGION}"))
@@ -410,10 +406,10 @@ mod kms_gen_keys_binary_test {
             .arg("--public-s3-bucket")
             .arg(BUCKET_NAME)
             .arg("--public-s3-prefix")
-            .arg("central_s3")
+            .arg(&s3_prefix)
             .arg("--private-storage=file")
             .arg("--private-file-path")
-            .arg("./temp/keys/")
+            .arg(temp_dir_priv.path())
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("--deterministic")
@@ -440,12 +436,7 @@ mod kms_gen_keys_binary_test {
 mod kms_server_binary_test {
     use super::*;
 
-    fn kill_kms_server() {
-        kill_process(KMS_SERVER)
-    }
-
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     fn help() {
         Command::cargo_bin(KMS_SERVER)
@@ -458,44 +449,45 @@ mod kms_server_binary_test {
     }
 
     fn run_subcommand_no_args(config_file: &str) {
-        // Spawn with correct arguments and check it does not
-        // die within 5 seconds.
-        // Note that the join handle cannot kill the thread,
-        // so we need [kill_kms_server] for it.
-        let config_file = config_file.to_string();
-        let h = thread::spawn(|| {
-            let out = Command::cargo_bin(KMS_SERVER)
-                .unwrap()
-                .arg("--config-file")
-                .arg(config_file)
-                .output();
-            // Debug output of failing tests
-            match out {
-                Ok(ref output) if !output.status.success() => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    tracing::error!(
-                        status = %output.status,
-                        stdout = %stdout,
-                        stderr = %stderr,
-                        "kms-server integration command exited unexpectedly"
-                    );
-                }
-                Err(ref err) => {
-                    tracing::error!(
-                        error = %err,
-                        "Failed to capture kms-server subprocess output in integration test"
-                    );
-                }
-                _ => {}
-            }
-        });
+        // Spawn the server, give it 5s to come up and stay up, then kill the
+        // specific child PID we spawned (not every `kms-server` by name —
+        // doing so would terminate sibling tests' servers running in parallel).
+        let mut child = Command::cargo_bin(KMS_SERVER)
+            .unwrap()
+            .arg("--config-file")
+            .arg(config_file)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn kms-server");
 
         thread::sleep(Duration::from_secs(5));
-        assert!(!h.is_finished());
 
-        kill_kms_server();
-        h.join().unwrap();
+        // Sanity: the server should still be running (it's a long-running
+        // process; it shouldn't exit on its own within 5s).
+        let exited = child.try_wait().expect("try_wait failed");
+        assert!(
+            exited.is_none(),
+            "kms-server exited within 5s with status {:?}, expected it to keep running",
+            exited
+        );
+
+        child.kill().expect("kill failed");
+        let output = child
+            .wait_with_output()
+            .expect("wait_with_output failed");
+
+        // Debug output for unexpected non-kill exit codes
+        if !output.status.success() && output.status.code().is_some() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(
+                status = %output.status,
+                stdout = %stdout,
+                stderr = %stderr,
+                "kms-server integration command exited unexpectedly"
+            );
+        }
 
         // We need to manually delete the storage every time
         // since it might affect other tests (in other modules).
@@ -503,7 +495,6 @@ mod kms_server_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     #[persistent_traces]
     fn subcommand_dev_centralized() {
@@ -520,7 +511,6 @@ mod kms_server_binary_test {
     }
 
     #[test]
-    #[serial_test::serial]
     #[integration_test]
     #[persistent_traces]
     fn subcommand_dev_threshold() {
@@ -634,7 +624,6 @@ mod kms_custodian_binary_tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn sunshine_generate() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
@@ -645,7 +634,6 @@ mod kms_custodian_binary_tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn sunshine_verify() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir
@@ -664,7 +652,6 @@ mod kms_custodian_binary_tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn sunshine_decrypt_custodian() {
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
