@@ -449,11 +449,10 @@ mod kms_server_binary_test {
     }
 
     fn run_subcommand_no_args(config_file: &str) {
-        // Spawn the server, give it 5s to come up and stay up, then kill the
-        // specific child PID we spawned (not every `kms-server` by name —
-        // doing so would terminate sibling tests' servers running in parallel).
-        let mut child = Command::cargo_bin(KMS_SERVER)
-            .unwrap()
+        // Spawn the server, give it 5s to come up (and stay up), then kill the
+        // specific child PID we spawned.
+        let bin_path = assert_cmd::cargo::cargo_bin(KMS_SERVER);
+        let mut child = std::process::Command::new(&bin_path)
             .arg("--config-file")
             .arg(config_file)
             .stdout(std::process::Stdio::piped())

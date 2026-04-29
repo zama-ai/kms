@@ -167,7 +167,7 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
 // TODO(dp): legacy global-storage path — only `nightly_tests.rs` callers
 // (slow_tests-gated) still use this. Port them to `ThresholdTestEnv::builder()`
 // and delete this helper.
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
     parameter: FheParameter,

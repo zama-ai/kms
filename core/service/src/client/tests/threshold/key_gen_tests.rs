@@ -4,16 +4,18 @@
 // of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
+    use crate::client::tests::threshold::common::threshold_handles;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::KeyGenMetadata;
+    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+
     use kms_grpc::rpc_types::PrivDataType;
 }}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::key_gen::tests::check_conformance;
     use crate::client::tests::common::{OptKeySetConfigAccessor};
-    use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::consts::DEFAULT_EPOCH_ID;
@@ -21,7 +23,6 @@ cfg_if::cfg_if! {
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
