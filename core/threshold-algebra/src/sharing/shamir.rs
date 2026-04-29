@@ -1,6 +1,7 @@
 use threshold_types::role::Role;
 
 use crate::{
+    error_correction::ReconstructionHints,
     poly::Poly,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Ring, RingWithExceptionalSequence},
@@ -195,6 +196,19 @@ pub trait RevealOp<Z> {
     }
 
     fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z>;
+
+    fn err_reconstruct_with_hints(
+        &self,
+        degree: usize,
+        max_errs: usize,
+        _hints: &ReconstructionHints<Z>,
+    ) -> anyhow::Result<Z>
+    where
+        Z: ErrorCorrect,
+    {
+        // Default: ignore hints
+        self.err_reconstruct(degree, max_errs)
+    }
 }
 
 impl<Z> RevealOp<Z> for ShamirSharings<Z>
@@ -203,6 +217,16 @@ where
 {
     fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z> {
         let recon = <Z as ErrorCorrect>::error_correct(self, degree, max_errs)?;
+        Ok(recon.eval(&Z::ZERO))
+    }
+
+    fn err_reconstruct_with_hints(
+        &self,
+        degree: usize,
+        max_errs: usize,
+        hints: &ReconstructionHints<Z>,
+    ) -> anyhow::Result<Z> {
+        let recon = Z::error_correct_with_hints(self, degree, max_errs, hints)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }
@@ -253,12 +277,14 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
-pub fn reconstruct_w_errors_sync<Z>(
+/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
+fn reconstruct_w_errors_sync_common<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
+    hints: Option<&ReconstructionHints<Z>>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
@@ -276,7 +302,11 @@ where
             ))
         })?;
 
-        let opened = sharing.err_reconstruct(degree, max_errs)?;
+        let opened = if let Some(hints) = hints {
+            sharing.err_reconstruct_with_hints(degree, max_errs, hints)?
+        } else {
+            sharing.err_reconstruct(degree, max_errs)?
+        };
         return Ok(Some(opened));
     }
 
@@ -292,6 +322,44 @@ where
     Ok(None)
 }
 
+/// [`reconstruct_w_errors_sync_common`] without precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_sync<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    reconstruct_w_errors_sync_common(num_parties, degree, threshold, num_bots, sharing, None)
+}
+
+/// [`reconstruct_w_errors_sync_common`] with precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_sync_with_hints<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    reconstruct_w_errors_sync_common(
+        num_parties,
+        degree,
+        threshold,
+        num_bots,
+        sharing,
+        Some(hints),
+    )
+}
+
 /// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
 /// in an async network
 /// Takes as input:
@@ -304,12 +372,15 @@ where
 ///  Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
-pub fn reconstruct_w_errors_async<Z>(
+///
+/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
+fn reconstruct_w_errors_async_common<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
     num_bots: usize,
     sharing: &ShamirSharings<Z>,
+    hints: Option<&ReconstructionHints<Z>>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
@@ -319,13 +390,17 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     if degree + 3 * threshold < num_parties {
         if num_heard_from > degree + 2 * threshold {
-            // max_errs = threshold - num_bots
             let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
                 anyhow_error_and_warn_log(format!(
-                "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
-            ))
+                    "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
+                ))
             })?;
-            let opened = sharing.err_reconstruct(degree, max_errs)?;
+
+            let opened = if let Some(hints) = hints {
+                sharing.err_reconstruct_with_hints(degree, max_errs, hints)?
+            } else {
+                sharing.err_reconstruct(degree, max_errs)?
+            };
             Ok(Some(opened))
         } else {
             //We do not have enough shares yet
@@ -334,12 +409,13 @@ where
     } else if degree + 2 * threshold < num_parties {
         if num_heard_from > degree + threshold {
             let r: usize = num_heard_from - (degree + threshold + 1);
-            let opened_poly = Z::error_correct(sharing, degree, r);
+            let opened_poly = if let Some(hints) = hints {
+                Z::error_correct_with_hints(sharing, degree, r, hints)
+            } else {
+                Z::error_correct(sharing, degree, r)
+            };
             if let Ok(opened_poly) = opened_poly {
                 if opened_poly.deg() <= degree {
-                    //Note: Not entirely certain we really need all this checking mechanism.
-                    //If error_correct succeeded, why isnt it enough?
-
                     //Check how many shares lie on the polynomial
                     let mut num_shares_on_poly = 0;
                     for share in sharing.shares.iter() {
@@ -349,7 +425,6 @@ where
                         {
                             num_shares_on_poly += 1;
                         }
-
                         //If enough, return the result
                         if num_shares_on_poly > degree + threshold {
                             return Ok(Some(opened_poly.eval(&(Z::ZERO))));
@@ -367,12 +442,50 @@ where
             //We do not have enough shares yet
             Ok(None)
         }
-    //Make sure there's hope to ever have enough shares to try and reconstruct
+        //Make sure there's hope to ever have enough shares to try and reconstruct
     } else {
         Err(anyhow_error_and_warn_log(format!(
             "Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}"
         )))
     }
+}
+
+/// [`reconstruct_w_errors_async_common`] without precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_async<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    reconstruct_w_errors_async_common(num_parties, degree, threshold, num_bots, sharing, None)
+}
+
+/// [`reconstruct_w_errors_async_common`] with precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_async_with_hints<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    reconstruct_w_errors_async_common(
+        num_parties,
+        degree,
+        threshold,
+        num_bots,
+        sharing,
+        Some(hints),
+    )
 }
 
 #[cfg(test)]
