@@ -52,7 +52,22 @@ use tfhe::Versionize;
 use tfhe::named::Named;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use thiserror::Error;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+
+#[derive(Error, Debug)]
+pub enum StorageError {
+    #[error("Existence check error")]
+    ExistenceCheckError,
+    #[error("Writing error")]
+    WritingError,
+    #[error("Purging error")]
+    PurgingError,
+    #[error("Backup error")]
+    BackupError,
+    #[error("Other error: {0}")]
+    Other(#[from] anyhow::Error),
+}
 
 /// Marker trait for private FHE materials.
 /// This exists because FHE materials are stored by epochs, unlike other materials.
@@ -408,9 +423,61 @@ where
         }
     }
 
+    /// General method for handling the storage of material, including backup.
+    pub async fn handle_all_storage<
+        'a,
+        PubData: Serialize + Versionize + Named + Send + Sync,
+        PrivData: Serialize + Versionize + Named + Send + Sync,
+        T: Clone,
+    >(
+        &self,
+        req_id: &RequestId,
+        epoch_id: Option<&EpochId>,
+        pub_data: Vec<(&'a PubData, PubDataType)>,
+        priv_data: Vec<(&'a PrivData, PrivDataType)>,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError>
+    where
+        <PubData as Versionize>::Versioned<'a>: Send + Sync,
+        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        // Then ensure that data does not already exist to avoid accidentally overwriting or purging
+        // TODO add helper methods for existence check
+
+        let priv_types = priv_data
+            .iter()
+            .map(|(_, priv_type)| priv_type.clone())
+            .collect();
+        let pub_types = pub_data
+            .iter()
+            .map(|(_, pub_type)| pub_type.clone())
+            .collect();
+        if self
+            .write_data_pair(req_id, epoch_id, pub_data, priv_data)
+            .await
+        {
+            // If storage is ok, then update the backup
+            if !self.update_backup_vault(false, op_metric_tag).await {
+                // Observe that even if backup fails, we do not want to purge the material
+                return Err(StorageError::BackupError);
+            }
+            return Ok(());
+        } else {
+            // If storage write failed then purge
+
+            if !self
+                .purge_material(req_id, epoch_id, priv_types, pub_types)
+                .await
+            {
+                return Err(StorageError::PurgingError);
+            }
+            return Err(StorageError::WritingError);
+        }
+    }
+
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
-    async fn purge_material<T: Clone>(
+    async fn purge_material(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
