@@ -213,7 +213,6 @@ jobs:
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
-          SYNC_SECRETS_CHART_VERSION: '0.2.1'
         run: |
           {
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
@@ -223,7 +222,6 @@ jobs:
             echo "NAMESPACE=${NAMESPACE}"
             echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
             echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
-            echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
           } >> "$GITHUB_ENV"
 
       - name: Login to zws GitHub Container Registry
