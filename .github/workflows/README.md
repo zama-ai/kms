@@ -599,20 +599,7 @@ graph TD
 
 ## 🛠️ Reusable Workflow Infrastructure
 
-### 1. 🖥️ Big Instance Testing
-[`.github/workflows/common-testing-big-instance.yml`](common-testing-big-instance.yml)
-
-#### Architecture
-- 🚀 **EC2 Runner Management**: Uses Zama SLAB for dynamic runner provisioning
-- 🔄 **Workflow Delegation**: Proxies to `common-testing.yml` with enhanced resources
-- 🛑 **Guaranteed Cleanup**: Always stops runners even on failure
-
-#### Supported Services
-- **MinIO**: Object storage testing (`run-minio: true`)
-- **Redis**: Caching and state testing (`run-redis: true`)
-- **WASM Runtime**: WebAssembly execution testing (`run-wasm: true`)
-
-### 2. 🏗️ Common Testing Pipeline
+### 1. 🏗️ Common Testing Pipeline
 [`.github/workflows/common-testing.yml`](common-testing.yml)
 
 #### Pipeline Stages
@@ -631,7 +618,7 @@ graph TD
 - **Artifact Collection**: JUnit XML and log preservation
 - **Slack Integration**: Nightly test result notifications
 
-### 3. 🌐 WASM Testing Pipeline
+### 2. 🌐 WASM Testing Pipeline
 [`.github/workflows/wasm-testing.yml`](wasm-testing.yml)
 
 #### Specialized WASM Workflow
@@ -640,7 +627,7 @@ graph TD
 - **Node.js Testing**: Validates WASM functionality with `node --test`
 - **Dry-run Publishing**: Tests NPM package creation without actual publish
 
-### 4. 🐳 Specialized Docker Workflows
+### 3. 🐳 Specialized Docker Workflows
 - **Nitro Enclave**: [`common-nitro-enclave.yml`](common-nitro-enclave.yml) - AWS secure execution
 - **ArgoCD Updates**: [`common-update-argocd.yml`](common-update-argocd.yml) - Staging deployments
 - **Docker Check Build**: [`docker-check-build.yml`](docker-check-build.yml) - Validate Docker builds without publishing
