@@ -1,6 +1,6 @@
 use aes_prng::AesRng;
 use algebra::poly::Poly;
-use algebra::poly::lagrange_interpolation;
+use algebra::poly::lagrange_interpolation_with_polys;
 use algebra::poly::lagrange_polynomials;
 use algebra::sharing::shamir::InputOp;
 use algebra::sharing::shamir::ShamirSharings;
@@ -23,32 +23,27 @@ fn bench_lagrange_poly(c: &mut Criterion) {
         let p_str = format!("n:{num_parties}/t:{threshold}/e:{max_err}");
         assert!(num_parties >= (threshold + 1) + 2 * max_err);
 
+        let mut rng = AesRng::seed_from_u64(0);
+        let secret = LevelOne::from_u128(2345);
+        let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
+        let xs: Vec<_> = sharing
+            .shares
+            .iter()
+            .map(|s| LevelOne::from_u128(s.owner().one_based() as u128))
+            .collect();
+        let ys: Vec<_> = sharing.shares.iter().map(|s| s.value()).collect();
+
+        // Pre-compute Lagrange polynomials for the memoized benchmark
+        let lagrange_polys = lagrange_polynomials(&xs);
+
         group.bench_function(BenchmarkId::new("lagrange_mem", p_str.clone()), |b| {
-            let mut rng = AesRng::seed_from_u64(0);
-            let secret = LevelOne::from_u128(2345);
-            let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
-            let xs: Vec<_> = sharing
-                .shares
-                .iter()
-                .map(|s| LevelOne::from_u128(s.owner().one_based() as u128))
-                .collect();
-            let ys: Vec<_> = sharing.shares.iter().map(|s| s.value()).collect();
             b.iter(|| {
-                let interpolated = lagrange_interpolation(&xs, &ys);
+                let interpolated = lagrange_interpolation_with_polys(&lagrange_polys, &ys);
                 assert_eq!(interpolated.unwrap().eval(&LevelOne::from_u128(0)), secret);
             });
         });
 
         group.bench_function(BenchmarkId::new("lagrange_no_mem", p_str), |b| {
-            let mut rng = AesRng::seed_from_u64(0);
-            let secret = LevelOne::from_u128(2345);
-            let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
-            let xs: Vec<_> = sharing
-                .shares
-                .iter()
-                .map(|s| LevelOne::from_u128(s.owner().one_based() as u128))
-                .collect();
-            let ys: Vec<_> = sharing.shares.iter().map(|s| s.value()).collect();
             b.iter(|| {
                 let ls = lagrange_polynomials(&xs);
                 let mut res = Poly::zero();

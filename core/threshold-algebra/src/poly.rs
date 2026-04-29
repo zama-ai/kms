@@ -600,15 +600,27 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
 
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
-    let ls = F::memoize_lagrange(points)?;
-    if ls.len() != values.len() {
+    if let Some(cached) = F::cached_lagrange_polys(points) {
+        lagrange_interpolation_with_polys(cached, values)
+    } else {
+        lagrange_interpolation_with_polys(lagrange_polynomials(points), values)
+    }
+}
+
+/// interpolate a polynomial using pre-computed Lagrange basis polynomials and y-coordinates
+pub fn lagrange_interpolation_with_polys<F: Field>(
+    lagrange_polys: impl AsRef<[Poly<F>]>,
+    values: &[F],
+) -> anyhow::Result<Poly<F>> {
+    let lagrange_polys = lagrange_polys.as_ref();
+    if lagrange_polys.len() != values.len() {
         return Err(anyhow_error_and_log(
             "Lagrange interpolation failure: mismatch between number of points and values"
                 .to_string(),
         ));
     }
     let mut res = Poly::zero();
-    for (li, vi) in ls.into_iter().zip_eq(values.iter()) {
+    for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
         let term = li * vi;
         res = res + term;
     }

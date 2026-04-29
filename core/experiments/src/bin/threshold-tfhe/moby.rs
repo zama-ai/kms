@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use clap::Parser;
 use experiments::choreography;
 use experiments::choreography::tfhe_rs::strategies::DefaultChoreoRoutingHelper;
@@ -23,6 +25,16 @@ pub struct Cli {
     /// Disable telemetry (tracing and metrics).
     #[clap(long)]
     no_telemetry: bool,
+
+    /// Gives the expected number of parties, used to pre-compute the Lagrange basis.
+    /// Note: For GF8 and GF16 the cache is pre-computed for all subsets, so this argument is not needed and can be ignored.
+    #[clap(long)]
+    expected_num_parties: Option<usize>,
+
+    /// Gives the expected number of threshold, used to pre-compute the Lagrange basis.
+    /// Note: For GF8 and GF16 the cache is pre-computed for all subsets, so this argument is not needed and can be ignored.
+    #[clap(long)]
+    expected_threshold: Option<usize>,
 }
 
 // Below we set EXTENSION_DEGREE to be the highest available from the compilation flags
@@ -71,6 +83,20 @@ const EXTENSION_DEGREE: usize = 8;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let (Some(num_parties), Some(threshold)) = (
+        Cli::parse().expected_num_parties,
+        Cli::parse().expected_threshold,
+    ) {
+        // Pre-compute the Lagrange basis for the expected number of parties and threshold
+        algebra::galois_fields::lagrange::init_lagrange_stores(
+            NonZero::new(num_parties).expect("Number of parties must be non-zero"),
+            threshold,
+        )?;
+    } else {
+        println!(
+            "Expected number of parties or threshold not provided, skipping pre-computation of Lagrange basis"
+        );
+    }
     default_provider().install_default().unwrap();
     #[cfg(feature = "measure_memory")]
     experiments::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
