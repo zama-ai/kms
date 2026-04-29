@@ -3,7 +3,6 @@ use std::path::Path;
 
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
@@ -14,6 +13,7 @@ use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,

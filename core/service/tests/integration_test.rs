@@ -473,9 +473,7 @@ mod kms_server_binary_test {
         );
 
         child.kill().expect("kill failed");
-        let output = child
-            .wait_with_output()
-            .expect("wait_with_output failed");
+        let output = child.wait_with_output().expect("wait_with_output failed");
 
         // Debug output for unexpected non-kill exit codes
         if !output.status.success() && output.status.code().is_some() {
