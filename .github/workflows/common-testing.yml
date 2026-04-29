@@ -63,8 +63,6 @@ on:
     secrets:
       GHCR_READ_TOKEN:
         required: true
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
       SLACK_CHANNEL:
         required: true
       BOT_USERNAME:
@@ -115,10 +113,8 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          submodules: true
           lfs: ${{ ! inputs.skip-test-material }}
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Get Rust version
         env:
@@ -301,7 +297,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: 'minioadmin'
           AWS_DEFAULT_REGION: 'eu-north-1'
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}

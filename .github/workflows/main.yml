@@ -239,17 +239,28 @@ jobs:
       # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
       #   centralized : central testing only (no threshold material)
+      # Threshold entry: PRSS tests (sequential via #[serial]); needs default material.
+      # Centralized entry: keygen, CRS, backup/restore workflows.
+      # Both skip: full_gen_tests (nightly), nightly_* (scheduled),
+      # k8s_* (cluster tests), isolated_test_example (demo).
+      # The docker-tls test runs in its own dedicated job — skip it here.
       - name: Set matrix
         id: set-matrix
         run: |
-          MATRIX="matrix={\"include\":["
-                    # Threshold tests: includes PRSS tests (sequential execution via #[serial])
-          # Centralized tests: basic keygen, CRS, backup/restore workflows
-          # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
-          MATRIX="${MATRIX}{\"args-tests\":\"--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\",\"generate_default_material\":true},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\",\"generate_default_material\":false}"
-          MATRIX="${MATRIX%,}]}"
-          echo "$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "$MATRIX"
+          MATRIX_JSON=$(jq -nc '{
+            include: [
+              {
+                "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker",
+                generate_default_material: true
+              },
+              {
+                "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example",
+                generate_default_material: false
+              }
+            ]
+          }')
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX_JSON"
 
   # Core client integration tests - Native execution (no Docker)
   # Runs integration tests split across threshold and centralized jobs
@@ -282,10 +293,6 @@ jobs:
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
-      # 11 integration_test tests, each isolated (tempdir + OS-assigned ports).
-      # Measured 49.5min total at 6-way; the slowest test
-      # (`test_threshold_mpc_context_switch_6`, ~20min) is the floor, so
-      # going past 6 is diminishing returns.
       nextest-test-threads: "6"
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -317,14 +324,110 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms-core-client'
-      # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
-      # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
-      args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
+      # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
+      # and the docker-tls test which has its own dedicated job.
+      # nightly_* and nightly_full_gen_tests_* are intentionally included here
+      # (they're skipped only in the regular-CI profile via --skip).
+      args-tests: >-
+        --features threshold_tests -- --skip k8s_ --skip isolated_test_example
+        --skip test_threshold_mpc_context_switch_6_docker
       generate-default-material: true
       nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
     secrets: inherit
+
+  # Docker-Compose integration test. Exercises mTLS + certificate-store reload
+  # when the MPC context changes (the test brings up a 6-party cluster via
+  # docker compose). Free-standing job — does not go through common-testing.yml
+  # because it doesn't need the test-material/btrfs/minio plumbing.
+  test-core-client-docker-tls:
+    name: main/test-core-client-docker-tls
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
+      github.ref == 'refs/heads/main'
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      DOCKER_BUILDKIT: 1
+      DOCKER_BUILD_TEST_CORE_CLIENT: 1
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: ./.github/actions/docker-login
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Chainguard Container Registry
+        uses: ./.github/actions/docker-login
+        with:
+          registry: cgr.dev
+          username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
+          password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
+
+      - name: Set up Docker Buildx
+        uses: ./.github/actions/docker-setup-buildx
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
+        with:
+          save-if: false
+
+      - name: Install nextest
+        run: cargo install cargo-nextest@0.9.133 --locked --force
+
+      - name: Run TLS-over-Docker integration test
+        run: |
+          echo "EXECUTING: env RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast -p kms-core-client --features threshold_tests --test integration_test -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'"
+          env RUST_BACKTRACE=full cargo nextest run \
+            --profile ci \
+            --no-fail-fast \
+            -p kms-core-client \
+            --features threshold_tests \
+            --test integration_test \
+            -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
 
   # Core client unit tests. Integration filters below skip everything that
   # consumes kms test material, so `skip-test-material: true` is safe.
@@ -446,15 +549,23 @@ jobs:
       - name: Set matrix
         id: set-matrix
         run: |
-          MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
+            MATRIX_JSON=$(jq -nc '{
+              include: [
+                { "args-tests": "--release -F slow_tests -F s3_tests -F insecure nightly" }
+              ]
+            }')
           else
-            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
+            MATRIX_JSON=$(jq -nc '{
+              include: [
+                { "args-tests": "-F testing --lib" },
+                { "args-tests": "-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly" },
+                { "args-tests": "-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly" }
+              ]
+            }')
           fi
-          MATRIX="${MATRIX%,}]}"
-          echo "$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "$MATRIX"
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+          echo "matrix=$MATRIX_JSON"
 
   # Runs core service tests based on the matrix configuration
   # Uses big instance for better performance and includes:
@@ -640,11 +751,13 @@ jobs:
       matrix:
         include:
 
-          # Most "normal" crates should be added here; runs with default features only.
+          # "Normal" crates and small utilities; default features only.
+          # `--all-features` would still be a no-op for the utilities since none
+          # of them define non-default features today.
           - group: crates-normies
-            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv'
-            # Run with default features avoids slow_tests; we turn on `all_extension_degrees` on threshold-algebra so
-            # all its per-degree tests run.
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+            # Default features avoids slow_tests; turn on `all_extension_degrees`
+            # on threshold-algebra so its per-degree tests run.
             features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
             runs-on: '64cpu-linux-x64'
@@ -666,13 +779,6 @@ jobs:
             features: '-F threshold-bgv/slow_tests'
             threads: '8'
             runs-on: '64cpu-linux-x64'
-
-          # Small and light utility crates. Quick to run.
-          - group: workspace-utils
-            crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
-            features: '--all-features'
-            threads: ''
-            runs-on: '8cpu-linux-x64'
     uses: ./.github/workflows/common-testing.yml
     with:
       # --no-tests=pass: no tests is not an error, but to nexttest it is and this is the fix.
