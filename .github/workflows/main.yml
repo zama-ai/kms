@@ -533,23 +533,15 @@ jobs:
 
   ############################################################################
   # Core Threshold Pipeline
-  # Testing triggered by:
-  # - Changes to core/experiments/**
-  # - Changes to observability/**
-  # - Changes to workflow file
   #
-  # This component has three different test configurations:
-  # 1. PR Tests: Basic validation for pull requests
-  # 2. Main Branch Tests: Extended tests with Redis integration
-  # 3. Dependabot Tests: Simplified build for dependency updates
+  # Runs `experiments` lib tests. `experiments` doesn't consume kms test
+  # material. Triggered by changes to core/experiments/**, tools/**, this
+  # workflow, or pushes to main. (`slow_tests` for the threshold stack lives
+  # on `threshold-bgv` and is covered by
+  # `test-workspace-crates::crates-heavy-2`.)
   ############################################################################
-
-  # Runs basic threshold tests for pull requests
-  # Includes slow tests but runs only library tests
-  # experiments tests don't consume kms test material.
-  test-core-threshold-pr:
-    name: main/test-core-threshold-pr
-    # job permissions
+  test-core-threshold:
+    name: main/test-core-threshold
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry
@@ -558,9 +550,15 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
+      # `experiments` lib tests use rayon internally, so each test uses more threads.
+      # Cap nextest parallelism at 4 on a 32-core runner.
       args-tests: '--lib'
       crate-names: '-p experiments'
       nextest-test-threads: 4
@@ -577,13 +575,18 @@ jobs:
       runs-on: '32cpu-linux-x64'
     secrets: inherit
 
-  # Runs extended threshold tests on main/release branches
-  # Includes Redis integration and all test suites
-  # Only runs when threshold-related changes are detected
-  # experiments tests don't consume kms test material.
-  test-core-threshold-main:
-    name: main/test-core-threshold-main
-    # job permissions
+  ############################################################################
+  # `experiments::integration_redis` is the only redis-touching test in the
+  # workspace; it needs the redis sidecar from `common-testing.yml`.
+  # Tests use `FLUSHALL`, so they must run sequentially (--test-threads 1).
+  #
+  # TODO(dp): can we not do this? The dedicated job + sidecar exists for a
+  # single test file. If we don't plan to extend redis-path coverage in
+  # `threshold-execution`, prefer deleting `integration_redis.rs` and the
+  # `redis` workspace dep on `experiments` over maintaining this.
+  ############################################################################
+  test-core-threshold-redis:
+    name: main/test-core-threshold-redis
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry
@@ -592,47 +595,20 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
+    if: >-
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      args-tests: '--lib'
+      args-tests: '--test integration_redis'
+      crate-names: '-p experiments'
       run-redis: true
-      crate-names: '-p experiments'
-      nextest-test-threads: 4
+      # `serial_test::serial` is process-local; nextest runs each #[test] in
+      # its own process, so we serialize at the runner level instead.
+      nextest-test-threads: 1
       skip-test-material: true
-      # Availables runners:
-      #  - 1cpu-linux-x64 (m7a.medium)
-      #  - 2cpu-linux-x64 (m7i.large)
-      #  - 4cpu-linux-x64 (m7i.xlarge)
-      #  - 8cpu-linux-x64 (c7i.2xlarge)
-      #  - 16cpu-linux-x64 (c7i.4xlarge)
-      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
-      #  - 48cpu-linux-x64 (c7i.12xlarge)
-      #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '32cpu-linux-x64'
-    secrets: inherit
-
-  # Simplified build process for Dependabot PRs
-  # Only runs library tests without integration components
-  # Helps validate dependency updates quickly
-  # experiments tests don't consume kms test material.
-  build-dependabot:
-    name: main/build-dependabot
-    # job permissions
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    needs: check-changes
-    if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
-    uses: ./.github/workflows/common-testing.yml
-    with:
-      args-tests: '--lib'
-      crate-names: '-p experiments'
-      skip-test-material: true
+      runs-on: '8cpu-linux-x64'
     secrets: inherit
 
   ############################################################################
@@ -717,11 +693,10 @@ jobs:
       - test-grpc
       - test-core-service
       - test-core-service-slow-threshold
-      - test-core-threshold-pr
-      - test-core-threshold-main
+      - test-core-threshold
+      - test-core-threshold-redis
       - test-workspace-crates
       - test-wasm
-      - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
     permissions:
       checks: write # Required to create GitHub checks for test results
