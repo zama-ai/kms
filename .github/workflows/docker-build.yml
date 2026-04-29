@@ -67,16 +67,20 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: docker-build-rust-golden-latest
+  cancel-in-progress: false
+
 jobs:
   ############################################################################
   # Computes a content-addressed tag for the golden image and checks whether
   # an image with that tag already exists in GHCR. The tag is derived from
   # the inputs that actually determine the image content: the Dockerfile,
   # rust-toolchain.toml, and the resolved digest of the Chainguard base
-  # image (which is a moving tag upstream). When `cache_hit == 'true'`,
-  # `rust-golden-image:latest` already points at the matching content-tagged
-  # image, so the `golden-image` job below is skipped and downstream jobs keep
-  # using their existing `rust-golden-image:latest` Dockerfile base.
+  # image (which is a moving tag upstream). When `cache_hit == 'true'`, the
+  # content-tagged image already exists and can be retagged as `latest` before
+  # the downstream Dockerfiles consume their existing `rust-golden-image:latest`
+  # base.
   golden-image-tag:
     name: docker-build/golden-image-tag
     runs-on: ubuntu-latest
@@ -119,38 +123,20 @@ jobs:
           GOLDEN_TAG="golden-${CONTENT_HASH}"
           echo "golden_tag=${GOLDEN_TAG}" >> "$GITHUB_OUTPUT"
           echo "Computed golden image tag: ${GOLDEN_TAG}"
-      - name: Check whether golden image latest is current
+      - name: Check whether golden image already exists
         id: lookup
         env:
           GOLDEN_TAG: ${{ steps.compute.outputs.golden_tag }}
         run: |
           set -euo pipefail
           GOLDEN_IMAGE="ghcr.io/zama-ai/kms/rust-golden-image:${GOLDEN_TAG}"
-          LATEST_IMAGE="ghcr.io/zama-ai/kms/rust-golden-image:latest"
 
-          if ! docker manifest inspect "${GOLDEN_IMAGE}" >/dev/null 2>&1; then
-            echo "cache_hit=false" >> "$GITHUB_OUTPUT"
-            echo "Cache miss: ${GOLDEN_IMAGE} does not exist."
-            exit 0
-          fi
-
-          if ! docker manifest inspect "${LATEST_IMAGE}" >/dev/null 2>&1; then
-            echo "cache_hit=false" >> "$GITHUB_OUTPUT"
-            echo "Cache miss: ${LATEST_IMAGE} does not exist."
-            exit 0
-          fi
-
-          GOLDEN_DIGEST=$(docker buildx imagetools inspect "${GOLDEN_IMAGE}" --format '{{.Manifest.Digest}}')
-          LATEST_DIGEST=$(docker buildx imagetools inspect "${LATEST_IMAGE}" --format '{{.Manifest.Digest}}')
-          echo "${GOLDEN_IMAGE} -> ${GOLDEN_DIGEST}"
-          echo "${LATEST_IMAGE} -> ${LATEST_DIGEST}"
-
-          if [[ "${GOLDEN_DIGEST}" == "${LATEST_DIGEST}" ]]; then
+          if docker manifest inspect "${GOLDEN_IMAGE}" >/dev/null 2>&1; then
             echo "cache_hit=true" >> "$GITHUB_OUTPUT"
-            echo "Cache hit: latest already matches ${GOLDEN_TAG}; skipping rebuild."
+            echo "Cache hit: ${GOLDEN_IMAGE} already exists."
           else
             echo "cache_hit=false" >> "$GITHUB_OUTPUT"
-            echo "Cache miss: latest differs from ${GOLDEN_TAG}; rebuilding golden image."
+            echo "Cache miss: golden image will be built and pushed as :${GOLDEN_TAG}."
           fi
 
   ############################################################################
@@ -193,26 +179,70 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
+  # Retags the content-addressed golden image as latest.
+  #
+  # The downstream Dockerfiles cannot receive the content tag through
+  # common-docker.yml@v1.0.5, so keep `latest` synchronized before they build.
+  ############################################################################
+  golden-image-latest:
+    name: docker-build/golden-image-latest
+    runs-on: ubuntu-latest
+    needs:
+      - golden-image-tag
+      - golden-image
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.golden-image-tag.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
+      (
+        needs.golden-image.result == 'success' ||
+        needs.golden-image-tag.outputs.cache_hit == 'true'
+      )
+    permissions:
+      packages: write # Required to update the latest tag in GHCR
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag golden image as latest
+        env:
+          GOLDEN_TAG: ${{ needs.golden-image-tag.outputs.golden_tag }}
+        run: |
+          set -euo pipefail
+          GOLDEN_IMAGE="ghcr.io/zama-ai/kms/rust-golden-image:${GOLDEN_TAG}"
+          LATEST_IMAGE="ghcr.io/zama-ai/kms/rust-golden-image:latest"
+
+          docker buildx imagetools create \
+            --tag "${LATEST_IMAGE}" \
+            "${GOLDEN_IMAGE}"
+
+          GOLDEN_DIGEST=$(docker buildx imagetools inspect "${GOLDEN_IMAGE}" --format '{{.Manifest.Digest}}')
+          LATEST_DIGEST=$(docker buildx imagetools inspect "${LATEST_IMAGE}" --format '{{.Manifest.Digest}}')
+          echo "${GOLDEN_IMAGE} -> ${GOLDEN_DIGEST}"
+          echo "${LATEST_IMAGE} -> ${LATEST_DIGEST}"
+
+          if [[ "${GOLDEN_DIGEST}" != "${LATEST_DIGEST}" ]]; then
+            echo "Latest tag does not match ${GOLDEN_TAG} after retagging"
+            exit 1
+          fi
+
+  ############################################################################
   # Builds Docker image for core-client
   #
   core-client:
     name: docker-build/core-client (bpr)
     needs:
       # - start-amd64-runner
-      - golden-image-tag
-      - golden-image
-    # `golden-image` is skipped only when latest already matches the content tag,
-    # so downstream builds may use latest only in that cache-hit case.
+      - golden-image-latest
     if: |
+      always() &&
       !cancelled() &&
-      needs.golden-image-tag.result == 'success' &&
-      (
-        needs.golden-image.result == 'success' ||
-        (
-          needs.golden-image-tag.outputs.cache_hit == 'true' &&
-          (github.event_name != 'workflow_dispatch' || inputs.build-golden-image)
-        )
-      ) &&
+      needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
@@ -247,20 +277,11 @@ jobs:
     name: docker-build/core-service (bpr)
     needs:
       # - start-amd64-runner
-      - golden-image-tag
-      - golden-image
-    # `golden-image` is skipped only when latest already matches the content tag,
-    # so downstream builds may use latest only in that cache-hit case.
+      - golden-image-latest
     if: |
+      always() &&
       !cancelled() &&
-      needs.golden-image-tag.result == 'success' &&
-      (
-        needs.golden-image.result == 'success' ||
-        (
-          needs.golden-image-tag.outputs.cache_hit == 'true' &&
-          (github.event_name != 'workflow_dispatch' || inputs.build-golden-image)
-        )
-      ) &&
+      needs.golden-image-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
     permissions:
