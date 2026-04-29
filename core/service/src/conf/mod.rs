@@ -84,26 +84,38 @@ pub struct ServiceEndpoint {
     pub grpc_max_message_size: usize,
 }
 
+/// The enclave init script extracts networking configuration from the
+/// kms-server config before kms-server even starts. We add these fields to the
+/// config schema so serde validation wouldn't be thrown off by unknown
+/// fields. Kms-server doesn't actually use them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct EnclaveBootstrapConfig {
+    // vsock to read fresh k8s web identity tokens from
     #[validate(range(min = 1, max = 65535))]
     pub web_identity_token_port: u16,
     #[validate(range(min = 1, max = 65535))]
+    // vsock to read the parent k8s pod DNS configuration from
     pub resolv_conf_port: u16,
+    // enclave networking configuration
     #[validate(nested)]
     pub network_tunnel: EnclaveBootstrapNetworkTunnelConfig,
 }
 
+/// Enclaves now get their own routable IP addresses.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct EnclaveBootstrapNetworkTunnelConfig {
+    // gateway and enclave are on this subnet
     #[validate(length(min = 1))]
     pub subnet: String,
+    // gateway address
     #[validate(length(min = 1))]
     pub parent_address: String,
+    // unsurprisingly, enclave address
     #[validate(length(min = 1))]
     pub enclave_address: String,
+    // virtual TUN devices on both ends talk through this vsock
     #[validate(range(min = 1, max = 65535))]
     pub vsock_port: u16,
 }
