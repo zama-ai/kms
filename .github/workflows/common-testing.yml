@@ -312,7 +312,18 @@ jobs:
           # for `all`.
           du -sh /mnt/cow-scratch/test-material
 
-      # Build kms-custodian binary required by integration tests
+      # Build kms-custodian binary required by integration tests.
+      # TODO(dp): retire this step. Only two test files use the binary:
+      #   - core/service/tests/integration_test.rs (`sunshine_*` in
+      #     `kms_custodian_binary_tests`) — same-package, `cargo_bin()` works
+      #     without the explicit pre-build because nextest auto-builds [[bin]]s.
+      #   - core-client/tests/integration/integration_test.rs (custodian
+      #     backup tests) — cross-package, currently needs the explicit
+      #     build. Migrate to `escargot::CargoBuild::new().bin("kms-custodian").package("kms").run()?`
+      #     so the test builds the binary on demand. See per-test TODOs in
+      #     core-client/tests/integration/integration_test.rs.
+      # Once retired, this step (and the `skip-test-material` gating below)
+      # can go away. Need a specific step/test for the kms-binary though?
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
         run: |
