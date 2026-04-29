@@ -1507,7 +1507,9 @@ impl<
                 // partial success and retry the migration, but we do not try
                 // to mark the new keygen itself as failed.
                 //
-                // TODO if copying fails, do we still call `update_backup_vault`?
+                // Even if this migration copy fails, continue so the successfully
+                // committed new key material at req_id is swept into the backup
+                // vault below.
                 if matches!(
                     keyset_config.secret_key_config,
                     ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
@@ -1537,7 +1539,6 @@ impl<
                              The new keys at {req_id} are valid; \
                              the migration to {old_key_id} must be retried."
                         );
-                        return;
                     }
                 }
             }

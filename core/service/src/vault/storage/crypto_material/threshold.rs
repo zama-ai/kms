@@ -23,6 +23,7 @@ use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
+        utils::verify_public_key_digest_from_bytes,
     },
     util::meta_store::update_err_req_in_meta_store,
     util::meta_store::{
@@ -619,6 +620,40 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 anyhow::anyhow!("Migrated ThresholdFheKeys metadata missing PublicKey digest")
             })?
             .clone();
+
+        // The old PublicKey bytes are intentionally preserved in Phase B, so
+        // verify now that they are present, readable, and match the digest
+        // that will be signed into the migrated metadata.
+        let old_public_key_bytes = pub_storage
+            .load_bytes(old_key_id, &PubDataType::PublicKey.to_string())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to load raw PublicKey bytes for old keyset {old_key_id}: {e}"
+                )
+            })?;
+        verify_public_key_digest_from_bytes(&old_public_key_bytes, &public_key_digest).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "PublicKey digest mismatch for old keyset {old_key_id}: {e}; \
+                     expected={}, stored-bytes-hash={}",
+                    hex::encode(&public_key_digest),
+                    hex::encode(hashing::hash_element(
+                        &crate::engine::base::DSEP_PUBDATA_KEY,
+                        &old_public_key_bytes
+                    )),
+                )
+            },
+        )?;
+        let _: tfhe::CompactPublicKey = read_versioned_at_request_id(
+            &*pub_storage,
+            old_key_id,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize PublicKey for old keyset {old_key_id}: {e}")
+        })?;
 
         // Re-sign the metadata under old_key_id.
         let sol_type = KeygenVerification::new_compressed(
