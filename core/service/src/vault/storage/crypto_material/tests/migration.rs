@@ -112,6 +112,7 @@ async fn assert_migrated_public_material(
     crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
     old_key_id: &RequestId,
     new_key_id: &RequestId,
+    expected_server_key_bytes: &[u8],
 ) {
     let pub_storage = crypto_storage.inner.public_storage.lock().await;
     assert!(
@@ -122,11 +123,11 @@ async fn assert_migrated_public_material(
         "CompressedXofKeySet should exist at old_key_id"
     );
     assert!(
-        !pub_storage
+        pub_storage
             .data_exists(old_key_id, &PubDataType::ServerKey.to_string())
             .await
             .unwrap(),
-        "stale ServerKey should be deleted from old_key_id after migration"
+        "ServerKey should be preserved at old_key_id after migration"
     );
     assert!(
         pub_storage
@@ -154,6 +155,26 @@ async fn assert_migrated_public_material(
         old_pk_bytes, new_pk_bytes,
         "compact PK bytes at old_key_id and new_key_id must be identical"
     );
+    let old_server_key_bytes = pub_storage
+        .load_bytes(old_key_id, &PubDataType::ServerKey.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        old_server_key_bytes, expected_server_key_bytes,
+        "ServerKey bytes at old_key_id must be preserved by migration"
+    );
+}
+
+async fn load_public_material_bytes(
+    crypto_storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    key_id: &RequestId,
+    data_type: PubDataType,
+) -> Vec<u8> {
+    let pub_storage = crypto_storage.inner.public_storage.lock().await;
+    pub_storage
+        .load_bytes(key_id, &data_type.to_string())
+        .await
+        .unwrap()
 }
 
 /// Seed an `old_key_id` with a pre-migration uncompressed keyset whose
@@ -247,6 +268,8 @@ async fn test_copy_compressed_key_to_original_success() {
         &domain,
     )
     .await;
+    let old_server_key_bytes =
+        load_public_material_bytes(&crypto_storage, &old_key_id, PubDataType::ServerKey).await;
 
     let (compressed_keyset, new_fhe_keys) = generate_compressed_keyset_and_fhe_keys(
         &new_key_id,
@@ -281,12 +304,18 @@ async fn test_copy_compressed_key_to_original_success() {
         .await;
     assert!(result.is_ok(), "copy should succeed: {result:?}");
 
-    // Stale ServerKey left over from the original uncompressed keyset must be
-    // removed. PublicKey is in both the old and new digest maps (the migrate
-    // keygen preserves the old compact PK at new_key_id), so it must stay —
-    // and its bytes must match the ones at new_key_id so external clients see
-    // the same compact PK at either ID.
-    assert_migrated_public_material(&crypto_storage, &old_key_id, &new_key_id).await;
+    // ServerKey left over from the original uncompressed keyset is retained for
+    // legacy/direct-storage consumers. PublicKey is in both the old and new
+    // digest maps (the migrate keygen preserves the old compact PK at
+    // new_key_id), so it must stay too; its bytes must match the ones at
+    // new_key_id so external clients see the same compact PK at either ID.
+    assert_migrated_public_material(
+        &crypto_storage,
+        &old_key_id,
+        &new_key_id,
+        &old_server_key_bytes,
+    )
+    .await;
 
     // ThresholdFheKeys at (old_key_id, epoch_id) has Compressed public_material
     // and metadata signed under old_key_id.
@@ -333,6 +362,8 @@ async fn test_copy_compressed_key_overwrite() {
         &domain,
     )
     .await;
+    let old_server_key_bytes =
+        load_public_material_bytes(&crypto_storage, &old_key_id, PubDataType::ServerKey).await;
 
     let (compressed_1, fhe_keys_1) = generate_compressed_keyset_and_fhe_keys(
         &new_key_id_1,
@@ -366,6 +397,13 @@ async fn test_copy_compressed_key_overwrite() {
         )
         .await
         .unwrap();
+    assert_migrated_public_material(
+        &crypto_storage,
+        &old_key_id,
+        &new_key_id_1,
+        &old_server_key_bytes,
+    )
+    .await;
 
     let (compressed_2, fhe_keys_2) = generate_compressed_keyset_and_fhe_keys(
         &new_key_id_2,
@@ -397,6 +435,13 @@ async fn test_copy_compressed_key_overwrite() {
         )
         .await;
     assert!(result.is_ok(), "second copy should succeed: {result:?}");
+    assert_migrated_public_material(
+        &crypto_storage,
+        &old_key_id,
+        &new_key_id_2,
+        &old_server_key_bytes,
+    )
+    .await;
 
     {
         let guarded = crypto_storage

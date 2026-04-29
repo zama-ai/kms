@@ -32,10 +32,9 @@ use crate::{
         Vault,
         storage::{
             Storage, StorageExt, crypto_material::log_storage_success,
-            delete_at_request_and_epoch_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, read_versioned_at_request_and_epoch_id,
-            read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id,
+            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
+            read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
     },
 };
@@ -530,13 +529,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// keygen meta-store are all updated under the same held locks so a concurrent
     /// reader cannot observe a mixed pre/post state.
     ///
-    /// Stale pub-data left over from the original (pre-migration) uncompressed
-    /// keyset at `old_key_id` is removed so that pub storage at `old_key_id`
-    /// exactly reflects the new metadata's `key_digest_map`. The migrate keygen
-    /// preserves the old `CompactPublicKey` at `new_key_id`, so `PubDataType::PublicKey`
-    /// is present in both old and new digest maps and is **not** part of the
-    /// stale-types diff — the compact public key file at `old_key_id` is left
-    /// untouched, and remains identical to the one stored at `new_key_id`.
+    /// The old `CompactPublicKey` and `ServerKey` files at `old_key_id` are
+    /// preserved for compatibility. The migration keygen also stores the old
+    /// `CompactPublicKey` at `new_key_id`, so the public key bytes remain
+    /// identical under both IDs. `ServerKey` is retained even though compressed
+    /// metadata does not advertise it, so legacy or direct-storage consumers can
+    /// continue fetching it from the original key id while new flows prefer the
+    /// signed compressed layout.
     #[allow(clippy::too_many_arguments)]
     pub async fn copy_compressed_key_to_original(
         &self,
@@ -577,10 +576,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         )
         .await?;
 
-        // The pre-migration ThresholdFheKeys at (old_key_id, old_epoch_id); we
-        // use its key_digest_map to decide which stale PubDataTypes to delete
-        // from pub storage at old_key_id.
-        let old_fhe_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+        // Validate that the original key exists before mutating any backend.
+        let _: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
             &*priv_storage,
             old_key_id,
             old_epoch_id,
@@ -637,8 +634,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             migrated_inner.key_digest_map.clone(),
             new_signature,
         );
-        let new_key_digest_keys: std::collections::HashSet<PubDataType> =
-            migrated_inner.key_digest_map.keys().copied().collect();
 
         let updated_fhe_keys = ThresholdFheKeys::new(
             migrated_fhe_keys.private_keys.clone(),
@@ -648,35 +643,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
         // --- Phase B: mutate all backends under the held locks. ---
 
-        // Pub storage at old_key_id: remove any pre-migration pub-data types
-        // that are NOT present in the new digest map (stale ServerKey/PublicKey
-        // from the original uncompressed keyset), then overwrite the
-        // CompressedXofKeySet.
-        let stale_pub_types: Vec<PubDataType> = match &old_fhe_keys.meta_data {
-            KeyGenMetadata::Current(old_inner) => old_inner
-                .key_digest_map
-                .keys()
-                .copied()
-                .filter(|t| !new_key_digest_keys.contains(t))
-                .collect(),
-            // Legacy pre-upgrade metadata: we can still tell which pub-data
-            // types were written by looking at the raw map.
-            KeyGenMetadata::LegacyV0(map) => map
-                .keys()
-                .copied()
-                .filter(|t| !new_key_digest_keys.contains(t))
-                .collect(),
-        };
-        for pub_type in &stale_pub_types {
-            match pub_type {
-                PubDataType::PublicKey => {
-                    delete_pk_at_request_id(&mut *pub_storage, old_key_id).await?;
-                }
-                other => {
-                    delete_at_request_id(&mut *pub_storage, old_key_id, &other.to_string()).await?;
-                }
-            }
-        }
+        // Preserve the old PublicKey and ServerKey, and overwrite only the
+        // compressed keyset at the original key ID.
         delete_at_request_id(
             &mut *pub_storage,
             old_key_id,
