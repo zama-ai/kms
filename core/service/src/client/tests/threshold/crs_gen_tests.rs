@@ -5,7 +5,6 @@ cfg_if::cfg_if! {
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::CrsGenRequest;
     use kms_grpc::kms::v1::{Empty, FheParameter};
@@ -14,12 +13,18 @@ cfg_if::cfg_if! {
     use kms_grpc::RequestId;
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Arc;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
+    use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+}}
+
+cfg_if::cfg_if! {
+   if #[cfg(feature = "slow_tests")] {
+    use std::sync::Arc;
     use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+    use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
+    use crate::util::key_setup::test_tools::purge;
 }}
 
 #[cfg(feature = "insecure")]
