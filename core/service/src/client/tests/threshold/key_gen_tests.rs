@@ -1273,7 +1273,7 @@ pub(crate) async fn verify_keygen_responses(
                     req_get_keygen,
                     &kg_res,
                     domain,
-                    vec![],
+                    extra_data.clone(),
                     &storage,
                 )
                 .await
