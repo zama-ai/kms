@@ -1,7 +1,8 @@
 use algebra::{
     PRSSConversions,
     error_correction::error_correction,
-    poly::{Poly, lagrange_polynomials},
+    galois_fields::lagrange::{LagrangeMap, build_lagrange_map},
+    poly::Poly,
     sharing::{shamir::ShamirSharings, share::Share},
     structure_traits::{
         ErrorCorrect, Field, FromU128, Invert, One, Ring, RingWithExceptionalSequence, Sample,
@@ -21,11 +22,8 @@ use itertools::Itertools;
 use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-use std::sync::LazyLock;
-use std::sync::RwLock;
+use std::{iter::Sum, sync::OnceLock};
 
 use crate::algebra::crt::LevelKswCrtRepresentation;
 use crate::algebra::crt::from_crt;
@@ -349,32 +347,11 @@ macro_rules! impl_field_level {
                 }
             }
 
-            static [<LAGRANGE_STORE_BGV_ $name:upper>]: LazyLock<RwLock<HashMap<Vec<$name>, Vec<Poly<$name>>>>> =
-                LazyLock::new(|| RwLock::new(HashMap::new()));
+            static [<LAGRANGE_STORE_BGV_ $name:upper>]: OnceLock<LagrangeMap<$name>> = OnceLock::new();
 
             impl Field for $name {
-                fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-                    if let Ok(lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].read() {
-                        match lock_lagrange_store.get(points) {
-                            Some(v) => Ok(v.clone()),
-                            None => {
-                                drop(lock_lagrange_store);
-                                if let Ok(mut lock_lagrange_store) = [<LAGRANGE_STORE_BGV_ $name:upper>].write() {
-                                    let lagrange_pols = lagrange_polynomials(points);
-                                    lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                                    Ok(lagrange_pols)
-                                } else {
-                                    Err(anyhow_error_and_log(
-                                        "Error writing LAGRANGE_STORE".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error reading LAGRANGE_STORE".to_string(),
-                        ))
-                    }
+                fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+                    [<LAGRANGE_STORE_BGV_ $name:upper>].get()?.get(points).map(|v| v.as_slice())
                 }
 
                 fn invert(&self) -> Self {
@@ -1379,6 +1356,65 @@ impl_field_level!(
     ConstMontyFormR,
     "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"
 );
+
+pub fn init_lagrange_cache_all_fields(
+    num_parties: std::num::NonZero<usize>,
+    min_threshold: usize,
+) -> anyhow::Result<()> {
+    LAGRANGE_STORE_BGV_LEVELONE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTWO
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTHREE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFOUR
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFIVE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDSIX
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDSEVEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDEIGHT
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDEIGHT
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDNINE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDELEVEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTWELVE
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDTHIRTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFOURTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDFIFTEEN
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+    LAGRANGE_STORE_BGV_FIELDR
+        .set(build_lagrange_map(num_parties, min_threshold)?)
+        .ok();
+
+    Ok(())
+}
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {

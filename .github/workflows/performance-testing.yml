@@ -76,6 +76,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: performance-testing-kms-ci
+  cancel-in-progress: false
+
 jobs:
   ############################################################################
   # Docker Build Job (Conditional)
@@ -108,12 +112,18 @@ jobs:
 
   ############################################################################
   # Start AMD64 Runner
-  # Waits for docker-build if it's running, but always executes
+  # Waits for docker-build if required, then starts the test runner
   ############################################################################
   start-amd64-runner:
     name: performance-testing/start-amd64-runner
     needs: [docker-build]
-    if: always()
+    if: |
+      always() &&
+      !cancelled() &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
@@ -135,7 +145,14 @@ jobs:
   ############################################################################
   performance-testing:
     needs: [docker-build, start-amd64-runner]
-    if: always() && needs.start-amd64-runner.result == 'success' && !cancelled()
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.start-amd64-runner.result == 'success' &&
+      (
+        needs.docker-build.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.build == false)
+      )
     name: performance-testing
     runs-on: ${{ needs.start-amd64-runner.outputs.label }}
     timeout-minutes: 1800
@@ -190,13 +207,12 @@ jobs:
       - name: Configure deployment parameters
         env:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-          TLS: ${{ inputs.tls || 'true' }}
+          TLS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.tls) || 'true' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
-          SYNC_SECRETS_CHART_VERSION: '0.2.1'
         run: |
           {
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
@@ -206,7 +222,6 @@ jobs:
             echo "NAMESPACE=${NAMESPACE}"
             echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
             echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
-            echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
           } >> "$GITHUB_ENV"
 
       - name: Login to zws GitHub Container Registry
@@ -229,6 +244,43 @@ jobs:
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
 
+      # VERIFY IMAGE TAGS EXIST IN REGISTRY
+      # Fail fast if requested tags are missing, instead of waiting ~40min for
+      # helm pre-install hooks to time out on ImagePullBackOff.
+      # ======================================================================
+      - name: Verify image tags exist in registry
+        env:
+          IMAGE_REPO: hub.zama.org/ghcr/zama-ai/kms
+        run: |
+          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+            CORE_IMAGE_NAME="core-service-enclave"
+          else
+            CORE_IMAGE_NAME="core-service"
+          fi
+
+          images=(
+            "${IMAGE_REPO}/${CORE_IMAGE_NAME}:${KMS_CORE_IMAGE_TAG}"
+            "${IMAGE_REPO}/core-client:${KMS_CORE_CLIENT_IMAGE_TAG}"
+          )
+
+          missing=0
+          for img in "${images[@]}"; do
+            echo "Checking ${img}..."
+            if docker manifest inspect "${img}" > /dev/null 2>&1; then
+              echo "  ✅ found"
+            else
+              echo "  ❌ not found in registry"
+              missing=1
+            fi
+          done
+
+          if [[ "${missing}" -eq 1 ]]; then
+            echo "ERROR: One or more required image tags are missing from the registry."
+            echo "If you dispatched manually with build=false, check that the provided"
+            echo "image tags were actually pushed; otherwise re-run with build=true."
+            exit 1
+          fi
+
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
@@ -237,7 +289,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:${NAMESPACE}
+          tags: tag:kms-ci
 
       - name: Setup helm
         run: |
@@ -457,7 +509,7 @@ jobs:
     name: performance-testing/stop-amd64-runner
     needs: [start-amd64-runner, performance-testing]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && needs.start-amd64-runner.result == 'success'
     steps:
       - name: Stop AMD64 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
