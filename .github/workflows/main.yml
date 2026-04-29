@@ -531,21 +531,16 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      # PR matrix has two disjoint entries (verified by find-test-duplicates tool):
+      #   entry 1: kind(lib), --skip nightly  → all kms lib tests minus nightly-named.
+      #   entry 2: kind(test), --skip threshold --skip nightly  → integration tests
+      #     not matching threshold/nightly. Threshold-named integration tests
+      #     run in `test-core-service-slow-threshold`. Nightly-named tests run
+      #     in the schedule entry below.
+      # Schedule entry runs everything name-matching `nightly` in --release.
+      #
       # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
-      # per-entry specs instead of regenerating everything. Concrete needs:
-      #   entry 1 (`-F testing --lib`)
-      #     : 4P testing, aka "insecure"
-      #   entry 2 (`slow_tests ... default_user_decryption_threshold --skip nightly`)
-      #     : 4P testing + 4P default (aka 4P insecure/4P secure)
-      #       (all surviving cases pin DEFAULT_THRESHOLD_KEY_ID_4P)
-      #   entry 3 (`slow_tests ... threshold --skip default_user_decryption_threshold --skip nightly`)
-      #     : 4P + 10P testing + 4P default + 13P testing
-      #       (10P from 2 public_decryption cases;
-      #        13P via TEST_THRESHOLD_KEY_ID alias in misc_tests)
-      #   entry 4 (`slow_tests ... -- --skip threshold --skip nightly`)
-      #     : 4P testing + 4P default (centralized only)
-      #   schedule
-      #     : all (nightly runs 10P user_decryption + 13P default)
+      # per-entry specs instead of regenerating everything.
       - name: Set matrix
         id: set-matrix
         run: |
@@ -558,9 +553,8 @@ jobs:
           else
             MATRIX_JSON=$(jq -nc '{
               include: [
-                { "args-tests": "-F testing --lib" },
-                { "args-tests": "-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly" },
-                { "args-tests": "-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly" }
+                { "args-tests": "-F slow_tests -F s3_tests -F insecure --lib -- --skip nightly" },
+                { "args-tests": "-E kind(test) -F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly" }
               ]
             }')
           fi
@@ -632,7 +626,7 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      args-tests: '-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
+      args-tests: '-E kind(test) -F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
       run-minio: true
       crate-names: '-p kms'
       runner-volume: '400gb'
@@ -752,11 +746,12 @@ jobs:
         include:
 
           # "Normal" crates and small utilities; default features only.
-          # `--all-features` would still be a no-op for the utilities since none
-          # of them define non-default features today.
+          # threshold-execution / threshold-bgv / threshold-networking are
+          # intentionally excluded — heavy-1 / heavy-2 already run them with
+          # `*/slow_tests`, which is a *superset* of the default test set.
           - group: crates-normies
-            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
-            # Default features avoids slow_tests; turn on `all_extension_degrees`
+            crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
+            # Default features avoid slow_tests; turn on `all_extension_degrees`
             # on threshold-algebra so its per-degree tests run.
             features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
