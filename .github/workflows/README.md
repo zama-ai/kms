@@ -628,7 +628,6 @@ graph TD
 #### Advanced Testing Features
 - **Nextest Integration**: Modern test runner with better output
 - **Test Parallelism**: Configurable via `nextest-test-threads`
-- **Retry Logic**: `NEXTEST_RETRIES: 3` for flaky test handling
 - **Artifact Collection**: JUnit XML and log preservation
 - **Slack Integration**: Nightly test result notifications
 

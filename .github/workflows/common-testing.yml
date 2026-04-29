@@ -334,7 +334,6 @@ jobs:
           CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
-          NEXTEST_RETRIES: 3
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
