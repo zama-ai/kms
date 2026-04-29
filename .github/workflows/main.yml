@@ -279,7 +279,6 @@ jobs:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core-client'
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       generate-default-material: ${{ matrix.generate_default_material }}
@@ -317,7 +316,6 @@ jobs:
       (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core-client'
       crate-names: '-p kms-core-client'
       # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
       # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
@@ -344,7 +342,6 @@ jobs:
     if: needs.check-changes.outputs.changes-core-client == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core-client'
       crate-names: '-p kms-core-client'
       skip-test-material: true
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
@@ -384,7 +381,6 @@ jobs:
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/grpc'
       args-tests: '--all-features'
       crate-names: '-p kms-grpc'
       skip-test-material: true
@@ -485,7 +481,6 @@ jobs:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/service'
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       crate-names: '-p kms'
@@ -526,7 +521,6 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/service'
       args-tests: '-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly'
       run-minio: true
       crate-names: '-p kms'
@@ -567,10 +561,7 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-tools == 'true'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/experiments'
-      # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-      # and limit the number of test run in parallel to 4
-      args-tests: '-F slow_tests --lib'
+      args-tests: '--lib'
       crate-names: '-p experiments'
       nextest-test-threads: 4
       skip-test-material: true
@@ -604,10 +595,7 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/experiments'
-      # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-      # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib'
+      args-tests: '--lib'
       run-redis: true
       crate-names: '-p experiments'
       nextest-test-threads: 4
@@ -642,7 +630,6 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/experiments'
       args-tests: '--lib'
       crate-names: '-p experiments'
       skip-test-material: true
