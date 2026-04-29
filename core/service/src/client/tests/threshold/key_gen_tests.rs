@@ -1,3 +1,7 @@
+// TODO(dp): the imports here are a noisy mess — two `cfg_if!` blocks plus
+// dozens of individually `#[cfg(...)]`-gated `use` lines. Consolidate into
+// a single `cfg_if!` per feature combo (or pull the shared imports up out
+// of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
@@ -160,6 +164,12 @@ impl TestKeyGenResult {
 /// Test insecure compressed keygen with Test parameters.
 /// This tests the insecure `initialize_compressed_key_material` code path where
 /// party 1 generates compressed keys locally and shares private key shares with other parties.
+// TODO(dp): the migrated tests in this file (and in mpc_context_tests.rs,
+// crs_gen_tests.rs, public_decryption_tests.rs, user_decryption_tests.rs)
+// share a heavy `ThresholdTestEnv::builder()...build()` + spec-construction
+// preamble. A second sweep should factor that out — e.g. a `with_test_setup!`
+// macro or a `ThresholdTestEnv::for_test(name, parties, spec_kind)` helper —
+// to shrink each test back down to the part that actually varies.
 #[cfg(feature = "insecure")]
 #[rstest::rstest]
 #[case(4)]
