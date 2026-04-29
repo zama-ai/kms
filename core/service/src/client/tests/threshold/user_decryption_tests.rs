@@ -592,7 +592,7 @@ pub(crate) async fn user_decryption_threshold(
         }
     }
 
-    let server_private_keys = get_server_private_keys(amount_parties).await;
+    let server_private_keys = get_server_private_keys(amount_parties, &material_path).await;
 
     process_batch_threshold_user_decryption(
         &mut internal_client,
@@ -729,11 +729,16 @@ async fn process_batch_threshold_user_decryption(
     }
 }
 
-async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+async fn get_server_private_keys(
+    amount_parties: usize,
+    material_path: &std::path::Path,
+) -> HashMap<u32, PrivateSigKey> {
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
-        let priv_storage = FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap();
+        // Read from the per-test isolated material path populated by `builder().force_isolated()`
+        let priv_storage =
+            FileStorage::new(Some(material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
         let sk = get_core_signing_key(&priv_storage)
             .await
             .inspect_err(|e| {
