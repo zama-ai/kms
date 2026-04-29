@@ -3,9 +3,6 @@ name: wasm-testing
 on:
   workflow_call:
     inputs:
-      working-directory:
-        type: string
-        required: true
       wasm-test-feature:
         type: string
         required: false
@@ -31,10 +28,6 @@ jobs:
       contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - name: Checkout Project
@@ -63,6 +56,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm with tests
+        working-directory: ./core/service
         env:
           WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
@@ -78,11 +72,11 @@ jobs:
       # which populates per-test tempdirs by copying from the workspace's
       # `test-material/` directory.
       - name: Generate test material
-        working-directory: .
         run: |
           cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
       - name: Generate wasm test files
+        working-directory: ./core/service
         env:
           WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: |
@@ -90,6 +84,7 @@ jobs:
           cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
 
       - name: Test wasm
+        working-directory: ./core/service
         run: node --test tests/js
 
       # NPM package handling

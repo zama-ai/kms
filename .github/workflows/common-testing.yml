@@ -3,14 +3,6 @@ name: common-testing
 on:
   workflow_call:
     inputs:
-      working-directory:
-        type: string
-        required: false
-        default: '.'
-      build-publish-docs:
-        type: boolean
-        required: false
-        default: false
       runs-on:
         type: string
         required: false
@@ -35,14 +27,6 @@ on:
         type: boolean
         required: false
         default: false
-      run-wasm:
-        type: boolean
-        required: false
-        default: false
-      wasm-test-feature:
-        type: string
-        required: false
-        default: '-F wasm_tests'
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
         # Injected verbatim into cargo invocations that need explicit package
@@ -53,10 +37,6 @@ on:
         # When true, skip LFS pull, test-material generation, and the
         # kms-custodian build. Useful for light unit-test-only jobs on
         # crates that don't need integration test fixtures.
-        type: boolean
-        required: false
-        default: false
-      npm-release:
         type: boolean
         required: false
         default: false
@@ -81,15 +61,9 @@ on:
         required: false
         default: false  # If true, generate Default test material (includes pre-generated PRSS)
     secrets:
-      CODECOV_TOKEN:
-        required: false
       GHCR_READ_TOKEN:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      AWS_ACCESS_KEY_S3_USER:
-        required: true
-      AWS_SECRET_KEY_S3_USER:
         required: true
       SLACK_CHANNEL:
         required: true
@@ -107,7 +81,6 @@ env:
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
-  NPM_TAG: ''
 
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
@@ -124,15 +97,6 @@ jobs:
       contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=${{ inputs.runner-volume }}/extras=s3-cache
-    services:
-      redis:
-        image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7' || '' }}
-        ports:
-          - 6379:6379
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - name: Setup Runs-on
@@ -208,6 +172,13 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 
+      # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
+      - name: Setup Redis
+        if: ${{ inputs.run-redis }}
+        run: |
+          docker run -d -p 6379:6379 --name redis \
+            redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7
+
       - name: Setup minio
         if: ${{ inputs.run-minio }}
         env:
@@ -257,7 +228,6 @@ jobs:
 
       - name: Decompress Test Material (Default)
         if: ${{ inputs.use-pregenerated-material }}
-        working-directory: .
         run: |
           echo "Decompressing default test material..."
           mkdir -p ./test-material
@@ -267,13 +237,12 @@ jobs:
 
       # Generate test material. Subcommand is `all` (testing + default) when
       # the job uses slow_tests or explicitly requests default; otherwise
-      # `testing` only. Must run from workspace root, not working-directory.
+      # `testing` only.
       #
       # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
       # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
         if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
-        working-directory: .
         env:
           GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
           ARGS_TESTS: ${{ inputs.args-tests }}
@@ -477,19 +446,6 @@ jobs:
           path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore
-
-      # Documentation
-      - name: Build Documentation
-        if: ${{ inputs.build-publish-docs }}
-        run: cargo doc --no-deps
-
-      - name: Deploy to GitHub Pages
-        if: ${{ inputs.build-publish-docs }}
-        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc
-          destination_dir: ${{ inputs.working-directory }}
 
       - name: Remove aws credentials file
         run: |

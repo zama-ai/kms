@@ -725,8 +725,6 @@ jobs:
       needs.check-changes.outputs.changes-core-service == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
-    with:
-      working-directory: './core/service'
     secrets: inherit
 
   ############################################################################
