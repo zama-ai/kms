@@ -653,6 +653,41 @@ where
         true
     }
 
+    /// Write the keys to the storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    pub(crate) async fn write_backup_material(
+        &self,
+        recovery_material: &RecoveryValidationMaterial,
+    ) -> bool {
+        let req_id = &recovery_material.custodian_context().context_id;
+        let mut pub_storage = self.public_storage.lock().await;
+        CryptoMaterialStorage::<PubS, PrivS>::write_pub_data(
+            &mut (*pub_storage),
+            &req_id,
+            recovery_material,
+            &PubDataType::RecoveryMaterial,
+        )
+        .await
+    }
+
+    /// Write the CRS to the storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    pub(crate) async fn write_crs(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        pp: CompactPkeCrs,
+        crs_info: CrsGenMetadata,
+    ) -> bool {
+        self.write_data_pair(
+            crs_id,
+            Some(epoch_id),
+            vec![(&pp, PubDataType::CRS)],
+            vec![(&crs_info, PrivDataType::CrsInfo)],
+        )
+        .await
+    }
+
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material<T: Clone>(
         &self,
@@ -1263,20 +1298,25 @@ where
         Ok(())
     }
 
-    pub async fn write_context_info(
+    /// Write the context infor to the private storage backend.
+    /// Returns true if the write is successful, false otherwise.
+    pub(crate) async fn write_context_info(
         &self,
         context_id: &ContextId,
         context_info: &ContextInfo,
     ) -> anyhow::Result<()> {
-        let mut priv_storage = self.private_storage.lock().await;
-        store_context_at_id(&mut *priv_storage, context_id, context_info).await?;
-        log_storage_success_optional_variant(
-            context_id,
-            priv_storage.info(),
-            &PrivDataType::ContextInfo.to_string(),
-            false,
+        let mut priv_storage_guard = self.private_storage.lock().await;
+        if !CryptoMaterialStorage::<PubS, PrivS>::write_priv_data(
+            &mut (*priv_storage_guard),
+            &((*context_id).into()),
             None,
-        );
+            context_info,
+            &PrivDataType::ContextInfo,
+        )
+        .await
+        {
+            anyhow::bail!("Failed to write context info for context ID {context_id}");
+        }
         Ok(())
     }
 
