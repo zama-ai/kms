@@ -732,6 +732,70 @@ pub fn gao_decoding<F: Field>(
     }
 }
 
+/// Like [`gao_decoding`] but reuses precomputed Lagrange polynomials and the vanishing polynomial
+/// from [`FieldHints`](crate::error_correction::FieldHints).
+///
+/// The caller must ensure that `lagrange_polys` and `vanishing_poly` were built from the same
+/// `points` slice passed here.
+pub fn gao_decoding_with_field_hints<F: Field>(
+    points: &[F],
+    values: &[F],
+    k: usize,
+    max_errs: usize,
+    lagrange_polys: &[Poly<F>],
+    vanishing_poly: &Poly<F>,
+) -> anyhow::Result<Poly<F>> {
+    let n = points.len();
+
+    let d = (n + 1)
+        .checked_sub(k)
+        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
+
+    if values.len() != points.len() {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: mismatch between number of values and points".to_string(),
+        ));
+    }
+
+    if 2 * max_errs >= d {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
+        ));
+    }
+
+    // R = interpolation polynomial through (points, values).
+    let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
+
+    // G = vanishing polynomial (precomputed).
+    let g = vanishing_poly.clone();
+
+    let gcd_stop = (n + k) / 2;
+    let (q1, q0) = partial_xgcd(g, r, gcd_stop);
+
+    if q0.deg() > max_errs {
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.",
+            q0.deg()
+        )));
+    }
+
+    let (h, rem) = q1 / &q0;
+
+    if !rem.is_zero() {
+        Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Division remainder is not zero but {rem:?}."
+        )))
+    } else if h.deg() >= k {
+        Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Division result is of too high degree {}, but should be at most {}.",
+            h.deg(),
+            k - 1
+        )))
+    } else {
+        Ok(h)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

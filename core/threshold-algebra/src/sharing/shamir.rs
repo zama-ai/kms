@@ -1,6 +1,7 @@
 use threshold_types::role::Role;
 
 use crate::{
+    error_correction::ReconstructionHints,
     poly::Poly,
     sharing::share::Share,
     structure_traits::{ErrorCorrect, Ring, RingWithExceptionalSequence},
@@ -195,6 +196,19 @@ pub trait RevealOp<Z> {
     }
 
     fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z>;
+
+    fn err_reconstruct_with_hints(
+        &self,
+        degree: usize,
+        max_errs: usize,
+        _hints: &ReconstructionHints<Z>,
+    ) -> anyhow::Result<Z>
+    where
+        Z: ErrorCorrect,
+    {
+        // Default: ignore hints
+        self.err_reconstruct(degree, max_errs)
+    }
 }
 
 impl<Z> RevealOp<Z> for ShamirSharings<Z>
@@ -203,6 +217,16 @@ where
 {
     fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z> {
         let recon = <Z as ErrorCorrect>::error_correct(self, degree, max_errs)?;
+        Ok(recon.eval(&Z::ZERO))
+    }
+
+    fn err_reconstruct_with_hints(
+        &self,
+        degree: usize,
+        max_errs: usize,
+        hints: &ReconstructionHints<Z>,
+    ) -> anyhow::Result<Z> {
+        let recon = Z::error_correct_with_hints(self, degree, max_errs, hints)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }
@@ -253,6 +277,7 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
+/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
 pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
@@ -292,6 +317,41 @@ where
     Ok(None)
 }
 
+/// Like [`reconstruct_w_errors_sync`] but reuses precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_sync_with_hints<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    let num_heard_from = sharing.shares.len() + num_bots;
+    if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
+        let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+            anyhow_error_and_warn_log(format!(
+                "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
+            ))
+        })?;
+
+        let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
+        return Ok(Some(opened));
+    }
+
+    if degree + 2 * threshold >= num_parties {
+        return Err(anyhow_error_and_warn_log(format!(
+            "Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}",
+            sharing.shares.len()
+        )));
+    }
+
+    Ok(None)
+}
+
 /// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
 /// in an async network
 /// Takes as input:
@@ -304,6 +364,8 @@ where
 ///  Returns either the result or None if there are not enough shares to do reconstruction yet
 /// This assumes that sharing contains all the shares the current party know of, including its own if relevant
 /// thus we always perform the check "case B".
+///
+/// This error out only if reconstruction is impossible given the parameters, it does not error out if we just do not have enough shares yet.
 pub fn reconstruct_w_errors_async<Z>(
     num_parties: usize,
     degree: usize,
@@ -368,6 +430,68 @@ where
             Ok(None)
         }
     //Make sure there's hope to ever have enough shares to try and reconstruct
+    } else {
+        Err(anyhow_error_and_warn_log(format!(
+            "Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}"
+        )))
+    }
+}
+
+/// Like [`reconstruct_w_errors_async`] but reuses precomputed [`ReconstructionHints`].
+pub fn reconstruct_w_errors_async_with_hints<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    num_bots: usize,
+    sharing: &ShamirSharings<Z>,
+    hints: &ReconstructionHints<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    let num_heard_from = sharing.shares.len() + num_bots;
+    if degree + 3 * threshold < num_parties {
+        if num_heard_from > degree + 2 * threshold {
+            let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+                anyhow_error_and_warn_log(format!(
+                    "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
+                ))
+            })?;
+            let opened = sharing.err_reconstruct_with_hints(degree, max_errs, hints)?;
+            Ok(Some(opened))
+        } else {
+            Ok(None)
+        }
+    } else if degree + 2 * threshold < num_parties {
+        if num_heard_from > degree + threshold {
+            let r: usize = num_heard_from - (degree + threshold + 1);
+            let opened_poly = Z::error_correct_with_hints(sharing, degree, r, hints);
+            if let Ok(opened_poly) = opened_poly {
+                if opened_poly.deg() <= degree {
+                    let mut num_shares_on_poly = 0;
+                    for share in sharing.shares.iter() {
+                        if share.value()
+                            == opened_poly
+                                .eval(&Z::embed_role_to_exceptional_sequence(&share.owner())?)
+                        {
+                            num_shares_on_poly += 1;
+                        }
+
+                        if num_shares_on_poly > degree + threshold {
+                            return Ok(Some(opened_poly.eval(&(Z::ZERO))));
+                        }
+                    }
+                    Ok(None)
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     } else {
         Err(anyhow_error_and_warn_log(format!(
             "Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}"
