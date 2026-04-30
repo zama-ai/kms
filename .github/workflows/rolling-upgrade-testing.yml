@@ -70,7 +70,6 @@
 #   stop-runner            Stops the EC2 runner (always).
 ##############################################################################
 name: rolling-upgrade-testing
-
 on:
   workflow_dispatch:
     inputs:
@@ -124,9 +123,7 @@ on:
         required: true
         default: '6,7,8,9'
         type: string
-
 permissions: {}
-
 jobs:
   ############################################################################
   # Docker Build Job (Conditional)
@@ -152,7 +149,6 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # Start Runner
   ############################################################################
@@ -164,6 +160,8 @@ jobs:
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Start EC2 runner
         id: start-ec2-runner
         uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
@@ -174,7 +172,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
           profile: small-instance
-
   ############################################################################
   # Rolling Upgrade Testing Job
   ############################################################################
@@ -192,7 +189,6 @@ jobs:
     steps:
       - name: Setup Home
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       - name: Checkout Project KMS
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -234,7 +230,6 @@ jobs:
             echo "KMS_CORE_IMAGE_TAG=${OLD_TAG}"
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${OLD_TAG}"
           } >> "$GITHUB_ENV"
-
       - name: Configure deployment parameters
         env:
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
@@ -256,7 +251,6 @@ jobs:
             echo "FIRST_BATCH=${FIRST_BATCH}"
             echo "SECOND_BATCH=${SECOND_BATCH}"
           } >> "$GITHUB_ENV"
-
       # ====================================================================
       # TOOLING SETUP
       # ====================================================================
@@ -266,19 +260,16 @@ jobs:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
           password: ${{ secrets.HARBOR_READ_TOKEN }}
-
       - name: Setup tailscale
         uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:${NAMESPACE}
-
       - name: Setup helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           export PATH=$PATH:/usr/local/bin
-
       - name: Setup argo workflow CLI
         env:
           ARGO_OS: '${{ runner.os }}'
@@ -292,10 +283,8 @@ jobs:
           chmod +x "argo-${ARGO_OS}-amd64"
           mv "./argo-${ARGO_OS}-amd64" /usr/local/bin/argo
           argo version
-
       - name: Setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
-
       # ====================================================================
       # KUBERNETES SETUP
       # ====================================================================
@@ -303,14 +292,12 @@ jobs:
         run: |
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       - name: Checkout Project
         if: ${{ env.NEW_KMS_CHART_VERSION != 'repository' }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       - name: Checkout Project (from branch)
         if: ${{ env.NEW_KMS_CHART_VERSION == 'repository' }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -318,12 +305,10 @@ jobs:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       - name: Set kubeconfig context
         run: |
           kubectl config get-contexts
           kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       - name: Install jq
         env:
           JQ_VERSION: 1.8.1
@@ -332,7 +317,6 @@ jobs:
           sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
           sudo chmod +x /usr/local/bin/jq
           echo "JQ version: $(jq --version)"
-
       # ====================================================================
       # STEP 1: Deploy all 13 nodes with OLD version
       # ====================================================================
@@ -349,7 +333,6 @@ jobs:
             --num-parties 13 \
             --kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
-
       # ====================================================================
       # STEP 2: Run baseline performance tests
       # ====================================================================
@@ -394,7 +377,6 @@ jobs:
           fi
           echo "Extracted BASELINE_KEY_ID=${BASELINE_KEY_ID}"
           echo "BASELINE_KEY_ID=${BASELINE_KEY_ID}" >> "$GITHUB_ENV"
-
       # ====================================================================
       # STEP 3: Rolling upgrade 5/13 (first batch)
       # ====================================================================
@@ -416,7 +398,6 @@ jobs:
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
           echo "KMS_CORE_CLIENT_IMAGE_TAG=${NEW_IMAGE_TAG}" >> "$GITHUB_ENV"
-
       # ====================================================================
       # STEP 4: Run performance tests with 5/13 upgraded
       # ====================================================================
@@ -456,7 +437,6 @@ jobs:
           echo "Streaming mixed-5/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
           echo "Mixed 5/13 tests completed."
-
       # ====================================================================
       # STEP 5: Rolling upgrade 9/13 (second batch)
       # ====================================================================
@@ -477,7 +457,6 @@ jobs:
             --old-kms-chart-version "${OLD_KMS_CHART_VERSION}" \
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
-
       # ====================================================================
       # STEP 6: Run performance tests with 9/13 upgraded
       # ====================================================================
@@ -518,7 +497,6 @@ jobs:
           echo "Streaming mixed-9/13 workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
           echo "Mixed 9/13 tests completed."
-
       # ====================================================================
       # UPLOAD TEST LOGS
       # ====================================================================
@@ -529,7 +507,6 @@ jobs:
           name: argo-rolling-upgrade-logs
           path: argo-*-logs.txt
           retention-days: 30
-
       # ====================================================================
       # LOG COLLECTION
       # ====================================================================
@@ -550,7 +527,6 @@ jobs:
               echo "Pod ${POD_NAME} not found" > "${LOG_FILE}"
             fi
           done
-
       - name: Upload kms-core logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -559,7 +535,6 @@ jobs:
           path: kms-core-*.txt
           retention-days: 30
           if-no-files-found: warn
-
       # ====================================================================
       # CLEANUP
       # ====================================================================
@@ -575,7 +550,6 @@ jobs:
           kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
           echo "Cleanup completed"
-
   ############################################################################
   # Stop Runner
   ############################################################################
@@ -585,6 +559,8 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Stop runner
         uses: zama-ai/slab-github-runner@0a812986560d3f10dc65728b1ccb9ae4c48a8a16 # v1.5.1
         with:

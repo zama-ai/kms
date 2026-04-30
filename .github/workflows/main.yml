@@ -5,28 +5,24 @@
 # 3. Pushes: On main and release/* branches for building images
 # IMPORTANT NOTES: The tests are only executed for components that have been changed
 name: main
-
 on:
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
   pull_request:
   push:
     branches: ['main', 'release/*']
-
 # Controls concurrent workflow runs:
 # - Groups runs by git ref
 # - Cancels in-progress runs for non-main/release branches
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 # Top-level permissions for workflow-level operations
 permissions:
   actions: read # Required to read workflow run information
   contents: read # Required to checkout repository code
   pull-requests: read # Required to read pull request information
   packages: read # Required to read GitHub packages/container registry
-
 jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
@@ -52,6 +48,8 @@ jobs:
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: true
@@ -119,7 +117,6 @@ jobs:
             helm-chart:
               - 'charts/**'
               - 'rust-toolchain.toml'
-
   ############################################################################
   # Docker build pipeline
   # Triggered by:
@@ -137,46 +134,33 @@ jobs:
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
     secrets: inherit
-
   ############################################################################
   # Helm chart pipeline
   # Triggered by:
   # - Changes to charts/**
   ############################################################################
   test-helm-chart:
-    name:
-      main/test-helm-chart
-      # job permissions
+    name: main/test-helm-chart
+    # job permissions
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+      needs.check-changes.outputs.changes-helm-chart == 'true' && (github.event_name != 'schedule' || github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-test.yml
-
   lint-helm-chart:
-    name:
-      main/lint-helm-chart
-      # job permissions
+    name: main/lint-helm-chart
+    # job permissions
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' ||
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+      needs.check-changes.outputs.changes-helm-chart == 'true' && (github.event_name != 'schedule' || github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-lint.yml
-
   release-helm-chart:
     name: main/release-helm-chart
     permissions:
@@ -186,12 +170,8 @@ jobs:
       packages: write # Required to publish packages
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-helm-chart == 'true' &&
-      (github.event_name != 'schedule' && github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main' ||
-      startsWith(github.ref, 'refs/heads/release/'))
+      needs.check-changes.outputs.changes-helm-chart == 'true' && (github.event_name != 'schedule' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-release.yml
-
   ############################################################################
   # KMS Local Docs Link Check
   # Triggered by:
@@ -212,13 +192,14 @@ jobs:
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
       - run: python3 -m pip install linkcheckmd
       - name: Check dead-link
         run: python3 ci/scripts/local_docs_link_check.py
-
   ############################################################################
   # Core Client Pipeline
   # Testing triggered by:
@@ -233,17 +214,13 @@ jobs:
     name: main/prepare-core-client-matrix
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+      needs.check-changes.outputs.changes-core-client == 'true' || needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-core-grpc == 'true' || needs.check-changes.outputs.changes-ci == 'true' || needs.check-changes.outputs.changes-tools == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass narrower
       # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
@@ -269,7 +246,6 @@ jobs:
           MATRIX="${MATRIX}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
-
   # Core client integration tests - Native execution (no Docker)
   # Runs integration tests split across threshold and centralized jobs
   # Uses pre-generated test material and isolated temporary directories
@@ -287,13 +263,7 @@ jobs:
       - prepare-core-client-matrix
       - check-changes
     if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+      needs.check-changes.outputs.changes-core-client == 'true' || needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-core-grpc == 'true' || needs.check-changes.outputs.changes-ci == 'true' || needs.check-changes.outputs.changes-tools == 'true' || github.ref == 'refs/heads/main'
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
@@ -313,7 +283,6 @@ jobs:
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
     secrets: inherit
-
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests)
   test-core-client-nightly:
     name: main/test-core-client-nightly
@@ -327,8 +296,7 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+      github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
     uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
@@ -338,13 +306,11 @@ jobs:
       # nightly_* and nightly_full_gen_tests_* are intentionally included here
       # (they're skipped only in the regular-CI profile via --skip).
       args-tests: >-
-        --features threshold_tests -- --skip k8s_ --skip isolated_test_example
-        --skip test_threshold_mpc_context_switch_6_docker
+        --features threshold_tests -- --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker
       generate-default-material: true
       nextest-profile: 'ci-nightly'
       runs-on: '32cpu-linux-x64'
     secrets: inherit
-
   # Docker-Compose integration test.
   test-core-client-docker-tls:
     name: main/test-core-client-docker-tls
@@ -357,13 +323,7 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-core-client == 'true' ||
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-core-threshold == 'true' ||
-      needs.check-changes.outputs.changes-core-grpc == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      needs.check-changes.outputs.changes-tools == 'true' ||
-      github.ref == 'refs/heads/main'
+      needs.check-changes.outputs.changes-core-client == 'true' || needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-core-threshold == 'true' || needs.check-changes.outputs.changes-core-grpc == 'true' || needs.check-changes.outputs.changes-ci == 'true' || needs.check-changes.outputs.changes-tools == 'true' || github.ref == 'refs/heads/main'
     runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
     timeout-minutes: 150
     env:
@@ -379,38 +339,32 @@ jobs:
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
         with:
           metrics: cpu,network,memory,disk,io
-
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
           persist-credentials: true
-
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Login to GitHub Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Login to Chainguard Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
           password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
-
       - name: Set up Docker Buildx
         uses: ./.github/actions/docker-setup-buildx
-
       - name: Set up Rust and Protoc
         uses: ./.github/actions/setup-rust-and-protoc
         with:
@@ -419,20 +373,16 @@ jobs:
           rust-cache: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
         with:
           save-if: false # read-only; our job never poisons the cache
-
       - name: Install nextest
         run: cargo install cargo-nextest@0.9.124 --locked --force
-
       - name: Setup usage of private repo
         env:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
         run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
       - name: Run TLS-over-Docker integration test
         working-directory: ./core-client
         run: |
@@ -442,7 +392,6 @@ jobs:
             --features threshold_tests \
             --test integration_test \
             -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
-
   # Core client unit tests. Integration filters below skip everything that
   # consumes kms test material, so `skip-test-material: true` is safe.
   test-core-client-unit:
@@ -477,7 +426,6 @@ jobs:
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
     secrets: inherit
-
   ############################################################################
   # GRPC Testing
   # Triggered by:
@@ -514,7 +462,6 @@ jobs:
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
     secrets: inherit
-
   ############################################################################
   # Core Service Pipeline
   # Testing triggered by:
@@ -538,15 +485,15 @@ jobs:
     name: main/prepare-matrix
     needs: check-changes
     if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+      needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
       # per-entry specs instead of regenerating everything. Concrete needs:
       #   entry 1 (`-F testing --lib`)
@@ -574,7 +521,6 @@ jobs:
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
-
   # Runs core service tests based on the matrix configuration
   # Uses big instance for better performance and includes:
   # - MinIO for object storage testing
@@ -593,9 +539,7 @@ jobs:
       - check-changes
       - prepare-matrix
     if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+      needs.check-changes.outputs.changes-core-service == 'true' || github.ref == 'refs/heads/main' || needs.check-changes.outputs.changes-ci == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing.yml
@@ -617,10 +561,9 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
-      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
-      enable-shared-material: true  # Use shared material mode (no copying)
+      nextest-test-threads: "1" # Required for #[serial] tests (slow_tests with shared state)
+      enable-shared-material: true # Use shared material mode (no copying)
     secrets: inherit
-
   ############################################################################
   # Core Threshold Pipeline
   # Testing triggered by:
@@ -672,8 +615,6 @@ jobs:
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
     secrets: inherit
-
-
   # TODO: This is probably obsolete considering experiments
   # (previous threshold-fhe) is now consuming the MPC library and not
   # really part of it. (test-workspace-crate is now the important job)
@@ -714,7 +655,6 @@ jobs:
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '32cpu-linux-x64'
     secrets: inherit
-
   # TODO: This is probably obsolete considering experiments
   # (previous threshold-fhe) is now consuming the MPC library and not
   # really part of it. (test-workspace-crate is now the important job)
@@ -741,7 +681,6 @@ jobs:
       crate-names: '-p experiments'
       skip-test-material: true
     secrets: inherit
-
   ############################################################################
   # Workspace crates
   # Runs clippy + unit tests for workspace crates that have no dedicated CI
@@ -762,15 +701,12 @@ jobs:
     needs: check-changes
     secrets: inherit
     if: >-
-      needs.check-changes.outputs.changes-workspace-crates == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      github.ref == 'refs/heads/main'
+      needs.check-changes.outputs.changes-workspace-crates == 'true' || needs.check-changes.outputs.changes-ci == 'true' || github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       # Groups aim at similarly-sized work. `runtime-slow` is split out because enabling `slow_tests` takes a long time.
       matrix:
         include:
-
           # Most "normal" crates should be added here; runs with default features only.
           - group: crates-normies
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p threshold-execution -p threshold-networking -p threshold-bgv'
@@ -779,7 +715,6 @@ jobs:
             features: '-F threshold-algebra/all_extension_degrees'
             threads: ''
             runs-on: '64cpu-linux-x64'
-
           # Slow/heavy tests, 1/2. Big iron, lots of RAM.
           - group: crates-heavy-1
             crates: '-p threshold-execution'
@@ -788,7 +723,6 @@ jobs:
             # at ~89min; trying 8 to halve wall-clock. Back off if OOM.
             threads: '8'
             runs-on: '64cpu-linux-x64'
-
           # Slow/heavy tests, 2/2. Big iron, lots of RAM.
           # The `threshold-bgv` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
@@ -797,7 +731,6 @@ jobs:
             features: '-F threshold-bgv/slow_tests'
             threads: '8'
             runs-on: '64cpu-linux-x64'
-
           # Small and light utility crates. Quick to run.
           - group: workspace-utils
             crates: '-p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
@@ -812,7 +745,6 @@ jobs:
       nextest-test-threads: ${{ matrix.threads }}
       skip-test-material: true
       runs-on: ${{ matrix.runs-on }}
-
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
   test-reporter:
@@ -837,7 +769,6 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     secrets: inherit
-
   ############################################################################
   # Wasm Testing Pipeline
   ############################################################################
@@ -853,94 +784,92 @@ jobs:
     needs:
       - check-changes
     if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true'
+      needs.check-changes.outputs.changes-core-service == 'true' || needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
     with:
       working-directory: './core/service'
     secrets: inherit
+############################################################################
+# ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
+#██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
+#███████║██████╔╝██║  ███╗██║   ██║██║     ██║  ██║
+#██╔══██║██╔══██╗██║   ██║██║   ██║██║     ██║  ██║
+#██║  ██║██║  ██║╚██████╔╝╚██████╔╝╚██████╗██████╔╝
+#╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝  ╚═════╝╚═════╝
+############################################################################
+# Updates ArgoCD staging environment
+# Only runs during scheduled workflow (nightly builds)
+# Deploys to kms-threshold-staging namespace
+############################################################################
+# update-kms-core-client-argocd-staging:
+#   name: main/update-kms-core-client-argocd-staging
+#   if: github.event_name == 'schedule'
+#   needs:
+#     - test-core-client
+#     - docker-core-client
+#   uses: ./.github/workflows/common-update-argocd.yml
+#   with:
+#     branch-name: 'kms-staging'
+#     argocd-namespace: 'tkms-staging'
+#     argocd-app-name: 'kms-service'
+#     application-image: 'kmsCoreClient'
+#     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
+#   secrets:
+#     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  ############################################################################
-  # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
-  #██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
-  #███████║██████╔╝██║  ███╗██║   ██║██║     ██║  ██║
-  #██╔══██║██╔══██╗██║   ██║██║   ██║██║     ██║  ██║
-  #██║  ██║██║  ██║╚██████╔╝╚██████╔╝╚██████╗██████╔╝
-  #╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝  ╚═════╝╚═════╝
-  ############################################################################
-  # Updates ArgoCD staging environment
-  # Only runs during scheduled workflow (nightly builds)
-  # Deploys to kms-threshold-staging namespace
-  ############################################################################
-  # update-kms-core-client-argocd-staging:
-  #   name: main/update-kms-core-client-argocd-staging
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-client
-  #     - docker-core-client
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCoreClient'
-  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+# update-kms-core-argocd-staging:
+#   name: main/update-kms-core-argocd-staging
+#   if: github.event_name == 'schedule'
+#   needs:
+#     - test-core-service
+#     - docker-core-service
+#     - docker-nitro-enclave
+#     - update-kms-core-client-argocd-staging-with-enclave
+#   uses: ./.github/workflows/common-update-argocd.yml
+#   with:
+#     branch-name: 'kms-staging'
+#     argocd-namespace: 'tkms-staging'
+#     argocd-app-name: 'kms-service'
+#     application-image: 'kmsCore'
+#     image-tag: ${{ needs.docker-core-service.outputs.image_tag }}
+#   secrets:
+#     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  # update-kms-core-argocd-staging:
-  #   name: main/update-kms-core-argocd-staging
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-service
-  #     - docker-core-service
-  #     - docker-nitro-enclave
-  #     - update-kms-core-client-argocd-staging-with-enclave
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCore'
-  #     image-tag: ${{ needs.docker-core-service.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+# update-kms-core-client-argocd-staging-with-enclave:
+#   name: main/update-kms-core-client-argocd-staging-with-enclave
+#   if: github.event_name == 'schedule'
+#   needs:
+#     - test-core-client
+#     - docker-core-client
+#     - update-kms-core-client-argocd-staging
+#   uses: ./.github/workflows/common-update-argocd.yml
+#   with:
+#     branch-name: 'kms-staging'
+#     argocd-namespace: 'tkms-enclave-staging'
+#     argocd-app-name: 'kms-service'
+#     application-image: 'kmsCoreClient'
+#     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
+#   secrets:
+#     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  # update-kms-core-client-argocd-staging-with-enclave:
-  #   name: main/update-kms-core-client-argocd-staging-with-enclave
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-client
-  #     - docker-core-client
-  #     - update-kms-core-client-argocd-staging
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-enclave-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCoreClient'
-  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
-  # update-kms-core-argocd-staging-with-enclave:
-  #   name: main/update-kms-core-argocd-staging-with-enclave
-  #   if: github.event_name == 'schedule'
-  #   needs:
-  #     - test-core-service
-  #     - docker-core-service
-  #     - docker-nitro-enclave
-  #     - update-kms-core-argocd-staging
-  #   uses: ./.github/workflows/common-update-argocd.yml
-  #   with:
-  #     branch-name: 'kms-staging'
-  #     argocd-namespace: 'tkms-enclave-staging'
-  #     argocd-app-name: 'kms-service'
-  #     application-image: 'kmsCore'
-  #     enclave-deployment: true
-  #     enclave-pcr0: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr0 }}
-  #     enclave-pcr1: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr1 }}
-  #     enclave-pcr2: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr2 }}
-  #     image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
-  #   secrets:
-  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+# update-kms-core-argocd-staging-with-enclave:
+#   name: main/update-kms-core-argocd-staging-with-enclave
+#   if: github.event_name == 'schedule'
+#   needs:
+#     - test-core-service
+#     - docker-core-service
+#     - docker-nitro-enclave
+#     - update-kms-core-argocd-staging
+#   uses: ./.github/workflows/common-update-argocd.yml
+#   with:
+#     branch-name: 'kms-staging'
+#     argocd-namespace: 'tkms-enclave-staging'
+#     argocd-app-name: 'kms-service'
+#     application-image: 'kmsCore'
+#     enclave-deployment: true
+#     enclave-pcr0: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr0 }}
+#     enclave-pcr1: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr1 }}
+#     enclave-pcr2: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr2 }}
+#     image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
+#   secrets:
+#     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}

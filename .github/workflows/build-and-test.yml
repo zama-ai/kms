@@ -10,13 +10,10 @@
 # - Parallel test execution after build completes
 ##############################################################################
 name: build-and-test
-
 on:
   pull_request:
     types: [opened, labeled, synchronize, reopened]
-
 permissions: {}
-
 # Per-PR group + suffix: runs that should supersede each other use "ci"; unrelated
 # label events (e.g. CLA bot) use "noise" so they do not cancel an in-progress push
 # or pr-preview run. Push / synchronize / reopen always use "ci"; so do labeled
@@ -25,12 +22,12 @@ permissions: {}
 concurrency:
   group: >-
     build-and-test-${{ github.event.pull_request.number || github.run_id }}-${{
+
       github.event.action != 'labeled' && 'ci' ||
       github.event.action == 'labeled' && (startsWith(github.event.label.name, 'pr-preview-') || github.event.label.name == 'docker') && 'ci' ||
       'noise'
     }}
   cancel-in-progress: true
-
 jobs:
   ############################################################################
   # Build Docker images once for the entire PR workflow
@@ -38,8 +35,8 @@ jobs:
   docker-build:
     name: build-and-test/docker-build
     if: >-
-      github.event_name == 'pull_request' &&
-      (
+      github.event_name == 'pull_request' && (
+
         github.event.action == 'opened' ||
         github.event.action == 'synchronize' ||
         github.event.action == 'reopened' ||
@@ -63,7 +60,6 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # Run Kind testing using pre-built images
   ############################################################################
@@ -71,8 +67,7 @@ jobs:
     name: build-and-test/kind-testing
     needs: [docker-build]
     if: >-
-      github.event_name == 'pull_request' &&
-      (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'docker'))
+      github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'labeled' && github.event.label.name == 'docker'))
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required for nested docker-build job (even if it doesn't run)
@@ -98,7 +93,6 @@ jobs:
       HARBOR_READ_LOGIN: ${{ secrets.HARBOR_READ_LOGIN }}
       HARBOR_READ_TOKEN: ${{ secrets.HARBOR_READ_TOKEN }}
       ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
   ############################################################################
   # Determine deployment type from PR labels
   ############################################################################
@@ -106,8 +100,8 @@ jobs:
     name: build-and-test/check-labels
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'pull_request' &&
-      (
+      github.event_name == 'pull_request' && (
+
         github.event.action == 'opened' ||
         github.event.action == 'synchronize' ||
         github.event.action == 'reopened' ||
@@ -117,6 +111,8 @@ jobs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
       deployment_type: ${{ steps.check.outputs.deployment_type }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Check PR labels and determine deployment type
         id: check
         env:
@@ -136,7 +132,6 @@ jobs:
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             echo "No pr-preview label found"
           fi
-
   ############################################################################
   # Deploy PR preview if labeled (using pre-built images)
   ############################################################################

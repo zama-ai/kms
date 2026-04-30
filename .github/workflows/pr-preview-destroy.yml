@@ -2,15 +2,12 @@
 # pr-preview-destroy workflow
 ##############################################################################
 name: pr-preview-destroy
-
 on:
   schedule:
     - cron: '0 0 * * *'
   pull_request:
     types: [closed, unlabeled]
-
 permissions: {}
-
 jobs:
   ############################################################################
   # PR Preview Destroy Job
@@ -18,19 +15,9 @@ jobs:
   pr-preview-destroy:
     name: pr-preview-destroy
     if: >-
-      (github.event_name == 'schedule' || github.event_name == 'pull_request') &&
-      (github.event.action == 'unlabeled' && (contains(github.event.label.name, 'pr-preview-threshold') ||
-      contains(github.event.label.name, 'pr-preview-centralized') ||
-      contains(github.event.label.name, 'pr-preview-thresholdWithEnclave') ||
-      contains(github.event.label.name, 'pr-preview-centralizedWithEnclave'))) ||
-      (github.event.action == 'closed' &&
-      (contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')))
+      (github.event_name == 'schedule' || github.event_name == 'pull_request') && (github.event.action == 'unlabeled' && (contains(github.event.label.name, 'pr-preview-threshold') || contains(github.event.label.name, 'pr-preview-centralized') || contains(github.event.label.name, 'pr-preview-thresholdWithEnclave') || contains(github.event.label.name, 'pr-preview-centralizedWithEnclave'))) || (github.event.action == 'closed' && (contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') || contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') || contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') || contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')))
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     timeout-minutes: 1800
-
     # Environment variables used throughout the job
     env:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
@@ -44,15 +31,12 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kms-ci
-
       - name: Setup helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           export PATH=$PATH:/usr/local/bin
-
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
-
       # ======================================================================
       # KUBERNETES CONFIG & DESTROY NAMESPACE
       # ======================================================================
@@ -63,7 +47,6 @@ jobs:
           ###################################################################
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       - name: Destroy namespace
         if: github.event_name != 'schedule'
         run: |
@@ -83,19 +66,17 @@ jobs:
             echo "Namespace ${NAMESPACE} does not exist"
             exit 0
           fi
-
       - name: Find namespaces to destroy
         if: github.event_name == 'schedule'
         id: find-namespaces-to-destroy
         run: |
           echo "Finding namespaces to destroy..."
           echo "namespaces=$(kubectl get namespaces -o json | jq -r '.items[] | select(.metadata.name | startswith("kms-ci-")) | .metadata.name')" >> "$GITHUB_OUTPUT"
-
       - name: Destroy namespaces
         if: github.event_name == 'schedule'
         env:
           NAMESPACES: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}
-        run: |
+        run: |-
           echo "Destroying namespaces: $NAMESPACES"
           for namespace in $(echo "$NAMESPACES" | tr ',' '\n'); do
             echo "Destroying namespace: $namespace"
