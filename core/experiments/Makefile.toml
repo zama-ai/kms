@@ -143,11 +143,11 @@ script = '''
 mkdir -p temp/telemetry
 echo "" > temp/telemetry/export.json
 chmod o+w temp/telemetry/export.json
-// For each party in NUM_PARTIES, create a file for the stats and give write permissions (to avoid permission issues when parties try to write to the mounted folder)
 mkdir -p temp/session_stats
 for i in $(seq 1 ${NUM_PARTIES}); do
-    touch temp/session_stats/session_stats_party_$i.txt
-    chmod o+w temp/session_stats/session_stats_party_$i.txt
+    touch temp/session_stats/session_stats_$i.txt
+    echo "\nNEW_RUN: ${EXPERIMENT_NAME}" >> temp/session_stats/session_stats_$i.txt
+    chmod o+w temp/session_stats/session_stats_$i.txt
 done
 '''
 

@@ -144,6 +144,11 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
     }
 
     fn next_ternary_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>> {
+        tracing::warn!(
+            "Available ternary: {}, requested ternary: {}",
+            self.available_ternary.len(),
+            amount
+        );
         if self.available_ternary.len() >= amount {
             Ok(self.available_ternary.drain(0..amount).collect())
         } else {
@@ -155,6 +160,11 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
     }
 
     fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>> {
+        tracing::warn!(
+            "Available noise: {}, requested noise: {}",
+            self.available_noise.len(),
+            amount
+        );
         if self.available_noise.len() >= amount {
             Ok(self.available_noise.drain(0..amount).collect())
         } else {
