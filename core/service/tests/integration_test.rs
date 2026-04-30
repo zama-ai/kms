@@ -1,10 +1,5 @@
 use assert_cmd::{Command, assert::OutputAssertExt};
-use kms_lib::consts::{
-    KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-};
-use kms_lib::vault::storage::{StorageType, file::FileStorage};
-use std::path::PathBuf;
-use std::str::FromStr;
+use std::path::Path;
 use std::{fs, thread, time::Duration};
 use test_utils_service::integration_test;
 use test_utils_service::persistent_traces;
@@ -13,42 +8,6 @@ const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
-
-fn purge_file_storage(storage: &FileStorage) {
-    let dir = storage.root_dir();
-    if dir.exists() {
-        fs::remove_dir_all(dir).unwrap();
-    }
-}
-
-// We purge the centralized storage and the threshold storage for party-1
-// since the CLI test only use default_1.toml.
-fn purge_all() {
-    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-    purge_file_storage(&priv_storage);
-    purge_file_storage(&pub_storage);
-
-    let priv_storage = FileStorage::new(
-        None,
-        StorageType::PRIV,
-        PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
-    )
-    .unwrap();
-    let pub_storage = FileStorage::new(
-        None,
-        StorageType::PUB,
-        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
-    )
-    .unwrap();
-    purge_file_storage(&priv_storage);
-    purge_file_storage(&pub_storage);
-
-    let key_dir = PathBuf::from_str(KEY_PATH_PREFIX).unwrap();
-    if key_dir.exists() {
-        fs::remove_dir_all(key_dir).unwrap();
-    }
-}
 
 #[cfg(test)]
 mod kms_init_binary_test {
@@ -448,11 +407,14 @@ mod kms_server_binary_test {
             .success();
     }
 
-    fn run_subcommand_no_args(config_file: &str) {
+    fn run_subcommand_no_args(config_file: &Path, cwd: &Path) {
         // Spawn the server, give it 5s to come up (and stay up), then kill the
-        // specific child PID we spawned.
+        // specific child PID we spawned. CWD is the per-test tempdir so the
+        // relative paths in the config (`./keys`, `./backup_vault`,
+        // `certs/...`) all resolve inside it.
         let bin_path = assert_cmd::cargo::cargo_bin(KMS_SERVER);
         let mut child = std::process::Command::new(&bin_path)
+            .current_dir(cwd)
             .arg("--config-file")
             .arg(config_file)
             .stdout(std::process::Stdio::piped())
@@ -463,56 +425,62 @@ mod kms_server_binary_test {
         thread::sleep(Duration::from_secs(5));
 
         // Sanity: the server should still be running (it's a long-running
-        // process; it shouldn't exit on its own within 5s).
-        let exited = child.try_wait().expect("try_wait failed");
-        assert!(
-            exited.is_none(),
-            "kms-server exited within 5s with status {:?}, expected it to keep running",
-            exited
-        );
-
-        child.kill().expect("kill failed");
-        let output = child.wait_with_output().expect("wait_with_output failed");
-
-        // Debug output for unexpected non-kill exit codes
-        if !output.status.success() && output.status.code().is_some() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!(
-                status = %output.status,
-                stdout = %stdout,
-                stderr = %stderr,
-                "kms-server integration command exited unexpectedly"
+        // process; it shouldn't exit on its own within 5s). If it has
+        // exited, drain stdout/stderr and panic with them so the failure
+        // is diagnosable.
+        if let Some(status) = child.try_wait().expect("try_wait failed") {
+            let output = child.wait_with_output().expect("wait_with_output failed");
+            panic!(
+                "kms-server exited within 5s with status {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
             );
         }
 
-        // We need to manually delete the storage every time
-        // since it might affect other tests (in other modules).
-        purge_all();
+        child.kill().expect("kill failed");
+        let _ = child.wait_with_output().expect("wait_with_output failed");
     }
 
+    // All three binaries (kms-gen-keys, kms-gen-tls-certs, kms-server) share
+    // the per-test tempdir as their CWD, so the config's relative paths
+    // (`./keys`, `./backup_vault`, `certs/...`) all resolve inside it. Each
+    // test owns its own tempdir, so concurrent test runs cannot collide.
     #[test]
     #[integration_test]
     #[persistent_traces]
     fn subcommand_dev_centralized() {
-        purge_all();
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("config/default_centralized.toml");
+        let config_dst = tempdir.path().join("default_centralized.toml");
+        std::fs::copy(&config_src, &config_dst).unwrap();
+
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
+            .current_dir(tempdir.path())
             .arg("--param-test")
             .arg("centralized")
             .output()
             .unwrap()
             .assert()
             .success();
-        run_subcommand_no_args("config/default_centralized.toml");
+        run_subcommand_no_args(&config_dst, tempdir.path());
     }
 
     #[test]
     #[integration_test]
     #[persistent_traces]
     fn subcommand_dev_threshold() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_src =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_1.toml");
+        let config_dst = tempdir.path().join("default_1.toml");
+        std::fs::copy(&config_src, &config_dst).unwrap();
+
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
+            .current_dir(tempdir.path())
             .arg("--private-file-path")
             .arg("./keys")
             .arg("--private-file-prefix")
@@ -528,12 +496,9 @@ mod kms_server_binary_test {
             .assert()
             .success();
 
-        // NOTE that we use the cert directory instead of
-        // a temporary directory because kms-server binary
-        // doesn't know about the temporary directory since
-        // its configuration is loaded from a file.
         Command::cargo_bin(KMS_GEN_TLS_CERTS)
             .unwrap()
+            .current_dir(tempdir.path())
             .arg("-o")
             .arg("certs")
             .arg("--ca-prefix")
@@ -544,7 +509,7 @@ mod kms_server_binary_test {
             .unwrap()
             .assert()
             .success();
-        run_subcommand_no_args("config/default_1.toml");
+        run_subcommand_no_args(&config_dst, tempdir.path());
     }
 }
 
