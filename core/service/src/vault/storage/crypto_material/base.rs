@@ -487,7 +487,7 @@ where
     }
 
     /// General method for handling the storage of material, including backup.
-    pub(crate) async fn handle_all_storage<
+    pub(in crate::vault::storage::crypto_material) async fn handle_all_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
