@@ -8,9 +8,10 @@ mod common;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
+    CrsGenMetadataWithExtraDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
@@ -24,7 +25,9 @@ use kms_grpc::{
     RequestId,
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    solidity_types::{CrsgenVerification, KeygenVerification},
+    solidity_types::{
+        CrsgenVerification, CrsgenVerificationQ126, KeygenVerification, KeygenVerificationQ126,
+    },
 };
 use kms_lib::{
     backup::{
@@ -198,13 +201,11 @@ fn test_key_gen_metadata(
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-    let sol_type = KeygenVerification::new_uncompressed(
+    let sol_type = KeygenVerificationQ126::new_standard(
         &preprocessing_id,
         &key_id,
         server_key_digest.clone(),
         pub_key_digest.clone(),
-        // TODO: reenable for RFC005
-        // vec![],
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
@@ -233,6 +234,7 @@ fn test_key_gen_metadata(
         preprocessing_id,
         key_digest_map,
         external_signature,
+        extra_data: None, // Legacy approach
     };
 
     if original_legacy != new_legacy {
@@ -270,11 +272,11 @@ fn test_crs_gen_metadata(
     let crs_id: RequestId = RequestId::new_random(&mut rng);
     let digest = [12u8; 32].to_vec();
     let max_num_bits = test.max_num_bits;
-    let sol_type = CrsgenVerification::new(
-        &crs_id,
-        max_num_bits as usize,
-        digest.clone(), /* TODO: reenable for RFC005 vec![] */
-    );
+    // Reproduce the old verification signature (before 13.20).
+    // The stored vectors were produced by a generator pinned at a commit that did not yet have `extraData` on the
+    // Solidity struct. `CrsgenVerificationQ126` mirrors that layout (and keeps
+    // the EIP-712 struct name `CrsgenVerification` so the typeHash matches).
+    let sol_type = CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, digest.clone());
     let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
         .map_err(|e| {
             test.failure(
@@ -282,7 +284,13 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+    let new_current = CrsGenMetadata::new(
+        crs_id,
+        digest,
+        max_num_bits,
+        external_signature.clone(),
+        vec![],
+    );
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
@@ -323,6 +331,116 @@ fn test_crs_gen_metadata(
         Err(test.failure(
             format!(
                 "Invalid key gen metadata:\n Expected :\n{original_current:?}\nGot:\n{new_current:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+/// Twin of `test_key_gen_metadata` with the 13.20 format (including extra data).
+fn test_key_gen_metadata_with_extra_data(
+    dir: &Path,
+    test: &KeyGenMetadataWithExtraDataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    let (pretend_server_key, pretend_public_key) = gen_sig_keys(&mut rng);
+    let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
+    let key_id: RequestId = RequestId::new_random(&mut rng);
+
+    let extra_data = test.extra_data.to_vec();
+    let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let sol_type = KeygenVerification::new_uncompressed(
+        &preprocessing_id,
+        &key_id,
+        server_key_digest.clone(),
+        pub_key_digest.clone(),
+        extra_data.clone(),
+    );
+    key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
+    key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    let external_signature =
+        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+
+    let new_versionized = KeyGenMetadataInner {
+        key_id,
+        preprocessing_id,
+        key_digest_map,
+        external_signature,
+        extra_data: Some(extra_data),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid key gen metadata (with extra_data):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+/// Twin of `test_crs_gen_metadata` with the 13.20 format (including extra data).
+fn test_crs_gen_metadata_with_extra_data(
+    dir: &Path,
+    test: &CrsGenMetadataWithExtraDataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    let crs_id: RequestId = RequestId::new_random(&mut rng);
+    let digest = [12u8; 32].to_vec();
+    let max_num_bits = test.max_num_bits;
+    let extra_data = test.extra_data.to_vec();
+    let sol_type = CrsgenVerification::new(
+        &crs_id,
+        max_num_bits as usize,
+        digest.clone(),
+        extra_data.clone(),
+    );
+    let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
+        .map_err(|e| {
+            test.failure(
+                format!("Failed to compute external signature: {}", e),
+                format,
+            )
+        })?;
+    let new_current = CrsGenMetadata::new(
+        crs_id,
+        digest,
+        max_num_bits,
+        external_signature.clone(),
+        extra_data,
+    );
+    match &new_current {
+        CrsGenMetadata::LegacyV0(_) => {
+            return Err(test.failure(
+                "Expected current CrsGenMetadata, got legacy".to_string(),
+                format,
+            ));
+        }
+        CrsGenMetadata::Current(_) => {
+            // Expected. Match exhaustively so this is updated if a new variant is added.
+        }
+    }
+
+    if original_current != new_current {
+        Err(test.failure(
+            format!(
+                "Invalid crs gen metadata (with extra_data):\n Expected :\n{original_current:?}\nGot:\n{new_current:?}"
             ),
             format,
         ))
@@ -898,7 +1016,7 @@ fn test_kms_fhe_key_handles(
     let original_versionized: KmsFheKeyHandles = load_and_unversionize(dir, test, format)?;
 
     // Retrieve the key parameters from the original KMS handle
-    let (original_integer_key, _, _, _, _, _, _) =
+    let (original_integer_key, _, _, _, _, _, _, _) =
         original_versionized.client_key.clone().into_raw_parts();
     let original_key_params = original_integer_key.parameters();
 
@@ -937,7 +1055,8 @@ fn test_kms_fhe_key_handles(
     .unwrap();
 
     // Retrieve the key parameters from the new KMS handle
-    let (new_integer_key, _, _, _, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
+    let (new_integer_key, _, _, _, _, _, _, _) =
+        new_versionized.client_key.clone().into_raw_parts();
     let new_key_params = new_integer_key.parameters();
 
     // Compare the key parameters and the public key info. We cannot directly compare KmsFheKeyHandles
@@ -1146,6 +1265,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::CrsGenMetadata(test) => {
                 test_crs_gen_metadata(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::KeyGenMetadataWithExtraData(test) => {
+                test_key_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CrsGenMetadataWithExtraData(test) => {
+                test_crs_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()

@@ -63,6 +63,7 @@ jobs:
           filters: |
             ci:
               - '.github/workflows/**'
+              - 'rust-toolchain.toml'
             core-client:
               - 'core-client/src/**'
               - 'core-client/config/**'
@@ -72,12 +73,15 @@ jobs:
               - 'core/thread-handles/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-client-k8s-tests:
               - 'core-client/tests/**'
+              - 'rust-toolchain.toml'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-service:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
@@ -88,12 +92,14 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-threshold:
               - 'core/threshold*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             # Workspace crates that have no dedicated CI job of their own.
             # Used by `test-workspace-crates` to run their unit tests grouped
             # across a few runners.
@@ -106,10 +112,13 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             docs:
               - 'docs/**'
+              - 'rust-toolchain.toml'
             helm-chart:
               - 'charts/**'
+              - 'rust-toolchain.toml'
 
   ############################################################################
   # Docker build pipeline
@@ -235,19 +244,29 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
+      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass narrower
       # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
       #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
       #   centralized : central testing only (no threshold material)
       - name: Set matrix
         id: set-matrix
         run: |
+          # Threshold tests: PRSS tests (sequential via #[serial]).
+          # Centralized tests: basic keygen, CRS, backup/restore workflows.
+          # Both skip: full_gen_tests (nightly), nightly_* (scheduled),
+          # k8s_* (cluster tests), isolated_test_example (demo).
+          # The docker-tls test runs in its own dedicated job — skip it here.
+          THRESHOLD_ARGS="--features threshold_tests -- threshold --skip full_gen_tests --skip nightly"
+          THRESHOLD_ARGS="${THRESHOLD_ARGS} --skip k8s_ --skip centralized --skip isolated_test_example"
+          THRESHOLD_ARGS="${THRESHOLD_ARGS} --skip test_threshold_mpc_context_switch_6_docker"
+
+          CENTRALIZED_ARGS="--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_"
+          CENTRALIZED_ARGS="${CENTRALIZED_ARGS} --skip threshold --skip isolated_test_example"
+
           MATRIX="matrix={\"include\":["
-                    # Threshold tests: includes PRSS tests (sequential execution via #[serial])
-          # Centralized tests: basic keygen, CRS, backup/restore workflows
-          # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
-          MATRIX="${MATRIX}{\"args-tests\":\"--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\",\"generate_default_material\":true},{\"args-tests\":\"--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\",\"generate_default_material\":false}"
-          MATRIX="${MATRIX%,}]}"
+          MATRIX="${MATRIX}{\"args-tests\":\"${THRESHOLD_ARGS}\",\"generate_default_material\":true},"
+          MATRIX="${MATRIX}{\"args-tests\":\"${CENTRALIZED_ARGS}\",\"generate_default_material\":false}"
+          MATRIX="${MATRIX}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
 
@@ -314,13 +333,115 @@ jobs:
     with:
       working-directory: './core-client'
       crate-names: '-p kms-core-client'
-      # Run ALL tests - no skips (includes nightly_* and nightly_full_gen_tests_*)
-      # nightly_* and nightly_full_gen_tests_* are skipped in regular CI via --skip prefix matching
-      args-tests: '--features threshold_tests -- --skip k8s_ --skip isolated_test_example'
+      # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
+      # and the docker-tls test which has its own dedicated job.
+      # nightly_* and nightly_full_gen_tests_* are intentionally included here
+      # (they're skipped only in the regular-CI profile via --skip).
+      args-tests: >-
+        --features threshold_tests -- --skip k8s_ --skip isolated_test_example
+        --skip test_threshold_mpc_context_switch_6_docker
       generate-default-material: true
       nextest-profile: 'ci-nightly'
       runs-on: '32cpu-linux-x64'
     secrets: inherit
+
+  # Docker-Compose integration test.
+  test-core-client-docker-tls:
+    name: main/test-core-client-docker-tls
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      needs.check-changes.outputs.changes-tools == 'true' ||
+      github.ref == 'refs/heads/main'
+    runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+    timeout-minutes: 150
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      DOCKER_BUILDKIT: 1
+      DOCKER_BUILD_TEST_CORE_CLIENT: 1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
+          persist-credentials: true
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: ./.github/actions/docker-login
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Chainguard Container Registry
+        uses: ./.github/actions/docker-login
+        with:
+          registry: cgr.dev
+          username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env]
+          password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env]
+
+      - name: Set up Docker Buildx
+        uses: ./.github/actions/docker-setup-buildx
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: llvm-tools-preview, llvm-tools
+          rust-cache: "false"
+          protoc-version: '26.1'
+          protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2  # zizmor: ignore[cache-poisoning]
+        with:
+          save-if: false # read-only; our job never poisons the cache
+
+      - name: Install nextest
+        run: cargo install cargo-nextest@0.9.124 --locked --force
+
+      - name: Setup usage of private repo
+        env:
+          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }} # zizmor: ignore[secrets-outside-env]
+        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+
+      - name: Run TLS-over-Docker integration test
+        working-directory: ./core-client
+        run: |
+          RUST_BACKTRACE=full cargo nextest run \
+            --profile ci \
+            --no-fail-fast \
+            --features threshold_tests \
+            --test integration_test \
+            -E 'test(=docker_harness::test_threshold_mpc_context_switch_6_docker)'
 
   # Core client unit tests. Integration filters below skip everything that
   # consumes kms test material, so `skip-test-material: true` is safe.

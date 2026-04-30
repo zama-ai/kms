@@ -615,19 +615,21 @@ pub struct SharedKeyGenParameters {
     /// instead of running full distributed keygen.
     #[clap(long)]
     pub existing_keyset_id: Option<RequestId>,
-    /// Epoch ID for the existing keyset (optional, defaults to the request's epoch).
-    #[clap(long)]
-    pub existing_epoch_id: Option<EpochId>,
     /// Reuse the tag from the existing keyset instead of using the new key ID as tag.
     /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub use_existing_key_tag: bool,
+    /// Copy a compressed keygen from existing shares back to the existing keyset ID.
+    /// This is only valid with --existing-keyset-id and compressed keygen.
+    #[clap(
+        long,
+        default_value_t = false,
+        requires = "existing_keyset_id",
+        conflicts_with = "uncompressed"
+    )]
+    pub copy_compressed_key_to_original: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -653,10 +655,6 @@ pub struct CrsParameters {
     pub epoch_id: Option<EpochId>,
     #[clap(long)]
     pub context_id: Option<ContextId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 impl Default for CrsParameters {
@@ -665,7 +663,6 @@ impl Default for CrsParameters {
             max_num_bits: 2048,
             epoch_id: None,
             context_id: None,
-            extra_data: None,
         }
     }
 }
@@ -1262,20 +1259,21 @@ pub async fn fetch_ctxt_from_file(
 /// Try to fetch keys for the given key ID, auto-detecting whether they use the default
 /// compressed storage or the legacy uncompressed layout.
 ///
-/// If `uncompressed_keys` is explicitly `true`, fetches `[PublicKey, ServerKey]` only.
-/// Otherwise, tries `[CompressedXofKeySet]` first; on failure, falls back to
-/// `[PublicKey, ServerKey]`.
+/// If `compressed_keys` is `true`, tries the compressed layout
+/// `[CompressedXofKeySet, PublicKey]` first; on failure, falls back to the
+/// legacy `[PublicKey, ServerKey]`. If `compressed_keys` is `false`, fetches
+/// `[PublicKey, ServerKey]` only.
 /// Returns the fetched party confs and a boolean indicating whether uncompressed keys were found.
 async fn fetch_keys_auto_detect(
     key_id: &str,
-    uncompressed_keys: bool,
+    compressed_keys: bool,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
 ) -> anyhow::Result<(Vec<CoreConf>, bool)> {
-    let compressed_key_types = vec![PubDataType::CompressedXofKeySet];
+    let compressed_key_types = vec![PubDataType::CompressedXofKeySet, PubDataType::PublicKey];
     let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
-    if uncompressed_keys {
+    if !compressed_keys {
         let confs =
             fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false).await?;
         return Ok((confs, true));
@@ -1293,7 +1291,7 @@ async fn fetch_keys_auto_detect(
         Ok(confs) => Ok((confs, false)),
         Err(_) => {
             tracing::info!(
-                "CompressedXofKeySet not found, trying legacy [PublicKey, ServerKey]..."
+                "Compressed layout [CompressedXofKeySet, PublicKey] not found, trying legacy [PublicKey, ServerKey]..."
             );
             let confs =
                 fetch_public_elements(key_id, &key_types, cc_conf, destination_prefix, false)
@@ -1664,7 +1662,7 @@ pub async fn execute_cmd(
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.uncompressed_keys,
+                        !cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1741,7 +1739,7 @@ pub async fn execute_cmd(
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                         &cipher_parameters.key_id.as_str(),
-                        cipher_parameters.uncompressed_keys,
+                        !cipher_parameters.uncompressed_keys,
                         &cc_conf,
                         destination_prefix,
                     )
@@ -1813,7 +1811,6 @@ pub async fn execute_cmd(
                 false,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1839,7 +1836,6 @@ pub async fn execute_cmd(
                 true,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1857,7 +1853,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1879,7 +1874,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
@@ -1888,7 +1882,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1910,7 +1903,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
@@ -1992,7 +1984,7 @@ pub async fn execute_cmd(
         CCCommand::Encrypt(cipher_parameters) => {
             let (party_confs, detected_uncompressed) = fetch_keys_auto_detect(
                 &cipher_parameters.key_id.as_str(),
-                cipher_parameters.uncompressed_keys,
+                !cipher_parameters.uncompressed_keys,
                 &cc_conf,
                 destination_prefix,
             )
@@ -2387,7 +2379,13 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_lib::engine::base::derive_request_id;
+    use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
+    use kms_lib::vault::storage::{StorageType, file::FileStorage, store_versioned_at_request_id};
     use std::env;
+    use tempfile::tempdir;
+    use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
+    use tfhe::xof_key_set::CompressedXofKeySet;
 
     #[test]
     fn test_parse_hex() {
@@ -2408,6 +2406,37 @@ mod tests {
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
         assert!(parse_hex("Ox01").is_err()); // leading O (letter) instead of 0 (digit)
+    }
+
+    #[test]
+    fn test_copy_compressed_key_to_original_requires_existing_keyset_id() {
+        let err = CmdConfig::try_parse_from([
+            "core-client",
+            "key-gen",
+            "--preproc-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--copy-compressed-key-to-original",
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn test_copy_compressed_key_to_original_conflicts_with_uncompressed() {
+        let err = CmdConfig::try_parse_from([
+            "core-client",
+            "key-gen",
+            "--preproc-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--existing-keyset-id",
+            "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--copy-compressed-key-to-original",
+            "--uncompressed",
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -2562,5 +2591,117 @@ mod tests {
             "context_id:{id1};epoch_id:{id2};previous_keys:[key_id={id3},preproc_id={id4},server_key_digest=abc123,public_key_digest=def123;key_id={id5},preproc_id={id6},xof_key_digest=abc456];previous_crs:[crs_id={wrong_id},digest=abc789;crs_id={id8},digest=abc000]"
         );
         assert!(PreviousEpochParameters::from_str(&input_string).is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_keys_auto_detect_downloads_public_key_for_compressed_layout() {
+        let remote_root = tempdir().unwrap();
+        let destination_root = tempdir().unwrap();
+        let object_folder = "PUB-p1";
+        let key_id = derive_request_id("fetch_keys_auto_detect_downloads_public_key").unwrap();
+
+        let params = kms_lib::consts::TEST_PARAM;
+        let config = params.to_tfhe_config();
+        let max_norm_hwt = params
+            .get_params_basics_handle()
+            .get_sk_deviations()
+            .map(|x| x.pmax)
+            .unwrap_or(1.0);
+        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+        let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
+            config,
+            vec![1, 2, 3, 4],
+            params.get_params_basics_handle().get_sec() as u32,
+            max_norm_hwt,
+            key_id.into(),
+        )
+        .unwrap();
+        let (public_key, _server_key) = compressed_keyset
+            .clone()
+            .decompress()
+            .unwrap()
+            .into_raw_parts();
+
+        let mut remote_storage = FileStorage::new(
+            Some(remote_root.path()),
+            StorageType::PUB,
+            Some(object_folder),
+        )
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut remote_storage,
+            &key_id,
+            &compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut remote_storage,
+            &key_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        let cc_conf = CoreClientConfig {
+            kms_type: KmsType::Threshold,
+            cores: vec![CoreConf {
+                party_id: 1,
+                address: "127.0.0.1:0".to_string(),
+                s3_endpoint: format!("file://{}", remote_root.path().display()),
+                object_folder: object_folder.to_string(),
+                #[cfg(feature = "testing")]
+                private_object_folder: None,
+                #[cfg(feature = "testing")]
+                config_path: None,
+            }],
+            decryption_mode: None,
+            num_majority: 1,
+            num_reconstruct: 1,
+            fhe_params: Some(FheParameter::Test),
+        };
+
+        let (party_confs, detected_uncompressed) =
+            fetch_keys_auto_detect(&key_id.to_string(), true, &cc_conf, destination_root.path())
+                .await
+                .unwrap();
+
+        assert_eq!(party_confs.len(), 1);
+        assert!(
+            !detected_uncompressed,
+            "compressed layout should not fall back to legacy uncompressed keys"
+        );
+
+        let downloaded_pk_path = destination_root
+            .path()
+            .join(object_folder)
+            .join(PubDataType::PublicKey.to_string())
+            .join(key_id.to_string());
+        assert!(
+            downloaded_pk_path.exists(),
+            "compressed auto-detect should download the authoritative standalone PublicKey"
+        );
+
+        let _downloaded_pk =
+            load_pk_from_pub_storage(Some(destination_root.path()), &key_id, Some(object_folder))
+                .await;
+        let (ciphertext, _format, _fhe_type) = compute_cipher_from_stored_key(
+            Some(destination_root.path()),
+            TestingPlaintext::U8(42),
+            &key_id,
+            Some(object_folder),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            false,
+        )
+        .await;
+        assert!(
+            !ciphertext.is_empty(),
+            "encryption should succeed from freshly fetched compressed key material"
+        );
     }
 }

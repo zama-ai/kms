@@ -13,7 +13,6 @@ use crate::{
             generate_compressed_decompression_keys, generate_decompression_keys,
         },
         glwe_key::GlweSecretKeyShare,
-        lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
         lwe_bootstrap_key_generation::generate_compressed_bootstrap_key,
         lwe_key::{LweSecretKeyShare, generate_lwe_public_key_shared},
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
@@ -37,14 +36,10 @@ use error_utils::anyhow_error_and_log;
 use hashing::DomainSep;
 use num_integer::div_ceil;
 use tfhe::{
-    core_crypto::{
-        entities::LweBootstrapKey,
-        prelude::{SeededLweBootstrapKey, UnsignedInteger},
-    },
+    core_crypto::prelude::{SeededLweBootstrapKey, UnsignedInteger},
     shortint::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
-        parameters::LweCiphertextCount,
         server_key::CompressedModulusSwitchConfiguration,
     },
     xof_key_set::CompressedXofKeySet,
@@ -53,7 +48,7 @@ use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
 
 pub(crate) const DSEP_KG: DomainSep = *b"TFHE_GEN";
-pub(crate) const DSEP_PRF_KG: DomainSep = *b"PRF_KGEN";
+pub(crate) const DSEP_PRF_KG: DomainSep = *b"OPRF_GEN";
 
 ///Sample the random but public seed
 async fn sample_seed<
@@ -517,6 +512,8 @@ where
     // Then open LWE public key (compressed/seeded variant)
     // This needs to be the first step in this function because XOF ordering needs to be preserved
     let lwe_public_key = {
+        // Snapshot the XOF generator state before any mask bytes are consumed.
+        let compression_seed = mpc_encryption_rng.current_compression_seed();
         let lwe_pk_share = generate_lwe_public_key_shared(
             &params,
             mpc_encryption_rng,
@@ -526,7 +523,7 @@ where
         )
         .await?;
         lwe_pk_share
-            .open_to_tfhers_seeded_type(seed, session)
+            .open_to_tfhers_seeded_type(compression_seed, session)
             .await?
     };
 
@@ -558,7 +555,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -576,7 +572,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
@@ -588,7 +583,6 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -603,7 +597,6 @@ where
                     mpc_encryption_rng,
                     session,
                     preprocessing,
-                    seed,
                 )
                 .await?,
             )
@@ -626,7 +619,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?;
 
@@ -640,7 +632,6 @@ where
                             mpc_encryption_rng,
                             session,
                             preprocessing,
-                            seed,
                         )
                         .await?,
                     )
@@ -670,7 +661,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -684,7 +674,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -713,7 +702,6 @@ where
                         mpc_encryption_rng,
                         session,
                         preprocessing,
-                        seed,
                     )
                     .await?,
                 ))
@@ -742,7 +730,6 @@ where
                 mpc_encryption_rng,
                 session,
                 preprocessing,
-                seed,
             )
             .await?,
         ),
@@ -844,33 +831,8 @@ where
         &mut mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await
-}
-
-/// Correctly decompresses a CompressedDecompressionKey standalone generated from the XOF
-/// and outputs a the raw elements of a [`DecompressionKey`] __BEFORE__ the fourrier transform.
-pub fn decompress_compressed_standalone_decompression_key_from_xof(
-    compressed_decompression_key: CompressedDecompressionKey,
-) -> (LweBootstrapKey<Vec<u64>>, LweCiphertextCount) {
-    let (key, count) = compressed_decompression_key.into_raw_parts();
-
-    let bsk = match key {
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::Classic {
-            bsk,
-            modulus_switch_noise_reduction_key: _,
-        } => bsk,
-        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::MultiBit {
-            seeded_bsk: _,
-            deterministic_execution: _,
-        } => panic!("MultiBit compressed decompression keys are not supported yet"),
-    };
-    let decompressed_key = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-        _,
-        SoftwareRandomGenerator,
-    >(bsk, DSEP_KG);
-    (decompressed_key, count)
 }
 
 /// Generates a compressed bootstrapping key (BSK) for the homomorphic PRF.
@@ -929,7 +891,6 @@ where
         &mut mpc_encryption_rng,
         session,
         preprocessing,
-        seed,
     )
     .await?;
 
@@ -2119,7 +2080,7 @@ pub mod tests {
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let (integer_server_key, _, _, _, ck, _, _, _) = pk.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pk.server_key);
@@ -2264,7 +2225,7 @@ pub mod tests {
 
         set_server_key(pk.server_key.clone());
         let (shortint_pk, tag) = {
-            let (shorint_pk, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
+            let (shorint_pk, _, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
             (shorint_pk.into_raw_parts(), tag)
         };
         for _ in 0..100 {
@@ -2274,6 +2235,7 @@ pub mod tests {
         if with_compact {
             let tfhe_sk = tfhe::ClientKey::from_raw_parts(
                 shortint_sk.into(),
+                None,
                 None,
                 None,
                 None,
@@ -2343,6 +2305,7 @@ pub mod tests {
         // encrypt/decrypt. We only compress and decompress which doesn't require this key.
         let tfhe_sk = tfhe::ClientKey::from_raw_parts(
             shortint_sk.into(),
+            None,
             None,
             None,
             None,
@@ -2601,6 +2564,29 @@ pub mod tests {
     /// Phase 2: keygen from the existing `PrivateKeySet` to regenerate public keys
     /// Saves the results (phase 1 private keys, phase 2 public keys) to file.
     #[cfg(feature = "slow_tests")]
+    fn assert_compressed_xof_keyset_decompression_matches_raw_parts(
+        compressed_pk: &tfhe::xof_key_set::CompressedXofKeySet,
+    ) {
+        let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+        let decompressed_keyset = FhePubKeySet {
+            public_key,
+            server_key,
+        };
+
+        let (_seed, compressed_public_key, compressed_server_key) =
+            compressed_pk.clone().into_raw_parts();
+        let decompressed_raw_parts = FhePubKeySet {
+            public_key: compressed_public_key.decompress(),
+            server_key: compressed_server_key.decompress(),
+        };
+
+        assert_eq!(
+            decompressed_keyset, decompressed_raw_parts,
+            "decompressing CompressedXofKeySet must match decompressing its raw parts individually"
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
     async fn run_dkg_from_existing_sk_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         tag: tfhe::Tag,
@@ -2659,6 +2645,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
+                assert_compressed_xof_keyset_decompression_matches_raw_parts(&compressed_pk);
                 let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 FhePubKeySet {
                     public_key,
@@ -2776,6 +2763,25 @@ pub mod tests {
         integration_keygen_from_existing_test_bk_sns::<4>(true).await
     }
 
+    /// Derives the seed used by tfhe-rs 1.6.1 to create the modulus-switched
+    /// PRF input. This mirrors `create_random_from_seed_modulus_switched` in
+    /// tfhe-rs so the expected plaintext is computed independently from the
+    /// encrypted OPRF path.
+    #[cfg(feature = "slow_tests")]
+    fn oprf_modulus_switched_seed(
+        seed: tfhe_csprng::seeders::Seed,
+        random_bits_count: u64,
+    ) -> Vec<u8> {
+        use sha3::{Digest, Sha3_256};
+
+        let mut hasher = Sha3_256::default();
+        hasher.update(b"TFHE_PRF");
+        hasher.update(seed.0.to_le_bytes());
+        hasher.update(1u64.to_le_bytes());
+        hasher.update(random_bits_count.to_le_bytes());
+        hasher.finalize().to_vec()
+    }
+
     /// Plaintext reference for the shortint OPRF — mirrors
     /// `oprf_compare_plain_from_seed` in tfhe-rs (shortint/oprf.rs).
     /// Given the PRF's small LWE secret key, a seed, the shortint params, and
@@ -2788,68 +2794,54 @@ pub mod tests {
         params: tfhe::shortint::ShortintParameterSet,
         random_bits_count: u64,
     ) -> u64 {
+        use tfhe::core_crypto::commons::math::random::{RandomGenerator, Uniform};
         use tfhe::core_crypto::prelude::{
-            CiphertextModulus, LweCiphertextOwned, decrypt_lwe_ciphertext,
+            CiphertextModulus, DefaultRandomGenerator, LweCiphertextOwned, decrypt_lwe_ciphertext,
         };
+        use tfhe_csprng::seeders::XofSeed;
 
-        // --- gen_prf_input equivalent, using public tfhe-rs APIs ---
-        // 1. Seeded LWE with mask from SHAKE256 and body=0.
         let lwe_size = params.lwe_dimension().to_lwe_size();
-        let ct_seed = tfhe::shortint::oprf::create_random_from_seed::<u64>(seed, lwe_size);
-        // 2. Modulus-switch each sample to log_modulus = log2(2 * polynomial_size).
-        let log_modulus = params
-            .polynomial_size()
-            .to_blind_rotation_input_modulus_log()
-            .0;
+        let polynomial_size = params.polynomial_size();
+        let input_p = 2 * polynomial_size.0 as u64;
+        let log_input_p = input_p.ilog2() as usize;
+        let log_modulus = polynomial_size.to_blind_rotation_input_modulus_log().0;
+
+        let seed = oprf_modulus_switched_seed(seed, random_bits_count);
+        let mut xof =
+            RandomGenerator::<DefaultRandomGenerator>::new(XofSeed::new(seed, *b"PRF_INIT"));
+        let mask = (0..lwe_size.to_lwe_dimension().0)
+            .map(|_| {
+                xof.random_from_distribution_custom_mod::<u32, _>(
+                    Uniform,
+                    CiphertextModulus::new(input_p as u128),
+                ) as u64
+            })
+            .collect_vec();
+
         let shift = u64::BITS as usize - log_modulus;
-        let msed = |a: u64| -> u64 {
-            // round-to-nearest to 2^log_modulus then shift back to full modulus
-            let rounded = a.wrapping_add(1u64 << (shift - 1)) >> shift;
-            rounded << shift
-        };
-        // 3. Build the full-modulus LWE from the switched values.
-        let container: Vec<u64> = ct_seed
-            .get_mask()
-            .as_ref()
-            .iter()
-            .copied()
-            .map(msed)
-            .chain(std::iter::once(msed(*ct_seed.get_body().data)))
+        let container: Vec<u64> = mask
+            .into_iter()
+            .map(|sample| sample << shift)
+            .chain(std::iter::once(0))
             .collect();
         let ct = LweCiphertextOwned::from_container(container, CiphertextModulus::new_native());
-        // 4. Decrypt under the PRF LWE sk and round to log_input_p bits.
-        let input_p = 2 * params.polynomial_size().0 as u64;
-        let log_input_p = input_p.ilog2() as usize;
+
         let pt = decrypt_lwe_ciphertext(prf_lwe_sk, &ct).0;
         let plain_prf_input = pt.wrapping_add(1u64 << (u64::BITS as usize - log_input_p - 1))
             >> (u64::BITS as usize - log_input_p);
 
-        // --- negacyclic step function from oprf_compare_plain_from_seed ---
-        let p_prime = 1u64 << random_bits_count;
-        let output_p = 2 * params.carry_modulus().0 * params.message_modulus().0;
-        let poly_delta = 2 * params.polynomial_size().0 as u64 / p_prime;
-        let half_negacyclic_part = |x: u64| 2 * (x / poly_delta) + 1;
-        let negacyclic_part = |x: u64| -> u64 {
-            assert!(x < input_p);
-            if x < input_p / 2 {
-                half_negacyclic_part(x)
-            } else {
-                2 * output_p - half_negacyclic_part(x - input_p / 2)
-            }
-        };
-        let prf = |x: u64| -> u64 {
-            let a = (negacyclic_part(x) + p_prime - 1) % (2 * output_p);
-            assert!(a.is_multiple_of(2));
-            a / 2
-        };
-        prf(plain_prf_input)
+        tfhe::shortint::oprf::test_utils::cleatext_prf(
+            plain_prf_input,
+            random_bits_count,
+            2 * params.carry_modulus().0 * params.message_modulus().0,
+            polynomial_size.0 as u64,
+        )
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial_test::serial]
     async fn homprf_bsk_gen_and_oprf_correctness_f4() {
-        use crate::tfhe_internals::lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof;
         use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
         use crate::tfhe_internals::test_feature::{
             gen_key_set, keygen_all_party_shares_from_keyset,
@@ -2858,18 +2850,15 @@ pub mod tests {
         use aes_prng::AesRng;
         use rand::SeedableRng;
         use std::collections::HashMap;
-        use tfhe::core_crypto::prelude::{
-            FourierLweBootstrapKey, GlweSecretKey,
-            par_convert_standard_lwe_bootstrap_key_to_fourier,
-        };
+        use tfhe::core_crypto::prelude::GlweSecretKey;
         use tfhe::shortint::EncryptionKeyChoice;
-        use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-        use tfhe::shortint::server_key::ShortintBootstrappingKey;
-        use tfhe_csprng::generators::SoftwareRandomGenerator;
+        use tfhe::shortint::oprf::{
+            AtomicPatternOprfPrivateKey, CompressedOprfBootstrappingKey, CompressedOprfServerKey,
+            OprfPrivateKey,
+        };
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        // NOTE: it is not possible to use small parameters as that doesn't work for oprf
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1u8;
@@ -2975,44 +2964,9 @@ pub mod tests {
             reconstruct_bit_vec::<Z128, 4>(glwe_shares, glwe_total, threshold as usize);
         let reconstructed_glwe_sk = GlweSecretKey::from_container(glwe_key_bits, polynomial_size);
 
-        // Decompress the seeded PRF BSK using the PRF-specific XOF DSEP.
-        let decompressed_prf_bsk = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
-            u64,
-            SoftwareRandomGenerator,
-        >(bsk_ref, super::DSEP_PRF_KG);
-
-        // Convert to Fourier form for the shortint server key.
-        let mut fourier_prf_bsk = FourierLweBootstrapKey::new(
-            decompressed_prf_bsk.input_lwe_dimension(),
-            decompressed_prf_bsk.glwe_size(),
-            decompressed_prf_bsk.polynomial_size(),
-            decompressed_prf_bsk.decomposition_base_log(),
-            decompressed_prf_bsk.decomposition_level_count(),
-        );
-        par_convert_standard_lwe_bootstrap_key_to_fourier(
-            &decompressed_prf_bsk,
-            &mut fourier_prf_bsk,
-        );
-
-        // Take the shortint ServerKey from the DKG output and replace the
-        // bootstrapping key with our distributed PRF BSK. The KSK is left
-        // intact — `generate_oblivious_pseudo_random` does not use it in
-        // KS-PBS order.
-        let mut shortint_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
-        match &mut shortint_server_key.atomic_pattern {
-            AtomicPatternServerKey::Standard(sap) => match &mut sap.bootstrapping_key {
-                ShortintBootstrappingKey::Classic { bsk, .. } => {
-                    *bsk = fourier_prf_bsk;
-                }
-                _ => panic!("expected Classic bootstrap key"),
-            },
-            _ => panic!("expected Standard atomic pattern server key"),
-        }
-
         // Build a shortint ClientKey using the reconstructed GLWE sk. The
         // small LWE sk slot is unused for OPRF decryption in KS-PBS order, so
         // a zero-filled placeholder of the correct dimension suffices.
-        let wrong_glwe_sk = reconstructed_glwe_sk.clone();
         let dummy_small_lwe_sk =
             tfhe::core_crypto::prelude::LweSecretKey::from_container(vec![0u64; lwe_dim]);
         let sck = StandardAtomicPatternClientKey::from_raw_parts(
@@ -3024,6 +2978,13 @@ pub mod tests {
         let shortint_ck = tfhe::shortint::ClientKey {
             atomic_pattern: AtomicPatternClientKey::Standard(sck),
         };
+        let target_shortint_server_key = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        let oprf_server_key =
+            CompressedOprfServerKey::from_raw_parts(CompressedOprfBootstrappingKey::Classic {
+                seeded_bsk: bsk_ref,
+            })
+            .expand()
+            .to_fourier();
 
         // Run the homomorphic PRF for a range of seeds and compare each
         // decrypted output to the plaintext reference.
@@ -3031,7 +2992,11 @@ pub mod tests {
         let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
         for s in 0u128..50u128 {
             let seed = Seed(s);
-            let img = shortint_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
+            let img = oprf_server_key.generate_oblivious_pseudo_random(
+                seed,
+                random_bits_count,
+                &target_shortint_server_key,
+            );
             let actual = shortint_ck.decrypt_message_and_carry(&img);
             let expected = oprf_expected_plaintext(
                 &reconstructed_prf_lwe_sk.as_view(),
@@ -3047,20 +3012,21 @@ pub mod tests {
         // actual PRF key, eliminating any chance of accidental collision.
         let wrong_lwe_sk =
             tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_lwe_key_bits);
-        let wrong_sck = StandardAtomicPatternClientKey::from_raw_parts(
-            wrong_glwe_sk,
-            wrong_lwe_sk,
-            PBSParameters::PBS(ciphertext_params),
-            None,
-        );
-        let wrong_shortint_ck = tfhe::shortint::ClientKey {
-            atomic_pattern: AtomicPatternClientKey::Standard(wrong_sck),
-        };
-        let wrong_server_key = tfhe::shortint::ServerKey::new(&wrong_shortint_ck);
+        let wrong_oprf_private_key =
+            OprfPrivateKey::from_raw_parts(AtomicPatternOprfPrivateKey::Standard(wrong_lwe_sk));
+        let wrong_oprf_server_key =
+            CompressedOprfServerKey::new(&wrong_oprf_private_key, &shortint_ck)
+                .unwrap()
+                .expand()
+                .to_fourier();
         let mut mismatches = 0u64;
         for s in 0u128..50u128 {
             let seed = Seed(s);
-            let img = wrong_server_key.generate_oblivious_pseudo_random(seed, random_bits_count);
+            let img = wrong_oprf_server_key.generate_oblivious_pseudo_random(
+                seed,
+                random_bits_count,
+                &target_shortint_server_key,
+            );
             let actual = shortint_ck.decrypt_message_and_carry(&img);
             let expected = oprf_expected_plaintext(
                 &reconstructed_prf_lwe_sk.as_view(),

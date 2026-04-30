@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::prelude::{
     SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
 };
-use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
@@ -163,29 +162,28 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             _ => (None, None),
         };
 
-        let rerand_ksk =
-            self.cpk_re_randomization_ksk
-                .as_ref()
-                .map(|rerand_ksk| match rerand_ksk {
+        let cpk_re_randomization_key =
+            self.cpk_re_randomization_ksk.as_ref().map(|rerand_ksk| {
+                let ksk = match rerand_ksk {
                     CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
                         tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
                     }
-                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(dedicated_rerand_ksk) => {
-                        let shortint_rerand_ksk =
-                        tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
-                            dedicated_rerand_ksk.clone(),
-                            0,
-                            EncryptionKeyChoice::Big,
-                    KeySwitchingKeyDestinationAtomicPattern::Standard,
-                        );
-
-                        let rerand_ksk =
-                        tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
-                            shortint_rerand_ksk,
-                        );
-                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(ksk) => {
+                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(
+                            tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                                tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                                    ksk.clone(),
+                                    0,
+                                    tfhe::shortint::EncryptionKeyChoice::Big,
+                                    KeySwitchingKeyDestinationAtomicPattern::Standard,
+                                ),
+                            ),
+                        )
                     }
-                });
+                };
+
+                tfhe::CompressedReRandomizationKey::LegacyDedicatedCPK { ksk }
+            });
 
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),
@@ -202,7 +200,8 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             }),
             noise_squashing_key,
             noise_squashing_compression_key,
-            rerand_ksk,
+            cpk_re_randomization_key,
+            None,
             tag,
         )
     }

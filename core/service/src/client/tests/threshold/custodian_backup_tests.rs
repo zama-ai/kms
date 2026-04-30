@@ -34,6 +34,7 @@ use crate::client::test_tools::ServerHandle;
 use crate::client::tests::common::{keygen_config, uncompressed_keygen_config};
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::DEFAULT_EPOCH_ID;
+#[cfg(feature = "insecure")]
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     SIGNING_KEY_ID,
@@ -766,7 +767,7 @@ async fn test_backup_after_reshare_threshold() {
     .await;
 
     // Compute key digests needed for the reshare request
-    let (_, public_key, server_key) = keyset.get_standard();
+    let (_, public_key, server_key) = keyset.get_uncompressed();
     let server_key_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
     let public_key_digest =

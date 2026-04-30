@@ -33,11 +33,12 @@ pub(crate) async fn generate_compressed_mod_switch_noise_reduction_key<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-    seed: u128,
 ) -> anyhow::Result<CompressedModulusSwitchNoiseReductionKey<u64>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    // Snapshot the XOF generator state before any mask bytes are consumed.
+    let compression_seed = mpc_encryption_rng.current_compression_seed();
     let output = generate_encrypted_zeros(
         input_lwe_sk,
         params,
@@ -47,7 +48,7 @@ where
     )?;
 
     let opened_ciphertext_list =
-        lwe_ciphertext::open_to_tfhers_seeded_type(output, seed, session).await?;
+        lwe_ciphertext::open_to_tfhers_seeded_type(output, compression_seed, session).await?;
 
     Ok(CompressedModulusSwitchNoiseReductionKey {
         modulus_switch_zeros: opened_ciphertext_list,

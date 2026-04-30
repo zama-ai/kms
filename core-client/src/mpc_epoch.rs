@@ -261,7 +261,7 @@ pub(crate) async fn do_new_epoch(
 
             let (party_confs_successful, is_compressed) = match fetch_public_elements(
                 &key_id.to_string(),
-                &[PubDataType::CompressedXofKeySet],
+                &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
                 cc_conf,
                 destination_prefix,
                 true,
@@ -299,18 +299,19 @@ pub(crate) async fn do_new_epoch(
             })?;
 
             // Fetch keys, first try compressed, then fetch uncompressed (pub, srv) as fallback
-            let keyset = if is_compressed {
-                Some(
-                    load_material_from_pub_storage::<tfhe::xof_key_set::CompressedXofKeySet>(
-                        Some(destination_prefix),
-                        &key_id,
-                        PubDataType::CompressedXofKeySet,
-                        pub_storage_prefix,
-                    )
-                    .await,
-                )
+            let (keyset, compressed_public_key) = if is_compressed {
+                let keyset = load_material_from_pub_storage::<tfhe::xof_key_set::CompressedXofKeySet>(
+                    Some(destination_prefix),
+                    &key_id,
+                    PubDataType::CompressedXofKeySet,
+                    pub_storage_prefix,
+                );
+                let pk =
+                    load_pk_from_pub_storage(Some(destination_prefix), &key_id, pub_storage_prefix);
+                let (keyset, pk) = tokio::join!(keyset, pk);
+                (Some(keyset), Some(pk))
             } else {
-                None
+                (None, None)
             };
 
             let (public_key, server_key) = if keyset.is_none() {
@@ -348,13 +349,17 @@ pub(crate) async fn do_new_epoch(
                     .clone();
 
                 if let Some(keyset) = keyset.as_ref() {
+                    let pk = compressed_public_key
+                        .as_ref()
+                        .expect("compressed reshared key must have compact public key material");
                     crate::keygen::check_compressed_keyset_ext_signature(
                         keyset,
+                        pk,
                         &preproc_id,
                         &key_id,
                         &signature,
                         &dummy_domain(),
-                        vec![], // TODO RFC005, once extra data is added to request we need it here to verify the signature
+                        request.extra_data.clone(),
                         kms_addrs,
                     )?;
                 } else {
@@ -369,7 +374,7 @@ pub(crate) async fn do_new_epoch(
                         &key_id,
                         &signature,
                         &dummy_domain(),
-                        vec![], // TODO RFC005, once extra data is added to request we need it here to verify the signature
+                        request.extra_data.clone(),
                         kms_addrs,
                     )?;
                 }
