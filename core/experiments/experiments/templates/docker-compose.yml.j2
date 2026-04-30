@@ -7,7 +7,7 @@ services:
     cap_add:
       - NET_ADMIN
     command:
-      - "{{protocol}}"
+      - "{{protocol}}" --expected-num-parties {{n_parties}} --expected-threshold {{threshold}}
     environment:
       - RUST_BACKTRACE=1
       - RUN_MODE=dev
