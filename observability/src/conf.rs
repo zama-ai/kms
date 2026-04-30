@@ -101,11 +101,11 @@ impl TelemetryConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        debug!("Validating telemetry config: {:?}", self);
+        println!("Validating telemetry config: {:?}", self);
         if let Some(endpoint) = &self.tracing_endpoint
             && endpoint.is_empty()
         {
-            warn!("Empty tracing endpoint provided");
+            println!("WARN: Empty tracing endpoint provided");
             return Err(ConfigError::Message(
                 "tracing endpoint cannot be empty".to_string(),
             ));
@@ -210,11 +210,9 @@ impl<'de> Deserialize<'de> for RetryConfig {
         }
 
         let helper = RetryConfigHelper::deserialize(deserializer)?;
-        tracing::info!(
+        println!(
             "Deserializing RetryConfig: max_retries={:?}, initial_delay_ms={:?}, max_delay_ms={:?}",
-            helper.max_retries,
-            helper.initial_delay_ms,
-            helper.max_delay_ms,
+            helper.max_retries, helper.initial_delay_ms, helper.max_delay_ms,
         );
 
         Ok(RetryConfig {
@@ -281,7 +279,7 @@ fn mode() -> ExecutionEnvironment {
     let res = env::var("RUN_MODE")
         .map(|enum_str| ExecutionEnvironment::from_str(enum_str.as_str()).unwrap_or_default())
         .unwrap_or_else(|_| ExecutionEnvironment::Local);
-    tracing::info!("RUN_MODE={res}");
+    println!("RUN_MODE={res}");
     res
 }
 
@@ -292,12 +290,12 @@ impl Settings<'_> {
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de> + std::fmt::Debug>(&self) -> Result<T, ConfigError> {
-        tracing::info!(
+        println!(
             "Initializing configuration with prefix: {}",
             self.env_prefix
         );
         if let Some(path) = self.path {
-            tracing::info!("Using config file: {path}");
+            println!("Using config file: {path}");
         }
 
         // NOTE: Environment variables that correspond to a sequence,
@@ -345,7 +343,7 @@ impl Settings<'_> {
 
         let settings: T = config.try_deserialize()?;
 
-        tracing::info!("DEBUG: SETTINGS: {:?}", settings);
+        println!("DEBUG: SETTINGS: {:?}", settings);
 
         Ok(settings)
     }
