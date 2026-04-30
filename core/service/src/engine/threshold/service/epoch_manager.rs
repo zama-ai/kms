@@ -68,7 +68,7 @@ use crate::{
     engine::{
         base::{
             CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
-            compute_info_compressed_keygen, compute_info_crs, compute_info_standard_keygen,
+            compute_info_compressed_keygen, compute_info_crs, compute_info_uncompressed_keygen,
             retrieve_parameters,
         },
         threshold::service::{
@@ -623,7 +623,7 @@ impl<
             // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
             match verified_material {
                 VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                    let info = match compute_info_standard_keygen(
+                    let info = match compute_info_uncompressed_keygen(
                         sk,
                         &DSEP_PUBDATA_KEY,
                         &key_info.preproc_id,

@@ -1,6 +1,6 @@
 use crate::{
     consts::DEFAULT_EPOCH_ID,
-    cryptography::signatures::gen_sig_keys,
+    cryptography::signatures::{PrivateSigKey, gen_sig_keys},
     dummy_domain,
     engine::base::{KeyGenMetadata, derive_request_id},
 };
@@ -13,8 +13,11 @@ use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tfhe::{CompactPublicKey, ConfigBuilder, ServerKey, shortint::ClassicPBSParameters};
-use tfhe::{core_crypto::prelude::NormalizedHammingWeightBound, xof_key_set::CompressedXofKeySet};
+use tfhe::{
+    CompactPublicKey, ConfigBuilder, Seed, ServerKey, shortint::ClassicPBSParameters,
+    xof_key_set::CompressedXofKeySet,
+};
+use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use threshold_execution::tfhe_internals::{
     parameters::DKGParams,
     public_keysets::FhePubKeySet,
@@ -26,7 +29,7 @@ use crate::{
     consts::TEST_PARAM,
     engine::{
         base::KmsFheKeyHandles,
-        centralized::central_kms::async_generate_crs,
+        centralized::central_kms::{async_generate_crs, generate_fhe_keys},
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
@@ -44,6 +47,46 @@ use crate::{
 fn dummy_info() -> KeyGenMetadata {
     let req_id = derive_request_id("dummy_info").unwrap();
     KeyGenMetadata::new(req_id, req_id, HashMap::new(), vec![], vec![])
+}
+
+fn ram_threshold_storage(
+    backup_vault: Option<crate::vault::Vault>,
+) -> ThresholdCryptoMaterialStorage<RamStorage, RamStorage> {
+    ThresholdCryptoMaterialStorage::new(
+        RamStorage::new(),
+        RamStorage::new(),
+        backup_vault,
+        HashMap::new(),
+    )
+}
+
+fn generate_compressed_keys(
+    req_id: &RequestId,
+    prep_id: &RequestId,
+    signing_seed: u64,
+) -> (
+    PrivateSigKey,
+    alloy_sol_types::Eip712Domain,
+    CompressedXofKeySet,
+    CompactPublicKey,
+    KmsFheKeyHandles,
+) {
+    let mut rng = AesRng::seed_from_u64(signing_seed);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+    let domain = dummy_domain();
+    let (compressed_keyset, compact_pk, key_info) = generate_fhe_keys(
+        &sk,
+        TEST_PARAM,
+        KeyGenSecretKeyConfig::GenerateAll,
+        req_id,
+        prep_id,
+        Some(Seed(42)),
+        &domain,
+        vec![],
+    )
+    .unwrap();
+
+    (sk, domain, compressed_keyset, compact_pk, key_info)
 }
 
 #[tokio::test]
@@ -700,28 +743,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         .unwrap()
         .into();
     let (crypto_storage, mut threshold_fhe_keys, _fhe_key_set) = setup_threshold_store(&req_id);
-
-    let params = TEST_PARAM;
-    let config = params.to_tfhe_config();
-    let max_norm_hwt = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|x| x.pmax)
-        .unwrap_or(1.0);
-    let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
-    let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
-        config,
-        vec![42, 43, 44, 45],
-        params.get_params_basics_handle().get_sec() as u32,
-        max_norm_hwt,
-        req_id.into(),
-    )
-    .unwrap();
-    let (compact_pk, _sk) = compressed_keyset
-        .clone()
-        .decompress()
-        .unwrap()
-        .into_raw_parts();
+    let (_, _, compressed_keyset, compact_pk, _) = generate_compressed_keys(&req_id, &req_id, 42);
     threshold_fhe_keys.public_material = PublicKeyMaterial::new(compressed_keyset.clone());
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
@@ -787,33 +809,8 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         None,
         HashMap::new(),
     );
-
-    let params = TEST_PARAM;
-    let config = params.to_tfhe_config();
-    let max_norm_hwt = params
-        .get_params_basics_handle()
-        .get_sk_deviations()
-        .map(|x| x.pmax)
-        .unwrap_or(1.0);
-    let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
-    let (client_key, compressed_keyset) = CompressedXofKeySet::generate(
-        config,
-        vec![50, 51, 52, 53],
-        params.get_params_basics_handle().get_sec() as u32,
-        max_norm_hwt,
-        req_id.into(),
-    )
-    .unwrap();
-    let (compact_pk, _server_key) = compressed_keyset
-        .clone()
-        .decompress()
-        .unwrap()
-        .into_raw_parts();
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
+    let (_, _, compressed_keyset, compact_pk, key_info) =
+        generate_compressed_keys(&req_id, &req_id, 50);
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     {
@@ -932,3 +929,5 @@ fn setup_threshold_store(
     );
     (crypto_storage, threshold_fhe_keys, fhe_key_set)
 }
+
+mod migration;

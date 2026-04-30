@@ -111,6 +111,7 @@ pub(crate) async fn do_keygen(
             .map(|id| kms_grpc::kms::v1::KeySetAddedInfo {
                 existing_keyset_id: Some(id.into()),
                 use_existing_key_tag: shared_config.use_existing_key_tag,
+                copy_compressed_key_to_original: shared_config.copy_compressed_key_to_original,
                 ..Default::default()
             });
     let dkg_req = internal_client.key_gen_request(

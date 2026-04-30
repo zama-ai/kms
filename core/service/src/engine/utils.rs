@@ -1386,7 +1386,7 @@ mod tests {
 
         let digest = match &metadata {
             CrsGenMetadata::Current(inner) => inner.crs_digest.clone(),
-            _ => panic!("expected Current metadata"),
+            _ => panic!("expected Current metadata, instead got {:?}", metadata),
         };
 
         store_versioned_at_request_id(storage, crs_id, &crs, &PubDataType::CRS.to_string())

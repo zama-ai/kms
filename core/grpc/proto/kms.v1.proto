@@ -59,7 +59,17 @@ message KeySetAddedInfo {
   //
   // This option is only used when KeyGenSecretKeyConfig::UseExisting is used.
   // Otherwise it is ignored.
-  bool use_existing_key_tag = 5;
+  bool use_existing_key_tag = 4;
+
+  // If true, after a compressed keygen from existing shares
+  // (UseExisting + CompressedKeyConfig::All), copy the resulting
+  // CompressedXofKeySet to the original key ID and replace the original
+  // ThresholdFheKeys with the migrated one. The CompactPublicKey is
+  // preserved at both the original and the new key ID.
+  //
+  // Only used when KeyGenSecretKeyConfig::UseExisting is used with
+  // CompressedKeyConfig::All. Otherwise it is ignored.
+  bool copy_compressed_key_to_original = 5;
 }
 
 // The keyset configuration message.
