@@ -2,6 +2,10 @@ name: rust-lint
 
 on:
   pull_request:
+  # Run on main pushes too so the rust-cache `save-if` condition in the "Setup Rust cache"-step evaluates to true and
+  # populates the workspace cache. PR runs only use the cache for reading.
+  push:
+    branches: [main]
 
 concurrency:
   group: rust-lint-${{ github.ref }}
