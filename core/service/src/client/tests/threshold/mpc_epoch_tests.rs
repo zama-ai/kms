@@ -384,6 +384,7 @@ async fn run_new_epoch(
             resharing.as_ref().map(|r| &r.signing_domain),
         )
         .unwrap();
+    let extra_data = reshare_request.extra_data.clone();
 
     // Execute reshare
     let mut tasks_reshare = JoinSet::new();
@@ -485,6 +486,7 @@ async fn run_new_epoch(
                 &preproc_id,
                 &key_id,
                 &resharing_params.signing_domain,
+                extra_data.clone(),
                 amount_parties,
                 Some(new_epoch_id.into()),
                 true, // compressed
@@ -542,7 +544,7 @@ async fn run_new_epoch(
                     &crs_id,
                     res_storage,
                     &resharing_params.signing_domain,
-                    vec![],
+                    extra_data.clone(),
                     min_agree_count,
                 )
                 .await

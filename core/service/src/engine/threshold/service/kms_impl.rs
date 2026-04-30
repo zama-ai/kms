@@ -1026,6 +1026,7 @@ mod tests {
                     RequestId::zeros(),
                     HashMap::new(),
                     vec![],
+                    vec![],
                 ),
                 key_cache: OnceLock::new(),
             };
@@ -1072,6 +1073,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 HashMap::new(),
+                vec![],
                 vec![],
             ),
         );
@@ -1135,6 +1137,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 HashMap::new(),
+                vec![],
                 vec![],
             ),
         };
