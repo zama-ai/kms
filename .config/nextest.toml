@@ -1,25 +1,21 @@
 # =============================================================================
-# Test Groups — enforce sequential execution for tests sharing infrastructure
+# Test Groups
 # =============================================================================
-# nextest runs each test in a separate process, so #[serial] attributes alone
-# are insufficient to prevent parallel execution across binaries.
 [test-groups]
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
 k8s-integration = { max-threads = 1 }
 
 # =============================================================================
-# CI profile: used for PR checks. Test selection (including which nightly
-# tests to skip) lives in the workflow YAML so it's visible at the
-# `cargo nextest run` invocation site.
+# CI profile: used for PR checks. Test selection lives in the workflow YAMLs so
+# it's visible at the `cargo nextest run` invocation site.
 # =============================================================================
 [profile.ci]
 
 [profile.ci.junit]
 path = "junit.xml"
 
-# Serialize all K8s test binaries (kubernetes_test_threshold*,
-# kubernetes_test_centralized*) — they share the same Kind cluster pods.
+# Ensure K8s tests run serially, they share the same Kind cluster pods.
 [[profile.ci.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
@@ -39,7 +35,7 @@ path = "junit.xml"
 filter = 'package(kms-core-client) & binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
 
-# Serialize K8s tests (same as ci profile).
+# Ensure K8s tests run serially, they share the same Kind cluster pods.
 [[profile.ci-nightly.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"
