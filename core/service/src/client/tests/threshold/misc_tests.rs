@@ -6,18 +6,13 @@ use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::send_dec_reqs;
+use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::engine::utils::make_extra_data;
-use crate::vault::storage::file::FileStorage;
-cfg_if::cfg_if! {
-    if #[cfg(feature = "slow_tests")] {
-        use serial_test::serial;
-    }
-}
-use crate::client::tests::common::send_dec_reqs;
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::testing::prelude::*;
+use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use threshold_networking::grpc::GrpcServer;
