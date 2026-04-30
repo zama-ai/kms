@@ -111,13 +111,27 @@ jobs:
         id: compute
         run: |
           set -euo pipefail
-          BASE_IMAGE="cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev"
+          DOCKERFILE="docker/base/Dockerfile"
+          # Single source of truth: read the first external FROM line from the
+          # Dockerfile so bumping the base image there is enough to trigger a
+          # golden image rebuild. Skips any `--flag=...` arguments to FROM.
+          BASE_IMAGE=$(awk '
+            toupper($1) == "FROM" {
+              for (i = 2; i <= NF; i++) {
+                if ($i !~ /^--/) { print $i; exit }
+              }
+            }
+          ' "${DOCKERFILE}")
+          if [[ -z "${BASE_IMAGE}" ]]; then
+            echo "Failed to parse base image from ${DOCKERFILE}" >&2
+            exit 1
+          fi
           BASE_DIGEST=$(docker buildx imagetools inspect "${BASE_IMAGE}" --format '{{.Manifest.Digest}}')
           echo "Resolved ${BASE_IMAGE} -> ${BASE_DIGEST}"
           CONTENT_HASH=$(
             {
               echo "base=${BASE_DIGEST}"
-              sha256sum docker/base/Dockerfile rust-toolchain.toml
+              sha256sum "${DOCKERFILE}" rust-toolchain.toml
             } | sha256sum | cut -c1-12
           )
           GOLDEN_TAG="golden-${CONTENT_HASH}"
