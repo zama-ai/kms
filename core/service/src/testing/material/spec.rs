@@ -22,8 +22,10 @@ pub struct TestMaterialSpec {
 /// Type of test material parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialType {
+    // TODO(dp): This should really be named `Insecure`, but that's potentially disruptive to production.
     /// Testing parameters (fast, small keys)
     Testing,
+    // TODO(dp): This should really be named `Secure`.
     /// Default parameters (production-like, slower)
     Default,
 }
@@ -122,7 +124,8 @@ impl TestMaterialSpec {
     /// Create specification for centralized test with Default parameters
     ///
     /// Uses production-like key sizes (MaterialType::Default).
-    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    /// **Requires:** Pre-generated secure material, e.g.
+    /// `generate-test-material --profile secure --parties 4`
     pub fn centralized_default() -> Self {
         let mut spec = Self::centralized_basic();
         spec.material_type = MaterialType::Default;
@@ -132,7 +135,8 @@ impl TestMaterialSpec {
     /// Create specification for threshold test with Default parameters
     ///
     /// Uses production-like key sizes (MaterialType::Default).
-    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    /// **Requires:** Pre-generated secure material, e.g.
+    /// `generate-test-material --profile secure --parties 4`
     pub fn threshold_default(party_count: usize) -> Self {
         let mut spec = Self::threshold_basic(party_count);
         spec.material_type = MaterialType::Default;
