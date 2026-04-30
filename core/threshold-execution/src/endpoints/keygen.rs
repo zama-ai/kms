@@ -40,6 +40,7 @@ use tfhe::{
     shortint::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
+        oprf::{CompressedOprfBootstrappingKey, CompressedOprfServerKey},
         server_key::CompressedModulusSwitchConfiguration,
     },
     xof_key_set::CompressedXofKeySet,
@@ -392,6 +393,16 @@ where
         lwe_hat_secret_key_share.clone()
     };
 
+    let oprf_secret_key_share = Some(
+        LweSecretKeyShare::new_from_preprocessing(
+            params_basics_handle.lwe_dimension(),
+            preprocessing,
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?,
+    );
+
     tracing::info!("(Party {my_role}) Generating corresponding public key...Done");
 
     // Generate the GLWE secret key
@@ -464,6 +475,7 @@ where
     let priv_key_set = GenericPrivateKeySet {
         lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
         lwe_secret_key_share,
+        oprf_secret_key_share,
         glwe_secret_key_share,
         glwe_secret_key_share_sns,
         glwe_secret_key_share_compression,
@@ -471,6 +483,42 @@ where
     };
 
     Ok(priv_key_set)
+}
+
+/// Ensures a Z128 finalized private keyset contains the dedicated OPRF LWE key share.
+///
+/// Older persisted keysets do not have this share. `UseExisting` keygen calls this
+/// before regenerating public material so the new keyset can persist the generated share.
+#[instrument(name="TFHE.EnsureOprfSecretKeyShare", skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+pub async fn ensure_oprf_secret_key_share_z128<
+    S: BaseSessionHandles,
+    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    const EXTENSION_DEGREE: usize,
+>(
+    private_key_set: &mut PrivateKeySet<EXTENSION_DEGREE>,
+    params: DKGParams,
+    preprocessing: &mut P,
+    session: &mut S,
+) -> anyhow::Result<()>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    if private_key_set.oprf_secret_key_share.is_none() {
+        let params_basics_handle = params.get_params_basics_handle();
+        private_key_set.oprf_secret_key_share = Some(
+            crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
+                LweSecretKeyShare::new_from_preprocessing(
+                    params_basics_handle.lwe_dimension(),
+                    preprocessing,
+                    params_basics_handle.get_pmax(),
+                    session,
+                )
+                .await?,
+            ),
+        );
+    }
+
+    Ok(())
 }
 
 /// Generates all compressed public keys from an existing private key set.
@@ -585,6 +633,23 @@ where
         preprocessing,
     )
     .await?;
+
+    let oprf_bsk = generate_compressed_oprf_bootstrap_key(
+        &private_key_set.glwe_secret_key_share,
+        private_key_set
+            .oprf_secret_key_share
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing OPRF secret key share"))?,
+        params,
+        preprocessing,
+        session,
+    )
+    .await?;
+    let oprf_key = Some(CompressedOprfServerKey::from_raw_parts(
+        CompressedOprfBootstrappingKey::Classic {
+            seeded_bsk: oprf_bsk,
+        },
+    ));
 
     // If needed, compute the mod switch noise reduction key
     let msnrk = match params_basics_handle.get_msnrk_configuration() {
@@ -747,6 +812,7 @@ where
         msnrk_sns,
         sns_compression_key,
         cpk_re_randomization_ksk,
+        oprf_key,
         seed,
     })
 }
@@ -867,15 +933,8 @@ where
     // function into a pub(crate) and integrate it into a normal keygen as the
     // normal keygen would include this bsk.
 
-    let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(XofSeed::new_u128(seed, DSEP_PRF_KG));
-
     // The LWE key share is the PRF key/seed
+    let params_basics_handle = params.get_params_basics_handle();
     let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
         params_basics_handle.lwe_dimension(),
         preprocessing,
@@ -884,17 +943,51 @@ where
     )
     .await?;
 
-    let bsk = generate_compressed_bootstrap_key(
+    let bsk = generate_compressed_oprf_bootstrap_key(
         glwe_secret_key_share,
         &lwe_secret_key_share,
+        params,
+        preprocessing,
+        session,
+    )
+    .await?;
+
+    Ok((bsk, lwe_secret_key_share))
+}
+
+async fn generate_compressed_oprf_bootstrap_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    oprf_lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: DKGParams,
+    preprocessing: &mut P,
+    session: &mut S,
+) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
+        Z,
+        SoftwareRandomGenerator,
+        EXTENSION_DEGREE,
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_PRF_KG));
+
+    generate_compressed_bootstrap_key(
+        glwe_secret_key_share,
+        oprf_lwe_secret_key_share,
         params_basics_handle.get_bk_params(),
         &mut mpc_encryption_rng,
         session,
         preprocessing,
     )
-    .await?;
-
-    Ok((bsk, lwe_secret_key_share))
+    .await
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -2223,6 +2316,7 @@ pub mod tests {
             prefix_path,
         );
 
+        assert_has_dedicated_oprf_key(&pk.server_key);
         set_server_key(pk.server_key.clone());
         let (shortint_pk, tag) = {
             let (shorint_pk, _, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
@@ -2293,6 +2387,7 @@ pub mod tests {
             prefix_path,
         );
 
+        assert_has_dedicated_oprf_key(&pk.server_key);
         set_server_key(pk.server_key.clone());
         let tag = pk.server_key.tag();
 
@@ -2321,6 +2416,14 @@ pub mod tests {
         if with_rerand {
             try_tfhe_rerand(&tfhe_sk, &pk.public_key);
         }
+    }
+
+    fn assert_has_dedicated_oprf_key(server_key: &tfhe::ServerKey) {
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "threshold full keygen must embed a dedicated OPRF server key"
+        );
     }
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys

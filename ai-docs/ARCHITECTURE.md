@@ -129,6 +129,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   preprocessing), `KeyGen`, and `NewEpoch` for key rotation. Multiple keyset
   configurations are supported (standard, decompression-only, compressed
   variants).
+  Standard threshold keygen persists a dedicated OPRF LWE secret-key share in
+  each party's private key material and includes the corresponding OPRF server
+  key in the generated TFHE server key. Legacy private keysets that predate this
+  field are upgraded with the OPRF share absent; `UseExisting` keygen generates
+  and persists a fresh OPRF share for such legacy material before regenerating
+  public keys. The centralized keygen path emits the same OPRF server key via
+  the tfhe-rs default (`IntegerConfig::dedicated_oprf_key = true`), so threshold
+  and centralized server keys agree on this slot.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated).
 - **CRS** — `CRSGen` for ZK-proof common reference strings.

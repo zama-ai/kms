@@ -1452,6 +1452,13 @@ pub(crate) mod tests {
             decompressed.is_ok(),
             "Compressed keyset should be decompressible"
         );
+
+        let (_pk, server_key) = decompressed.unwrap().into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        assert!(
+            oprf_key.is_some(),
+            "centralized full keygen must embed a dedicated OPRF server key"
+        );
     }
 
     #[tokio::test]

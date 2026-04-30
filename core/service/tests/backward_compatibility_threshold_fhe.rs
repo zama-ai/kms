@@ -268,6 +268,11 @@ fn test_private_key_gen(
         LweSecretKeyShareEnum::Z64(_)
     ));
 
+    assert!(
+        original_versionized.oprf_secret_key_share.is_none(),
+        "legacy private keysets must upgrade with no dedicated OPRF private share"
+    );
+
     Ok(test.success(format))
 }
 
