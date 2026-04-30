@@ -778,7 +778,7 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::DEFAULT_EPOCH_ID;
+    use crate::consts::{DEFAULT_EPOCH_ID, TEST_THRESHOLD_KEY_ID_4P};
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
