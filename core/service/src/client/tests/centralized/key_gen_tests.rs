@@ -275,6 +275,7 @@ pub async fn run_key_gen_centralized(
             domain.clone(),
         )
         .unwrap();
+    let extra_data = gen_req.extra_data.clone();
     let gen_response = kms_client
         .key_gen(tonic::Request::new(gen_req.clone()))
         .await
@@ -319,7 +320,7 @@ pub async fn run_key_gen_centralized(
                     key_req_id,
                     &inner_resp,
                     &domain,
-                    vec![],
+                    extra_data.clone(),
                     &pub_storage,
                 )
                 .await
@@ -349,7 +350,7 @@ pub async fn run_key_gen_centralized(
                     key_req_id,
                     resp,
                     &domain_clone,
-                    vec![],
+                    extra_data.clone(),
                     &pub_storage,
                 )
                 .await

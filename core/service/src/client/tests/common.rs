@@ -1,7 +1,9 @@
 use crate::client::client_wasm::Client;
 use crate::consts::TEST_PARAM;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::engine::utils::make_extra_data;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
@@ -21,6 +23,12 @@ use tonic::transport::Channel;
 
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
+
+/// Constructs the extra data field based on the default context and epoch IDs.
+pub(crate) fn default_isolated_extra_data() -> Vec<u8> {
+    make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
+        .expect("make_extra_data with defaults cannot fail")
+}
 
 /// Returns the default keygen config.
 ///
@@ -74,10 +82,9 @@ pub(crate) fn keygen_config_from_existing(
             }),
         }),
         Some(KeySetAddedInfo {
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
             use_existing_key_tag,
+            ..KeySetAddedInfo::default()
         }),
     )
 }
@@ -96,8 +103,7 @@ pub(crate) fn decompression_keygen_config(
         Some(KeySetAddedInfo {
             from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
-            existing_keyset_id: None,
-            use_existing_key_tag: false,
+            ..KeySetAddedInfo::default()
         }),
     )
 }

@@ -619,12 +619,17 @@ pub struct SharedKeyGenParameters {
     /// This is only used when generating a key from existing shares.
     #[clap(long, default_value_t = false)]
     pub use_existing_key_tag: bool,
+    /// Copy a compressed keygen from existing shares back to the existing keyset ID.
+    /// This is only valid with --existing-keyset-id and compressed keygen.
+    #[clap(
+        long,
+        default_value_t = false,
+        requires = "existing_keyset_id",
+        conflicts_with = "uncompressed"
+    )]
+    pub copy_compressed_key_to_original: bool,
     pub context_id: Option<ContextId>,
     pub epoch_id: Option<EpochId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -650,10 +655,6 @@ pub struct CrsParameters {
     pub epoch_id: Option<EpochId>,
     #[clap(long)]
     pub context_id: Option<ContextId>,
-    /// Optional extra data (hex-encoded) to include in the request.
-    /// Can optionally have a "0x" prefix.
-    #[clap(long)]
-    pub extra_data: Option<String>,
 }
 
 impl Default for CrsParameters {
@@ -662,7 +663,6 @@ impl Default for CrsParameters {
             max_num_bits: 2048,
             epoch_id: None,
             context_id: None,
-            extra_data: None,
         }
     }
 }
@@ -1811,7 +1811,6 @@ pub async fn execute_cmd(
                 false,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1837,7 +1836,6 @@ pub async fn execute_cmd(
                 true,
                 shared_args,
                 destination_prefix,
-                parse_extra_data(&shared_args.extra_data),
             )
             .await?;
 
@@ -1855,7 +1853,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1877,7 +1874,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
@@ -1886,7 +1882,6 @@ pub async fn execute_cmd(
             max_num_bits,
             epoch_id,
             context_id,
-            extra_data,
         }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -1908,7 +1903,6 @@ pub async fn execute_cmd(
                 destination_prefix,
                 *context_id,
                 *epoch_id,
-                parse_extra_data(extra_data),
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
@@ -2412,6 +2406,37 @@ mod tests {
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
         assert!(parse_hex("Ox01").is_err()); // leading O (letter) instead of 0 (digit)
+    }
+
+    #[test]
+    fn test_copy_compressed_key_to_original_requires_existing_keyset_id() {
+        let err = CmdConfig::try_parse_from([
+            "core-client",
+            "key-gen",
+            "--preproc-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--copy-compressed-key-to-original",
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn test_copy_compressed_key_to_original_conflicts_with_uncompressed() {
+        let err = CmdConfig::try_parse_from([
+            "core-client",
+            "key-gen",
+            "--preproc-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--existing-keyset-id",
+            "1102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--copy-compressed-key-to-original",
+            "--uncompressed",
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

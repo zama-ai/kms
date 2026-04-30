@@ -142,8 +142,7 @@ async fn crs_gen_centralized_manual(
                 crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
                 maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
                 crsDigest: actual_digest.to_vec().into(),
-                // TODO: reenable for RFC005
-                // extraData: vec![].into(),
+                extraData: ceremony_req.extra_data.clone().into(),
             },
             &domain,
             &resp.external_signature,
@@ -244,7 +243,12 @@ pub(crate) async fn run_crs_centralized(
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
-        .process_get_crs_resp(&inner_resp, &domain, vec![], &pub_storage)
+        .process_get_crs_resp(
+            &inner_resp,
+            &domain,
+            gen_req.extra_data.clone(),
+            &pub_storage,
+        )
         .await
         .unwrap()
         .unwrap();
