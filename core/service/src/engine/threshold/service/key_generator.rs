@@ -14,7 +14,7 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::PubDataType,
+    rpc_types::{PrivDataType, PubDataType},
 };
 use observability::{
     metrics,
@@ -75,7 +75,7 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{CryptoMaterialReader, ThresholdCryptoMaterialStorage},
+        crypto_material::{CryptoMaterialReader, PublicKeySet, ThresholdCryptoMaterialStorage},
     },
 };
 
@@ -491,9 +491,7 @@ impl<
                         tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
                         let mut guarded_meta_store = meta_store_cancelled.write().await;
                         let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
-                        // TODO(#2983) Meta store update will fail here. The helper methods will be rewritten to avoid this problem. 
-                        // In connection with this the meta store update should be moved to AFTER the purging
-                        crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
+                        crypto_storage_cancelled.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::PublicKey, PubDataType::ServerKey, PubDataType::CompressedXofKeySet], &[PrivDataType::FheKeyInfo]).await;
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -1080,10 +1078,9 @@ impl<
             }
         };
 
-        //Note: We can't easily check here whether we succeeded writing to the meta store
-        //thus we can't increment the error counter if it fails
-        crypto_storage
-            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
+        let _ = crypto_storage
+            .inner
+            .write_decompression_key(req_id, info, decompression_key, meta_store)
             .await;
 
         tracing::info!(
@@ -1411,12 +1408,13 @@ impl<
                 //Note: We can't easily check here whether we succeeded writing to the meta store
                 //thus we can't increment the error counter if it fails
                 if let Err(e) = crypto_storage
-                    .write_threshold_keys_with_dkg_meta_store(
+                    .write_threshold_keys(
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
-                        pub_key_set,
+                        PublicKeySet::Standard(pub_key_set),
                         meta_store,
+                        op_tag,
                     )
                     .await
                 {
@@ -1429,7 +1427,7 @@ impl<
                 // CompactPublicKey so that signatures and stored bytes stay stable for
                 // clients that already hold it. For a fresh keygen, use the public key
                 // derived from the newly generated compressed keyset.
-                let compact_pk = match existing_compact_pk {
+                let compact_public_key = match existing_compact_pk {
                     Some(old_pk) => old_pk,
                     None => match compressed_keyset.decompress() {
                         Ok(ks) => ks.into_raw_parts().0,
@@ -1454,7 +1452,7 @@ impl<
                     &prep_id,
                     req_id,
                     &compressed_keyset,
-                    &compact_pk,
+                    &compact_public_key,
                     &eip712_domain,
                     extra_data,
                 ) {
@@ -1481,13 +1479,16 @@ impl<
                 // NOTE: when there is an existing compact pk from an older keygen (an older key ID),
                 // then this pk is effectively copied to the new key ID.
                 if let Err(e) = crypto_storage
-                    .write_threshold_keys_with_dkg_meta_store_compressed(
+                    .write_threshold_keys(
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
-                        &compressed_keyset,
-                        &compact_pk,
+                        PublicKeySet::Compressed {
+                            compact_public_key,
+                            compressed_keyset,
+                        },
                         meta_store,
+                        op_tag,
                     )
                     .await
                 {

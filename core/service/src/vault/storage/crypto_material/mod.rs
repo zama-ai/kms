@@ -47,6 +47,7 @@ mod tests;
 // Re-export the public API for external consumption
 pub use base::CryptoMaterialStorage;
 pub use centralized::CentralizedCryptoMaterialStorage;
+pub use threshold::PublicKeySet;
 pub use threshold::ThresholdCryptoMaterialStorage;
 pub use traits::CryptoMaterialReader;
 pub use traits::PrivateCryptoMaterialReader;

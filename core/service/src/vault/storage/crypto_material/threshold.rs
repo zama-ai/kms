@@ -5,17 +5,14 @@
 
 use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType},
 };
-use tfhe::{
-    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs,
-};
+use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
@@ -23,20 +20,26 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
     },
-    util::meta_store::{
-        MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
-    },
+    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, crypto_material::log_storage_success, read_all_data_versioned,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            Storage, StorageExt,
+            crypto_material::base::{StorageError, update_meta_store},
+            read_all_data_versioned,
         },
     },
 };
 
 use super::base::CryptoMaterialStorage;
 
+pub enum PublicKeySet {
+    Standard(FhePubKeySet),
+    Compressed {
+        compact_public_key: tfhe::CompactPublicKey,
+        compressed_keyset: CompressedXofKeySet,
+    },
+}
 /// A cached generic storage entity for the threshold KMS.
 /// Cloning this object is cheap since it uses Arc internally.
 pub struct ThresholdCryptoMaterialStorage<
@@ -80,26 +83,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         prss_info: &PRSSSetupCombined,
     ) -> anyhow::Result<()> {
-        let mut priv_storage = self.inner.private_storage.lock().await;
-        if !CryptoMaterialStorage::<PubS, PrivS>::write_priv_data(
-            &mut (*priv_storage),
-            &(*epoch_id).into(),
-            None, // PRSS data is NOT stored under an epoch
-            prss_info,
-            &PrivDataType::PrssSetupCombined,
-        )
-        .await
-        {
-            anyhow::bail!("Failed to write PRSS info for epoch {epoch_id}");
-        }
-        log_storage_success(
-            epoch_id,
-            priv_storage.info(),
-            &PrivDataType::PrssSetupCombined.to_string(),
-            false,
-            true,
-        );
-        Ok(())
+        // No public data so we just use PRSSSetupCombined
+        self.inner
+            .handle_all_storage::<PRSSSetupCombined, PRSSSetupCombined>(
+                &(*epoch_id).into(), // using epoch_id as req_id since PRSS info is stored under this directly
+                None,
+                None, // no public data for PRSS info
+                Some((prss_info, PrivDataType::PrssSetupCombined)),
+                OP_NEW_EPOCH,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Storing PRSS failed with error: {e}"))
     }
 
     /// Read all PRSS info from storage
@@ -118,24 +112,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-    ) -> bool {
-        if let Err(e) = self
-            .inner
+    ) -> Result<(), StorageError> {
+        self.inner
             .handle_all_storage(
                 crs_id,
                 Some(epoch_id),
-                &vec![(&pp, PubDataType::CRS)],
-                &vec![(&crs_info.clone(), PrivDataType::CrsInfo)],
+                Some((&pp, PubDataType::CRS)),
+                Some((&crs_info.clone(), PrivDataType::CrsInfo)),
                 OP_NEW_EPOCH,
             )
             .await
-        {
-            tracing::error!(
-                "Failed to write CRS for resharing epoch change to storage for CRS ID {crs_id} and epoch {epoch_id}: {e}"
-            );
-            return false;
-        }
-        true
     }
 
     /// Check if the CRS under [req_id, epoch_id] exists in the storage.
@@ -143,352 +129,95 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id, epoch_id).await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn inner_write_threshold_keys<T: Clone>(
+    pub(crate) async fn write_threshold_keys(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
-        fhe_key_set: FhePubKeySet,
-        meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) -> bool {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let (r1, r2) = {
-            // Lock the storage components in the correct order to avoid deadlocks.
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let mut priv_storage = self.inner.private_storage.lock().await;
-
-            let f1 = async {
-                let store_result = store_versioned_at_request_and_epoch_id(
-                    &mut (*priv_storage),
-                    key_id,
-                    epoch_id,
-                    &threshold_fhe_keys,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &store_result {
-                    tracing::error!(
-                        "Failed to store threshold FHE keys to private storage for request {}: {}",
-                        key_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        key_id,
-                        priv_storage.info(),
-                        &PrivDataType::FheKeyInfo.to_string(),
-                        false,
-                        true,
-                    );
-                }
-                store_result.is_ok()
-            };
-            let f2 = async {
-                tracing::info!("Storing public key");
-                let pk_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    &fhe_key_set.public_key,
-                    &PubDataType::PublicKey.to_string(),
-                )
-                .await;
-                if let Err(e) = &pk_result {
-                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::PublicKey.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                let server_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    &fhe_key_set.server_key,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &server_result {
-                    tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::ServerKey.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                pk_result.is_ok() && server_result.is_ok()
-            };
-            tokio::join!(f1, f2)
-        };
-        // Try to store the new data
-        tracing::info!("Storing Keys objects for key ID {}", key_id);
-
-        if r1 && r2 {
-            {
-                let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "Threshold FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                } else {
-                    tracing::debug!("Added new threshold FHE keys to cache for {}", key_id);
-                }
-            }
-            tracing::info!("Finished storing key for Key Id {key_id}.");
-            true
-        } else {
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might be
-            // because the data did not get created
-            // In any case, we can't do much.
-            tracing::warn!(
-                "Failed to ensure existence of threshold key material for Key with ID: {}",
-                key_id
-            );
-            let guarded_meta_storage = meta_store.write().await;
-            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
-                .await;
-            false
-        }
-    }
-
-    /// Write the key materials (result of a keygen) to storage and cache
-    /// for the threshold KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_threshold_keys_with_dkg_meta_store(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
-        fhe_key_set: FhePubKeySet,
+        fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        ensure_meta_store_request_pending(&meta_store, key_id).await?;
-
-        let info = threshold_fhe_keys.meta_data.clone();
-        let storage_ok = self
-            .inner_write_threshold_keys(
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        // First ensure that the meta store request is pending
+        ensure_meta_store_request_pending(&meta_store, key_id)
+            .await
+            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        let meta_res = threshold_fhe_keys.meta_data.clone();
+        let res = self
+            .handle_threshold_key_storage(
                 key_id,
                 epoch_id,
                 threshold_fhe_keys,
                 fhe_key_set,
-                Arc::clone(&meta_store),
+                op_metric_tag,
             )
             .await;
-        if !storage_ok {
-            anyhow::bail!("Storage write failed for threshold key {key_id}");
-        }
-        let mut guarded_meta_store = meta_store.write().await;
-        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
-            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
-                .await;
-            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
-        }
-        Ok(())
+        // Finally update meta store
+        update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
     }
 
-    /// Write the key materials (result of a compressed keygen) to storage and cache
-    /// for the threshold KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// This is similar to [write_threshold_keys_with_dkg_meta_store] but for compressed keys.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn write_threshold_keys_with_dkg_meta_store_compressed(
+    /// Helper function to write the threshold keys to storage, along with updating the cache if the storage operation was successful.
+    pub(crate) async fn handle_threshold_key_storage(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
-        compressed_keyset: &CompressedXofKeySet,
-        compact_public_key: &tfhe::CompactPublicKey,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        ensure_meta_store_request_pending(&meta_store, key_id).await?;
-
-        let info = threshold_fhe_keys.meta_data.clone();
-        let storage_ok = self
-            .inner_write_threshold_keys_compressed(
-                key_id,
-                epoch_id,
-                threshold_fhe_keys,
-                compressed_keyset,
-                compact_public_key,
-                Arc::clone(&meta_store),
-            )
-            .await;
-        if !storage_ok {
-            anyhow::bail!("Storage write failed for compressed threshold key {key_id}");
-        }
-        let mut guarded_meta_store = meta_store.write().await;
-        if let Err(e) = guarded_meta_store.update(key_id, Ok(info)) {
-            self.handle_threshold_meta_update_failure(key_id, epoch_id, guarded_meta_store)
-                .await;
-            anyhow::bail!("Error while updating meta store for {key_id}: {e}");
-        }
-        Ok(())
-    }
-
-    async fn handle_threshold_meta_update_failure(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
-    ) {
-        if should_purge_after_meta_update_failure(&guarded_meta_store, key_id) {
-            self.purge_key_material(key_id, epoch_id, guarded_meta_store)
-                .await;
-        } else {
-            drop(guarded_meta_store);
-        }
-
-        let mut guarded_fhe_keys = self.fhe_keys.write().await;
-        guarded_fhe_keys.remove(&(*key_id, *epoch_id));
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn inner_write_threshold_keys_compressed<T: Clone>(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
-        compressed_keyset: &CompressedXofKeySet,
-        compact_public_key: &tfhe::CompactPublicKey,
-        meta_store: Arc<RwLock<MetaStore<T>>>,
-    ) -> bool {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let guarded_meta_storage = meta_store.write().await;
-        let (r1, r2) = {
-            // Lock the storage components in the correct order to avoid deadlocks.
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let mut priv_storage = self.inner.private_storage.lock().await;
-
-            let f1 = async {
-                let store_result = store_versioned_at_request_and_epoch_id(
-                    &mut (*priv_storage),
-                    key_id,
-                    epoch_id,
-                    &threshold_fhe_keys,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &store_result {
-                    tracing::error!(
-                        "Failed to store threshold FHE keys to private storage for request {}: {}",
+        fhe_key_set: PublicKeySet,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        // First try to store the special key
+        let pk_to_store = match &fhe_key_set {
+            PublicKeySet::Standard(keys) => {
+                self.inner
+                    .handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
                         key_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        key_id,
-                        priv_storage.info(),
-                        &PrivDataType::FheKeyInfo.to_string(),
-                        false,
-                        true,
-                    );
-                }
-                store_result.is_ok()
-            };
-            let f2 = async {
-                // Store compressed xof key set and the compact public key derived from it.
-                let keyset_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    compressed_keyset,
-                    &PubDataType::CompressedXofKeySet.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &keyset_result {
-                    tracing::error!(
-                        "Failed to store compressed server key for request {}: {}",
-                        key_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::CompressedXofKeySet.to_string(),
-                        true,
-                        true,
-                    );
-                }
-
-                let pk_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    compact_public_key,
-                    &PubDataType::PublicKey.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &pk_result {
-                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::PublicKey.to_string(),
-                        true,
-                        true,
-                    );
-                }
-
-                keyset_result.is_ok() && pk_result.is_ok()
-            };
-            tokio::join!(f1, f2)
-        };
-        // Try to store the new data
-        tracing::info!("Storing compressed keys objects for key ID {}", key_id);
-
-        if r1 && r2 {
-            {
-                let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "Threshold FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                } else {
-                    tracing::debug!(
-                        "Added new compressed threshold FHE keys to cache for {}",
-                        key_id
-                    );
-                }
+                        Some(epoch_id),
+                        Some((&keys.server_key, PubDataType::ServerKey)),
+                        None,
+                        op_metric_tag,
+                    )
+                    .await?;
+                &keys.public_key
             }
-            tracing::info!("Finished storing compressed key for Key Id {key_id}.");
-            true
-        } else {
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might be
-            // because the data did not get created
-            // In any case, we can't do much.
-            tracing::warn!(
-                "Failed to ensure existence of compressed threshold key material for Key with ID: {}",
-                key_id
-            );
-            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
-                .await;
-            false
+            PublicKeySet::Compressed {
+                compact_public_key,
+                compressed_keyset,
+            } => {
+                self.inner
+                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
+                        key_id,
+                        Some(epoch_id),
+                        Some((&compressed_keyset, PubDataType::CompressedXofKeySet)),
+                        None,
+                        op_metric_tag,
+                    )
+                    .await?;
+                &compact_public_key
+            }
+        };
+        // If it goes well also store the public key and private state
+        let res = self
+            .inner
+            .handle_all_storage(
+                key_id,
+                Some(epoch_id),
+                Some((pk_to_store, PubDataType::PublicKey)),
+                Some((&threshold_fhe_keys, PrivDataType::FheKeyInfo)),
+                op_metric_tag,
+            )
+            .await;
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+            // Update cache
+            let mut guarded_fhe_keys = self.fhe_keys.write().await;
+            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
+            if previous.is_some() {
+                tracing::warn!(
+                    "Threshold FHE keys already exist in cache for {}, overwriting",
+                    key_id
+                );
+            }
         }
+        res
     }
 
     /// Read the key materials for decryption in the threshold case.
@@ -550,31 +279,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             self.inner.private_storage.clone(),
         )
         .await
-    }
-
-    /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
-    pub async fn purge_key_material<T: Clone>(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
-    ) {
-        self.inner
-            .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
-            .await
-    }
-
-    /// Note that we're not storing a shortint decompression key
-    pub async fn write_decompression_key_with_meta_store(
-        &self,
-        req_id: &RequestId,
-        decompression_key: DecompressionKey,
-        info: KeyGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
-        self.inner
-            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
-            .await
     }
 }
 

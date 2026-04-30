@@ -95,7 +95,9 @@ use crate::{
     },
     vault::storage::{
         Storage, StorageExt,
-        crypto_material::{PrivateCryptoMaterialReader, ThresholdCryptoMaterialStorage},
+        crypto_material::{
+            PrivateCryptoMaterialReader, PublicKeySet, ThresholdCryptoMaterialStorage,
+        },
         delete_at_request_and_epoch_id, delete_at_request_id,
         s3::RealReadOnlyS3StorageGetter,
     },
@@ -660,12 +662,12 @@ impl<
 
                     storage_tasks.push(
                         crypto_storage
-                            .inner_write_threshold_keys(
+                            .handle_threshold_key_storage(
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
-                                fhe_pubkeys,
-                                Arc::clone(&meta_store),
+                                PublicKeySet::Standard(fhe_pubkeys),
+                                OP_NEW_EPOCH,
                             )
                             .boxed(),
                     );
@@ -713,19 +715,20 @@ impl<
                         info.clone(),
                     );
 
-                    let meta_store = Arc::clone(&meta_store);
                     storage_tasks.push(
                         async move {
                             let compressed_keyset = compressed_keyset;
                             let compact_public_key = compact_public_key;
                             crypto_storage
-                                .inner_write_threshold_keys_compressed(
+                                .handle_threshold_key_storage(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
-                                    &compressed_keyset,
-                                    &compact_public_key,
-                                    meta_store,
+                                    PublicKeySet::Compressed {
+                                        compact_public_key,
+                                        compressed_keyset,
+                                    },
+                                    OP_NEW_EPOCH,
                                 )
                                 .await
                         }
@@ -761,7 +764,7 @@ impl<
         // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
         let res = join_all(storage_tasks).await;
         let mut err_msgs = Vec::new();
-        let agg_res = if res.iter().any(|r| *r == false) {
+        let agg_res = if res.iter().any(|r| r.is_err()) {
             let storage_err_msg = format!(
                 "Failed to store all reshared keys for new epoch {}.",
                 new_epoch_id

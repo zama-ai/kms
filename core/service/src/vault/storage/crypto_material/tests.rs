@@ -3,6 +3,7 @@ use crate::{
     cryptography::signatures::gen_sig_keys,
     dummy_domain,
     engine::base::{KeyGenMetadata, derive_request_id},
+    vault::storage::crypto_material::PublicKeySet,
 };
 use aes_prng::AesRng;
 use kms_grpc::{
@@ -441,12 +442,13 @@ async fn write_threshold_empty_update() {
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -495,12 +497,13 @@ async fn write_threshold_empty_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -528,12 +531,13 @@ async fn write_threshold_keys_meta_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -545,12 +549,13 @@ async fn write_threshold_keys_meta_update() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -611,12 +616,13 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -638,12 +644,13 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
-            &new_req_id,
+        .write_threshold_keys(
+            &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            PublicKeySet::Standard(fhe_key_set.clone()),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -717,7 +724,7 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
         req_id.into(),
     )
     .unwrap();
-    let (compact_pk, _sk) = compressed_keyset
+    let (compact_public_key, _sk) = compressed_keyset
         .clone()
         .decompress()
         .unwrap()
@@ -726,13 +733,16 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store_compressed(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys,
-            &compressed_keyset,
-            &compact_pk,
+            PublicKeySet::Compressed {
+                compact_public_key,
+                compressed_keyset,
+            },
             meta_store,
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -804,7 +814,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         req_id.into(),
     )
     .unwrap();
-    let (compact_pk, _server_key) = compressed_keyset
+    let (compact_public_key, _server_key) = compressed_keyset
         .clone()
         .decompress()
         .unwrap()
@@ -822,13 +832,16 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     }
 
     crypto_storage
-        .write_centralized_compressed_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info,
-            &compressed_keyset,
-            &compact_pk,
+            PublicKeySet::Compressed {
+                compact_public_key,
+                compressed_keyset,
+            },
             meta_store,
+            "",
         )
         .await
         .unwrap();

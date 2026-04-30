@@ -9,19 +9,20 @@ use tokio::sync::{Mutex, RwLock};
 use kms_grpc::{
     RequestId,
     identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType},
+    rpc_types::{PrivDataType, PubDataType},
 };
-use tfhe::{integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet};
-use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
-    util::meta_store::MetaStore,
+    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id,
+            Storage, StorageExt,
+            crypto_material::{
+                PublicKeySet,
+                base::{StorageError, update_meta_store},
+            },
         },
     },
 };
@@ -58,163 +59,96 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
-    pub async fn write_decompression_key_with_meta_store(
-        &self,
-        req_id: &RequestId,
-        decompression_key: DecompressionKey,
-        info: KeyGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) {
-        self.inner
-            .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
-            .await
-    }
-
-    /// Write the key materials (result of a keygen) to storage and cache
-    /// for the centralized KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_centralized_keys_with_meta_store(
+    pub(crate) async fn write_central_keys(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        key_info: KmsFheKeyHandles,
-        fhe_key_set: FhePubKeySet,
+        central_fhe_keys: KmsFheKeyHandles,
+        fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let mut guarded_meta_store = meta_store.write().await;
-
-        // Try to store the new data
-        tracing::info!(
-            "Attempting to store centralized keygen material for key ID {}",
-            key_id
-        );
-
-        let f1 = async {
-            let mut priv_storage = self.inner.private_storage.lock().await;
-            let store_result = store_versioned_at_request_and_epoch_id(
-                &mut (*priv_storage),
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        // First ensure that the meta store request is pending
+        ensure_meta_store_request_pending(&meta_store, key_id)
+            .await
+            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        let meta_res = central_fhe_keys.public_key_info.clone();
+        let res = self
+            .handle_central_key_storage(
                 key_id,
                 epoch_id,
-                &key_info,
-                &PrivDataType::FhePrivateKey.to_string(),
+                central_fhe_keys,
+                fhe_key_set,
+                op_metric_tag,
             )
             .await;
-            if let Err(e) = &store_result {
-                tracing::error!(
-                    "Failed to store FHE key info to private storage for request {}: {}",
-                    key_id,
-                    e
-                );
-            }
-            store_result.is_ok()
-        };
+        // Finally update meta store
+        update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
+    }
 
-        let f2 = async {
-            tracing::info!("Storing public key");
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
+    // TODO can we simplify this with the threshold methods with a macro since cache also needs to be updated, of format different in central comapred to threshold
+    /// Helper function to write the central keys to storage, along with updating the cache if the storage operation was successful.
+    pub(crate) async fn handle_central_key_storage(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        central_fhe_keys: KmsFheKeyHandles,
+        fhe_key_set: PublicKeySet,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        // First try to store the special key
+        let pk_to_store = match &fhe_key_set {
+            PublicKeySet::Standard(keys) => {
+                self.inner
+                    .handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
+                        key_id,
+                        Some(epoch_id),
+                        Some((&keys.server_key, PubDataType::ServerKey)),
+                        None,
+                        op_metric_tag,
+                    )
+                    .await?;
+                &keys.public_key
+            }
+            PublicKeySet::Compressed {
+                compact_public_key,
+                compressed_keyset,
+            } => {
+                self.inner
+                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
+                        key_id,
+                        Some(epoch_id),
+                        Some((&compressed_keyset, PubDataType::CompressedXofKeySet)),
+                        None,
+                        op_metric_tag,
+                    )
+                    .await?;
+                &compact_public_key
+            }
+        };
+        // If it goes well also store the public key and private state
+        let res = self
+            .inner
+            .handle_all_storage(
                 key_id,
-                &fhe_key_set.public_key,
-                &PubDataType::PublicKey.to_string(),
+                Some(epoch_id),
+                Some((pk_to_store, PubDataType::PublicKey)),
+                Some((&central_fhe_keys, PrivDataType::FheKeyInfo)),
+                op_metric_tag,
             )
             .await;
-            if let Err(e) = &result {
-                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-
-        let f3 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                &fhe_key_set.server_key,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-        if r1 && r2 && r3 {
-            let meta_update =
-                guarded_meta_store.update(key_id, Ok(key_info.public_key_info.clone()));
-            if meta_update.is_ok() {
-                let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                }
-                tracing::info!(
-                    "Successfully stored centralized keygen material for request {}",
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+            // Update cache
+            let mut guarded_fhe_keys = self.fhe_keys.write().await;
+            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), central_fhe_keys);
+            if previous.is_some() {
+                tracing::warn!(
+                    "Threshold FHE keys already exist in cache for {}, overwriting",
                     key_id
                 );
-                Ok(())
-            } else {
-                // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something since
-                // it might be because the data did not get created
-                // In any case, we can't do much.
-                self.inner
-                    .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
-                    .await;
-                meta_update.map_err(|e| {
-                    anyhow::anyhow!("Error while updating PK meta store for {key_id}: {e}")
-                })
             }
-        } else {
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since
-            // it might be because the data did not get created
-            // In any case, we can't do much.
-            self.inner
-                .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
-                .await;
-            anyhow::bail!("Storage write failed for key {key_id}");
         }
-    }
-
-    /// Write the compressed key materials (result of a compressed keygen) to storage and cache
-    /// for the centralized KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// This is similar to [write_centralized_keys_with_meta_store] but for compressed keys.
-    /// Instead of storing separate public_key and server_key, we store the compressed keyset.
-    pub async fn write_centralized_compressed_keys_with_meta_store(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        key_info: KmsFheKeyHandles,
-        compressed_keyset: &CompressedXofKeySet,
-        compact_public_key: &tfhe::CompactPublicKey,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .write_compressed_keys_with_dkg_meta_store(
-                key_id,
-                epoch_id,
-                key_info,
-                PrivDataType::FhePrivateKey,
-                compressed_keyset,
-                compact_public_key,
-                meta_store,
-                Arc::clone(&self.fhe_keys),
-            )
-            .await
+        res
     }
 
     /// Read the key materials for decryption in the centralized case.
