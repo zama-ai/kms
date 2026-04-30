@@ -101,11 +101,11 @@ impl TelemetryConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        debug!("Validating telemetry config: {:?}", self);
+        println!("Validating telemetry config: {:?}", self);
         if let Some(endpoint) = &self.tracing_endpoint
             && endpoint.is_empty()
         {
-            warn!("Empty tracing endpoint provided");
+            println!("WARN: Empty tracing endpoint provided");
             return Err(ConfigError::Message(
                 "tracing endpoint cannot be empty".to_string(),
             ));
@@ -343,7 +343,7 @@ impl Settings<'_> {
 
         let settings: T = config.try_deserialize()?;
 
-        tracing::info!("DEBUG: SETTINGS: {:?}", settings);
+        println!("DEBUG: SETTINGS: {:?}", settings);
 
         Ok(settings)
     }
