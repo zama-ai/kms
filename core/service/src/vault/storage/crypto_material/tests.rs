@@ -72,7 +72,7 @@ async fn write_crs() {
 
     // writing to an empty meta store should fail
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -119,7 +119,7 @@ async fn write_crs() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -133,7 +133,7 @@ async fn write_crs() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -174,7 +174,7 @@ async fn write_crs() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &new_req_id,
             &default_epoch_id,
             pp,

@@ -4,6 +4,7 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
@@ -139,7 +140,7 @@ pub async fn crs_gen_impl<
                         Some(req_id),
                         anyhow::anyhow!("CRS generation of request {} exiting before completion because of an abort request.", req_id),
                     );
-                    let del_res = crypto_storage_cancel.inner.purge_crs_material(&req_id, &epoch_id).await;
+                    let del_res =  crypto_storage_cancel.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::CRS], &[PrivDataType::CrsInfo]).await;
                     {
                         let mut guarded_meta_store = meta_store_cancel.write().await;
                         let msg = if del_res {
@@ -304,18 +305,12 @@ pub(crate) async fn crs_gen_background<
 
     if let Err(e) = crypto_storage
         .inner
-        .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
+        .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
         .await
     {
         tracing::error!("Failed to write CRS to storage: {e}");
         return;
     }
-    // Update the backup and handle potential failures by incrementing backup errors in the metrics
-    crypto_storage
-        .inner
-        .update_backup_vault(false, op_tag)
-        .await;
-
     tracing::info!(
         "⏱️ Core Event Time for CRS-gen request id {}: {:?}",
         req_id,

@@ -9,6 +9,7 @@ use kms_grpc::{
     EpochId, RequestId,
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
+    rpc_types::{PrivDataType, PubDataType},
 };
 use observability::{
     metrics::{self, DurationGuard},
@@ -113,6 +114,7 @@ impl<
 
         // Validate the request ID before proceeding
         self.crypto_storage
+            .inner
             .crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
@@ -226,7 +228,7 @@ impl<
                             Some(req_id),
                             anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
                         );
-                        let del_res = crypto_storage_cancelled.inner.purge_crs_material(&req_id, &epoch_id).await;
+                        let del_res = crypto_storage_cancelled.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::CRS], &[PrivDataType::CrsInfo]).await;
                         {
                             let mut guarded_meta_store = meta_store_cancelled.write().await;
                             let msg = if del_res {
@@ -453,28 +455,20 @@ impl<
             hex::encode(crs_info.digest())
         );
 
-        //Note: We can't easily check here whether we succeeded writing to the meta store
-        //thus we can't increment the error counter if it fails
-        if let Err(e) = crypto_storage
+        let res = crypto_storage
             .inner
-            .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-            .await
-        {
-            tracing::error!("Failed to write CRS for request {req_id}: {e}");
-            return;
-        }
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, op_tag)
+            .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await;
-
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-        tracing::info!(
-            "CRS stored. CRS ceremony time was {:?} ms",
-            (elapsed_time).as_millis()
-        );
+        if let Err(e) = res {
+            tracing::error!("Failed to write CRS for request {req_id}: {e}");
+        } else {
+            tracing::info!(
+                "CRS stored. CRS ceremony time was {:?} ms",
+                (elapsed_time).as_millis()
+            );
+        }
     }
 }
 

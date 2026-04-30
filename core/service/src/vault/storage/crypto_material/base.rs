@@ -5,10 +5,7 @@
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::meta_store::update_ok_req_in_meta_store;
-use crate::util::meta_store::{
-    ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
-    update_err_req_in_meta_store,
-};
+use crate::util::meta_store::{ensure_meta_store_request_pending, update_err_req_in_meta_store};
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
@@ -490,7 +487,7 @@ where
     }
 
     /// General method for handling the storage of material, including backup.
-    async fn handle_all_storage<
+    pub(crate) async fn handle_all_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
@@ -508,7 +505,6 @@ where
     {
         // Then ensure that data does not already exist to avoid accidentally overwriting or purging
         // TODO add helper methods for existence check
-
         let priv_types = priv_data
             .iter()
             .map(|(_, priv_type)| priv_type.clone())
@@ -530,7 +526,7 @@ where
             // If storage write failed then purge
 
             if !self
-                .purge_material(req_id, epoch_id, &priv_types, &pub_types)
+                .purge_material(req_id, epoch_id, &pub_types, &priv_types)
                 .await
             {
                 return Err(StorageError::PurgingError);
@@ -545,12 +541,12 @@ where
 
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
-    async fn purge_material(
+    pub(crate) async fn purge_material(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
-        private_types: &[PrivDataType],
         public_types: &[PubDataType],
+        private_types: &[PrivDataType],
     ) -> bool {
         // Lock both stores up front to enforce the public-then-private locking order.
         let mut pub_storage = self.public_storage.lock().await;
@@ -935,163 +931,6 @@ where
                 "Removed key data from meta store for request {} while purging key material",
                 req_id
             );
-        }
-    }
-
-    /// Write the CRS to the storage backend as well as the cache,
-    /// and update the [meta_store] to "Done" if the procedure is successful.
-    /// In case of an error, update the meta-store with the relevant error information and storage data is purged.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_crs_with_meta_store(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-        op_metric_tag: &'static str,
-    ) -> anyhow::Result<()> {
-        ensure_meta_store_request_pending(&meta_store, crs_id).await?;
-        let storage_ok = self
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info.clone())
-            .await
-            && update_ok_req_in_meta_store(
-                &mut meta_store.write().await,
-                crs_id,
-                crs_info,
-                op_metric_tag,
-            );
-        if !storage_ok {
-            let mut guarded_meta_store = meta_store.write().await;
-            if should_purge_after_meta_update_failure(&guarded_meta_store, crs_id) {
-                let purge_res = self.purge_crs_material(crs_id, epoch_id).await;
-                if update_err_req_in_meta_store(
-                    &mut guarded_meta_store,
-                    crs_id,
-                    format!(
-                        "Failed to write CRS to storage, purge after failure {}",
-                        if purge_res { "succeeded" } else { "failed" }
-                    ),
-                    op_metric_tag,
-                ) {
-                    anyhow::bail!(
-                        "Failed to write CRS {crs_id} to storage, but successfully purged dangling CRS material and updated meta store"
-                    );
-                } else {
-                    anyhow::bail!(
-                        "Failed to write CRS {crs_id} to storage, and failed to update meta store after purging dangling CRS material"
-                    );
-                }
-            }
-            anyhow::bail!(
-                "Failed to write CRS {crs_id} to storage, and purge after failure is not needed"
-            );
-        }
-        Ok(())
-    }
-
-    /// Write the CRS to the storage backend.
-    /// Returns true if the write is successful, false otherwise.
-    pub(crate) async fn inner_write_crs(
-        &self,
-        crs_id: &RequestId,
-        epoch_id: &EpochId,
-        pp: CompactPkeCrs,
-        crs_info: CrsGenMetadata,
-    ) -> bool {
-        let (r1, r2) = {
-            // Enforce locking order for internal types
-            let mut pub_storage = self.public_storage.lock().await;
-            let mut priv_storage = self.private_storage.lock().await;
-
-            let f1 = async {
-                let result = store_versioned_at_request_and_epoch_id(
-                    &mut (*priv_storage),
-                    crs_id,
-                    epoch_id,
-                    &crs_info,
-                    &PrivDataType::CrsInfo.to_string(),
-                )
-                .await;
-                if let Err(e) = &result {
-                    tracing::error!(
-                        "Failed to store CRS info to private storage for request {}: {}",
-                        crs_id,
-                        e
-                    );
-                }
-                result.is_ok()
-            };
-            let f2 = async {
-                let result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    crs_id,
-                    &pp,
-                    &PubDataType::CRS.to_string(),
-                )
-                .await;
-                if let Err(e) = &result {
-                    tracing::error!(
-                        "Failed to store CRS to public storage for request {}: {}",
-                        crs_id,
-                        e
-                    );
-                }
-                result.is_ok()
-            };
-            tokio::join!(f1, f2)
-        };
-
-        r1 && r2
-    }
-
-    /// Tries to delete all the types of CRS material related to a specific [RequestId].
-    /// Returns true if the purge is successful, false otherwise.
-    pub async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        // Enforce locking order for internal types
-        let mut pub_storage = self.public_storage.lock().await;
-        let mut priv_storage = self.private_storage.lock().await;
-
-        let f1 = async {
-            let result =
-                delete_at_request_id(&mut (*pub_storage), req_id, &PubDataType::CRS.to_string())
-                    .await;
-            if let Err(e) = &result {
-                tracing::warn!(
-                    "Failed to delete CRS from public storage for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            result.is_err()
-        };
-        let f2 = async {
-            let priv_result = delete_at_request_and_epoch_id(
-                &mut (*priv_storage),
-                req_id,
-                epoch_id,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await;
-            if let Err(e) = &priv_result {
-                tracing::warn!(
-                    "Failed to delete CRS info from private storage for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-
-            priv_result.is_err()
-        };
-        let (r1, r2) = tokio::join!(f1, f2);
-        if r1 || r2 {
-            tracing::error!("Failed to delete crs material for request {}", req_id);
-            false
-        } else {
-            tracing::info!("Deleted all crs material for request {}", req_id);
-            true
         }
     }
 

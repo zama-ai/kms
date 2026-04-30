@@ -23,7 +23,6 @@ use crate::{
         base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::{ThresholdFheKeys, session::PRSSSetupCombined},
     },
-    util::meta_store::update_err_req_in_meta_store,
     util::meta_store::{
         MetaStore, ensure_meta_store_request_pending, should_purge_after_meta_update_failure,
     },
@@ -82,13 +81,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         prss_info: &PRSSSetupCombined,
     ) -> anyhow::Result<()> {
         let mut priv_storage = self.inner.private_storage.lock().await;
-        store_versioned_at_request_id(
-            &mut *priv_storage,
+        if !CryptoMaterialStorage::<PubS, PrivS>::write_priv_data(
+            &mut (*priv_storage),
             &(*epoch_id).into(),
+            None, // PRSS data is NOT stored under an epoch
             prss_info,
-            &PrivDataType::PrssSetupCombined.to_string(),
+            &PrivDataType::PrssSetupCombined,
         )
-        .await?;
+        .await
+        {
+            anyhow::bail!("Failed to write PRSS info for epoch {epoch_id}");
+        }
         log_storage_success(
             epoch_id,
             priv_storage.info(),
@@ -104,59 +107,35 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
     ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
         let priv_storage = self.inner.private_storage.lock().await;
-
         read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
     }
 
     /// Write the CRS to the storage backend (for use in connection with resharing).
     /// Returns true if the write was successful, false otherwise.
-    ///
-    /// On failure, the meta_store is used to purge dangling data.
-    /// On success, the meta_store is NOT updated; the caller is responsible for that.
-    pub(crate) async fn resharing_crs_write<T: Clone>(
+    pub(crate) async fn resharing_crs_write(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<T>>>,
     ) -> bool {
-        if self
+        if let Err(e) = self
             .inner
-            .inner_write_crs(crs_id, epoch_id, pp, crs_info)
+            .handle_all_storage(
+                crs_id,
+                Some(epoch_id),
+                &vec![(&pp, PubDataType::CRS)],
+                &vec![(&crs_info.clone(), PrivDataType::CrsInfo)],
+                OP_NEW_EPOCH,
+            )
             .await
         {
-            true
-        } else {
-            // Some store op failed, we need to purge any potentially
-            // dangling data and update the meta store accordingly.
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might
-            // be because the data did not get created
-            // In any case, we can't do much.
-            if self.inner.purge_crs_material(crs_id, epoch_id).await {
-                // Successfully purged dangling data, now update meta store with error
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = update_err_req_in_meta_store(
-                    &mut guarded_meta_store,
-                    crs_id,
-                    format!("Failed to write CRS to storage for epoch change to {epoch_id}"),
-                    OP_NEW_EPOCH,
-                );
-            } else {
-                // Failure in purging data
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = update_err_req_in_meta_store(
-                    &mut guarded_meta_store,
-                    crs_id,
-                    format!(
-                        "Failed to purge dangling data in connection with CRS update failure for epoch change to {epoch_id}"
-                    ),
-                    OP_NEW_EPOCH,
-                );
-            }
-            false
+            tracing::error!(
+                "Failed to write CRS for resharing epoch change to storage for CRS ID {crs_id} and epoch {epoch_id}: {e}"
+            );
+            return false;
         }
+        true
     }
 
     /// Check if the CRS under [req_id, epoch_id] exists in the storage.

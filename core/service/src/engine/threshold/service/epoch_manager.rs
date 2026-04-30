@@ -87,7 +87,10 @@ use crate::{
         },
     },
     util::{
-        meta_store::{MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store},
+        meta_store::{
+            MetaStore, retrieve_from_meta_store, update_err_req_in_meta_store,
+            update_req_in_meta_store,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{
@@ -750,29 +753,41 @@ impl<
             crs_metadatas.push(crs_meta_data.clone());
             storage_tasks.push(
                 crypto_storage
-                    .resharing_crs_write(
-                        &crs_info.crs_id,
-                        &new_epoch_id,
-                        crs,
-                        crs_meta_data,
-                        Arc::clone(&meta_store),
-                    )
+                    .resharing_crs_write(&crs_info.crs_id, &new_epoch_id, crs, crs_meta_data)
                     .boxed(),
             );
         }
 
         // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
-        join_all(storage_tasks).await;
-        meta_store.write().await.update(
+        let res = join_all(storage_tasks).await;
+        let mut err_msgs = Vec::new();
+        let agg_res = if res.iter().any(|r| *r == false) {
+            let storage_err_msg = format!(
+                "Failed to store all reshared keys for new epoch {}.",
+                new_epoch_id
+            );
+            err_msgs.push(storage_err_msg.clone());
+            Err(storage_err_msg)
+        } else {
+            Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
+        };
+        if !update_req_in_meta_store(
+            &mut meta_store.write().await,
             &new_epoch_id.into(),
-            Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas))),
-        )?;
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, OP_NEW_EPOCH)
-            .await;
-        Ok(())
+            agg_res,
+            OP_NEW_EPOCH,
+        ) {
+            err_msgs.push(format!(
+                "Failed to update the meta store with error for new epoch {} after storage failure.",
+                new_epoch_id
+            ));
+        }
+        // TODO is it correct to return ok even if there was a storage error, this looks like it was the old flow
+        if err_msgs.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(err_msgs.join(", ")))
+        }
     }
 
     async fn reshare_as_set_2(
