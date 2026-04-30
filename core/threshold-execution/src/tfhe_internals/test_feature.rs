@@ -536,13 +536,18 @@ where
                 data: glwe_sns_compression_key_shares128,
             });
 
+    let lwe_compute_secret_key_share = LweSecretKeyShare {
+        data: lwe_key_shares64,
+    };
+
     Ok(PrivateKeySet {
-        lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
-            data: lwe_key_shares64,
-        }),
+        lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(
+            lwe_compute_secret_key_share.clone(),
+        ),
         lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z64(LweSecretKeyShare {
             data: lwe_encryption_key_shares64,
         }),
+        oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z64(lwe_compute_secret_key_share)),
         glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
             data: glwe_key_shares128,
             polynomial_size: params_basic_handle.polynomial_size(),
@@ -1048,26 +1053,34 @@ where
 
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
-        .map(|p| PrivateKeySet {
-            lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+        .map(|p| {
+            let lwe_compute_secret_key_share = LweSecretKeyShare {
                 data: vv128_lwe_key[p].clone(),
-            }),
-            lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
-                data: vv128_lwe_enc_key[p].clone(),
-            }),
-            glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
-                data: vv128_glwe_key[p].clone(),
-                polynomial_size: glwe_poly_size,
-            }),
-            glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
-                data: vv128[p].clone(),
-            }),
-            parameters,
-            // the below is not really used for any computation
-            glwe_secret_key_share_compression: None,
-            glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
-                .as_ref()
-                .map(|x| LweSecretKeyShare { data: x[p].clone() }),
+            };
+            PrivateKeySet {
+                lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(
+                    lwe_compute_secret_key_share.clone(),
+                ),
+                lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                    data: vv128_lwe_enc_key[p].clone(),
+                }),
+                oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z128(
+                    lwe_compute_secret_key_share,
+                )),
+                glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                    data: vv128_glwe_key[p].clone(),
+                    polynomial_size: glwe_poly_size,
+                }),
+                glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
+                    data: vv128[p].clone(),
+                }),
+                parameters,
+                // the below is not really used for any computation
+                glwe_secret_key_share_compression: None,
+                glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
+                    .as_ref()
+                    .map(|x| LweSecretKeyShare { data: x[p].clone() }),
+            }
         })
         .collect();
 
