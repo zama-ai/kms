@@ -406,14 +406,28 @@ Optional arguments:
 Analogously to above, _secure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID> [--compressed] [--keyset-type <TYPE>]
+$ cargo run -- -f <path-to-toml-config-file> key-gen --preproc-id <PREPROC_ID> [--uncompressed]
 ```
 Note that this will run the full distributed keygen protocol, which is expensive and time-consuming (read: several minutes of computation on a powerful machine with many cores).
 This command requires a set of pre-processing information, specified via `--preproc-id <PREPROC_ID>`.
 
 Optional arguments:
- - `-c`/`--compressed`: Generate compressed keys using XOF-seeded compression (default: disabled).
- - `-t`/`--keyset-type <TYPE>`: Keyset type for key generation. Currently only `standard` is supported (default: `standard`).
+ - `-u`/`--uncompressed`: Generate legacy uncompressed public key material (`PublicKey` + `ServerKey`). By default key generation stores compressed key material.
+ - `--existing-keyset-id <OLD_KEY_ID>`: generate a new keyset from the secret shares of an existing keyset.
+ - `--use-existing-key-tag`: when used with `--existing-keyset-id`, reuse the existing keyset's tag instead of the new key ID as tag.
+ - `--copy-compressed-key-to-original`: when used with `--existing-keyset-id` and compressed keygen, copy the migrated compressed key material back to the existing keyset ID.
+
+To migrate an existing keyset to the compressed storage layout while preserving the old key ID, run secure key generation from existing shares and ask the KMS to copy the compressed material back to the original ID:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> key-gen \
+    --preproc-id <PREPROC_ID> \
+    --existing-keyset-id <OLD_KEY_ID> \
+    --use-existing-key-tag \
+    --copy-compressed-key-to-original
+```
+
+After this migration completes, the old key ID can be used without `--uncompressed`; the client will fetch the compressed keyset and standalone public key for that old ID.
 
 It is also possible to fetch the result of a key generation through its `REQUEST_ID` using the following command:
 ```{bash}

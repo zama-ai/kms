@@ -198,6 +198,13 @@ pub static DEFAULT_EPOCH_ID: LazyLock<EpochId> = LazyLock::new(|| {
     ])
 });
 
+/// Constructs the extra data field based on the default context and epoch IDs.
+#[cfg(feature = "non-wasm")]
+pub fn default_extra_data() -> Vec<u8> {
+    crate::engine::utils::make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
+        .expect("make_extra_data with defaults cannot fail")
+}
+
 #[cfg(feature = "insecure")]
 pub static MOCK_NITRO_SIGNING_KEY_BYTES: LazyLock<Vec<u8>> =
     LazyLock::new(|| include_bytes!("../certs/mock_nitro_signing_key.der").into());

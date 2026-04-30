@@ -50,7 +50,8 @@ use crate::{
     engine::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
-            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
+            compute_info_decompression_keygen, compute_info_uncompressed_keygen,
+            retrieve_parameters,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
@@ -1293,7 +1294,7 @@ impl<
                         ) => {
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
-                                .expect("validated");
+                                .expect("Standard UseExisting keygen must have a validated keyset_added_info.existing_keyset_id");
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
@@ -1314,7 +1315,7 @@ impl<
                         ) => {
                             let existing_keyset_id = internal_keyset_config
                                 .get_existing_keyset_id()
-                                .expect("validated");
+                                .expect("Standard UseExisting compressed keygen must have a validated keyset_added_info.existing_keyset_id");
                             let tag: tfhe::Tag = existing_key_tag.unwrap_or_else(|| req_id.into());
                             Self::compressed_key_gen_from_existing_private_keyset(
                                 &mut dkg_sessions,
@@ -1353,7 +1354,7 @@ impl<
         match dkg_result {
             ThresholdKeyGenResult::Uncompressed(pub_key_set, private_keys) => {
                 //Compute all the info required for storing
-                let info = match compute_info_standard_keygen(
+                let info = match compute_info_uncompressed_keygen(
                     &sk,
                     &DSEP_PUBDATA_KEY,
                     &prep_id,
@@ -1487,7 +1488,7 @@ impl<
                             compact_public_key,
                             compressed_keyset,
                         },
-                        meta_store,
+                        Arc::clone(&meta_store),
                         op_tag,
                     )
                     .await
@@ -1496,6 +1497,51 @@ impl<
                         "Failed to write compressed threshold keys for request {req_id}: {e}"
                     );
                     return;
+                }
+
+                // If requested, copy the compressed key to the original key ID.
+                //
+                // Note: at this point the *new* keygen has already been committed
+                // and its meta_store entry is Done — that part of the request
+                // succeeded. The copy is a follow-up on a *different* key id
+                // (old_key_id), so a failure here does not invalidate the
+                // new_key_id material. We log loudly so operators can detect
+                // partial success and retry the migration, but we do not try
+                // to mark the new keygen itself as failed.
+                //
+                // Even if this migration copy fails, continue so the successfully
+                // committed new key material at req_id is swept into the backup
+                // vault below.
+                if matches!(
+                    keyset_config.secret_key_config,
+                    ddec_keyset_config::KeyGenSecretKeyConfig::UseExisting
+                ) && internal_keyset_config.copy_compressed_key_to_original()
+                {
+                    let old_key_id = internal_keyset_config
+                        .get_existing_keyset_id()
+                        .expect("copy_compressed_key_to_original requires the validated UseExisting keyset_added_info.existing_keyset_id");
+                    // UseExisting reads the old private shares at the current
+                    // epoch_id (see key_gen_from_existing_private_keyset), so
+                    // the copy targets the same (old_key_id, epoch_id) pair.
+                    if let Err(e) = crypto_storage
+                        .copy_compressed_key_to_original(
+                            req_id,
+                            epoch_id,
+                            &old_key_id,
+                            epoch_id,
+                            &sk,
+                            &eip712_domain,
+                            Arc::clone(&meta_store),
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            "Compressed keygen for {req_id} committed successfully, but the \
+                             follow-up copy to original key id {old_key_id} failed: {e}. \
+                             The new keys at {req_id} are valid; \
+                             the migration to {old_key_id} must be retried."
+                        );
+                    }
                 }
             }
         }
