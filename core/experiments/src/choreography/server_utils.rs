@@ -74,7 +74,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     // Write to file (as it's much easier to parse than tracing logs)
     // but contains a bit less info (doesn't have exact params etc for example)
     let role = sessions[0].my_role();
-    let file_name = format!("stats/session_stats_{role}.txt");
+    let file_name = format!("session_stats/session_stats_{role}.txt");
     let stats_line = format!(
         "\nname={},role={},num_sessions={},num_rounds={},network_sent(B)={},network_received(B)={},time_active(ms)={}",
         span.metadata()
