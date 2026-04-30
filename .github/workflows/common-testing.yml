@@ -1,5 +1,4 @@
 name: common-testing
-
 on:
   workflow_call:
     inputs:
@@ -71,23 +70,23 @@ on:
       nextest-profile:
         type: string
         required: false
-        default: 'ci'  # Use 'ci-nightly' for nightly builds that run all tests
+        default: 'ci' # Use 'ci-nightly' for nightly builds that run all tests
       nextest-test-threads:
         type: string
         required: false
-        default: ''  # Empty = let nextest decide (respects #[serial] attribute)
+        default: '' # Empty = let nextest decide (respects #[serial] attribute)
       enable-shared-material:
         type: boolean
         required: false
-        default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
+        default: false # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
       use-pregenerated-material:
         type: boolean
         required: false
-        default: false  # If true, download test material from artifacts instead of generating
+        default: false # If true, download test material from artifacts instead of generating
       generate-default-material:
         type: boolean
         required: false
-        default: false  # If true, generate Default test material (includes pre-generated PRSS)
+        default: false # If true, generate Default test material (includes pre-generated PRSS)
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -109,17 +108,14 @@ on:
         required: true
       CGR_PASSWORD:
         required: true
-
 env:
   CARGO_TERM_COLOR: always
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
   NPM_TAG: ''
-
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
-
 jobs:
   compile-rust-unit-tests:
     name: common-testing/compile-rust-unit-tests
@@ -141,27 +137,23 @@ jobs:
       run:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
-
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
         with:
           metrics: cpu,network,memory,disk,io
-
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
-
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
@@ -174,7 +166,6 @@ jobs:
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
           git lfs pull
-
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
         uses: ./.github/actions/docker-login
@@ -182,14 +173,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Login to Chainguard Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }}
           password: ${{ secrets.CGR_PASSWORD }}
-
       ############################################################################
       # Rust toolchain setup
       #
@@ -201,24 +190,20 @@ jobs:
           rust-cache: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           save-if: false
-
       - name: Install nextest and grcov
         run: |
           # Force reinstall nextest to ensure we have the required version (0.9.124+)
           # The cache may contain an older version that doesn't support test-groups
           cargo install cargo-nextest@0.9.124 --locked --force
           cargo install grcov --locked
-
       - name: Setup usage of private repo
         env:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
       - name: Setup minio
         if: ${{ inputs.run-minio }}
         env:
@@ -231,7 +216,6 @@ jobs:
                      -v /tmp/data:/data \
                      -v /tmp/config:/root/.minio \
                      minio/minio server /data
-
       - name: Setup Minio bucket
         if: ${{ inputs.run-minio }}
         env:
@@ -252,7 +236,6 @@ jobs:
           mc alias set "${MINIO_ALIAS}" http://127.0.0.1:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
-
       # Download pre-generated default test material if available (for slow_tests jobs)
       - name: Download Test Material (Default)
         if: ${{ inputs.use-pregenerated-material }}
@@ -260,7 +243,6 @@ jobs:
         with:
           name: test-material-default-${{ github.run_id }}
           path: .
-
       - name: Decompress Test Material (Default)
         if: ${{ inputs.use-pregenerated-material }}
         working-directory: .
@@ -270,7 +252,6 @@ jobs:
           tar -xzf test-material-default.tar.gz -C ./test-material
           rm test-material-default.tar.gz
           ls -la ./test-material/
-
       # Generate test material. Subcommand is `all` (testing + default) when
       # the job uses slow_tests or explicitly requests default; otherwise
       # `testing` only. Must run from workspace root, not working-directory.
@@ -288,14 +269,12 @@ jobs:
           fi
           echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
           cargo run -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
-
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
         run: |
           echo "EXECUTING: cargo build --package kms --bin kms-custodian"
           cargo build --package kms --bin kms-custodian
-
       # Test execution
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
@@ -368,7 +347,6 @@ jobs:
           echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
           env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
-
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         env:
@@ -387,14 +365,12 @@ jobs:
             exit 0
           fi
         shell: bash
-
       - name: Upload Test Results
         if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
       # COVERAGE
       # - name: Upload coverage to Codecov
       #   if: github.event_name == 'schedule'
@@ -403,7 +379,6 @@ jobs:
       #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
       #     files: '${{ runner.temp }}/lcov'
       #     fail_ci_if_error: true
-
       - name: Set Slack color
         id: slack_color
         env:
@@ -414,7 +389,6 @@ jobs:
           else
             echo "color=danger" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Post nightly tests results in a channel
         if: always() && github.event_name == 'schedule'
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
@@ -427,13 +401,11 @@ jobs:
           SLACK_TITLE: 'Nightly Tests Result'
           SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
           SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
-
       - name: Generate unique ID
         if: always()
         id: unique-id
         run: echo "id=$(date "+%s%N" | md5sum | head -c 8)" >> "$GITHUB_OUTPUT"
         shell: bash
-
       # `package-name` holds cargo flags like `-p kms` or `-p a -p b -p c`.
       # Strip the `-p` tokens and join remaining crate names with `_` so the
       # artifact label stays readable (e.g. `kms`, `a_b_c`).
@@ -444,7 +416,6 @@ jobs:
           CRATE_NAMES: ${{ inputs.crate-names }}
         shell: bash
         run: echo "value=$(echo "${CRATE_NAMES}" | sed -E 's/-p +//g' | tr ' ' '_')" >> "$GITHUB_OUTPUT"
-
       - name: Archive integration test trace logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -453,12 +424,10 @@ jobs:
           path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore
-
       # Documentation
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
         run: cargo doc --no-deps
-
       - name: Deploy to GitHub Pages
         if: ${{ inputs.build-publish-docs }}
         uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
@@ -466,7 +435,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
           destination_dir: ${{ inputs.working-directory }}
-
       - name: Remove aws credentials file
         run: |
           rm -rf ~/.aws

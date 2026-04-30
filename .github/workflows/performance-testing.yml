@@ -9,7 +9,6 @@
 # - Manual dispatch with configurable parameters
 ##############################################################################
 name: performance-testing
-
 on:
   #=======================================================
   schedule:
@@ -73,13 +72,10 @@ on:
         default: ''
         type: string
   #=======================================================
-
 permissions: {}
-
 concurrency:
   group: performance-testing-kms-ci
   cancel-in-progress: false
-
 jobs:
   ############################################################################
   # Docker Build Job (Conditional)
@@ -109,7 +105,6 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # Start AMD64 Runner
   # Waits for docker-build if required, then starts the test runner
@@ -128,6 +123,8 @@ jobs:
     outputs:
       label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Start EC2 runner AMD64
         id: start-ec2-runner-amd64
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
@@ -138,7 +135,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
           profile: small-instance
-
   ############################################################################
   # Performance Testing Job
   # Runs performance tests for KMS in different deployment modes
@@ -159,13 +155,11 @@ jobs:
     steps:
       - name: Setup Home
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       # ======================================================================
       # DETERMINE IMAGE TAGS
       # Use docker-build outputs if built, otherwise use provided inputs
@@ -200,7 +194,6 @@ jobs:
             echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
           } >> "$GITHUB_ENV"
-
       # ======================================================================
       # CONFIGURE DEPLOYMENT PARAMETERS
       # ======================================================================
@@ -223,14 +216,12 @@ jobs:
             echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
             echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
           } >> "$GITHUB_ENV"
-
       - name: Login to zws GitHub Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
           password: ${{ secrets.HARBOR_READ_TOKEN }}
-
       - name: Set up path suffix based on deployment type
         run: |
           ###################################################################
@@ -243,7 +234,6 @@ jobs:
             echo "Using standard threshold configuration..."
             echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
-
       # VERIFY IMAGE TAGS EXIST IN REGISTRY
       # Fail fast if requested tags are missing, instead of waiting ~40min for
       # helm pre-install hooks to time out on ImagePullBackOff.
@@ -280,7 +270,6 @@ jobs:
             echo "image tags were actually pushed; otherwise re-run with build=true."
             exit 1
           fi
-
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
@@ -290,12 +279,10 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kms-ci
-
       - name: Setup helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           export PATH=$PATH:/usr/local/bin
-
       - name: Setup argo workflow CLI
         env:
           ARGO_OS: '${{ runner.os }}'
@@ -315,10 +302,8 @@ jobs:
           mv "./argo-${ARGO_OS}-amd64" /usr/local/bin/argo
           # Test installation
           argo version
-
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
-
       # ======================================================================
       # KUBERNETES & HELM SETUP
       # ======================================================================
@@ -329,14 +314,12 @@ jobs:
           ###################################################################
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       - name: Checkout Project
         if: ${{ env.KMS_CHART_VERSION != 'repository' }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       - name: Checkout Project KMS
         if: ${{ env.KMS_CHART_VERSION == 'repository' }}
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -344,7 +327,6 @@ jobs:
           ref: "${{ env.KMS_BRANCH }}"
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       - name: Set kubeconfig
         run: |
           ###################################################################
@@ -354,7 +336,6 @@ jobs:
           kubectl config get-contexts
           echo "Setting context to Tailscale cluster..."
           kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       # ======================================================================
       # DEPLOYMENT
       # ======================================================================
@@ -380,7 +361,6 @@ jobs:
             --num-parties 13 \
             --kms-chart-version "${KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
-
       # ======================================================================
       # PERFORMANCE TESTING
       # ======================================================================
@@ -417,7 +397,6 @@ jobs:
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
 
           echo "Workflow completed."
-
       # ======================================================================
       # SAVE ARGO WORKFLOW LOGS
       # ======================================================================
@@ -428,7 +407,6 @@ jobs:
           name: argo-workflow-logs.txt
           path: argo-workflow-logs.txt
           retention-days: 30
-
       # ======================================================================
       # LOG COLLECTION
       # ======================================================================
@@ -457,7 +435,6 @@ jobs:
               touch "${LOG_FILE}"  # Create empty file to prevent workflow failure
             fi
           done
-
       - name: Upload kms-core logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -466,7 +443,6 @@ jobs:
           path: kms-core-*.txt
           retention-days: 30 # Keep logs for 30 days
           if-no-files-found: warn # Only warn if no log files are found
-
       # ======================================================================
       # CLEANUP
       # ======================================================================
@@ -501,7 +477,6 @@ jobs:
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
 
           echo "✅ Cleanup completed successfully"
-
   ############################################################################
   # Stop AMD64 Runner
   ############################################################################
@@ -511,6 +486,8 @@ jobs:
     runs-on: ubuntu-latest
     if: always() && needs.start-amd64-runner.result == 'success'
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Stop AMD64 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
         with:

@@ -1,5 +1,4 @@
 name: test-reporter
-
 on:
   workflow_call:
     secrets:
@@ -7,17 +6,14 @@ on:
         required: true
     # Security: This workflow only runs when called from other workflows in the same repository
     # and uses GITHUB_TOKEN with minimal permissions for artifact access
-
 env:
   CARGO_TERM_COLOR: always
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
   NPM_TAG: ''
-
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
-
 jobs:
   test-reporter:
     name: test-reporter/test-reporter
@@ -30,20 +26,19 @@ jobs:
       contents: read # Required to checkout repository code
     runs-on: ubuntu-latest
     if: ${{ !cancelled() }}
-
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: /tmp/junit
           pattern: junit-test-report-*
-
       - name: Display structure of downloaded files
         continue-on-error: true
         run: |
@@ -57,7 +52,6 @@ jobs:
             echo "EXIT_CODE=1" >> "$GITHUB_ENV"
             exit 1
           fi
-
       - name: Publish Test Report
         if: env.EXIT_CODE == 0
         uses: ctrf-io/github-test-reporter@0f299074936c32ccaab5be5230511f6b2b9080aa # v1.0.28

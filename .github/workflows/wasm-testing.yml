@@ -1,5 +1,4 @@
 name: wasm-testing
-
 on:
   workflow_call:
     inputs:
@@ -13,13 +12,10 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-
 env:
   NPM_TAG: 'test'
-
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
-
 jobs:
   wasm-testing:
     name: wasm-testing
@@ -35,64 +31,55 @@ jobs:
       run:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
-
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
-
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Set up Rust and Protoc
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       # WASM handling
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
       - name: Build wasm with tests
         env:
           WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
-
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
-
       - name: Generate wasm test files
         env:
           WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: |
           cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
           cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-
       - name: Test wasm
         run: node --test tests/js
-
       # NPM package handling
       - name: Set NPM version tag to latest
         if: ${{ !github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
-
       - name: Set NPM version tag to prerelease
         if: ${{ github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
-
       # Node package build and publish
       - name: NPM build node package
         working-directory: ./core/service
@@ -101,7 +88,6 @@ jobs:
           wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
           echo "# node-tkms" > pkg/README.md
-
       - name: NPM publish Node package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
@@ -109,7 +95,6 @@ jobs:
           dry-run: true
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
       # Web package build and publish
       - name: NPM build web package
         working-directory: ./core/service
@@ -118,7 +103,6 @@ jobs:
           wasm-pack build --target web . --no-default-features
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
           echo "# tkms" > pkg/README.md
-
       - name: NPM publish web package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
@@ -126,7 +110,6 @@ jobs:
           dry-run: true
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
       - name: Remove aws credentials file
         run: |
           rm -rf ~/.aws

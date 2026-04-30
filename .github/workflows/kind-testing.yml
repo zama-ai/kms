@@ -1,5 +1,4 @@
 name: kind-testing
-
 on:
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
@@ -34,16 +33,13 @@ on:
         required: true
       CGR_PASSWORD:
         required: true
-
 permissions: {}
-
 # Controls concurrent workflow runs:
 # - Groups runs by git ref
 # - Cancels in-progress runs for non-main/release branches
 concurrency:
   group: kind-testing-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 jobs:
   ############################################################################
   # Docker Build Job
@@ -69,7 +65,6 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # Start EC2 Runner Jobs
   # Initializes self-hosted runners for running tests in parallel
@@ -84,6 +79,8 @@ jobs:
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Start EC2 runner
         id: start-ec2-runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
@@ -94,7 +91,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
           profile: 'big-instance'
-
   start-runner-threshold:
     name: kind-testing/start-runner (threshold)
     runs-on: ubuntu-latest
@@ -104,6 +100,8 @@ jobs:
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Start EC2 runner
         id: start-ec2-runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
@@ -114,7 +112,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
           profile: 'big-instance-kind'
-
   start-runner-centralized:
     name: kind-testing/start-runner (centralized)
     runs-on: ubuntu-latest
@@ -124,6 +121,8 @@ jobs:
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Start EC2 runner
         id: start-ec2-runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
@@ -134,7 +133,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
           profile: 'big-instance-service'
-
   ############################################################################
   # Kind Testing Job
   # Main job that sets up a Kubernetes cluster using Kind and runs the tests
@@ -172,7 +170,6 @@ jobs:
       needs.start-runner-centralized.result == 'success' &&
       (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
-
     steps:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -180,17 +177,14 @@ jobs:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
-
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Setup HOME
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # ==========================================================================
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
@@ -204,7 +198,6 @@ jobs:
           "./git-lfs-${GIT_LFS_VERSION}/install.sh"
           # Pull LFS files after installation
           git lfs pull
-
       # ==========================================================================
       # Docker Buildx Setup
       # Configures Docker Buildx for building multi-platform images
@@ -215,7 +208,6 @@ jobs:
         with:
           platforms: linux/amd64 # Target platform for builds
           buildkitd-flags: --debug # Enable debug logging for BuildKit
-
       - name: Install kubectl
         if: matrix.cargo-check == false
         run: |
@@ -232,7 +224,6 @@ jobs:
           mv ./kubectl ~/.local/bin/kubectl
           export PATH=$PATH:~/.local/bin
           kubectl version --client
-
       - name: Install KIND
         if: matrix.cargo-check == false
         run: |
@@ -242,21 +233,18 @@ jobs:
           [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
           chmod +x ./kind
           mv ./kind /usr/local/bin/kind
-
       - name: Install Helm
         if: matrix.cargo-check == false
         run: |
           curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
           chmod 700 get_helm.sh
           ./get_helm.sh
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
           aws-region: eu-west-3
-
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to harbor Container Registry
         if: matrix.cargo-check == false
@@ -265,7 +253,6 @@ jobs:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
           password: ${{ secrets.HARBOR_READ_TOKEN }}
-
       # ==========================================================================
       # Rust toolchain setup
       #
@@ -276,7 +263,6 @@ jobs:
           rust-components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           rust-cache: "false"
           setup-protoc: "false"
-
       # ==========================================================================
       # Setup cache for dockerfile and inject in docker
       #
@@ -295,14 +281,12 @@ jobs:
             ${{ github.workspace }}/target
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install Protoc
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           setup-rust: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Setup cargo nextest and grcov
         if: matrix.cargo-check == false
         run: |
@@ -312,31 +296,25 @@ jobs:
           cargo install grcov --locked --force
           # Verify the installed version
           cargo nextest --version
-
       - name: Setup cargo dylint
         if: matrix.cargo-check == true
         run: |
           cargo install cargo-dylint dylint-link --force
-
       - name: clippy and rustfmt versions
         if: matrix.cargo-check == true
         run: |
           cargo clippy -V && cargo fmt --version
-
       - name: Formatting
         if: matrix.cargo-check == true
         run: cargo fmt --all -- --check
-
       - name: Linting All features
         if: matrix.cargo-check == true
         env:
           PACKAGE_NAME: 'kms-core-client'
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
-
       - name: Linting dylint
         if: matrix.cargo-check == true
         run: cargo dylint --all
-
       # ==========================================================================
       # Test Execution
       # Runs the Kubernetes integration tests using the configured environment
@@ -361,7 +339,6 @@ jobs:
           chmod +x ci/scripts/manage_lifecycle.sh
           chmod +x ci/scripts/deploy.sh
           ./ci/scripts/manage_lifecycle.sh start
-
       - name: Run Kubernetes Tests
         if: matrix.cargo-check == false
         id: tests
@@ -387,7 +364,6 @@ jobs:
             --namespace "${NAMESPACE}" \
             --deployment-type "${DEPLOYMENT_TYPE}" \
             --collect-logs
-
       - name: Copy Test Results
         if: always() && !cancelled()
         env:
@@ -406,14 +382,12 @@ jobs:
             exit 0
           fi
         shell: bash
-
       - name: Upload Test Results
         if: always() && !cancelled() && env.EXIT_CODE == 0
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
       - name: Cleanup Kind Setup and Collect Logs
         if: always() && matrix.cargo-check == false
         env:
@@ -437,7 +411,6 @@ jobs:
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
           chmod +x ci/scripts/manage_lifecycle.sh
           ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
-
       - name: Detect kms-core logs
         if: always() && matrix.cargo-check == false
         id: detect-kms-logs
@@ -452,7 +425,6 @@ jobs:
             echo "No kms-core logs found; skipping artifact upload."
           fi
         shell: bash
-
       - name: Upload kms-core logs
         if: always() && matrix.cargo-check == false && steps.detect-kms-logs.outputs.found == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -464,7 +436,6 @@ jobs:
             setup_kms.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: error
-
       - name: Check Test Results
         if: always() && matrix.cargo-check == false
         run: |
@@ -474,7 +445,6 @@ jobs:
             exit "${TEST_EXIT_CODE}"
           fi
           echo "Tests passed successfully"
-
   clean-up-build:
     name: kind-testing/clean-up-build
     if: |
@@ -488,6 +458,8 @@ jobs:
     permissions:
       packages: write # Required to delete GitHub packages/container registry
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Clean up build
         env:
           GH_TOKEN: ${{ github.token }}
@@ -527,7 +499,6 @@ jobs:
             delete_package_versions_by_tag "kms/core-service" "${IMAGE_TAG}"
             delete_package_versions_by_tag "kms/core-client" "${IMAGE_TAG}"
           fi
-
   # Test reporting job that runs after all tests complete
   # Only runs on pull requests to generate test reports
   test-reporter:
@@ -545,7 +516,6 @@ jobs:
       contents: read # Required to checkout repository code
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
   ############################################################################
   ############################################################################
   # Stop EC2 Runner Jobs
@@ -559,6 +529,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
         with:
@@ -567,7 +539,6 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           label: ${{ needs.start-runner-cargo.outputs.label }}
-
   stop-runner-threshold:
     name: kind-testing/stop-runner (threshold)
     needs:
@@ -576,6 +547,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
         with:
@@ -584,7 +557,6 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           label: ${{ needs.start-runner-threshold.outputs.label }}
-
   stop-runner-centralized:
     name: kind-testing/stop-runner (centralized)
     needs:
@@ -593,6 +565,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@5aee5d157f4a0201e5eaefc9cc648e5f9f5472a5 # v1.6.0
         with:

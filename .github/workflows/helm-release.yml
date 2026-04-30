@@ -1,15 +1,11 @@
 name: helm-release
-
 on:
   workflow_call:
   workflow_dispatch:
-
 env:
   HELM_VERSION: v3.16.4
-
 permissions:
   contents: read # Required to checkout repository code
-
 jobs:
   helm-release:
     name: helm-release/helm-release
@@ -21,29 +17,27 @@ jobs:
     runs-on: ubuntu-latest
     environment: main
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Configure Git
         run: |
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-
       - name: Login to GitHub Container Registry
         uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Install Helm
         uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 #v4.2.0
         with:
           version: ${{ env.HELM_VERSION }}
-
       - name: Check if helm release already exists
         id: check-release
         env:
@@ -70,7 +64,6 @@ jobs:
             echo "Release does not exist for version ${CHART_VERSION}"
             echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
-
       - name: Run chart-releaser
         if: steps.check-release.outputs.release_exists == 'false'
         uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
@@ -83,7 +76,6 @@ jobs:
         continue-on-error: true
         with:
           charts_dir: charts
-
       - name: Push Charts to GHCR
         if: always() && steps.check-release.outputs.release_exists == 'false'
         env:

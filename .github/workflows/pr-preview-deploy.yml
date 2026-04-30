@@ -2,7 +2,6 @@
 # pr-preview workflow
 ##############################################################################
 name: pr-preview-deploy
-
 on:
   workflow_call:
     inputs:
@@ -43,9 +42,7 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-
 permissions: {}
-
 jobs:
   ############################################################################
   # PR Preview Job
@@ -57,7 +54,6 @@ jobs:
       pull-requests: write # Required to update pull requests information
     runs-on: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false"
     timeout-minutes: 1800
-
     # Environment variables used throughout the job
     env:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
@@ -93,13 +89,11 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
           echo "Configured: ${DEPLOYMENT_TYPE} with NB_KMS_PARTIES parties"
-
       - name: Checkout Project KMS
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
       # ======================================================================
@@ -109,7 +103,6 @@ jobs:
           registry: ${{ secrets.HARBOR_URL }}
           username: ${{ secrets.HARBOR_READ_LOGIN }}
           password: ${{ secrets.HARBOR_READ_TOKEN }}
-
       - name: Handle pre-built images and PCR values
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
         env:
@@ -148,7 +141,6 @@ jobs:
               echo "PCR2=${PCR2}"
             } >> "$GITHUB_ENV"
           fi
-
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
@@ -158,15 +150,12 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kms-ci
-
       - name: Setup helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           export PATH=$PATH:/usr/local/bin
-
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
-
       # ======================================================================
       - name: Get Rust version
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
@@ -175,7 +164,6 @@ jobs:
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Set up Rust and Protoc
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         uses: ./.github/actions/setup-rust-and-protoc
@@ -185,7 +173,6 @@ jobs:
           rust-cache: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       # ======================================================================
       # KUBERNETES & HELM SETUP
       # ======================================================================
@@ -196,7 +183,6 @@ jobs:
           ###################################################################
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
       # ======================================================================
       # CHECK IF NAMESPACE EXISTS
       # ======================================================================
@@ -216,7 +202,6 @@ jobs:
             echo "Namespace ${NAMESPACE} does not exist"
             kubectl create namespace "${NAMESPACE}"
           fi
-
       # ======================================================================
       # RBAC: Tailscale group kms-dev-access (same pattern as zws-dev k8s-access)
       # ======================================================================
@@ -227,14 +212,11 @@ jobs:
             --group=kms-dev-access \
             -n "${NAMESPACE}" \
             --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Checkout Project KMS
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
-
-
       - name: Unified Deployment
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # For registry creds if needed
@@ -246,7 +228,6 @@ jobs:
             --deployment-type "${DEPLOYMENT_TYPE}" \
             --tag "${KMS_CORE_IMAGE_TAG}" \
             --num-parties "${NB_KMS_PARTIES}"
-
       - name: Generate PR Comment Body
         if: success()
         run: |
@@ -310,7 +291,6 @@ jobs:
           pgrep -f "kubectl port-forward" | xargs -n 1 kill
           \`\`\`
           EOF
-
       - name: Update pull request
         if: success()
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0

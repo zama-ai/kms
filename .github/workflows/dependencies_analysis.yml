@@ -1,53 +1,44 @@
 name: dependencies_analysis
-
 on:
   push:
     branches:
       - main
       - test
-
   pull_request:
     branches: ['*']
-
 concurrency:
   group: deps-analysis-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 permissions:
   contents: read # Required to checkout repository code
-
 jobs:
   dependencies-check:
     name: dependencies_analysis/dependencies-check (bpr)
     runs-on: ubuntu-latest
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
-
       - name: Rust setup
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           rust-toolchain: stable
           rust-cache: "false"
           setup-protoc: "false"
-
       # to calculate hash use `curl -s https://api.github.com/repos/cargo-bins/cargo-binstall/git/refs/tags/v1.16.4 | jq -r .object.sha`
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@ea60fcf749c6a52a729e0eaabb5eb33391d44823 # v1.16.4
-
       # Use cargo-binstall to efficiently install required cargo tools with versiones specified
       - name: Install cargo tools
         run: |
           cargo binstall --no-confirm --force \
             cargo-audit@0.22.0 \
             cargo-deny@0.18.9
-
       - name: Check that Cargo.lock is the source of truth
         run: cargo update -w --locked
-
       - name: License whitelist
         run: cargo-deny deny check license --deny license-not-encountered
-
       - name: Security issue whitelist
         run: cargo-audit audit

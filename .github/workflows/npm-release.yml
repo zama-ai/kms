@@ -2,13 +2,10 @@
 # If you change the name of this file, you must also update the
 # NPM trusted publishers configuration.
 name: npm-release
-
 on:
   release:
     types: [published]
-
 permissions: {}
-
 jobs:
   npm-release:
     name: npm-release
@@ -20,43 +17,38 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # "write" access to the "id-token" to access the container registry
     steps:
+      - name: Workaround CVE-2026-31431 (copy.fail)
+        run: echo "install algif_aead /bin/false" | sudo tee /etc/modprobe.d/disable-algif-aead.conf; if lsmod | grep -q algif_aead; then sudo rmmod algif_aead; fi
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
-
       - name: Install Protoc
         uses: ./.github/actions/setup-rust-and-protoc
         with:
           setup-rust: "false"
           protoc-version: '26.1'
           protoc-repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       # WASM handling
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
-
       - name: Update npm
         run: npm install -g npm@11.7.0
-
       # NPM package handling
       - name: Set NPM version tag to latest
         if: ${{ !github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
-
       - name: Set NPM version tag to prerelease
         if: ${{ github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
-
       # Node package build and publish
       - name: NPM build node package
         working-directory: ./core/service
@@ -68,7 +60,6 @@ jobs:
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
           sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"${TAG_NAME}\"/" pkg/package.json
           echo "# node-tkms" > pkg/README.md
-
       - name: NPM publish Node package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
@@ -76,7 +67,6 @@ jobs:
           dry-run: false
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
       # Web package build and publish
       - name: NPM build web package
         working-directory: ./core/service
@@ -88,7 +78,6 @@ jobs:
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
           sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"${TAG_NAME}\"/" pkg/package.json
           echo "# tkms" > pkg/README.md
-
       - name: NPM publish web package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
@@ -96,7 +85,6 @@ jobs:
           dry-run: false
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
       - name: Remove aws credentials file
         run: |
           rm -rf ~/.aws
