@@ -37,10 +37,8 @@ centralized
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
-     	     	   "timeout" int
      	     	   "from" string
-		      "to" string
-		      "timeout" int (optional, defaults to 60)) */}}
+		      "to" string */}}
 {{- define "socatContainer" -}}
 name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
@@ -50,9 +48,6 @@ command:
   - socat
 args:
   - -d0
-{{- if and (eq .name "grpc-peer-proxy") .timeout }}
-  - -T{{ .timeout }}
-{{- end }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -69,47 +64,131 @@ args:
 	      "to" .to) }}
 {{- end -}}
 
-{{/* takes a (dict "name" string
-                   "image" (dict "name" string "tag" string)
-                   "vsockPort" int
-		           "address" string
-		           "port" int) */}}
-{{- define "proxyFromEnclaveTcp" -}}
-{{- include "proxyFromEnclave"
-      (dict "name" .name
-            "image" .image
-            "vsockPort" .vsockPort
-	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
-{{- end -}}
+{{/* takes a (dict "image" kms-core-image-values
+                   "networkTunnel" nitro-network-tunnel-values
+                   "ingressPorts" list-of-tcp-ports)
+      and renders the pod-local parent-side TUN bridge and DNS proxy used for
+      enclave egress as a native Kubernetes sidecar. When ingressPorts is not
+      empty, TCP ingress is DNATed into the enclave over the TUN. The vsock port
+      must match init_enclave.sh. */}}
+{{- define "enclaveNetworkTunnelContainer" -}}
+name: enclave-network-tunnel
+image: {{ .image.name }}:{{ .image.tag }}
+imagePullPolicy: {{ .image.pullPolicy }}
+{{- if gt (len .ingressPorts) 0 }}
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+{{- end }}
+securityContext:
+  allowPrivilegeEscalation: true
+  privileged: true
+  runAsUser: 0
+restartPolicy: Always
+command:
+  - /bin/sh
+args:
+  - -c
+  - |
+    set -eu
+    TUN_IF={{ .networkTunnel.interfaceName | quote }}
+    TUN_ADDR={{ .networkTunnel.parentAddress | quote }}
+    TUN_HOST="${TUN_ADDR%/*}"
+    ENCLAVE_TUN_IP={{ .networkTunnel.enclaveAddress | quote }}
+    TUN_SUBNET={{ .networkTunnel.subnet | quote }}
+    VSOCK_PORT={{ .networkTunnel.vsockPort | quote }}
+    UPSTREAM_DNS=""
+    SOCAT_PID=""
+    DNSPROXY_PID=""
 
-{{/* takes a (dict "name" string
-     	     	   "image" (dict "name" string "tag" string)
-		           "from" string
-		           "cid" int
-                   "port" int
-                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
-{{- define "proxyToEnclave" -}}
-{{- include "socatContainer"
-      (dict "name" .name
-            "image" .image
-            "from" .from
-            "timeout" .timeout
-	      "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
-{{- end -}}
+    while read -r key value _; do
+      if [ "$key" = "nameserver" ]; then
+        UPSTREAM_DNS="$value"
+        break
+      fi
+    done < /etc/resolv.conf
 
-{{/* takes a (dict "name" string
-     	     	   "image" (dict "name" string "tag" string)
-		           "cid" int
-                   "port" int
-                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
-{{- define "proxyToEnclaveTcp" -}}
-{{- include "proxyToEnclave"
-      (dict "name" .name
-            "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
-            "cid" .cid
-            "port" .port
-            "timeout" .timeout) }}
+    if [ -z "$UPSTREAM_DNS" ]; then
+      echo "enclave-network-tunnel: cannot determine upstream nameserver from /etc/resolv.conf" >&2
+      exit 1
+    fi
+
+    {{- if gt (len .ingressPorts) 0 }}
+    if [ -z "${POD_IP:-}" ]; then
+      echo "enclave-network-tunnel: POD_IP is not set" >&2
+      exit 1
+    fi
+    {{- end }}
+
+    cleanup() {
+      if [ -n "$SOCAT_PID" ]; then
+        kill "$SOCAT_PID" 2>/dev/null || true
+      fi
+      if [ -n "$DNSPROXY_PID" ]; then
+        kill "$DNSPROXY_PID" 2>/dev/null || true
+      fi
+    }
+
+    trap cleanup EXIT INT TERM
+
+    sysctl -w net.ipv4.ip_forward=1 || echo 1 > /proc/sys/net/ipv4/ip_forward
+    iptables -t nat -C POSTROUTING -s "$TUN_SUBNET" -o eth0 -j MASQUERADE 2>/dev/null || \
+      iptables -t nat -A POSTROUTING -s "$TUN_SUBNET" -o eth0 -j MASQUERADE
+    iptables -C FORWARD -i "$TUN_IF" -j ACCEPT 2>/dev/null || \
+      iptables -A FORWARD -i "$TUN_IF" -j ACCEPT
+    iptables -C FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+      iptables -A FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+    echo "enclave-network-tunnel: starting parent-side TUN bridge on $TUN_HOST via $UPSTREAM_DNS"
+    socat -d0 \
+      VSOCK-LISTEN:$VSOCK_PORT,fork,reuseaddr \
+      TUN:$TUN_ADDR,tun-name=$TUN_IF,iff-up &
+    SOCAT_PID=$!
+
+    for _ in $(seq 1 30); do
+      if ifconfig "$TUN_IF" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+
+    if ! ifconfig "$TUN_IF" >/dev/null 2>&1; then
+      echo "enclave-network-tunnel: tunnel interface $TUN_IF did not come up" >&2
+      exit 1
+    fi
+
+    {{- if gt (len .ingressPorts) 0 }}
+    add_ingress_dnat() {
+      port="$1"
+      iptables -t nat -C PREROUTING -i eth0 -d "$POD_IP" -p tcp --dport "$port" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$port" 2>/dev/null || \
+        iptables -t nat -A PREROUTING -i eth0 -d "$POD_IP" -p tcp --dport "$port" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$port"
+      iptables -C FORWARD -i eth0 -o "$TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$port" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -i eth0 -o "$TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$port" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT
+    }
+
+    {{- range .ingressPorts }}
+    add_ingress_dnat {{ . | quote }}
+    {{- end }}
+    {{- end }}
+
+    dnsproxy -l "$TUN_HOST" -u "$UPSTREAM_DNS" &
+    DNSPROXY_PID=$!
+
+    while kill -0 "$SOCAT_PID" 2>/dev/null && kill -0 "$DNSPROXY_PID" 2>/dev/null; do
+      sleep 1
+    done
+
+    if ! kill -0 "$SOCAT_PID" 2>/dev/null; then
+      SOCAT_STATUS=0
+      wait "$SOCAT_PID" || SOCAT_STATUS=$?
+      exit "$SOCAT_STATUS"
+    fi
+
+    DNSPROXY_STATUS=0
+    wait "$DNSPROXY_PID" || DNSPROXY_STATUS=$?
+    exit "$DNSPROXY_STATUS"
 {{- end -}}
 
 {{- define "kmsInitJobName" -}}

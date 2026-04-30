@@ -6,6 +6,16 @@ listen_port = 50051
 timeout_secs = 360
 grpc_max_message_size = 104857600 # 100 MiB
 
+[enclave_bootstrap]
+web_identity_token_port = 4100
+resolv_conf_port = 4200
+
+[enclave_bootstrap.network_tunnel]
+subnet = "10.118.0.0/24"
+parent_address = "10.118.0.1/24"
+enclave_address = "10.118.0.2"
+vsock_port = 2100
+
 [telemetry]
 tracing_service_name = "kms-centralized"
 # tracing_endpoint = "http://localhost:4317"
@@ -19,9 +29,11 @@ scheduled_delay_ms = 500
 
 [aws]
 region = "eu-west-3"
-imds_endpoint = "http://localhost:5000"
-s3_endpoint = "https://localhost:6000"
-awskms_endpoint = "https://localhost:7000"
+# Optional mock/test overrides. For localstack-style mocks, keep these on HTTP
+# unless the endpoint presents a certificate valid for its actual hostname.
+# imds_endpoint = "http://127.0.0.1:5000"
+# s3_endpoint = "http://127.0.0.1:4566"
+# awskms_endpoint = "http://127.0.0.1:4566"
 
 [public_vault]
 [public_vault.storage.s3]

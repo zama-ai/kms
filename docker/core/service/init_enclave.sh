@@ -3,9 +3,13 @@
 set -o pipefail
 
 PARENT_CID=3
+TUN_IF=vsocktun
+
+# Don't bind to port 9000 as it is reserved by the AWS Nitro hypervisor for
+# communicating with the enclave.
 LOG_PORT=3000
 CONFIG_PORT=4000
-TOKEN_PORT=4100
+
 KMS_SERVER_CONFIG_FILE="config.toml"
 AWS_WEB_IDENTITY_TOKEN_FILE="token"
 export AWS_WEB_IDENTITY_TOKEN_FILE
@@ -24,13 +28,6 @@ fail() {
     exit
 }
 
-get_configured_port() {
-    local SERVICE_NAME="$1"
-    local SERVICE_URL
-    SERVICE_URL=$(get_value "$SERVICE_NAME")
-    echo "${SERVICE_URL##*:}"
-}
-
 get_value() {
     local KEY="$1"
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" || fail "$KEY not present in config"
@@ -41,34 +38,8 @@ has_value() {
     yq -e -p toml -oy ".$KEY" "$KMS_SERVER_CONFIG_FILE" &>/dev/null
 }
 
-start_tcp_proxy_out() {
-    local NAME="$1"
-    local PORT="$2"
-    log "starting enclave-side $NAME proxy"
-    socat -T180 \
-	TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr \
-	VSOCK-CONNECT:$PARENT_CID:"$PORT" \
-	|& logger &
-}
-
-start_tcp_proxy_in() {
-    local NAME="$1"
-    local PORT="$2"
-    log "starting enclave-side $NAME proxy"
-    socat -T180 \
-	VSOCK-LISTEN:"$PORT",fork,reuseaddr \
-	TCP:127.0.0.1:"$PORT",nodelay \
-	|& logger &
-}
-
 export PATH="/app/kms/core/service/bin:$PATH"
 cd /app/kms/core/service |& logger  || fail "cannot set working directory"
-
-# we use socat to convert TCP connections into vsocks and vice versa,
-# so we don't have to make tokio and hyper in kms-server talk to vsocks
-# this trick requires a loopback interface
-ifconfig lo 127.0.0.1 |& logger || fail "cannot setup loopback interface"
-route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loopback route"
 
 # receive kms-server configuration from the parent
 log "requesting kms-server config"
@@ -84,6 +55,65 @@ socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \
 	log "received kms-server config with sha256 $KMS_SERVER_CONFIG_HASH"
     }
 
+# extract bootstrap settings from the received config
+TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
+RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
+TUN_NET="$(get_value "enclave_bootstrap.network_tunnel.subnet" | tr -d '"')"
+PARENT_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
+ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
+NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
+GW_ADDR="${PARENT_TUN_ADDR%/*}"
+CIDR_PREFIX="${PARENT_TUN_ADDR#*/}"
+[ "$GW_ADDR" != "$PARENT_TUN_ADDR" ] || fail "parent tunnel address missing CIDR prefix: $PARENT_TUN_ADDR"
+case "$ENCLAVE_TUN_IP" in
+    */*) fail "enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP" ;;
+esac
+TUN_ADDR="${ENCLAVE_TUN_IP}/${CIDR_PREFIX}"
+
+# receive /etc/resolv.conf from the parent
+log "requesting /etc/resolv.conf"
+socat -u VSOCK-CONNECT:$PARENT_CID:"$RESOLVCONF_PORT" \
+      CREATE:resolv.conf \
+    |& logger || fail "cannot receive /etc/resolv.conf"
+[ -f "resolv.conf" ] || fail "did not receive /etc/resolv.conf"
+cp -f resolv.conf /etc/resolv.conf |& logger
+log "enclave /etc/resolv.conf:"
+cat /etc/resolv.conf |& logger
+
+# we are relaying raw IP packets from the enclave networking stack to the parent
+# networking stack over vsock so we don't have to make tokio and hyper in
+# kms-server talk vsock, this requires a virtual network interface and a NAT on
+# the parent
+ifconfig lo 127.0.0.1 |& logger || fail "cannot setup loopback interface"
+route add -net 127.0.0.0 netmask 255.0.0.0 lo |& logger || fail "cannot add loopback route"
+socat_tun() {
+    while true;
+    do
+	log "starting enclave-side network tunnel"
+	socat TUN:"$TUN_ADDR",tun-name=$TUN_IF,iff-up VSOCK-CONNECT:$PARENT_CID:"$NET_PORT" |& logger
+	log "enclave-side network tunnel disconnected, retrying in 1s"
+	sleep 1
+    done
+}
+socat_tun &
+for _ in $(seq 1 30);
+do
+    if ifconfig "$TUN_IF" &>/dev/null; then
+	break
+    fi
+    sleep 1
+done
+ifconfig "$TUN_IF" |& logger || fail "cannot setup tunnel interface"
+route add -net "$TUN_NET" dev $TUN_IF |& logger || fail "cannot add route to gateway"
+route add default gw "$GW_ADDR" |& logger || fail "cannot add default route"
+
+# DNS runs on the parent side of the tunnel, so point the enclave resolver at
+# the tunnel gateway while preserving the search domains and options copied from
+# the parent.
+log "enclave /etc/resolv.conf with parent-side dnsproxy:"
+sed -i "s/nameserver.*$/nameserver $GW_ADDR/" /etc/resolv.conf |& logger
+cat /etc/resolv.conf |& logger
+
 # keep receiving fresh web identity tokens from the parent
 has_value "aws.role_arn" || log "AWS role ARN not set"
 has_value "aws.role_arn" && \
@@ -94,7 +124,7 @@ has_value "aws.role_arn" && \
 	while true;
 	do
 	    socat -U PIPE:$AWS_WEB_IDENTITY_TOKEN_FILE \
-		  VSOCK-CONNECT:$PARENT_CID:$TOKEN_PORT \
+		  VSOCK-CONNECT:$PARENT_CID:"$TOKEN_PORT" \
 		|& logger || fail "cannot receive web identity token"
 	done &
     }
@@ -102,17 +132,10 @@ has_value "aws.role_arn" && \
 # the `aws-config` crate doesn't have a simple way to configure AWS API
 # endpoints for credentials providers (except IMDS), so we set the STS endpoint
 # through the environment
-has_value "aws.sts_endpoint" || log "AWS STS endpoint not set"
 has_value "aws.sts_endpoint" && {
     AWS_ENDPOINT_URL_STS="$(get_value "aws.sts_endpoint")"
     export AWS_ENDPOINT_URL_STS
 }
-
-# AWS API proxies
-start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
-start_tcp_proxy_out "AWS STS" "$(get_configured_port "aws.sts_endpoint")"
-start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
-start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
 # We need to be able to run kms-gen-keys independently of running kms-server
 # because kms-gen-keys also generates party CA certificates and those need to be
@@ -124,11 +147,23 @@ start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 # start if this section is present.
 has_value "keygen" && \
     {
-	AWS_ARGS="--aws-region $(get_value "aws.region") \
-		  --aws-imds-endpoint $(get_value "aws.imds_endpoint") \
-		  --aws-sts-endpoint $(get_value "aws.sts_endpoint") \
-		  --aws-s3-endpoint $(get_value "aws.s3_endpoint") \
-		  --aws-kms-endpoint $(get_value "aws.awskms_endpoint")"
+	AWS_IMDS_ENDPOINT_ARG=""
+	has_value "aws.imds_endpoint" && \
+	    AWS_IMDS_ENDPOINT_ARG="--aws-imds-endpoint $(get_value "aws.imds_endpoint")"
+
+	AWS_STS_ENDPOINT_ARG=""
+	has_value "aws.sts_endpoint" && \
+	    AWS_STS_ENDPOINT_ARG="--aws-sts-endpoint $(get_value "aws.sts_endpoint")"
+
+	AWS_S3_ENDPOINT_ARG=""
+	has_value "aws.s3_endpoint" && \
+	    AWS_S3_ENDPOINT_ARG="--aws-s3-endpoint $(get_value "aws.s3_endpoint")"
+
+	AWS_KMS_ENDPOINT_ARG=""
+	has_value "aws.awskms_endpoint" && \
+	    AWS_KMS_ENDPOINT_ARG="--aws-kms-endpoint $(get_value "aws.awskms_endpoint")"
+	
+	AWS_ARGS="--aws-region $(get_value "aws.region") $AWS_IMDS_ENDPOINT_ARG $AWS_STS_ENDPOINT_ARG $AWS_S3_ENDPOINT_ARG $AWS_KMS_ENDPOINT_ARG"
 
 	PUBLIC_S3_PREFIX_ARG=""
 	has_value "public_vault.storage.s3.prefix" && \
@@ -176,29 +211,6 @@ has_value "keygen" || \
 
 has_value "service" && \
     {
-	# telemetry proxies
-	has_value "telemetry.metrics_bind_address" || log "metrics endpoint not set"
-	has_value "telemetry.metrics_bind_address" && \
-	    start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
-	has_value "telemetry.tracing_endpoint" || log "tracing endpoint not set"
-	has_value "telemetry.tracing_endpoint" && \
-	    start_tcp_proxy_out "tracing" "$(get_configured_port "telemetry.tracing_endpoint")"
-
-	# gRPC proxies
-	start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
-	has_value "threshold" && \
-	    {
-		start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
-
-		# one outgoing proxy for each threshold peer
-		EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port);"
-		START_TCP_PROXY_OUT_CMDS=$( \
-					    yq -p toml -op ".threshold.peers | map (\"$EXPR\")" $KMS_SERVER_CONFIG_FILE \
-						| sed 's/^.* = //g')
-		eval "$START_TCP_PROXY_OUT_CMDS"
-	    }
-
-	# showtime!
 	log "starting kms-server"
 	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
     }

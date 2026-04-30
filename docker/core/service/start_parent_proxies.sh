@@ -5,24 +5,33 @@
 # standalone EC2 instance. There might be better ways to start proxies in larger
 # production environments, like K8S.
 
+KMS_SERVER_TUN_IF=vsocktun
+
 if [ "$#" -ne 4 ]; then
-    echo "usage: start_parent_proxies.sh ENCLAVE_CID ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT KMS_SERVER_CONFIG_FILE"
+    echo "usage: start_parent_proxies.sh ENCLAVE_LOG_PORT ENCLAVE_CONFIG_PORT KMS_SERVER_CONFIG_FILE WEB_IDENTITY_TOKEN_FILE"
     exit 1
 fi
 
-ENCLAVE_CID="$1"
-ENCLAVE_LOG_PORT="$2"
-ENCLAVE_CONFIG_PORT="$3"
-KMS_SERVER_CONFIG_FILE="$4"
+ENCLAVE_LOG_PORT="$1"
+ENCLAVE_CONFIG_PORT="$2"
+KMS_SERVER_CONFIG_FILE="$3"
+WEB_IDENTITY_TOKEN_FILE="$4"
+UPSTREAM_DNS=""
+PARENT_IF=""
+PARENT_IP=""
 
-get_configured_host_and_port() {
-    local SERVICE_NAME="$1"
-    get_value "$SERVICE_NAME" | sed 's/^https\?:\/\///'
-}
+while read -r key value _; do
+    if [ "$key" = "nameserver" ]; then
+        UPSTREAM_DNS="$value"
+        break
+    fi
+done < /etc/resolv.conf
 
 get_configured_port() {
     local SERVICE_NAME="$1"
-    get_value "$SERVICE_NAME" | cut -d ":" -f 3
+    local SERVICE_URL
+    SERVICE_URL=$(get_value "$SERVICE_NAME" | tr -d '"')
+    echo "${SERVICE_URL##*:}"
 }
 
 get_value() {
@@ -34,20 +43,60 @@ is_threshold() {
     yq -e -p toml -oy '.threshold' "$KMS_SERVER_CONFIG_FILE" &>/dev/null
 }
 
-start_tcp_proxy_out() {
-    local NAME="$1"
-    local VSOCK_PORT="$2"
-    local TCP_DST="$3"
-    echo "start_proxies: starting parent-side $NAME proxy"
-    socat -T180 VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr TCP:"$TCP_DST",nodelay &
+ENCLAVE_TOKEN_PORT="$(get_value "enclave_bootstrap.web_identity_token_port")"
+RESOLVCONF_PORT="$(get_value "enclave_bootstrap.resolv_conf_port")"
+ENCLAVE_NET_PORT="$(get_value "enclave_bootstrap.network_tunnel.vsock_port")"
+KMS_SERVER_TUN_ADDR="$(get_value "enclave_bootstrap.network_tunnel.parent_address" | tr -d '"')"
+ENCLAVE_TUN_IP="$(get_value "enclave_bootstrap.network_tunnel.enclave_address" | tr -d '"')"
+
+if [ "${KMS_SERVER_TUN_ADDR%/*}" = "$KMS_SERVER_TUN_ADDR" ]; then
+    echo "start_proxies: parent tunnel address missing CIDR prefix: $KMS_SERVER_TUN_ADDR"
+    exit 1
+fi
+
+case "$ENCLAVE_TUN_IP" in
+    */*)
+        echo "start_proxies: enclave tunnel address must not contain CIDR prefix: $ENCLAVE_TUN_IP"
+        exit 1
+        ;;
+esac
+
+ENCLAVE_TUN_ADDR="${ENCLAVE_TUN_IP}/${KMS_SERVER_TUN_ADDR#*/}"
+KMS_SERVER_TUN_IP="${KMS_SERVER_TUN_ADDR%/*}"
+
+add_ingress_dnat() {
+    local PORT="$1"
+    sudo iptables -t nat -C PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT" 2>/dev/null || \
+        sudo iptables -t nat -A PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT"
+    sudo iptables -C FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        sudo iptables -A FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT
 }
 
-start_tcp_proxy_in() {
-    local NAME="$1"
-    local PORT="$2"
-    echo "start_proxies: starting parent-side $NAME proxy"
-    socat -T180 TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
+delete_ingress_dnat() {
+    local PORT="$1"
+    if [ -n "$PARENT_IF" ] && [ -n "$PARENT_IP" ]; then
+        sudo iptables -t nat -D PREROUTING -i "$PARENT_IF" -d "$PARENT_IP" -p tcp --dport "$PORT" -j DNAT --to-destination "$ENCLAVE_TUN_IP:$PORT" 2>/dev/null || true
+        sudo iptables -D FORWARD -i "$PARENT_IF" -o "$KMS_SERVER_TUN_IF" -p tcp -d "$ENCLAVE_TUN_IP" --dport "$PORT" -m conntrack --ctstate NEW,RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    fi
 }
+
+cleanup() {
+    if [ -f "$KMS_SERVER_CONFIG_FILE" ]; then
+        delete_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
+        delete_ingress_dnat "$(get_configured_port "service.listen_port")"
+        if is_threshold; then
+            delete_ingress_dnat "$(get_configured_port "threshold.listen_port")"
+        fi
+    fi
+    if [ -n "$PARENT_IF" ]; then
+        sudo iptables -t nat -D POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || true
+    fi
+    sudo iptables -D FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || true
+    sudo iptables -D FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    kill $(jobs -p) 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
 
 # start the log stream for the enclave
 echo "start_proxies: starting enclave log stream"
@@ -57,25 +106,73 @@ socat -T180 -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork STDOUT &
 echo "start_proxies: starting enclave config stream"
 socat -T180 VSOCK-LISTEN:"$ENCLAVE_CONFIG_PORT",fork,reuseaddr OPEN:"$KMS_SERVER_CONFIG_FILE",rdonly &
 
-# start TCP proxies to let the enclave use tracing and AWS APIs
-AWS_REGION=$(get_value "aws.region")
-start_tcp_proxy_out "tracing" "$(get_configured_port "tracing.endpoint")" "$(get_configured_host_and_port "tracing.endpoint")"
-start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")" "169.254.169.254:80"
-start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")" "s3.$AWS_REGION.amazonaws.com:443"
-start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")" "kms.$AWS_REGION.amazonaws.com:443"
+# start the web identity token stream for the enclave
+echo "start_proxies: starting web identity token stream"
+socat VSOCK-LISTEN:"$ENCLAVE_TOKEN_PORT",fork,reuseaddr OPEN:"$WEB_IDENTITY_TOKEN_FILE",rdonly &
 
-# if needed, start TCP proxies for threshold peer-to-peer connections
-is_threshold && \
-    {
-	start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
+# start the resolv.conf stream for the enclave
+echo "start_proxies: starting /etc/resolv.conf stream"
+socat -T180 VSOCK-LISTEN:"$RESOLVCONF_PORT",fork,reuseaddr OPEN:/etc/resolv.conf,rdonly &
 
-	# one outgoing proxy for each threshold peer
-	EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port) \(.address):\(.port);"
-	START_TCP_PROXY_OUT_CMDS=$(\
-	    yq -p toml -op ".threshold.peers | map(\"$EXPR\")" "$KMS_SERVER_CONFIG_FILE" \
-		| sed 's/^.* = //g')
-	eval "$START_TCP_PROXY_OUT_CMDS"
-    }
+# enable NAT for enclave outgoing connections
+echo "start_proxies: starting enclave network tunnel interface"
+sudo socat VSOCK-LISTEN:"$ENCLAVE_NET_PORT",fork,reuseaddr TUN:"$KMS_SERVER_TUN_ADDR",tun-name=$KMS_SERVER_TUN_IF,iff-up &
+sudo sysctl -w net.ipv4.ip_forward=1
 
-# start a TCP proxy to let the world access the gRPC API in the enclave
-start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
+for _ in $(seq 1 30);
+do
+    if ifconfig "$KMS_SERVER_TUN_IF" &>/dev/null; then
+        break
+    fi
+    sleep 1
+done
+if ! ifconfig "$KMS_SERVER_TUN_IF" &>/dev/null; then
+    echo "start_proxies: tunnel interface $KMS_SERVER_TUN_IF did not come up"
+    exit 1
+fi
+
+if [ -z "$UPSTREAM_DNS" ]; then
+    echo "start_proxies: cannot determine upstream nameserver from /etc/resolv.conf"
+    exit 1
+fi
+
+set -- $(ip route get 1.1.1.1)
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        dev)
+            PARENT_IF="$2"
+            shift 2
+            ;;
+        src)
+            PARENT_IP="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$PARENT_IF" ] || [ -z "$PARENT_IP" ]; then
+    echo "start_proxies: cannot determine parent interface or IP"
+    exit 1
+fi
+
+sudo iptables -t nat -C POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE 2>/dev/null || \
+    sudo iptables -t nat -A POSTROUTING -s "$ENCLAVE_TUN_ADDR" -o "$PARENT_IF" -j MASQUERADE
+sudo iptables -C FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT 2>/dev/null || \
+    sudo iptables -A FORWARD -i "$KMS_SERVER_TUN_IF" -j ACCEPT
+sudo iptables -C FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+    sudo iptables -A FORWARD -o "$KMS_SERVER_TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+echo "start_proxies: DNATing metrics, client, and peer ingress to $ENCLAVE_TUN_IP over $KMS_SERVER_TUN_IF"
+add_ingress_dnat "$(get_configured_port "telemetry.metrics_bind_address")"
+add_ingress_dnat "$(get_configured_port "service.listen_port")"
+if is_threshold; then
+    add_ingress_dnat "$(get_configured_port "threshold.listen_port")"
+fi
+
+echo "start_proxies: starting dnsproxy on $KMS_SERVER_TUN_IP via $UPSTREAM_DNS"
+sudo dnsproxy -v -l "$KMS_SERVER_TUN_IP" -u "$UPSTREAM_DNS" &
+
+wait

@@ -55,9 +55,6 @@ aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
 aws-sdk-s3 = { workspace = true, optional = true }
-aws-smithy-runtime = { workspace = true, optional = true }
-aws-smithy-runtime-api = { workspace = true, optional = true }
-aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
 bincode.workspace = true
 bip39.workspace = true
@@ -71,8 +68,6 @@ futures-util.workspace = true
 getrandom.workspace = true # For some weird reason it needs to be here for wasm builds ? (even though we don't use it anywhere ?)
 hashing.workspace = true
 hex.workspace = true
-http-legacy.workspace = true
-hyper-rustls = { workspace = true, optional = true }
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
@@ -160,10 +155,6 @@ non-wasm = [
     "dep:aws-nitro-enclaves-nsm-api",
     "dep:aws-sdk-kms",
     "dep:aws-sdk-s3",
-    "dep:aws-smithy-runtime",
-    "dep:aws-smithy-runtime-api",
-    "dep:aws-smithy-types",
-    "dep:hyper-rustls",
     "dep:iam-rs",
     "dep:observability",
     "dep:rustls-webpki",
