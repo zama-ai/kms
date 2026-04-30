@@ -451,8 +451,8 @@ mod kms_server_binary_test {
     #[persistent_traces]
     fn subcommand_dev_centralized() {
         let tempdir = tempfile::tempdir().unwrap();
-        let config_src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("config/default_centralized.toml");
+        let config_src =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_centralized.toml");
         let config_dst = tempdir.path().join("default_centralized.toml");
         std::fs::copy(&config_src, &config_dst).unwrap();
 
@@ -473,8 +473,7 @@ mod kms_server_binary_test {
     #[persistent_traces]
     fn subcommand_dev_threshold() {
         let tempdir = tempfile::tempdir().unwrap();
-        let config_src =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_1.toml");
+        let config_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_1.toml");
         let config_dst = tempdir.path().join("default_1.toml");
         std::fs::copy(&config_src, &config_dst).unwrap();
 
