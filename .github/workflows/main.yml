@@ -259,7 +259,7 @@ jobs:
           MATRIX_JSON=$(jq -nc '{
             include: [
               {
-                "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker",
+                "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_concurrent_crs",
                 generate_default_material: true
               },
               {

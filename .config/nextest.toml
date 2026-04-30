@@ -1,44 +1,22 @@
-nextest-version = { required = "0.9.48" }
-
 # =============================================================================
 # Test Groups — enforce sequential execution for tests sharing infrastructure
 # =============================================================================
 # nextest runs each test in a separate process, so #[serial] attributes alone
 # are insufficient to prevent parallel execution across binaries.
 [test-groups]
-# TODO(dp): The `kms` package's `integration_test` binary still has two tests
-# (`subcommand_dev_centralized`, `subcommand_dev_threshold`) that write to
-# the global `./keys/` directory and call `purge_all()`, so concurrent
-# instances would race. All other tests in that binary were migrated to
-# per-test tempdirs (see TODOs there). `kms-core-client`'s
-# `integration_test` binary is excluded — each of its tests uses its own
-# tempdir and OS-assigned ports.
-integration-serial = { max-threads = 1 }
 # K8s tests (kubernetes_test_* binaries) share the same KMS pods in a Kind
 # cluster — concurrent requests would interfere with each other.
-k8s-integration    = { max-threads = 1 }
+k8s-integration = { max-threads = 1 }
 
 # =============================================================================
-# CI profile: used for PR checks (fast feedback)
+# CI profile: used for PR checks. Test selection (including which nightly
+# tests to skip) lives in the workflow YAML so it's visible at the
+# `cargo nextest run` invocation site.
 # =============================================================================
-# Excludes slow tests from integration_test that only run nightly:
-#   - nightly_full_gen_tests_default*           (uses FheParameter::Default — production-sized, slow)
-#   - nightly_tests_threshold_sequential_crs
-#   - test_threshold_concurrent_crs
 [profile.ci]
-default-filter = 'not (binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/))'
 
 [profile.ci.junit]
 path = "junit.xml"
-store-success-output = false
-store-failure-output = true
-
-# TODO(dp): narrow this filter once `subcommand_dev_*` are migrated off
-# global `./keys/` storage. Today they race via `purge_all()` and the
-# kms-gen-keys/kms-server invocations that omit `--*-file-path`.
-[[profile.ci.overrides]]
-filter = "package(kms) & binary(=integration_test)"
-test-group = "integration-serial"
 
 # Serialize all K8s test binaries (kubernetes_test_threshold*,
 # kubernetes_test_centralized*) — they share the same Kind cluster pods.
@@ -49,14 +27,10 @@ test-group = "k8s-integration"
 # =============================================================================
 # CI-nightly profile: used for scheduled builds — runs ALL tests
 # =============================================================================
-# No default-filter: includes the slow tests that the ci profile skips.
-# The serialization overrides below are identical to ci.
 [profile.ci-nightly]
 
 [profile.ci-nightly.junit]
 path = "junit.xml"
-store-success-output = false
-store-failure-output = true
 
 # Long timeout for slow production-param nightly tests. They live in
 # `kms-core-client` and are isolated per-test (tempdirs + OS-assigned ports),
@@ -64,12 +38,6 @@ store-failure-output = true
 [[profile.ci-nightly.overrides]]
 filter = 'package(kms-core-client) & binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
 slow-timeout = { period = "600s", terminate-after = 12 }
-
-# Serialize `kms` package's integration_test binary — `subcommand_dev_*`
-# still race on global `./keys/`. See ci-profile override above.
-[[profile.ci-nightly.overrides]]
-filter = "package(kms) & binary(=integration_test)"
-test-group = "integration-serial"
 
 # Serialize K8s tests (same as ci profile).
 [[profile.ci-nightly.overrides]]
