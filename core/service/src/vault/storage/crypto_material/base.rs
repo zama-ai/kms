@@ -32,10 +32,11 @@ use crate::{
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
-            store_context_at_id, store_versioned_at_request_id,
+            store_versioned_at_request_id,
         },
     },
 };
+use itertools::Itertools;
 use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
@@ -55,7 +56,7 @@ use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
     #[error("Existence check error")]
     ExistenceCheckError,
@@ -63,10 +64,12 @@ pub enum StorageError {
     WritingError,
     #[error("Purging error")]
     PurgingError,
+    #[error("MetaStore error: {0}")]
+    MetaStoreError(String),
     #[error("Backup error")]
     BackupError,
     #[error("Other error: {0}")]
-    Other(#[from] anyhow::Error),
+    Other(String),
 }
 
 /// Marker trait for private FHE materials.
@@ -423,18 +426,80 @@ where
         }
     }
 
-    /// General method for handling the storage of material, including backup.
-    pub async fn handle_all_storage<
+    /// Note that this method is not thread safe.
+    pub async fn handle_persistent_and_meta_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
-        T: Clone,
+        MetaT: Clone,
     >(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
-        pub_data: Vec<(&'a PubData, PubDataType)>,
-        priv_data: Vec<(&'a PrivData, PrivDataType)>,
+        pub_data: &[(&'a PubData, PubDataType)],
+        priv_data: &[(&'a PrivData, PrivDataType)],
+        meta_data: MetaT,
+        meta_store: Arc<RwLock<MetaStore<MetaT>>>,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError>
+    where
+        <PubData as Versionize>::Versioned<'a>: Send + Sync,
+        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        // First ensure that the meta store request is pending
+        ensure_meta_store_request_pending(&meta_store, req_id)
+            .await
+            .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
+        let res = self
+            .handle_all_storage(req_id, epoch_id, pub_data, priv_data, op_metric_tag)
+            .await;
+        let mut meta_store_ok = true;
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+            meta_store_ok &= update_ok_req_in_meta_store(
+                &mut meta_store.write().await,
+                req_id,
+                meta_data,
+                op_metric_tag,
+            )
+        } else {
+            meta_store_ok &= update_err_req_in_meta_store(
+                &mut meta_store.write().await,
+                req_id,
+                res.as_ref().unwrap_err().to_string(),
+                op_metric_tag,
+            );
+        }
+        if !meta_store_ok {
+            // NOTE this would indicate a bug since we have just verified that the meta can be updated in the start of this method
+            // Thus the meta store update can only fail in case of a race condition, which would indicate a bug
+            tracing::error!(
+                "Failed to update meta store in metric {op_metric_tag} for request {req_id}",
+            );
+            if res.is_ok() {
+                return Err(StorageError::MetaStoreError(format!(
+                    "Failed to update meta store for request {req_id}, but storage succeeded."
+                )));
+            } else {
+                return Err(StorageError::MetaStoreError(format!(
+                    "Failed to update meta store for request {req_id}. Also failed to store data with error: {}",
+                    res.unwrap_err()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// General method for handling the storage of material, including backup.
+    async fn handle_all_storage<
+        'a,
+        PubData: Serialize + Versionize + Named + Send + Sync,
+        PrivData: Serialize + Versionize + Named + Send + Sync,
+    >(
+        &self,
+        req_id: &RequestId,
+        epoch_id: Option<&EpochId>,
+        pub_data: &[(&'a PubData, PubDataType)],
+        priv_data: &[(&'a PrivData, PrivDataType)],
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
@@ -447,13 +512,13 @@ where
         let priv_types = priv_data
             .iter()
             .map(|(_, priv_type)| priv_type.clone())
-            .collect();
+            .collect_vec();
         let pub_types = pub_data
             .iter()
             .map(|(_, pub_type)| pub_type.clone())
-            .collect();
+            .collect_vec();
         if self
-            .write_data_pair(req_id, epoch_id, pub_data, priv_data)
+            .write_data_pair(req_id, epoch_id, &pub_data, &priv_data)
             .await
         {
             // If storage is ok, then update the backup
@@ -461,18 +526,21 @@ where
                 // Observe that even if backup fails, we do not want to purge the material
                 return Err(StorageError::BackupError);
             }
-            return Ok(());
         } else {
             // If storage write failed then purge
 
             if !self
-                .purge_material(req_id, epoch_id, priv_types, pub_types)
+                .purge_material(req_id, epoch_id, &priv_types, &pub_types)
                 .await
             {
                 return Err(StorageError::PurgingError);
             }
             return Err(StorageError::WritingError);
         }
+        tracing::info!(
+            "Successfully stored public data elements {pub_types:?} and private data elements {priv_types:?} under the handle {req_id} with epoch {epoch_id:?} for metric {op_metric_tag}",
+        );
+        return Ok(());
     }
 
     /// Helper method to purge material.
@@ -481,8 +549,8 @@ where
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
-        private_types: Vec<PrivDataType>,
-        public_types: Vec<PubDataType>,
+        private_types: &[PrivDataType],
+        public_types: &[PubDataType],
     ) -> bool {
         // Lock both stores up front to enforce the public-then-private locking order.
         let mut pub_storage = self.public_storage.lock().await;
@@ -490,7 +558,7 @@ where
 
         let f_pub = async {
             let mut failed = false;
-            for cur_pub_type in &public_types {
+            for cur_pub_type in public_types {
                 // Note that no public data is epoched
                 let del_res =
                     delete_at_request_id(&mut (*pub_storage), req_id, &cur_pub_type.to_string())
@@ -507,7 +575,7 @@ where
 
         let f_priv = async {
             let mut failed = false;
-            for cur_priv_type in &private_types {
+            for cur_priv_type in private_types {
                 match cur_priv_type {
                     // For FHE keys and CRS info, we need to delete at epoch level
                     PrivDataType::FheKeyInfo
@@ -576,8 +644,8 @@ where
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
-        pub_data: Vec<(&'a PubData, PubDataType)>,
-        priv_data: Vec<(&'a PrivData, PrivDataType)>,
+        pub_data: &[(&'a PubData, PubDataType)],
+        priv_data: &[(&'a PrivData, PrivDataType)],
     ) -> bool
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
@@ -591,8 +659,8 @@ where
                 if !CryptoMaterialStorage::<PubS, PrivS>::write_pub_data(
                     &mut (*pub_storage_guard),
                     req_id,
-                    pub_d,
-                    &pub_t,
+                    *pub_d,
+                    pub_t,
                 )
                 .await
                 {
@@ -609,8 +677,8 @@ where
                     &mut (*priv_storage_guard),
                     req_id,
                     epoch_id,
-                    priv_d,
-                    &priv_t,
+                    *priv_d,
+                    priv_t,
                 )
                 .await
                 {
@@ -656,7 +724,7 @@ where
     /// Write data to the private storage backend.
     /// Returns true if the write is successful, false otherwise.
     /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
-    async fn write_priv_data<
+    pub(crate) async fn write_priv_data<
         'a,
         PrivData: Serialize + Versionize + Named + Send + Sync,
         S: StorageExt,
@@ -745,15 +813,36 @@ where
         epoch_id: &EpochId,
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
-    ) -> bool {
-        self.write_data_pair(
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        self.handle_persistent_and_meta_storage(
             crs_id,
             Some(epoch_id),
-            vec![(&pp, PubDataType::CRS)],
-            vec![(&crs_info, PrivDataType::CrsInfo)],
+            &vec![(&pp, PubDataType::CRS)],
+            &vec![(&crs_info.clone(), PrivDataType::CrsInfo)],
+            crs_info,
+            meta_store,
+            op_metric_tag,
         )
         .await
     }
+
+    // pub async fn write_fhe_keys(
+    //     &self,
+    //     key_id: &RequestId,
+    //     epoch_id: &EpochId,
+    //     private_keys: Vec<(&'a KeyData, PubDataType)>,
+    //     fhe_key_set: FhePubKeySet,
+    // ) -> bool {
+    //     self.write_data_pair(
+    //         crs_id,
+    //         Some(epoch_id),
+    //         vec![(&pp, PubDataType::CRS)],
+    //         vec![(&crs_info, PrivDataType::CrsInfo)],
+    //     )
+    //     .await
+    // }
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material<T: Clone>(
@@ -1371,20 +1460,17 @@ where
         &self,
         context_id: &ContextId,
         context_info: &ContextInfo,
-    ) -> anyhow::Result<()> {
-        let mut priv_storage_guard = self.private_storage.lock().await;
-        if !CryptoMaterialStorage::<PubS, PrivS>::write_priv_data(
-            &mut (*priv_storage_guard),
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError> {
+        // No public data so we just reuse ContextInfo to appease the compiler
+        self.handle_all_storage::<ContextInfo, ContextInfo>(
             &((*context_id).into()),
             None,
-            context_info,
-            &PrivDataType::ContextInfo,
+            &[],
+            &[(context_info, PrivDataType::ContextInfo)],
+            op_metric_tag,
         )
         .await
-        {
-            anyhow::bail!("Failed to write context info for context ID {context_id}");
-        }
-        Ok(())
     }
 
     pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
