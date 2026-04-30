@@ -142,7 +142,7 @@ impl KmsFheKeyHandles {
         eip712_domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
     ) -> anyhow::Result<Self> {
-        let public_key_info = compute_info_standard_keygen(
+        let public_key_info = compute_info_uncompressed_keygen(
             sig_key,
             &crate::engine::base::DSEP_PUBDATA_KEY,
             preproc_id,
@@ -272,7 +272,7 @@ pub(crate) fn compute_external_signature_preprocessing(
     Ok(external_signature)
 }
 
-pub(crate) fn compute_info_standard_keygen(
+pub(crate) fn compute_info_uncompressed_keygen(
     sk: &PrivateSigKey,
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -1100,7 +1100,7 @@ pub(crate) mod tests {
         engine::{
             base::{
                 DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, compute_external_signature_preprocessing,
-                compute_info_standard_keygen, compute_public_decryption_message,
+                compute_info_uncompressed_keygen, compute_public_decryption_message,
                 safe_serialize_hash_element_versioned,
             },
             centralized::central_kms::{
@@ -1504,7 +1504,7 @@ pub(crate) mod tests {
         };
         let domain = dummy_domain();
         let extra_data = vec![0x01u8, 0x02, 0x03, 0x04];
-        let meta_data = compute_info_standard_keygen(
+        let meta_data = compute_info_uncompressed_keygen(
             &sk,
             &crate::engine::base::DSEP_PUBDATA_KEY,
             &prep_id,
@@ -1626,7 +1626,7 @@ pub(crate) mod tests {
             // should fail if we use the wrong signature
 
             let (_, bad_sk) = gen_sig_keys(&mut rng);
-            let meta_data = compute_info_standard_keygen(
+            let meta_data = compute_info_uncompressed_keygen(
                 &bad_sk,
                 &crate::engine::base::DSEP_PUBDATA_KEY,
                 &prep_id,

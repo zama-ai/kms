@@ -82,10 +82,9 @@ pub(crate) fn keygen_config_from_existing(
             }),
         }),
         Some(KeySetAddedInfo {
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
             existing_keyset_id: Some((*existing_keyset_id).into()),
             use_existing_key_tag,
+            ..KeySetAddedInfo::default()
         }),
     )
 }
@@ -104,8 +103,7 @@ pub(crate) fn decompression_keygen_config(
         Some(KeySetAddedInfo {
             from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
             to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
-            existing_keyset_id: None,
-            use_existing_key_tag: false,
+            ..KeySetAddedInfo::default()
         }),
     )
 }
