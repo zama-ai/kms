@@ -63,6 +63,7 @@ jobs:
           filters: |
             ci:
               - '.github/workflows/**'
+              - 'rust-toolchain.toml'
             core-client:
               - 'core-client/src/**'
               - 'core-client/config/**'
@@ -72,12 +73,15 @@ jobs:
               - 'core/thread-handles/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-client-k8s-tests:
               - 'core-client/tests/**'
+              - 'rust-toolchain.toml'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-service:
               - 'backward-compatibility/**'
               - 'core/grpc/**'
@@ -88,12 +92,14 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             core-threshold:
               - 'core/threshold*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             # Workspace crates that have no dedicated CI job of their own.
             # Used by `test-workspace-crates` to run their unit tests grouped
             # across a few runners.
@@ -106,10 +112,13 @@ jobs:
               - 'observability/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
             docs:
               - 'docs/**'
+              - 'rust-toolchain.toml'
             helm-chart:
               - 'charts/**'
+              - 'rust-toolchain.toml'
 
   ############################################################################
   # Docker build pipeline
@@ -356,7 +365,7 @@ jobs:
       needs.check-changes.outputs.changes-tools == 'true' ||
       github.ref == 'refs/heads/main'
     runs-on: runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-    timeout-minutes: 60
+    timeout-minutes: 150
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0

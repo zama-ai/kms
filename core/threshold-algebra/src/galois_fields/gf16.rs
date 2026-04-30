@@ -1,14 +1,11 @@
-use crate::{galois_fields::LagrangeMap, poly::lagrange_polynomials};
-use error_utils::anyhow_error_and_log;
-use std::collections::HashMap;
-
 use crate::{
+    galois_fields::{lagrange::LagrangeMap, lagrange::build_lagrange_map},
     poly::Poly,
     structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{GaloisField, g2p};
 use serde::{Deserialize, Serialize};
-use std::sync::{LazyLock, RwLock};
+use std::{num::NonZero, sync::LazyLock};
 
 g2p!(
     GF16,
@@ -87,32 +84,17 @@ impl RingWithExceptionalSequence for GF16 {
     }
 }
 
-static LAGRANGE_STORE: LazyLock<RwLock<LagrangeMap<GF16>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// Pre-computed Lagrange basis for all (ordered) non-empty subsets of GF16 that exclude 0.
+/// Size is \sum_{k=1}^{15} C(15, k) * k = 15 * 2^14 = 245760, which is small enough to be pre-computed and stored in memory.
+pub(crate) static LAGRANGE_STORE: LazyLock<LagrangeMap<GF16>> = LazyLock::new(|| {
+    build_lagrange_map::<GF16>(NonZero::new(15).expect("15 is non-zero"), 0).expect(
+        "Initialization of the GF16 Lagrange basis can't fail with 15 parties and threshold 0",
+    )
+});
 
 impl Field for GF16 {
-    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
-        if let Ok(lock_lagrange_store) = LAGRANGE_STORE.read() {
-            match lock_lagrange_store.get(points) {
-                Some(v) => Ok(v.clone()),
-                None => {
-                    drop(lock_lagrange_store);
-                    if let Ok(mut lock_lagrange_store) = LAGRANGE_STORE.write() {
-                        let lagrange_pols = lagrange_polynomials(points);
-                        lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
-                        Ok(lagrange_pols)
-                    } else {
-                        Err(anyhow_error_and_log(
-                            "Error writing LAGRANGE_STORE".to_string(),
-                        ))
-                    }
-                }
-            }
-        } else {
-            Err(anyhow_error_and_log(
-                "Error reading LAGRANGE_STORE".to_string(),
-            ))
-        }
+    fn cached_lagrange_polys(points: &[Self]) -> Option<&'static [Poly<Self>]> {
+        LAGRANGE_STORE.get(points).map(|v| v.as_slice())
     }
 }
 

@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
-    use crate::consts::DEFAULT_EPOCH_ID;
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
@@ -51,7 +51,11 @@ use crate::client::tests::threshold::common::threshold_key_gen_secure;
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::consts::TEST_PARAM;
+#[cfg(feature = "slow_tests")]
+use crate::consts::default_extra_data;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+#[cfg(feature = "insecure")]
+use crate::engine::utils::make_extra_data;
 #[cfg(feature = "slow_tests")]
 use crate::testing::helpers::domain_to_msg;
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
@@ -255,6 +259,7 @@ pub(crate) async fn run_threshold_keygen(
             domain,
         )
         .unwrap();
+    let extra_data = req_keygen.extra_data.clone();
 
     let responses = launch_dkg(req_keygen.clone(), kms_clients, insecure).await;
     for response in responses {
@@ -268,6 +273,7 @@ pub(crate) async fn run_threshold_keygen(
         internal_client,
         insecure,
         &keyset_config,
+        extra_data,
         data_root_path,
         expected_num_parties_crashed,
     )
@@ -320,6 +326,7 @@ async fn wait_for_keygen_result(
     internal_client: &Client,
     insecure: bool,
     keyset_config: &Option<KeySetConfig>,
+    extra_data: Vec<u8>,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
@@ -415,6 +422,7 @@ async fn wait_for_keygen_result(
             &req_preproc,
             &req_get_keygen,
             &domain,
+            extra_data,
             kms_clients.len() + expected_num_parties_crashed,
             None,
             compressed,
@@ -1005,11 +1013,12 @@ pub(crate) async fn run_preproc(
     );
 
     // the responses should be empty
+    let extra_data = preproc_request.extra_data.clone();
     let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
     assert!(responses.len() + expected_num_parties_crashed == amount_parties);
     for response in responses {
         internal_client
-            .process_preproc_response(preproc_req_id, &domain, &response)
+            .process_preproc_response(preproc_req_id, &domain, &response, extra_data.clone())
             .unwrap();
     }
 }
@@ -1238,6 +1247,7 @@ pub(crate) async fn verify_keygen_responses(
     req_preproc: &RequestId,
     req_get_keygen: &RequestId,
     domain: &Eip712Domain,
+    extra_data: Vec<u8>,
     total_num_parties: usize,
     read_key_at_epoch: Option<kms_grpc::EpochId>,
     compressed: bool,
@@ -1263,7 +1273,7 @@ pub(crate) async fn verify_keygen_responses(
                     req_get_keygen,
                     &kg_res,
                     domain,
-                    vec![],
+                    extra_data.clone(),
                     &storage,
                 )
                 .await
@@ -1278,7 +1288,7 @@ pub(crate) async fn verify_keygen_responses(
                     req_get_keygen,
                     &kg_res,
                     domain,
-                    vec![],
+                    extra_data.clone(),
                     &storage,
                 )
                 .await
@@ -1387,6 +1397,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         &crate::dummy_domain(),
+        make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
         env.clients.len(),
         None,
         true,
@@ -1447,6 +1458,7 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         &crate::dummy_domain(),
+        make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
         env.clients.len(),
         None,
         true,
@@ -1509,6 +1521,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
         &preproc_id,
         &keygen_id,
         &crate::dummy_domain(),
+        make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID)).unwrap(),
         env.clients.len(),
         None,
         true,
@@ -1555,8 +1568,9 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
             keyset_config: None,
-            context_id: None,
-            epoch_id: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            extra_data: default_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -1667,8 +1681,9 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
             keyset_config: None,
-            context_id: None,
-            epoch_id: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            extra_data: default_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client
@@ -2020,6 +2035,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id_1,
         &dummy_domain(),
+        default_extra_data(),
         env.clients.len(),
         None,
         true,
@@ -2043,6 +2059,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         &INSECURE_PREPROCESSING_ID,
         &key_id_2,
         &dummy_domain(),
+        default_extra_data(),
         env.clients.len(),
         None,
         true,
@@ -2067,8 +2084,9 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
                 keyset_type: KeySetType::DecompressionOnly.into(),
                 standard_keyset_config: None,
             }),
-            context_id: None,
-            epoch_id: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            extra_data: default_extra_data(),
         };
         preproc_tasks.spawn(async move {
             cur_client

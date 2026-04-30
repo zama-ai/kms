@@ -7,7 +7,7 @@ use crate::{
         BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring,
         RingWithExceptionalSequence, Sample, Solve, Solve1, Syndrome, ZConsts, Zero,
     },
-    syndrome::lagrange_numerators,
+    syndrome::{lagrange_numerators, syndrome_decoding_z2},
 };
 use error_utils::anyhow_error_and_log;
 
@@ -17,7 +17,6 @@ use threshold_types::role::Role;
 
 use crate::{
     base_ring::{Z64, Z128},
-    galois_fields::common::syndrome_decoding_z2,
     sharing::shamir::{ShamirFieldPoly, ShamirSharings},
     sharing::share::Share,
 };
