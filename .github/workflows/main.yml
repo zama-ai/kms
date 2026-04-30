@@ -649,6 +649,7 @@ jobs:
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
       enable-shared-material: true
+      lfs: true  # picks up backward_compatibility_threshold_fhe via the `threshold` filter
     secrets: inherit
 
   ############################################################################
