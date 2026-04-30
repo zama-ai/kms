@@ -1866,6 +1866,11 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
             let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+            assert!(
+                oprf_key.is_some(),
+                "Party {party_id}: compressed UseExisting keygen must embed a dedicated OPRF key"
+            );
             assert_eq!(
                 pk.tag(),
                 &expected_tag,
@@ -1916,6 +1921,27 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await?;
+            let threshold_keys_old: crate::engine::threshold::service::ThresholdFheKeys =
+                read_versioned_at_request_and_epoch_id(
+                    &priv_storage,
+                    &keygen_id_1,
+                    &DEFAULT_EPOCH_ID,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+            let old_oprf_share = &threshold_keys_old
+                .private_keys
+                .as_ref()
+                .oprf_secret_key_share;
+            let new_oprf_share = &threshold_keys.private_keys.as_ref().oprf_secret_key_share;
+            assert!(
+                old_oprf_share.is_some(),
+                "Party {party_id}: fresh keygen must persist the dedicated OPRF private share"
+            );
+            assert_eq!(
+                old_oprf_share, new_oprf_share,
+                "Party {party_id}: UseExisting keygen must reuse the persisted OPRF private share"
+            );
             match &threshold_keys.meta_data {
                 KeyGenMetadata::Current(inner) => {
                     let signed_pk_digest = inner
