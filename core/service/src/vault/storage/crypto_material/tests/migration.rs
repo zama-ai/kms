@@ -53,7 +53,11 @@ async fn store_migrated_compressed_material(
     new_fhe_keys: &ThresholdFheKeys,
 ) {
     {
-        let mut pub_storage = crypto_storage.inner.public_storage.lock().await;
+        let mut pub_storage = crypto_storage
+            .inner
+            .public_storage
+            .try_lock()
+            .expect("no other task should be using this lock");
         store_versioned_at_request_id(
             &mut *pub_storage,
             new_key_id,
@@ -72,7 +76,11 @@ async fn store_migrated_compressed_material(
         .unwrap();
     }
     {
-        let mut priv_storage = crypto_storage.inner.private_storage.lock().await;
+        let mut priv_storage = crypto_storage
+            .inner
+            .private_storage
+            .try_lock()
+            .expect("no other task should be using this lock");
         store_versioned_at_request_and_epoch_id(
             &mut *priv_storage,
             new_key_id,
@@ -127,7 +135,11 @@ async fn assert_migrated_public_material(
     new_key_id: &RequestId,
     expected_server_key_bytes: &[u8],
 ) {
-    let pub_storage = crypto_storage.inner.public_storage.lock().await;
+    let pub_storage = crypto_storage
+        .inner
+        .public_storage
+        .try_lock()
+        .expect("no other task should be using this lock");
     assert!(
         pub_storage
             .data_exists(old_key_id, &PubDataType::CompressedXofKeySet.to_string())
@@ -183,7 +195,11 @@ async fn load_public_material_bytes(
     key_id: &RequestId,
     data_type: PubDataType,
 ) -> Vec<u8> {
-    let pub_storage = crypto_storage.inner.public_storage.lock().await;
+    let pub_storage = crypto_storage
+        .inner
+        .public_storage
+        .try_lock()
+        .expect("no other task should be using this lock");
     pub_storage
         .load_bytes(key_id, &data_type.to_string())
         .await
@@ -227,7 +243,11 @@ async fn setup_pre_migration_uncompressed(
 
     // Private storage: ThresholdFheKeys at (old_key_id, epoch_id).
     {
-        let mut priv_storage = crypto_storage.inner.private_storage.lock().await;
+        let mut priv_storage = crypto_storage
+            .inner
+            .private_storage
+            .try_lock()
+            .expect("no other task should be using this lock");
         store_versioned_at_request_and_epoch_id(
             &mut *priv_storage,
             old_key_id,
@@ -240,7 +260,11 @@ async fn setup_pre_migration_uncompressed(
     }
     // Public storage: PublicKey + ServerKey at old_key_id.
     {
-        let mut pub_storage = crypto_storage.inner.public_storage.lock().await;
+        let mut pub_storage = crypto_storage
+            .inner
+            .public_storage
+            .try_lock()
+            .expect("no other task should be using this lock");
         store_versioned_at_request_id(
             &mut *pub_storage,
             old_key_id,
@@ -650,7 +674,11 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     // Pub storage at old_key_id must still hold the original ServerKey/PublicKey
     // and must NOT have received the new CompressedXofKeySet.
     {
-        let pub_storage = crypto_storage.inner.public_storage.lock().await;
+        let pub_storage = crypto_storage
+            .inner
+            .public_storage
+            .try_lock()
+            .expect("no other task should be using this lock");
         assert!(
             pub_storage
                 .data_exists(&old_key_id, &PubDataType::ServerKey.to_string())
@@ -778,7 +806,9 @@ async fn test_copy_compressed_key_updates_backup_vault() {
         .backup_vault
         .as_ref()
         .unwrap_or_else(|| panic!("backup vault should be configured for old_key_id={old_key_id}"));
-    let vault_guard = backup_vault.lock().await;
+    let vault_guard = backup_vault
+        .try_lock()
+        .expect("no other task should be using this lock");
     let backed_up: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
         &*vault_guard,
         &old_key_id,
