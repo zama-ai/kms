@@ -606,6 +606,7 @@ jobs:
       # slab-backend: 'big-instance-service'
       runner-volume: '400gb'
       rust-log-level: 'info'
+      lfs: true  # backward_compatibility_*.rs tests need the LFS fixtures
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)

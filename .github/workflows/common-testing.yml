@@ -34,9 +34,15 @@ on:
         type: string
         required: true
       skip-test-material:
-        # When true, skip LFS pull, test-material generation, and the
-        # kms-custodian build. Useful for light unit-test-only jobs on
-        # crates that don't need integration test fixtures.
+        # When true, skip test-material generation and the kms-custodian
+        # build. Useful for light unit-test-only jobs on crates that don't
+        # need integration test fixtures.
+        type: boolean
+        required: false
+        default: false
+      lfs:
+        # When true, pull LFS objects on checkout. Only `-p kms`
+        # backward_compatibility_*.rs tests need them (~24MB).
         type: boolean
         required: false
         default: false
@@ -52,10 +58,6 @@ on:
         type: boolean
         required: false
         default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
-      use-pregenerated-material:
-        type: boolean
-        required: false
-        default: false  # If true, download test material from artifacts instead of generating
       generate-default-material:
         type: boolean
         required: false
@@ -102,18 +104,10 @@ jobs:
         with:
           metrics: cpu,network,memory,disk,io
 
-      # LFS files (backward-compat fixtures) are only needed by `-p kms`
-      # backward_compatibility_*.rs tests; other callers pass skip-test-material.
-      - name: Install git-lfs
-        if: ${{ ! inputs.skip-test-material }}
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq git-lfs
-
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          lfs: ${{ ! inputs.skip-test-material }}
+          lfs: ${{ inputs.lfs }}
           persist-credentials: false
 
       - name: Get Rust version
@@ -200,28 +194,6 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
-      # TODO(dp) dead code? double check!
-      # No caller in main.yml passes `use-pregenerated-material: true`, so
-      # both download/decompress steps appear unused. Note: If revived, they also need the
-      # btrfs-loopback preamble below (otherwise tests on the loopback
-      # won't find the decompressed material under ./test-material).
-      # Download pre-generated default test material if available (for slow_tests jobs)
-      - name: Download Test Material (Default)
-        if: ${{ inputs.use-pregenerated-material }}
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: test-material-default-${{ github.run_id }}
-          path: .
-
-      - name: Decompress Test Material (Default)
-        if: ${{ inputs.use-pregenerated-material }}
-        run: |
-          echo "Decompressing default test material..."
-          mkdir -p ./test-material
-          tar -xzf test-material-default.tar.gz -C ./test-material
-          rm test-material-default.tar.gz
-          ls -la ./test-material/
-
       # Generate test material. Subcommand is `all` (testing + default) when
       # the job uses slow_tests or explicitly requests default; otherwise
       # `testing` only.
@@ -229,7 +201,7 @@ jobs:
       # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
       # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
-        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
+        if: ${{ ! inputs.skip-test-material }}
         env:
           GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
           ARGS_TESTS: ${{ inputs.args-tests }}
@@ -350,7 +322,7 @@ jobs:
       # If reflinks worked, apparent >> used (e.g., 200 GB logical / 25 GB used).
       # If they didn't, apparent ≈ used and we got byte copies for nothing.
       - name: Verify CoW reflinks
-        if: ${{ always() && ! inputs.skip-test-material && ! inputs.use-pregenerated-material }}
+        if: ${{ always() && ! inputs.skip-test-material }}
         run: |
           echo "--- logical size of per-test tempdirs (apparent) ---"
           du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
