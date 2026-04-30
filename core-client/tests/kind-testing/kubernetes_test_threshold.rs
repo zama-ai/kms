@@ -254,7 +254,6 @@ impl K8sTestContext {
                 max_num_bits: 2048,
                 epoch_id: Some(*DEFAULT_EPOCH_ID),
                 context_id: Some(*DEFAULT_MPC_CONTEXT),
-                extra_data: None,
             }))
             .await;
 

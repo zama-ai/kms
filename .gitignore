@@ -1,5 +1,6 @@
 .claude/settings.local.json
 ./CLAUDE.local.md
+.codex
 /target*
 **/temp/*
 /keys
