@@ -655,12 +655,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             anyhow::anyhow!("Failed to deserialize PublicKey for old keyset {old_key_id}: {e}")
         })?;
 
-        // Re-sign the metadata under old_key_id.
+        // Re-sign the metadata under old_key_id, preserving the migrated
+        // extra_data bytes when they exist.
+        let extra_data = migrated_inner.extra_data.clone().unwrap_or_default();
         let sol_type = KeygenVerification::new_compressed(
             &migrated_inner.preprocessing_id,
             old_key_id,
             compressed_digest,
             public_key_digest,
+            extra_data.clone(),
         );
         let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
         let new_metadata = KeyGenMetadata::new(
@@ -668,6 +671,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             migrated_inner.preprocessing_id,
             migrated_inner.key_digest_map.clone(),
             new_signature,
+            extra_data,
         );
 
         let updated_fhe_keys = ThresholdFheKeys::new(

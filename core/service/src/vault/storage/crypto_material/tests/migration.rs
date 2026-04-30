@@ -22,6 +22,7 @@ fn threshold_fhe_keys_for_compressed_keyset(
     sk: &PrivateSigKey,
     domain: &alloy_sol_types::Eip712Domain,
     compressed_keyset: &CompressedXofKeySet,
+    extra_data: Vec<u8>,
 ) -> ThresholdFheKeys {
     let info = compute_info_compressed_keygen(
         sk,
@@ -31,7 +32,7 @@ fn threshold_fhe_keys_for_compressed_keyset(
         compressed_keyset,
         compact_pk,
         domain,
-        vec![],
+        extra_data,
     )
     .unwrap();
 
@@ -107,6 +108,15 @@ fn assert_current_compressed_metadata(meta_data: &KeyGenMetadata, key_id: &Reque
             );
         }
         _ => panic!("expected Current metadata for key_id={key_id}, instead got {meta_data:?}"),
+    }
+}
+
+fn assert_current_metadata_extra_data(meta_data: &KeyGenMetadata, expected_extra_data: &[u8]) {
+    match meta_data {
+        KeyGenMetadata::Current(inner) => {
+            assert_eq!(inner.extra_data.as_deref(), Some(expected_extra_data));
+        }
+        _ => panic!("expected Current metadata, instead got {meta_data:?}"),
     }
 }
 
@@ -273,6 +283,7 @@ async fn test_copy_compressed_key_to_original_success() {
     .await;
     let old_server_key_bytes =
         load_public_material_bytes(&crypto_storage, &old_key_id, PubDataType::ServerKey).await;
+    let extra_data = b"copy-compressed-extra-data".to_vec();
 
     let new_fhe_keys = threshold_fhe_keys_for_compressed_keyset(
         &new_key_id,
@@ -282,6 +293,7 @@ async fn test_copy_compressed_key_to_original_success() {
         &sk,
         &domain,
         &compressed_keyset,
+        extra_data.clone(),
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -336,6 +348,7 @@ async fn test_copy_compressed_key_to_original_success() {
             "ThresholdFheKeys should have Compressed public_material at old_key_id={old_key_id}"
         );
         assert_current_compressed_metadata(&guarded.meta_data, &old_key_id);
+        assert_current_metadata_extra_data(&guarded.meta_data, &extra_data);
     }
 
     // dkg_pubinfo_meta_store now holds the new metadata for old_key_id.
@@ -351,6 +364,7 @@ async fn test_copy_compressed_key_to_original_success() {
             panic!("meta_store should hold Ok(metadata) for old_key_id={old_key_id}: {err:?}")
         });
         assert_current_compressed_metadata(&meta, &old_key_id);
+        assert_current_metadata_extra_data(&meta, &extra_data);
     }
 }
 
@@ -385,6 +399,7 @@ async fn test_copy_compressed_key_overwrite() {
         &sk,
         &domain,
         &compressed_1,
+        vec![],
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -432,6 +447,7 @@ async fn test_copy_compressed_key_overwrite() {
         &sk,
         &domain,
         &compressed_2,
+        vec![],
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -601,7 +617,7 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     let bad_fhe_keys = ThresholdFheKeys::new(
         old_fhe_keys.private_keys.clone(),
         PublicKeyMaterial::new(compressed_keyset.clone()),
-        KeyGenMetadata::new(new_key_id, prep_id, HashMap::new(), vec![]),
+        KeyGenMetadata::new(new_key_id, prep_id, HashMap::new(), vec![], vec![]),
     );
     store_migrated_compressed_material(
         &crypto_storage,
@@ -724,6 +740,7 @@ async fn test_copy_compressed_key_updates_backup_vault() {
         &sk,
         &domain,
         &compressed_keyset,
+        vec![],
     );
     store_migrated_compressed_material(
         &crypto_storage,
