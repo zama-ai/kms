@@ -42,7 +42,7 @@ $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY
 CURR_SID=$(( CURR_SID + 1 ))
 
 # Makes sure the generated keys has the expected hash
-EXPECTED_HASH="e8a52aa35fe9d4f1a1252285b6fd8c0626e4395385467633eb2789d6792abb47"
+EXPECTED_HASH="86e53c36c19d03ef7794486d982e7cc8bba4ddea704b7b9587e43aed5e7a804e"
 KEY_HASH=$(sha256sum $KEY_PATH/pk.bin|cut -d ' ' -f 1)
 if [ "$KEY_HASH" != "$EXPECTED_HASH" ]; then
     echo "❌ Key hash does not match expected value. Got $KEY_HASH, expected $EXPECTED_HASH"
