@@ -14,6 +14,7 @@ use crate::{
 /// Helper to build ThresholdFheKeys for a compressed keyset with proper metadata.
 /// Takes the `compact_pk` explicitly so tests can reproduce the production invariant that
 /// the old CompactPublicKey bytes are preserved at the new key ID during migration.
+#[expect(clippy::too_many_arguments)]
 fn threshold_fhe_keys_for_compressed_keyset(
     req_id: &RequestId,
     prep_id: &RequestId,
