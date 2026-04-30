@@ -104,6 +104,9 @@ message KeyGenPreprocRequest {
 
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   RequestId epoch_id = 6;
+
+  // Extra data used in the EIP712 signature - external_signature
+  bytes extra_data = 7;
 }
 
 message PartialKeyGenPreprocParams {
@@ -199,7 +202,7 @@ message KeyGenRequest {
   // under this keygen will be stored and registered under this epoch.
   RequestId epoch_id = 8;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 9;
 }
 
@@ -283,7 +286,7 @@ message CrsGenRequest {
   // In particular this is used to store the CRS at the correct location in the private storage
   RequestId epoch_id = 6;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 7;
 }
 
@@ -357,7 +360,7 @@ message PublicDecryptionRequest {
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 5;
 
   // MPC context ID which is used to identify the context to use for this request.
@@ -437,7 +440,7 @@ message UserDecryptionRequest {
   // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
-  // Extra data from the gateway.
+  // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.
@@ -821,6 +824,8 @@ message NewMpcEpochRequest {
   // The EIP712 domain used for signing the reshared key results.
   // Should be set when previous_epoch is set (resharing produces signed results).
   Eip712DomainMsg domain = 4;
+  // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
+  bytes extra_data = 5;
 }
 
 message EpochResultResponse {

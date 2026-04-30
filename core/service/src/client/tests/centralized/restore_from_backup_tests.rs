@@ -8,6 +8,7 @@
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow (nightly)
 
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
@@ -35,8 +36,9 @@ async fn key_gen(
         params: params as i32,
         keyset_config: None,
         domain: Some(domain_msg.clone()),
-        context_id: None,
-        epoch_id: None,
+        context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        extra_data: default_extra_data(),
     };
 
     let preproc_resp = client
