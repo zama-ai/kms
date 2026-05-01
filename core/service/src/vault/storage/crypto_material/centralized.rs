@@ -118,12 +118,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
                         key_id,
                         Some(epoch_id),
-                        Some((&compressed_keyset, PubDataType::CompressedXofKeySet)),
+                        Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
                         None,
                         op_metric_tag,
                     )
                     .await?;
-                &compact_public_key
+                compact_public_key
             }
         };
         // If it goes well also store the public key and private state

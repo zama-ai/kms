@@ -39,11 +39,12 @@ use kms_grpc::solidity_types::KeygenVerification;
 
 use super::base::CryptoMaterialStorage;
 
+#[derive(Clone)]
 pub enum PublicKeySet {
-    Standard(FhePubKeySet),
+    Standard(Box<FhePubKeySet>),
     Compressed {
-        compact_public_key: tfhe::CompactPublicKey,
-        compressed_keyset: CompressedXofKeySet,
+        compact_public_key: Box<tfhe::CompactPublicKey>,
+        compressed_keyset: Box<CompressedXofKeySet>,
     },
 }
 /// A cached generic storage entity for the threshold KMS.
@@ -193,12 +194,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
                         key_id,
                         Some(epoch_id),
-                        Some((&compressed_keyset, PubDataType::CompressedXofKeySet)),
+                        Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
                         None,
                         op_metric_tag,
                     )
                     .await?;
-                &compact_public_key
+                compact_public_key
             }
         };
         // If it goes well also store the public key and private state

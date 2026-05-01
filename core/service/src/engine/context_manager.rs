@@ -12,6 +12,7 @@ use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
 };
+use crate::util::meta_store::add_req_to_meta_store;
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
@@ -136,6 +137,7 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        // TODO this should likely be part of the async call to be consistent with other methods
         {
             let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             if !data_exists(
@@ -168,6 +170,11 @@ where
                 tonic::Code::InvalidArgument,
             )
         })?;
+        add_req_to_meta_store(
+            &mut self.custodian_meta_store.write().await,
+            &mpc_context_id.into(),
+            OP_NEW_MPC_CONTEXT,
+        )?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -175,7 +182,6 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-
         self.inner_new_custodian_context(custodian_context, mpc_context_id)
             .await
             .map_err(|e| {
@@ -268,7 +274,6 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
-
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -326,11 +331,9 @@ where
         );
         // Then store the results
         self.crypto_storage
-            .write_backup_keys_with_meta_store(
-                &recovery_validation,
-                Arc::clone(&self.custodian_meta_store),
-            )
-            .await;
+            .write_backup_keys(recovery_validation, Arc::clone(&self.custodian_meta_store))
+            .await
+            .map_err(|e| anyhow::anyhow!("Backing up failed with error {e}"))?;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
             inner_context.context_id,

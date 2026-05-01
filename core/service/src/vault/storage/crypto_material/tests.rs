@@ -312,21 +312,22 @@ async fn write_central_keys() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let fhe_key_set = FhePubKeySet {
+    let fhe_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
         public_key,
         server_key,
-    };
+    }));
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -342,12 +343,13 @@ async fn write_central_keys() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -355,12 +357,13 @@ async fn write_central_keys() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -376,12 +379,13 @@ async fn write_central_keys() {
     }
     let new_req_id = derive_request_id("write_central_keys_2").unwrap();
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &new_req_id,
             &epoch_id,
             key_info,
             fhe_key_set,
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -432,10 +436,10 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let fhe_key_set = FhePubKeySet {
+    let public_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
         public_key,
         server_key,
-    };
+    }));
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     {
@@ -449,12 +453,13 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
     }
 
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info,
-            fhe_key_set,
+            public_key_set,
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(
@@ -482,6 +487,7 @@ async fn write_threshold_empty_update() {
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
 
     // write to an empty meta store should fail
     let result = crypto_storage
@@ -489,7 +495,7 @@ async fn write_threshold_empty_update() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -544,7 +550,7 @@ async fn write_threshold_empty_update() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -565,6 +571,7 @@ async fn write_threshold_keys_meta_update() {
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set));
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // update the meta store and the write should be ok
@@ -578,7 +585,7 @@ async fn write_threshold_keys_meta_update() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -596,7 +603,7 @@ async fn write_threshold_keys_meta_update() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -651,7 +658,7 @@ async fn write_threshold_keys_failed_storage() {
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
-
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
     // update the meta store and the write should be ok
     {
         let meta_store = meta_store.clone();
@@ -663,7 +670,7 @@ async fn write_threshold_keys_failed_storage() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -691,7 +698,7 @@ async fn write_threshold_keys_failed_storage() {
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            PublicKeySet::Standard(fhe_key_set.clone()),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
             "",
         )
@@ -760,8 +767,8 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
             &epoch_id,
             threshold_fhe_keys,
             PublicKeySet::Compressed {
-                compact_public_key,
-                compressed_keyset,
+                compact_public_key: Box::new(compact_pk),
+                compressed_keyset: Box::new(compressed_keyset),
             },
             meta_store,
             "",
@@ -834,8 +841,8 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
             &epoch_id,
             key_info,
             PublicKeySet::Compressed {
-                compact_public_key,
-                compressed_keyset,
+                compact_public_key: Box::new(compact_pk),
+                compressed_keyset: Box::new(compressed_keyset),
             },
             meta_store,
             "",

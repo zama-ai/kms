@@ -23,7 +23,7 @@ use crate::{
         storage::{
             Storage, StorageExt, StorageReaderExt,
             crypto_material::{
-                check_data_exists, check_data_exists_at_epoch, log_storage_success,
+                check_data_exists, check_data_exists_at_epoch,
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
@@ -37,7 +37,7 @@ use kms_grpc::{
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_BACKUP, OP_DECOMPRESSION_KEYGEN};
+use observability::metrics_names::{ERR_BACKUP, OP_DECOMPRESSION_KEYGEN, OP_NEW_CUSTODIAN_CONTEXT};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
@@ -47,7 +47,7 @@ use tfhe::Versionize;
 use tfhe::named::Named;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
@@ -57,9 +57,11 @@ pub enum StorageError {
     WritingError,
     #[error("Purging error")]
     PurgingError,
+    #[error("Backup vault purging error")]
+    BackupVaultPurgingError,
     #[error("MetaStore error: {0}")]
     MetaStoreError(String),
-    #[error("Backup error")]
+    #[error("Error when backing up material")]
     BackupError,
     #[error("Other error: {0}")]
     Other(String),
@@ -268,6 +270,7 @@ where
     }
 
     /// Note that this method is not thread safe.
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_persistent_and_meta_storage<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -562,17 +565,6 @@ where
         true
     }
 
-    /// Write the keys to the storage backend.
-    /// Returns true if the write is successful, false otherwise.
-    pub(crate) async fn write_backup_material(
-        &self,
-        recovery_material: &RecoveryValidationMaterial,
-    ) -> bool {
-        let req_id = &recovery_material.custodian_context().context_id;
-        self.write_pub_data(req_id, recovery_material, &PubDataType::RecoveryMaterial)
-            .await
-    }
-
     /// Write the CRS to the storage backend.
     /// Returns true if the write is successful, false otherwise.
     pub(crate) async fn write_crs(
@@ -628,174 +620,83 @@ where
     /// The same goes for the commitments to the custodian shares and the recovery request.
     /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
     /// The private key for decrypting backups is written to the private storage.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn write_backup_keys_with_meta_store(
+    ///
+    /// NOTE: Unlike most other storage methods, this one will fail if there is no backup vault or if backup fails,
+    /// since the goal of this method is exactly to setup a backup.
+    pub async fn write_backup_keys(
         &self,
-        recovery_material: &RecoveryValidationMaterial,
+        recovery_material: RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
-    ) {
-        // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
-        let mut guarded_meta_store = meta_store.write().await;
+    ) -> Result<(), StorageError> {
         let req_id = recovery_material.custodian_context().context_id;
-        let pub_res = {
-            // Lock the storage needed in correct order to avoid deadlocks.
-            let mut public_storage_guard = self.public_storage.lock().await;
-
-            let pub_storage_future = async {
-                let store_result = store_versioned_at_request_id(
-                    &mut (*public_storage_guard),
-                    &req_id,
-                    recovery_material,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await;
-                if let Err(e) = &store_result {
-                    tracing::error!(
-                        "Failed to store commitments to the public storage for request {}: {}",
-                        req_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        req_id,
-                        public_storage_guard.info(),
-                        &PubDataType::RecoveryMaterial.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                store_result.is_ok()
-            };
-            tokio::join!(pub_storage_future).0
-        };
-        {
-            // Update meta store
-            // First we insert the request ID
-            // Whether things fail or not we can't do much
-            match guarded_meta_store.insert(&req_id) {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Failed to insert request ID {req_id} into meta store: {e}",);
-                    self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
-                        .await;
-                    return;
-                }
-            };
-            // If everything is ok, we update the meta store with a success
-            if pub_res {
-                if let Err(e) = guarded_meta_store.update(&req_id, Ok(recovery_material.clone())) {
-                    tracing::error!("Failed to update meta store for request {req_id}: {e}");
-                    self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
-                        .await;
-                }
-            } else {
-                self.purge_backup_material_and_backedup_content(&req_id, guarded_meta_store)
-                    .await;
+        // First ensure that the meta store request is pending
+        ensure_meta_store_request_pending(&meta_store, &req_id)
+            .await
+            .map_err(|e| {
+                StorageError::MetaStoreError(format!(
+                    "Meta store is not ready for request ID {req_id}: {e}"
+                ))
+            })?;
+        // Ensure we have a backup vault before starting
+        let vault = match self.backup_vault.as_ref() {
+            Some(vault) => vault,
+            None => {
                 tracing::error!(
-                    "Failed to store backup keys for request {}: pub_res: {}",
-                    req_id,
-                    pub_res,
+                    "No backup vault configured, cannot write backup keys for request {req_id}"
                 );
+                return Err(StorageError::BackupError);
             }
-        }
-        // Finally update the current backup key in the storage
-        {
-            match self.backup_vault {
-                Some(ref vault) => {
-                    let mut guarded_backup_vault = vault.lock().await;
-                    match &mut guarded_backup_vault.keychain {
-                        Some(keychain) => {
-                            if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
-                                // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(
-                                    req_id,
-                                    recovery_material.custodian_context().backup_enc_key.clone(),
-                                );
-                            }
-                        }
-                        None => {
-                            tracing::info!(
-                                "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
-                            );
-                        }
-                    }
-                }
-                None => tracing::warn!(
-                    "No backup vault configured, skipping setting backup encryption key for request {req_id}"
-                ),
-            }
-        }
-    }
-
-    /// Tries to delete all the data related to a custodian context (used for backup) for a specific context id [RequestId].
-    /// WARNING: This also deletes ALL backups of a given context. Hence the method should only be used to clean up.
-    pub async fn purge_backup_material_and_backedup_content(
-        &self,
-        req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,
-    ) {
-        // Enforce locking order for internal types
-        let mut pub_storage = self.public_storage.lock().await;
-        let back_vault = match self.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
         };
-
-        let pub_purge = async {
-            let res = delete_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &PubDataType::RecoveryMaterial.to_string(),
+        let mut res = self
+            .handle_all_storage::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
+                &req_id,
+                None,
+                Some((&recovery_material, PubDataType::RecoveryMaterial)),
+                None,
+                OP_NEW_CUSTODIAN_CONTEXT,
             )
             .await;
-            if let Err(e) = &res {
-                tracing::warn!(
-                    "Failed to delete commitment material for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            res.is_err()
-        };
-        let vault_purge = async {
-            match back_vault {
-                Some(mut back_vault) => delete_all_at_request_id(&mut (*back_vault), req_id)
-                    .await
-                    .is_err(),
-                None => false, // No backup vault, so no error
-            }
-        };
-        let (pub_purge_res, vault_purge_res) = tokio::join!(pub_purge, vault_purge);
-        if pub_purge_res || vault_purge_res {
-            tracing::error!("Failed to delete backup material for request {}", req_id);
-        } else {
-            tracing::info!("Deleted all backup material for request {}", req_id);
+        if res.is_err() {
+            // Note that we also care about a BackupError here, since we are actually setting up the initial backup
+            // Something went wrong so we will also purge the backup
+            res = delete_all_at_request_id(&mut *vault.lock().await, &req_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
+                    );
+                    StorageError::BackupVaultPurgingError
+                });
         }
-        // We cannot do much if updating the meta store fails at this point,
-        // so just log an error.
-        let meta_update_result = guarded_meta_store.update(
-            req_id,
-            Err(format!("Failed to store backup data for ID {req_id}")),
-        );
-        let meta_res = if let Err(e) = &meta_update_result {
-            tracing::error!("Removing backup from meta store failed with error: {}", e);
-            true
-        } else {
-            false
-        };
-
-        // We cannot do much if updating the cache fails at this point,
-        // so just log an error.
-        if meta_res {
-            tracing::error!("Failed to remove backup meta data for request {}", req_id);
-        } else {
-            tracing::info!(
-                "Removed all orphaned backup meta data for request {}",
-                req_id
-            );
+        // Update the current backup key in the storage
+        {
+            let mut guarded_backup_vault = vault.lock().await;
+            match &mut guarded_backup_vault.keychain {
+                Some(keychain) => {
+                    if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
+                        // Store the public key in the secret sharing keychain
+                        sharing_chain.set_backup_enc_key(
+                            req_id,
+                            recovery_material.custodian_context().backup_enc_key.clone(),
+                        );
+                    }
+                }
+                None => {
+                    tracing::info!(
+                        "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
+                    );
+                }
+            }
         }
+        // Finally update meta store
+        update_meta_store(
+            res,
+            &req_id,
+            recovery_material,
+            meta_store,
+            OP_NEW_CUSTODIAN_CONTEXT,
+        )
+        .await
     }
 
     /// Read the public key from a cache, if it does not exist,
@@ -1087,22 +988,21 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
     let mut meta_store_ok = true;
-    if storage_res.is_ok()
-        || storage_res
-            .as_ref()
-            .is_err_and(|e| e == &StorageError::BackupError)
+    if let Err(e) = &storage_res
+        && e != &StorageError::BackupError
     {
+        // We don't want to fail on backup errors
+        meta_store_ok &= update_err_req_in_meta_store(
+            &mut meta_store.write().await,
+            req_id,
+            e.to_string(),
+            op_metric_tag,
+        );
+    } else {
         meta_store_ok &= update_ok_req_in_meta_store(
             &mut meta_store.write().await,
             req_id,
             meta_data,
-            op_metric_tag,
-        )
-    } else {
-        meta_store_ok &= update_err_req_in_meta_store(
-            &mut meta_store.write().await,
-            req_id,
-            storage_res.as_ref().unwrap_err().to_string(),
             op_metric_tag,
         );
     }
@@ -1112,14 +1012,13 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
         tracing::error!(
             "Failed to update meta store in metric {op_metric_tag} for request {req_id}",
         );
-        if storage_res.is_ok() {
+        if let Err(e) = &storage_res {
             return Err(StorageError::MetaStoreError(format!(
-                "Failed to update meta store for request {req_id}, but storage succeeded."
+                "Failed to update meta store for request {req_id}. Also failed to store data with error: {e}",
             )));
         } else {
             return Err(StorageError::MetaStoreError(format!(
-                "Failed to update meta store for request {req_id}. Also failed to store data with error: {}",
-                storage_res.unwrap_err()
+                "Failed to update meta store for request {req_id}, but storage succeeded."
             )));
         }
     }

@@ -358,12 +358,6 @@ impl<
 
         crypto_storage.write_prss_info(epoch_id, &prss).await?;
         session_maker.add_epoch(*epoch_id, prss).await;
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, OP_NEW_EPOCH)
-            .await;
-
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
             epoch_id,
@@ -662,7 +656,7 @@ impl<
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
-                                PublicKeySet::Standard(fhe_pubkeys),
+                                PublicKeySet::Standard(Box::new(fhe_pubkeys)),
                                 OP_NEW_EPOCH,
                             )
                             .boxed(),
@@ -721,8 +715,8 @@ impl<
                                     &new_epoch_id,
                                     threshold_fhe_keys,
                                     PublicKeySet::Compressed {
-                                        compact_public_key,
-                                        compressed_keyset,
+                                        compact_public_key: Box::new(compact_public_key),
+                                        compressed_keyset: Box::new(compressed_keyset),
                                     },
                                     OP_NEW_EPOCH,
                                 )

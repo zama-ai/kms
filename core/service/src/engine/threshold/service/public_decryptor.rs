@@ -875,7 +875,7 @@ mod tests {
                 &key_id,
                 &epoch_id,
                 threshold_fhe_keys,
-                PublicKeySet::Standard(fhe_key_set),
+                PublicKeySet::Standard(Box::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
                 "",
             )
