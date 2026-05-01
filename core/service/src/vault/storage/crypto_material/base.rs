@@ -800,7 +800,8 @@ where
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
     #[cfg(test)]
-    pub(crate) async fn read_cloned_pk( // TODO can these be optimized or removed?
+    pub(crate) async fn read_cloned_pk(
+        // TODO can these be optimized or removed?
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<CompactPublicKey> {
