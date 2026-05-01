@@ -288,11 +288,7 @@ async fn setup_isolated_centralized_cli_test_impl(
 async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
@@ -341,11 +337,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -361,11 +353,7 @@ async fn setup_isolated_threshold_cli_test_with_prss(
 async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -381,11 +369,7 @@ async fn setup_isolated_threshold_cli_test_with_backup(
 async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -421,11 +405,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -448,11 +428,7 @@ async fn setup_isolated_threshold_cli_test_default(
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(
         test_name,
         party_count,
@@ -555,11 +531,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl_with_spec(
         test_name,
         party_count,
@@ -581,11 +553,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
-) -> Result<(
-    tempfile::TempDir,
-    HashMap<u32, ServerHandle>,
-    PathBuf,
-)> {
+) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     // Use builder pattern with full feature support
     let mut builder = ThresholdTestEnv::builder()
         .with_test_name(test_name)

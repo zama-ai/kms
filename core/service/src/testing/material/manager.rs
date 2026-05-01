@@ -21,7 +21,6 @@ use tempfile::TempDir;
 use threshold_types::role::Role;
 use tokio::fs;
 
-
 /// Helper function to compute storage path like FileStorage does
 fn compute_storage_path(
     base_path: Option<&Path>,
