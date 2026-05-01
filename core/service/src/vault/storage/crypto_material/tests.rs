@@ -228,9 +228,8 @@ async fn write_crs() {
         )
         .await;
     let err = result.unwrap_err().to_string();
-    // Successful purging since there is actually nothing to purge
     assert!(
-        err.contains("successfully purged dangling CRS material and updated meta store"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 
@@ -332,8 +331,8 @@ async fn write_central_keys() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating PK meta store for"),
-        "expected PK meta-store update failure when empty, got: {err}"
+        err.contains("Error while updating meta store for") && err.contains("request is missing"),
+        "expected meta-store update failure when empty, got: {err}"
     );
 
     // update the meta store and the write should be ok
@@ -368,8 +367,9 @@ async fn write_central_keys() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating PK meta store for"),
-        "expected PK meta-store conflict on double write, got: {err}"
+        err.contains("Error while updating meta store for")
+            && err.contains("request is already completed"),
+        "expected meta-store conflict on double write, got: {err}"
     );
 
     // write on a failed storage device should fail
@@ -378,6 +378,10 @@ async fn write_central_keys() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_central_keys_2").unwrap();
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&new_req_id).unwrap();
+    }
     let result = crypto_storage
         .write_central_keys(
             &new_req_id,
@@ -390,7 +394,7 @@ async fn write_central_keys() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Storage write failed for key"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 
@@ -398,7 +402,7 @@ async fn write_central_keys() {
     {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
-        assert!(!guard.exists(&new_req_id));
+        assert!(guard.exists(&new_req_id));
     }
 }
 
@@ -695,7 +699,7 @@ async fn write_threshold_keys_failed_storage() {
     }
     let result = crypto_storage
         .write_threshold_keys(
-            &req_id,
+            &new_req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
             boxed_public_key_set.clone(),
@@ -705,7 +709,7 @@ async fn write_threshold_keys_failed_storage() {
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Storage write failed for threshold key"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 

@@ -439,11 +439,11 @@ where
                     }
                 }
             }
-            // Negate since we return true if things went well
-            !failed
+            failed
         };
 
         let (pub_failed, priv_failed) = tokio::join!(f_pub, f_priv);
+        // If anything failed, return false. Else return true
         !(pub_failed || priv_failed)
     }
 
@@ -577,6 +577,8 @@ where
     }
 
     /// Helper function to write the FHE keys to storage, along with updating the cache if the storage operation was successful.
+    ///
+    /// Note that backup errors are not treated as fatal since the keys are safely stored.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::vault::storage::crypto_material) async fn handle_fhe_keys<
         PrivKeyData: Serialize + Versionize + Named + Send + Sync,
@@ -593,8 +595,8 @@ where
     where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
-        // First try to store the special key
-        let pk_to_store = match &fhe_key_set {
+        // First try to store the special key (server key or compressed keyset).
+        let first_res = match &fhe_key_set {
             PublicKeySet::Standard(keys) => {
                 self.handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
                     key_id,
@@ -603,12 +605,10 @@ where
                     None,
                     op_metric_tag,
                 )
-                .await?;
-                &keys.public_key
+                .await
             }
             PublicKeySet::Compressed {
-                compact_public_key,
-                compressed_keyset,
+                compressed_keyset, ..
             } => {
                 self
                     .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
@@ -618,12 +618,25 @@ where
                         None,
                         op_metric_tag,
                     )
-                    .await?;
-                compact_public_key
+                    .await
             }
         };
-        // If it goes well also store the public key and private state
-        let res = self
+        // For any error other than BackupError, the data was purged inside
+        // handle_all_storage and there is no point continuing.
+        if let Err(e) = &first_res
+            && e != &StorageError::BackupError
+        {
+            return first_res;
+        }
+
+        let pk_to_store = match &fhe_key_set {
+            PublicKeySet::Standard(keys) => &keys.public_key,
+            PublicKeySet::Compressed {
+                compact_public_key, ..
+            } => compact_public_key,
+        };
+        // Store the public key and private state.
+        let second_res = self
             .handle_all_storage(
                 key_id,
                 Some(epoch_id),
@@ -632,7 +645,11 @@ where
                 op_metric_tag,
             )
             .await;
-        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+        if second_res.is_ok()
+            || second_res
+                .as_ref()
+                .is_err_and(|e| e == &StorageError::BackupError)
+        {
             // Update cache
             let mut guarded_fhe_keys = cache.write().await;
             let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), priv_fhe_data);
@@ -643,7 +660,7 @@ where
                 );
             }
         }
-        res
+        second_res
     }
 
     /// Write the CRS to the storage backend.
@@ -1103,7 +1120,7 @@ pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT:
             )));
         }
     }
-    Ok(())
+    storage_res
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925

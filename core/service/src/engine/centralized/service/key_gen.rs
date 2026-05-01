@@ -451,9 +451,13 @@ pub(crate) async fn key_gen_background<
                     key_info,
                 ),
             };
-            let _ = crypto_storage
+            if let Err(e) = crypto_storage
                 .write_central_keys(req_id, epoch_id, key_info, pks, meta_store, op_tag)
-                .await;
+                .await
+            {
+                tracing::error!("Failed to write centralized keys for request {req_id}: {e}");
+                return;
+            }
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
         KeySetConfig::DecompressionOnly => {
@@ -508,10 +512,16 @@ pub(crate) async fn key_gen_background<
                     return;
                 }
             };
-            let _ = crypto_storage
+            if let Err(e) = crypto_storage
                 .inner
                 .write_decompression_key(req_id, info, decompression_key, meta_store)
-                .await;
+                .await
+            {
+                tracing::error!(
+                    "Failed to write centralized decompression key for request {req_id}: {e}"
+                );
+                return;
+            }
             tracing::info!(
                 "⏱️ Core Event Time for decompression Keygen: {:?}",
                 start.elapsed()

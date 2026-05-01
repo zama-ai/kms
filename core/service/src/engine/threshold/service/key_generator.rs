@@ -1079,10 +1079,16 @@ impl<
             }
         };
 
-        let _ = crypto_storage
+        if let Err(e) = crypto_storage
             .inner
             .write_decompression_key(req_id, info, decompression_key, meta_store)
-            .await;
+            .await
+        {
+            tracing::error!(
+                "Failed to write threshold decompression key for request {req_id}: {e}"
+            );
+            return;
+        }
 
         tracing::info!(
             "Decompression DKG protocol took {} ms to complete for request {req_id}",
