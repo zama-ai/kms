@@ -4,7 +4,7 @@
 //! used in the centralized KMS variant.
 
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 use kms_grpc::{
     RequestId,
@@ -117,49 +117,21 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> anyhow::Result<KmsFheKeyHandles> {
-        match CryptoMaterialStorage::<PubS, PrivS>::read_cloned_private_fhe_material_from_cache(
-            self.fhe_keys.clone(),
+    ) -> anyhow::Result<
+        OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), KmsFheKeyHandles>, KmsFheKeyHandles>,
+    > {
+        // First refresh. If the key is already in the cache then this is cheap
+        self.inner
+            .refresh_fhe_private_material::<KmsFheKeyHandles>(
+                Arc::clone(&self.fhe_keys),
+                req_id,
+                epoch_id,
+            )
+            .await?;
+        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             epoch_id,
-        )
-        .await
-        {
-            Ok(k) => Ok(k),
-            Err(e) => {
-                tracing::warn!("First attempt to read centralized fhe keys failed: {e}");
-                // No keys in cache -- try to refresh from storage
-                self.refresh_centralized_fhe_keys(req_id, epoch_id).await?;
-                CryptoMaterialStorage::<PubS, PrivS>::read_cloned_private_fhe_material_from_cache(
-                    self.fhe_keys.clone(),
-                    req_id,
-                    epoch_id,
-                )
-                .await
-            }
-        }
-    }
-
-    /// Refresh the key materials for decryption in the centralized case.
-    /// That is, if the key material is not in the cache,
-    /// an attempt is made to read from the storage to update the cache.
-    ///
-    /// The `epoch_id` identifies the epoch that the secret FHE key belongs to.
-    ///
-    /// Developers: try not to interleave calls to [refresh_centralized_fhe_keys]
-    /// with calls to [read_centralized_fhe_keys] on the same tokio task
-    /// since it's easy to deadlock, it's a consequence of RwLocks.
-    /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
-    pub async fn refresh_centralized_fhe_keys(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_fhe_private_material::<KmsFheKeyHandles, _>(
-            self.fhe_keys.clone(),
-            req_id,
-            epoch_id,
-            self.inner.private_storage.clone(),
+            Arc::clone(&self.fhe_keys),
         )
         .await
     }

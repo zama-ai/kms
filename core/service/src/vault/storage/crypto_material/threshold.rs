@@ -460,51 +460,18 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     ) -> anyhow::Result<
         OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), ThresholdFheKeys>, ThresholdFheKeys>,
     > {
-        // First try to read from cache
-        match CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+        // First refresh. If the key is already in the cache then this is cheap
+        self.inner
+            .refresh_fhe_private_material::<ThresholdFheKeys>(
+                Arc::clone(&self.fhe_keys),
+                req_id,
+                epoch_id,
+            )
+            .await?;
+        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             epoch_id,
             self.fhe_keys.clone(),
-        )
-        .await
-        {
-            Ok(guarded_keys) => Ok(guarded_keys),
-            Err(_) => {
-                // Refresh the cache if the first read was an error
-                self.refresh_threshold_fhe_keys(req_id, epoch_id).await?;
-                // Retry reading after the refresh
-                CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
-                    req_id,
-                    epoch_id,
-                    self.fhe_keys.clone(),
-                )
-                .await
-            }
-        }
-    }
-
-    /// Refresh the key materials for decryption in the threshold case.
-    /// That is, if the key material is not in the cache,
-    /// an attempt is made to read from the storage to update the cache.
-    /// The object [ThresholdFheKeys] is big so
-    /// we return a lock guard instead of the whole object.
-    ///
-    /// The `epoch_id` identifies the epoch that the secret FHE key share belongs to.
-    ///
-    /// Developers: try not to interleave calls to [refresh_threshold_fhe_keys]
-    /// with calls to [read_threshold_fhe_keys] on the same tokio task
-    /// since it's easy to deadlock, it's a consequence of RwLocks.
-    /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
-    pub async fn refresh_threshold_fhe_keys(
-        &self,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_fhe_private_material::<ThresholdFheKeys, _>(
-            self.fhe_keys.clone(),
-            req_id,
-            epoch_id,
-            self.inner.private_storage.clone(),
         )
         .await
     }

@@ -22,7 +22,7 @@ use crate::{
         Vault,
         keychain::KeychainProxy,
         storage::{
-            Storage, StorageExt, StorageReaderExt,
+            Storage, StorageExt,
             crypto_material::{
                 check_data_exists_at_epoch, log_storage_success_optional_variant,
                 traits::PrivateCryptoMaterialReader,
@@ -800,7 +800,7 @@ where
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
     #[cfg(test)]
-    pub(crate) async fn read_cloned_pk(
+    pub(crate) async fn read_cloned_pk( // TODO can these be optimized or removed?
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<CompactPublicKey> {
@@ -848,7 +848,9 @@ where
     }
 
     // TODO(#2849) should be changed to KeyId
-    pub async fn read_guarded_crypto_material_from_cache<T: Clone>(
+    pub(in crate::vault::storage::crypto_material) async fn read_guarded_crypto_material_from_cache<
+        T: Clone,
+    >(
         key_id: &RequestId,
         epoch_id: &EpochId,
         fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
@@ -864,30 +866,13 @@ where
         })
     }
 
-    pub(crate) async fn read_cloned_private_fhe_material_from_cache<
-        T: PrivateMaterialUnderEpoch + Clone,
-    >(
+    pub(in crate::vault::storage::crypto_material) async fn refresh_fhe_private_material<T>(
+        &self,
         cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
         req_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> anyhow::Result<T> {
-        let out = {
-            let guard = cache.read().await;
-            guard.get(&(*req_id, *epoch_id)).cloned()
-        };
-        out.ok_or_else(|| {
-            anyhow_error_and_warn_log(format!("Key handles are not in the cache for ID {req_id}"))
-        })
-    }
-
-    pub(crate) async fn refresh_fhe_private_material<T, S>(
-        cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
-        req_id: &RequestId,
-        epoch_id: &EpochId,
-        storage: Arc<Mutex<S>>,
     ) -> anyhow::Result<()>
     where
-        S: StorageReaderExt + Send + Sync + 'static,
         T: PrivateCryptoMaterialReader + PrivateMaterialUnderEpoch,
     {
         // This function does not need to be atomic, so we take a read lock
@@ -899,7 +884,7 @@ where
         };
 
         if !exists {
-            let storage = storage.lock().await;
+            let storage = self.private_storage.lock().await;
             match T::read_from_storage_at_epoch(&(*storage), req_id, epoch_id).await {
                 Ok(new_fhe_keys) => {
                     let mut guarded_fhe_keys = cache.write().await;
