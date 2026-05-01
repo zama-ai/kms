@@ -1,12 +1,6 @@
 //! CLI Integration Tests
 //!
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
-//
-// TODO(dp): unfinished — `#[serial]` was stripped from these tests but they
-// haven't been audited end-to-end against the post-PR-518/532 world the way
-// the centralized helpers in `core/service/src/client/tests/centralized/`
-// were. Expect failures under parallel execution; verify each
-// `setup_isolated_*` chain actually scopes all server state to its tempdir.
 
 use anyhow::Result;
 use futures::future::join_all;
