@@ -94,6 +94,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
             core-threshold:
+              - 'core/experiments/**'
               - 'core/threshold-*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
@@ -115,10 +116,8 @@ jobs:
               - 'rust-toolchain.toml'
             docs:
               - 'docs/**'
-              - 'rust-toolchain.toml'
             helm-chart:
               - 'charts/**'
-              - 'rust-toolchain.toml'
 
   ############################################################################
   # Docker build pipeline
@@ -194,9 +193,7 @@ jobs:
 
   ############################################################################
   # KMS Local Docs Link Check
-  # Triggered by:
-  # - Changes to docs/**
-  # - Changes to workflow file itself
+  # Triggered by changes to docs/** (and every push to main).
   ############################################################################
   check-docs:
     name: main/check-docs
@@ -221,10 +218,8 @@ jobs:
 
   ############################################################################
   # Core Client Pipeline
-  # Testing triggered by:
-  # - Changes to core-client/**
-  # - Changes to observability/**
-  # - Changes to workflow file
+  # Triggered by changes to core-client/**, core-service/**, core-threshold/**,
+  # core-grpc/**, tools/**, .github/workflows/**, or pushes to main.
   ############################################################################
   # Prepares test matrix for core-client integration tests
   # Splits tests into two parallel jobs: threshold and centralized
@@ -308,7 +303,8 @@ jobs:
       runs-on: '64cpu-linux-x64'
     secrets: inherit
 
-  # Core client nightly tests (runs ALL tests including nightly and full_gen_tests)
+  # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
+  # Triggered by scheduled runs, or by PRs touching core-client/tests/kind-testing/**.
   test-core-client-nightly:
     name: main/test-core-client-nightly
     # job permissions
@@ -466,9 +462,7 @@ jobs:
 
   ############################################################################
   # GRPC Testing
-  # Triggered by:
-  # - Changes to core/grpc/**
-  # - Changes to workflow file
+  # Triggered by changes to core/grpc/** (and Cargo lockfile / toolchain).
   ############################################################################
   # kms-grpc tests don't consume kms test material.
   test-grpc:
@@ -502,18 +496,10 @@ jobs:
 
   ############################################################################
   # Core Service Pipeline
-  # Testing triggered by:
-  # - Changes to core/service/**
-  # - Changes to core/experiments/**
-  # - Changes to core/grpc/**
-  # - Changes to observability/**
-  # - Changes to workflow file
-  #
-  # This pipeline consists of several stages:
-  # 1. Matrix preparation: Configures different test suites based on trigger type
-  # 2. Test execution: Runs tests with different configurations in parallel
-  # 3. Docker image building: Creates service and Nitro enclave images
-  # 4. ArgoCD staging update: Updates the staging environment (nightly only)
+  # Triggered by changes to core/service/**, core/grpc/**, core/threshold-*/**,
+  # core/test-utils/**, core/thread-handles/**, observability/**,
+  # backward-compatibility/**, .github/workflows/**, or pushes to main.
+  # Two stages: matrix preparation, then test execution.
   ############################################################################
 
   # Prepares test matrix with different configurations:
@@ -619,12 +605,12 @@ jobs:
   test-core-service-slow-threshold:
     name: main/test-core-service-slow-threshold
     permissions:
-      checks: write
-      packages: read
-      issues: write
-      pull-requests: write
-      actions: read
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
@@ -811,6 +797,7 @@ jobs:
 
   ############################################################################
   # Wasm Testing Pipeline
+  # Triggered by changes to core/service/** or .github/workflows/**.
   ############################################################################
   test-wasm:
     name: main/test-wasm
