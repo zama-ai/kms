@@ -136,7 +136,7 @@ pub enum PublicKeyMaterialV0 {
 #[versionize(PublicKeyMaterialVersioned)]
 pub enum PublicKeyMaterial {
     Uncompressed {
-        integer_server_key: Arc<ServerKey>,
+        integer_server_key: Arc<ServerKey>, // TODO do we really still want to keep this data in the meta store>
         sns_key: Option<Arc<NoiseSquashingKey>>,
         decompression_key: Option<Arc<DecompressionKey>>,
     },

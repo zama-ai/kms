@@ -725,7 +725,7 @@ mod tests {
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
-        vault::storage::ram,
+        vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
     use super::*;
@@ -871,12 +871,13 @@ mod tests {
 
         public_decryptor
             .crypto_storage
-            .write_threshold_keys_with_dkg_meta_store(
+            .write_threshold_keys(
                 &key_id,
                 &epoch_id,
                 threshold_fhe_keys,
-                fhe_key_set,
+                PublicKeySet::Standard(Box::new(fhe_key_set)),
                 Arc::clone(&key_meta_store),
+                "",
             )
             .await
             .unwrap_or_else(|_| {

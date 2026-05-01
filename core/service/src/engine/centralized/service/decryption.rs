@@ -70,22 +70,19 @@ pub async fn user_decrypt_impl<
     }
     // Observe we accept any epoch ID
 
-    match service
+    service
         .crypto_storage
         .inner
-        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .ensure_fhe_keys_exist(&key_id.into(), &epoch_id)
         .await
-    {
-        Ok(true) => {}
-        e_or_false => {
-            return Err(MetricedError::new(
+        .map_err(|e| {
+            MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(request_id),
-                anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
+                anyhow::anyhow!("Key ID {} not found: {}", key_id, e),
                 tonic::Code::NotFound,
-            ));
-        }
-    };
+            )
+        })?;
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
@@ -257,24 +254,18 @@ pub async fn public_decrypt_impl<
     }
     // Observe we accept any epoch ID
 
-    let keys_exist = match service
+    if let Err(e) = service
         .crypto_storage
         .inner
-        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .ensure_fhe_keys_exist(&key_id.into(), &epoch_id)
         .await
     {
-        Ok(exists) => exists,
-        Err(e) => {
-            tracing::error!(
-                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
-                key_id,
-                epoch_id,
-                e
-            );
-            false
-        }
-    };
-    if !keys_exist {
+        tracing::error!(
+            "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+            key_id,
+            epoch_id,
+            e
+        );
         return Err(MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),

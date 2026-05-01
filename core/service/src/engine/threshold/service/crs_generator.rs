@@ -113,7 +113,8 @@ impl<
 
         // Validate the request ID before proceeding
         self.crypto_storage
-            .crs_exists(&verified.req_id, &verified.epoch_id)
+            .inner
+            .ensure_crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -453,28 +454,20 @@ impl<
             hex::encode(crs_info.digest())
         );
 
-        //Note: We can't easily check here whether we succeeded writing to the meta store
-        //thus we can't increment the error counter if it fails
-        if let Err(e) = crypto_storage
+        let res = crypto_storage
             .inner
-            .write_crs_with_meta_store(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
-            .await
-        {
-            tracing::error!("Failed to write CRS for request {req_id}: {e}");
-            return;
-        }
-        // Update the backup and handle potential failures by incrementing backup errors in the metrics
-        crypto_storage
-            .inner
-            .update_backup_vault(false, op_tag)
+            .write_crs(req_id, epoch_id, pp, crs_info, meta_store, op_tag)
             .await;
-
         let crs_stop_timer = Instant::now();
         let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-        tracing::info!(
-            "CRS stored. CRS ceremony time was {:?} ms",
-            (elapsed_time).as_millis()
-        );
+        if let Err(e) = res {
+            tracing::error!("Failed to write CRS for request {req_id}: {e}");
+        } else {
+            tracing::info!(
+                "CRS stored. CRS ceremony time was {:?} ms",
+                (elapsed_time).as_millis()
+            );
+        }
     }
 }
 

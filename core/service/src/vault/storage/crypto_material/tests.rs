@@ -3,6 +3,7 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, gen_sig_keys},
     dummy_domain,
     engine::base::{KeyGenMetadata, derive_request_id},
+    vault::storage::crypto_material::{PublicKeySet, base::StorageError},
 };
 use aes_prng::AesRng;
 use kms_grpc::{
@@ -115,7 +116,7 @@ async fn write_crs() {
 
     // writing to an empty meta store should fail
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -162,7 +163,7 @@ async fn write_crs() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -176,7 +177,7 @@ async fn write_crs() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &req_id,
             &default_epoch_id,
             pp.clone(),
@@ -217,7 +218,7 @@ async fn write_crs() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_crs_with_meta_store(
+        .write_crs(
             &new_req_id,
             &default_epoch_id,
             pp,
@@ -227,9 +228,8 @@ async fn write_crs() {
         )
         .await;
     let err = result.unwrap_err().to_string();
-    // Successful purging since there is actually nothing to purge
     assert!(
-        err.contains("successfully purged dangling CRS material and updated meta store"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 
@@ -311,27 +311,28 @@ async fn write_central_keys() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let fhe_key_set = FhePubKeySet {
+    let fhe_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
         public_key,
         server_key,
-    };
+    }));
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating PK meta store for"),
-        "expected PK meta-store update failure when empty, got: {err}"
+        err.contains("Error while updating meta store for") && err.contains("request is missing"),
+        "expected meta-store update failure when empty, got: {err}"
     );
 
     // update the meta store and the write should be ok
@@ -341,12 +342,13 @@ async fn write_central_keys() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -354,18 +356,20 @@ async fn write_central_keys() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Error while updating PK meta store for"),
-        "expected PK meta-store conflict on double write, got: {err}"
+        err.contains("Error while updating meta store for")
+            && err.contains("request is already completed"),
+        "expected meta-store conflict on double write, got: {err}"
     );
 
     // write on a failed storage device should fail
@@ -374,18 +378,23 @@ async fn write_central_keys() {
         storage_guard.set_available_writes(0);
     }
     let new_req_id = derive_request_id("write_central_keys_2").unwrap();
+    {
+        let mut guard = meta_store.write().await;
+        guard.insert(&new_req_id).unwrap();
+    }
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &new_req_id,
             &epoch_id,
             key_info,
             fhe_key_set,
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Storage write failed for key"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 
@@ -393,7 +402,7 @@ async fn write_central_keys() {
     {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
-        assert!(!guard.exists(&new_req_id));
+        assert!(guard.exists(&new_req_id));
     }
 }
 
@@ -431,10 +440,10 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
         decompression_key: None,
         public_key_info: dummy_info(),
     };
-    let fhe_key_set = FhePubKeySet {
+    let public_key_set = PublicKeySet::Standard(Box::new(FhePubKeySet {
         public_key,
         server_key,
-    };
+    }));
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     {
@@ -448,12 +457,13 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
     }
 
     let result = crypto_storage
-        .write_centralized_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info,
-            fhe_key_set,
+            public_key_set,
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(
@@ -481,15 +491,17 @@ async fn write_threshold_empty_update() {
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
 
     // write to an empty meta store should fail
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -538,12 +550,13 @@ async fn write_threshold_empty_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -562,6 +575,7 @@ async fn write_threshold_keys_meta_update() {
         .unwrap()
         .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set));
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // update the meta store and the write should be ok
@@ -571,12 +585,13 @@ async fn write_threshold_keys_meta_update() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -588,12 +603,13 @@ async fn write_threshold_keys_meta_update() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -646,7 +662,7 @@ async fn write_threshold_keys_failed_storage() {
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
-
+    let boxed_public_key_set = PublicKeySet::Standard(Box::new(fhe_key_set.clone()));
     // update the meta store and the write should be ok
     {
         let meta_store = meta_store.clone();
@@ -654,12 +670,13 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     assert!(result.is_ok(), "expected success: {result:?}");
@@ -681,17 +698,18 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&new_req_id).unwrap();
     }
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store(
+        .write_threshold_keys(
             &new_req_id,
             &epoch_id,
             threshold_fhe_keys.clone(),
-            fhe_key_set.clone(),
+            boxed_public_key_set.clone(),
             meta_store.clone(),
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Storage write failed for threshold key"),
+        err.contains("Writing error"),
         "expected underlying storage failure, got: {err}"
     );
 
@@ -748,13 +766,16 @@ async fn write_threshold_compressed_empty_update_cleans_up() {
 
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let result = crypto_storage
-        .write_threshold_keys_with_dkg_meta_store_compressed(
+        .write_threshold_keys(
             &req_id,
             &epoch_id,
             threshold_fhe_keys,
-            &compressed_keyset,
-            &compact_pk,
+            PublicKeySet::Compressed {
+                compact_public_key: Box::new(compact_pk),
+                compressed_keyset: Box::new(compressed_keyset),
+            },
             meta_store,
+            "",
         )
         .await;
     let err = result.unwrap_err().to_string();
@@ -819,25 +840,25 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     }
 
     crypto_storage
-        .write_centralized_compressed_keys_with_meta_store(
+        .write_central_keys(
             &req_id,
             &epoch_id,
             key_info,
-            &compressed_keyset,
-            &compact_pk,
+            PublicKeySet::Compressed {
+                compact_public_key: Box::new(compact_pk),
+                compressed_keyset: Box::new(compressed_keyset),
+            },
             meta_store,
+            "",
         )
         .await
         .unwrap();
 
-    assert!(
-        crypto_storage
-            .inner
-            .fhe_keys_exist(&req_id, &epoch_id)
-            .await
-            .unwrap(),
-        "sanity check: complete compressed layout should be considered present"
-    );
+    crypto_storage
+        .inner
+        .ensure_fhe_keys_exist(&req_id, &epoch_id)
+        .await
+        .expect("sanity check: complete compressed layout should be considered present");
 
     {
         let mut guard = crypto_storage.inner.public_storage.lock().await;
@@ -847,11 +868,14 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     }
 
     assert!(
-        !crypto_storage
-            .inner
-            .fhe_keys_exist(&req_id, &epoch_id)
-            .await
-            .unwrap(),
+        matches!(
+            crypto_storage
+                .inner
+                .ensure_fhe_keys_exist(&req_id, &epoch_id)
+                .await
+                .unwrap_err(),
+            StorageError::ExistenceCheckError(_)
+        ),
         "compressed keys should be treated as missing when the standalone PublicKey is absent"
     );
 }
