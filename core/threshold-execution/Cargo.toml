@@ -55,6 +55,7 @@ tokio = { workspace = true, features = [
 tonic = { workspace = true, features = ["tls-ring"], optional = true }
 tracing.workspace = true
 zeroize.workspace = true
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-std.workspace = true
@@ -80,6 +81,6 @@ non-wasm = [
     "dep:tokio",
     "dep:tonic",
 ]
-testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils"]
+testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile"]
 slow_tests = ["testing"]
 malicious_strategies = ["testing", "algebra/extension_degree_4"]

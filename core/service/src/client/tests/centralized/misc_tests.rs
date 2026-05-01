@@ -19,7 +19,7 @@ cfg_if::cfg_if! {
         use kms_grpc::kms::v1::TypedCiphertext;
         use crate::engine::base::derive_request_id;
         use crate::util::rate_limiter::RateLimiterConfig;
-        use crate::engine::centralized::central_kms::tests::get_default_keys;
+        use crate::engine::centralized::central_kms::tests::default_keys;
         use crate::dummy_domain;
         use crate::client::client_wasm::Client;
         use kms_grpc::kms::v1::Empty;
@@ -154,7 +154,7 @@ async fn test_central_close_after_drop() -> Result<()> {
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_largecipher() -> Result<()> {
-    let keys = get_default_keys().await;
+    let keys = default_keys().await;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,

@@ -12,7 +12,7 @@
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
 };
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -48,7 +48,6 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
         .with_test_name("threshold_dkg_backup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -261,7 +260,6 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
         .with_test_name("threshold_autobackup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -326,7 +324,6 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
         .with_test_name("threshold_crs_backup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -348,7 +345,7 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),
             domain: Some(domain_msg.clone()),
-            extra_data: vec![],
+            extra_data: default_extra_data(),
             context_id: None,
             epoch_id: Some(epoch_id.into()),
         };

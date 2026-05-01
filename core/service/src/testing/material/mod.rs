@@ -13,5 +13,5 @@
 mod manager;
 mod spec;
 
-pub use manager::{TestMaterialHandle, TestMaterialManager};
+pub use manager::TestMaterialManager;
 pub use spec::{KeyType, MaterialType, TestMaterialSpec};

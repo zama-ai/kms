@@ -11,7 +11,6 @@ use kms_grpc::kms::v1::{Empty, NewCustodianContextRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter};
-use serial_test::serial;
 use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -20,7 +19,6 @@ use tonic::transport::Channel;
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
-#[serial]
 async fn test_new_custodian_context_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     new_custodian_context(4, FheParameter::Test, custodians, threshold).await;
 }
