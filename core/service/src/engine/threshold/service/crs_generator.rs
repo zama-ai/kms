@@ -9,7 +9,6 @@ use kms_grpc::{
     EpochId, RequestId,
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::{PrivDataType, PubDataType},
 };
 use observability::{
     metrics::{self, DurationGuard},
@@ -228,7 +227,7 @@ impl<
                             Some(req_id),
                             anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
                         );
-                        let del_res = crypto_storage_cancelled.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::CRS], &[PrivDataType::CrsInfo]).await;
+                        let del_res = crypto_storage_cancelled.inner.purge_crs_material(&req_id, &epoch_id).await;
                         {
                             let mut guarded_meta_store = meta_store_cancelled.write().await;
                             let msg = if del_res {

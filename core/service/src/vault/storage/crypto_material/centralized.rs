@@ -6,7 +6,11 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
-use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
+use kms_grpc::{
+    RequestId,
+    identifiers::EpochId,
+    rpc_types::{PrivDataType, PubDataType},
+};
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
@@ -84,6 +88,25 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await;
         // Finally update meta store
         update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
+    }
+
+    pub(crate) async fn purge_centralized_key_material(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> bool {
+        self.inner
+            .purge_material(
+                req_id,
+                Some(epoch_id),
+                &[
+                    PubDataType::PublicKey,
+                    PubDataType::ServerKey,
+                    PubDataType::CompressedXofKeySet,
+                ],
+                &[PrivDataType::FhePrivateKey],
+            )
+            .await
     }
 
     /// Read the key materials for decryption in the centralized case.

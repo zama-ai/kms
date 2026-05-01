@@ -20,7 +20,6 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
@@ -260,7 +259,9 @@ pub(crate) async fn run_keygen_with_cancel<
                     "Failed to mark request {req_id} as aborted in the key meta store: {e}"
                 );
             }
-            crypto_storage_cancel.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::PublicKey, PubDataType::ServerKey, PubDataType::CompressedXofKeySet], &[PrivDataType::FhePrivateKey]).await;
+            crypto_storage_cancel
+                .purge_centralized_key_material(&req_id, &epoch_id)
+                .await;
         }
     }
 }

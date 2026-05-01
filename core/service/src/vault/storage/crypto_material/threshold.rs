@@ -105,8 +105,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Write the CRS to the storage backend (for use in connection with resharing).
     /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
-    ///
-    /// Returns true if the write was successful, false otherwise.
     pub(crate) async fn resharing_crs_write(
         &self,
         crs_id: &RequestId,
@@ -133,8 +131,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Write the keys to the storage backend (for use in connection with resharing).
     /// Unlike the normal fhe writing this one does not update the meta store, nor the backup.
-    ///
-    /// Returns true if the write was successful, false otherwise.
     pub(crate) async fn resharing_fhe_write(
         &self,
         key_id: &RequestId,
@@ -185,6 +181,25 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await;
         // Finally update meta store
         update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
+    }
+
+    pub(crate) async fn purge_threshold_key_material(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> bool {
+        self.inner
+            .purge_material(
+                req_id,
+                Some(epoch_id),
+                &[
+                    PubDataType::PublicKey,
+                    PubDataType::ServerKey,
+                    PubDataType::CompressedXofKeySet,
+                ],
+                &[PrivDataType::FheKeyInfo],
+            )
+            .await
     }
 
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the

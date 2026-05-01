@@ -14,7 +14,7 @@ use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::{PrivDataType, PubDataType},
+    rpc_types::PubDataType,
 };
 use observability::{
     metrics,
@@ -492,7 +492,7 @@ impl<
                         tracing::error!("Key generation of request {} exiting before completion because of an abort request.", &req_id);
                         let mut guarded_meta_store = meta_store_cancelled.write().await;
                         let _ = guarded_meta_store.update(&req_id, Result::Err("Key generation was aborted".to_string()));
-                        crypto_storage_cancelled.inner.purge_material(&req_id, Some(&epoch_id), &[PubDataType::PublicKey, PubDataType::ServerKey, PubDataType::CompressedXofKeySet], &[PrivDataType::FheKeyInfo]).await;
+                        crypto_storage_cancelled.purge_threshold_key_material(&req_id, &epoch_id).await;
                     },
                 }
             }.instrument(tracing::Span::current()));

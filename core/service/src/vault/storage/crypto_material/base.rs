@@ -78,6 +78,10 @@ impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
 impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
 impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
 
+/// The public-key payload produced by an FHE keygen and consumed by the
+/// storage helpers.
+///
+/// Boxing the inner values keeps the enum cheap to move.
 #[derive(Clone)]
 pub enum PublicKeySet {
     Standard(Box<FhePubKeySet>),
@@ -280,7 +284,7 @@ where
         super::utils::get_core_signing_key(&*priv_storage).await
     }
 
-    /// Note that this method is not thread safe.
+    /// Note that this method must not be executed by multiple threads in parallel to avoid an inconsistent storage state.
     #[allow(clippy::too_many_arguments)]
     pub async fn handle_persistent_and_meta_storage<
         'a,
@@ -360,9 +364,19 @@ where
         Ok(())
     }
 
+    pub(crate) async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
+        self.purge_material(
+            req_id,
+            Some(epoch_id),
+            &[PubDataType::CRS],
+            &[PrivDataType::CrsInfo],
+        )
+        .await
+    }
+
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
-    pub(crate) async fn purge_material(
+    pub(in crate::vault::storage::crypto_material) async fn purge_material(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
@@ -518,7 +532,7 @@ where
     /// Write data to the private storage backend.
     /// Returns true if the write is successful, false otherwise.
     /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
-    pub async fn write_priv_data<'a, PrivData: Serialize + Versionize + Named + Send + Sync>(
+    async fn write_priv_data<'a, PrivData: Serialize + Versionize + Named + Send + Sync>(
         &self,
         req_id: &RequestId,
         epoch_id: Option<&EpochId>,
@@ -658,8 +672,9 @@ where
         res
     }
 
-    /// Write the CRS to the storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Write the CRS to public and private storage and update the meta
+    /// store with the outcome. On a write failure the partial data is
+    /// purged before the error is returned.
     pub(crate) async fn write_crs(
         &self,
         crs_id: &RequestId,
@@ -913,8 +928,7 @@ where
         Ok(())
     }
 
-    /// Write the context infor to the private storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Write the context info to the private storage backend.
     pub(crate) async fn write_context_info(
         &self,
         context_id: &ContextId,
