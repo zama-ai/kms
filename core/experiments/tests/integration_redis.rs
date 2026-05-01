@@ -43,7 +43,6 @@ macro_rules! test_triples {
         paste! {
 
 
-            #[serial_test::serial]
             #[tokio::test]
             async fn [<test_redis_preprocessing $z:lower>]() {
                 redis_tidy();
@@ -87,7 +86,6 @@ macro_rules! test_triples {
     };
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_triples() {
     redis_tidy();
@@ -126,7 +124,6 @@ async fn test_store_fetch_100_triples() {
     assert_eq!(triples, fetched_triples);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_randoms() {
     redis_tidy();
@@ -151,7 +148,6 @@ async fn test_store_fetch_100_randoms() {
     assert_eq!(randoms, fetched_shares);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_store_fetch_100_bits() {
     redis_tidy();
@@ -176,7 +172,6 @@ async fn test_store_fetch_100_bits() {
     assert_eq!(bits, fetched_bits);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_fetch_more_than_stored() {
     redis_tidy();
@@ -207,7 +202,6 @@ async fn test_fetch_more_than_stored() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_cleanup_on_drop() {
     redis_tidy();
@@ -360,7 +354,6 @@ fn test_dkg_orchestrator_large(
     .unwrap();
 }
 
-#[serial_test::serial]
 #[test]
 fn test_dkg_orchestrator_params8_small_no_sns() {
     use threshold_execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
@@ -386,7 +379,6 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_execution::online::preprocessing::{

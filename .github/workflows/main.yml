@@ -701,10 +701,6 @@ jobs:
   # workspace; it needs the redis sidecar from `common-testing.yml`.
   # Tests use `FLUSHALL`, so they must run sequentially (--test-threads 1).
   #
-  # TODO(dp): can we not do this? The dedicated job + sidecar exists for a
-  # single test file. If we don't plan to extend redis-path coverage in
-  # `threshold-execution`, prefer deleting `integration_redis.rs` and the
-  # `redis` workspace dep on `experiments` over maintaining this.
   ############################################################################
   test-core-threshold-redis:
     name: main/test-core-threshold-redis
@@ -725,8 +721,7 @@ jobs:
       args-tests: '--test integration_redis'
       crate-names: '-p experiments'
       run-redis: true
-      # `serial_test::serial` is process-local; nextest runs each #[test] in
-      # its own process, so we serialize at the runner level instead.
+      # Tests use `FLUSHALL`, so they must run sequentially.
       nextest-test-threads: 1
       skip-test-material: true
       runs-on: '8cpu-linux-x64'

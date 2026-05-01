@@ -22,7 +22,6 @@ use kms_lib::consts::{
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
-use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
 use std::path::{Path, PathBuf};
@@ -3004,7 +3003,6 @@ mod docker_harness {
     /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
     #[test_context(DockerComposeThresholdTestNoInitSixParty)]
     #[tokio::test]
-    #[serial(docker)]
     #[cfg_attr(not(feature = "threshold_tests"), ignore)]
     async fn test_threshold_mpc_context_switch_6_docker(
         ctx: &DockerComposeThresholdTestNoInitSixParty,
