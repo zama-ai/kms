@@ -7,14 +7,7 @@ use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
-use kms_grpc::{
-    RequestId,
-    identifiers::EpochId,
-    rpc_types::{PrivDataType, PubDataType},
-};
-use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
-use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-
+use super::base::CryptoMaterialStorage;
 use crate::{
     cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
@@ -27,26 +20,24 @@ use crate::{
         Vault,
         storage::{
             Storage, StorageExt,
-            crypto_material::base::{StorageError, update_meta_store},
+            crypto_material::{
+                PublicKeySet,
+                base::{StorageError, update_meta_store},
+            },
             delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
             read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         },
     },
 };
-
 use kms_grpc::solidity_types::KeygenVerification;
+use kms_grpc::{
+    RequestId,
+    identifiers::EpochId,
+    rpc_types::{PrivDataType, PubDataType},
+};
+use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 
-use super::base::CryptoMaterialStorage;
-
-#[derive(Clone)]
-pub enum PublicKeySet {
-    Standard(Box<FhePubKeySet>),
-    Compressed {
-        compact_public_key: Box<tfhe::CompactPublicKey>,
-        compressed_keyset: Box<CompressedXofKeySet>,
-    },
-}
 /// A cached generic storage entity for the threshold KMS.
 /// Cloning this object is cheap since it uses Arc internally.
 pub struct ThresholdCryptoMaterialStorage<
@@ -136,6 +127,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id, epoch_id).await
     }
 
+    /// Write the keys to the storage backend (for use in connection with resharing).
+    /// Returns true if the write was successful, false otherwise.
+    pub(crate) async fn resharing_fhe_write(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        fhe_key_set: PublicKeySet,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .handle_fhe_keys(
+                key_id,
+                epoch_id,
+                threshold_fhe_keys,
+                PrivDataType::FheKeyInfo,
+                fhe_key_set,
+                Arc::clone(&self.fhe_keys),
+                OP_NEW_EPOCH,
+            )
+            .await
+    }
+
     pub(crate) async fn write_threshold_keys(
         &self,
         key_id: &RequestId,
@@ -151,80 +164,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
         let meta_res = threshold_fhe_keys.meta_data.clone();
         let res = self
-            .handle_threshold_key_storage(
+            .inner
+            .handle_fhe_keys(
                 key_id,
                 epoch_id,
                 threshold_fhe_keys,
+                PrivDataType::FheKeyInfo,
                 fhe_key_set,
+                Arc::clone(&self.fhe_keys),
                 op_metric_tag,
             )
             .await;
         // Finally update meta store
         update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
-    }
-
-    /// Helper function to write the threshold keys to storage, along with updating the cache if the storage operation was successful.
-    pub(crate) async fn handle_threshold_key_storage(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
-        fhe_key_set: PublicKeySet,
-        op_metric_tag: &'static str,
-    ) -> Result<(), StorageError> {
-        // First try to store the special key
-        let pk_to_store = match &fhe_key_set {
-            PublicKeySet::Standard(keys) => {
-                self.inner
-                    .handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
-                        key_id,
-                        Some(epoch_id),
-                        Some((&keys.server_key, PubDataType::ServerKey)),
-                        None,
-                        op_metric_tag,
-                    )
-                    .await?;
-                &keys.public_key
-            }
-            PublicKeySet::Compressed {
-                compact_public_key,
-                compressed_keyset,
-            } => {
-                self.inner
-                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
-                        key_id,
-                        Some(epoch_id),
-                        Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
-                        None,
-                        op_metric_tag,
-                    )
-                    .await?;
-                compact_public_key
-            }
-        };
-        // If it goes well also store the public key and private state
-        let res = self
-            .inner
-            .handle_all_storage(
-                key_id,
-                Some(epoch_id),
-                Some((pk_to_store, PubDataType::PublicKey)),
-                Some((&threshold_fhe_keys, PrivDataType::FheKeyInfo)),
-                op_metric_tag,
-            )
-            .await;
-        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
-            // Update cache
-            let mut guarded_fhe_keys = self.fhe_keys.write().await;
-            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
-            if previous.is_some() {
-                tracing::warn!(
-                    "Threshold FHE keys already exist in cache for {}, overwriting",
-                    key_id
-                );
-            }
-        }
-        res
     }
 
     /// After a migration keygen (`UseExisting` + `CompressedKeyConfig::All`) stores the

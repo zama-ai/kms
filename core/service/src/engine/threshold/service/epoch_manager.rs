@@ -652,12 +652,11 @@ impl<
 
                     storage_tasks.push(
                         crypto_storage
-                            .handle_threshold_key_storage(
+                            .resharing_fhe_write(
                                 &key_info.key_id,
                                 &new_epoch_id,
                                 threshold_fhe_keys,
                                 PublicKeySet::Standard(Box::new(fhe_pubkeys)),
-                                OP_NEW_EPOCH,
                             )
                             .boxed(),
                     );
@@ -710,7 +709,7 @@ impl<
                             let compressed_keyset = compressed_keyset;
                             let compact_public_key = compact_public_key;
                             crypto_storage
-                                .handle_threshold_key_storage(
+                                .resharing_fhe_write(
                                     &key_info.key_id,
                                     &new_epoch_id,
                                     threshold_fhe_keys,
@@ -718,7 +717,6 @@ impl<
                                         compact_public_key: Box::new(compact_public_key),
                                         compressed_keyset: Box::new(compressed_keyset),
                                     },
-                                    OP_NEW_EPOCH,
                                 )
                                 .await
                         }

@@ -45,8 +45,10 @@ use strum::IntoEnumIterator;
 use tfhe::CompactPublicKey;
 use tfhe::Versionize;
 use tfhe::named::Named;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use thiserror::Error;
+use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -75,6 +77,15 @@ pub(crate) trait PrivateMaterialUnderEpoch {}
 impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
 impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
 impl PrivateMaterialUnderEpoch for CrsGenMetadata {}
+
+#[derive(Clone)]
+pub enum PublicKeySet {
+    Standard(Box<FhePubKeySet>),
+    Compressed {
+        compact_public_key: Box<tfhe::CompactPublicKey>,
+        compressed_keyset: Box<CompressedXofKeySet>,
+    },
+}
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -563,6 +574,76 @@ where
             }
         };
         true
+    }
+
+    /// Helper function to write the FHE keys to storage, along with updating the cache if the storage operation was successful.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::vault::storage::crypto_material) async fn handle_fhe_keys<
+        PrivKeyData: Serialize + Versionize + Named + Send + Sync,
+    >(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        priv_fhe_data: PrivKeyData,
+        priv_data_type: PrivDataType,
+        fhe_key_set: PublicKeySet,
+        cache: Arc<RwLock<HashMap<(RequestId, EpochId), PrivKeyData>>>,
+        op_metric_tag: &'static str,
+    ) -> Result<(), StorageError>
+    where
+        for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
+    {
+        // First try to store the special key
+        let pk_to_store = match &fhe_key_set {
+            PublicKeySet::Standard(keys) => {
+                self.handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
+                    key_id,
+                    Some(epoch_id),
+                    Some((&keys.server_key, PubDataType::ServerKey)),
+                    None,
+                    op_metric_tag,
+                )
+                .await?;
+                &keys.public_key
+            }
+            PublicKeySet::Compressed {
+                compact_public_key,
+                compressed_keyset,
+            } => {
+                self
+                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
+                        key_id,
+                        Some(epoch_id),
+                        Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
+                        None,
+                        op_metric_tag,
+                    )
+                    .await?;
+                compact_public_key
+            }
+        };
+        // If it goes well also store the public key and private state
+        let res = self
+            .handle_all_storage(
+                key_id,
+                Some(epoch_id),
+                Some((pk_to_store, PubDataType::PublicKey)),
+                Some((&priv_fhe_data, priv_data_type)),
+                op_metric_tag,
+            )
+            .await;
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
+            // Update cache
+            let mut guarded_fhe_keys = cache.write().await;
+            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), priv_fhe_data);
+            if previous.is_some() {
+                tracing::warn!(
+                    "Private FHE key data already exist in cache for {}, overwriting",
+                    key_id
+                );
+            }
+        }
+        res
     }
 
     /// Write the CRS to the storage backend.

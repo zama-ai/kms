@@ -6,11 +6,7 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
-use kms_grpc::{
-    RequestId,
-    identifiers::EpochId,
-    rpc_types::{PrivDataType, PubDataType},
-};
+use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
@@ -74,81 +70,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
         let meta_res = central_fhe_keys.public_key_info.clone();
         let res = self
-            .handle_central_key_storage(
+            .inner
+            .handle_fhe_keys(
                 key_id,
                 epoch_id,
                 central_fhe_keys,
+                PrivDataType::FhePrivateKey,
                 fhe_key_set,
+                Arc::clone(&self.fhe_keys),
                 op_metric_tag,
             )
             .await;
         // Finally update meta store
         update_meta_store(res, key_id, meta_res, meta_store, op_metric_tag).await
-    }
-
-    // TODO can we simplify this with the threshold methods with a macro since cache also needs to be updated, of format different in central comapred to threshold
-    /// Helper function to write the central keys to storage, along with updating the cache if the storage operation was successful.
-    pub(crate) async fn handle_central_key_storage(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-        central_fhe_keys: KmsFheKeyHandles,
-        fhe_key_set: PublicKeySet,
-        op_metric_tag: &'static str,
-    ) -> Result<(), StorageError> {
-        // First try to store the special key
-        let pk_to_store = match &fhe_key_set {
-            PublicKeySet::Standard(keys) => {
-                self.inner
-                    .handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
-                        key_id,
-                        Some(epoch_id),
-                        Some((&keys.server_key, PubDataType::ServerKey)),
-                        None,
-                        op_metric_tag,
-                    )
-                    .await?;
-                &keys.public_key
-            }
-            PublicKeySet::Compressed {
-                compact_public_key,
-                compressed_keyset,
-            } => {
-                self.inner
-                    .handle_all_storage::<tfhe::xof_key_set::CompressedXofKeySet, tfhe::xof_key_set::CompressedXofKeySet>(
-                        key_id,
-                        Some(epoch_id),
-                        Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
-                        None,
-                        op_metric_tag,
-                    )
-                    .await?;
-                compact_public_key
-            }
-        };
-        // If it goes well also store the public key and private state
-        let res = self
-            .inner
-            .handle_all_storage(
-                key_id,
-                Some(epoch_id),
-                Some((pk_to_store, PubDataType::PublicKey)),
-                Some((&central_fhe_keys, PrivDataType::FheKeyInfo)),
-                op_metric_tag,
-            )
-            .await;
-        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
-            // Update cache
-            let mut guarded_fhe_keys = self.fhe_keys.write().await;
-            let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), central_fhe_keys);
-            if previous.is_some() {
-                tracing::warn!(
-                    "Threshold FHE keys already exist in cache for {}, overwriting",
-                    key_id
-                );
-            }
-        }
-        res
     }
 
     /// Read the key materials for decryption in the centralized case.
