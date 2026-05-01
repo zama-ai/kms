@@ -5,6 +5,7 @@
 //! storage system.
 
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::vault::storage::crypto_material::base::StorageError;
 use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
@@ -116,7 +117,11 @@ pub async fn data_exists_at_epoch<S: StorageReaderExt>(
 /// # Note
 /// This function short-circuits and returns `Ok(false)` if public data is not found,
 /// without checking for private data.
-pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
+#[allow(dead_code)]
+pub(in crate::vault::storage::crypto_material) async fn check_data_exists<
+    PubS: Storage,
+    PrivS: Storage,
+>(
     pub_storage: &PubS,
     priv_storage: &PrivS,
     req_id: &RequestId,
@@ -147,11 +152,10 @@ pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
 /// * `priv_data_type` - Types of the private data to check
 ///
 /// # Returns
-/// `Ok(true)` all the public and private data exist, `Ok(false)` if anything is missing,
-/// or an error if any check fails.
+/// `Ok(())` if all the public and private data exist, or an error if any check fails or an error occurs.
 ///
 /// # Note
-/// This function short-circuits and returns `Ok(false)` if public data is not found,
+/// This function short-circuits and returns an [`ExistenceCheckError`] if public data is not found,
 /// without checking for private data.
 pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     pub_storage: &PubS,
@@ -160,20 +164,35 @@ pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
     epoch_id: &EpochId,
     pub_data_type: &[String],
     priv_data_type: &[String],
-) -> anyhow::Result<bool> {
+) -> Result<(), StorageError> {
     let mut pub_exists = true;
     for pub_type in pub_data_type {
         // No need to use epoch for public data existence check
-        pub_exists &= data_exists(pub_storage, req_id, pub_type).await?;
+        pub_exists &= data_exists(pub_storage, req_id, pub_type)
+            .await
+            .map_err(|_| StorageError::ReadingError)?;
     }
     if !pub_exists {
-        return Ok(false);
+        let msg = format!(
+            "Some public data (at least one of {pub_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
+        );
+        tracing::warn!("{msg}");
+        return Err(StorageError::ExistenceCheckError(msg));
     }
     let mut priv_exists = true;
     for priv_type in priv_data_type {
-        priv_exists &= data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_type).await?;
+        priv_exists &= data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_type)
+            .await
+            .map_err(|_| StorageError::ReadingError)?;
     }
-    Ok(priv_exists)
+    if !priv_exists {
+        let msg = format!(
+            "Some private data (at least one of {priv_data_type:?}) not found for request {req_id} and epoch {epoch_id}"
+        );
+        tracing::warn!("{msg}");
+        return Err(StorageError::ExistenceCheckError(msg));
+    }
+    Ok(())
 }
 
 /// Logs a message indicating that data already exists and generation is being skipped.

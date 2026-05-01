@@ -114,7 +114,7 @@ impl<
         // Validate the request ID before proceeding
         self.crypto_storage
             .inner
-            .crs_exists(&verified.req_id, &verified.epoch_id)
+            .ensure_crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(

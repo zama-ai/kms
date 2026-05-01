@@ -124,11 +124,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await
     }
 
-    /// Check if the CRS under [req_id, epoch_id] exists in the storage.
-    pub async fn crs_exists(&self, req_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
-        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id, epoch_id).await
-    }
-
     /// Write the keys to the storage backend (for use in connection with resharing).
     /// Unlike the normal fhe writing this one does not update the meta store, nor the backup.
     pub(crate) async fn resharing_fhe_write(

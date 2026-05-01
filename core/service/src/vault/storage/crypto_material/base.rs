@@ -5,6 +5,7 @@
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::util::meta_store::{ensure_meta_store_request_pending, update_err_req_in_meta_store};
+use crate::vault::storage::crypto_material::check_data_exists;
 use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
@@ -23,8 +24,8 @@ use crate::{
         storage::{
             Storage, StorageExt, StorageReaderExt,
             crypto_material::{
-                check_data_exists, check_data_exists_at_epoch,
-                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
+                check_data_exists_at_epoch, log_storage_success_optional_variant,
+                traits::PrivateCryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             read_all_data_versioned, read_context_at_id, store_versioned_at_request_id,
@@ -53,10 +54,12 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
-    #[error("Existence check error")]
-    ExistenceCheckError,
+    #[error("Existence check error: {0}")]
+    ExistenceCheckError(String),
     #[error("Writing error")]
     WritingError,
+    #[error("Reading error")]
+    ReadingError,
     #[error("Purging error")]
     PurgingError,
     #[error("Backup vault purging error")]
@@ -169,7 +172,8 @@ where
     // =========================
 
     /// Check if data exists in both public and private storage
-    pub async fn data_exists(
+    #[allow(dead_code)]
+    async fn data_exists(
         &self,
         req_id: &RequestId,
         pub_data_type: &str,
@@ -191,13 +195,13 @@ where
 
     /// Check if data exists in both public and private storage,
     /// where the private part is stored at a specific epoch.
-    pub async fn data_exists_at_epoch(
+    async fn data_exists_at_epoch(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
         pub_data_type: &[String],
         priv_data_type: &[String],
-    ) -> anyhow::Result<bool> {
+    ) -> Result<(), StorageError> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
         let priv_storage = self.private_storage.lock().await;
@@ -213,34 +217,19 @@ where
         .await
     }
 
-    /// Check if signing keys exist in the storage.
-    ///
-    /// This method checks if signing keys exist in the private storage.
-    ///
-    /// # Returns
-    /// `Ok(true)` if signing keys exist, `Ok(false)` if they don't, or an error if the check fails.
-    pub async fn private_signing_keys_exist(&self) -> anyhow::Result<bool> {
-        let priv_storage = self.private_storage.lock().await;
-        let keys: HashMap<RequestId, PrivateSigKey> =
-            read_all_data_versioned(&*priv_storage, &PrivDataType::SigningKey.to_string())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to read signing key data: {}", e))?;
-
-        Ok(!keys.is_empty())
-    }
-
     /// Check if FHE keys exist (for central server).
     ///
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
     /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
-    pub async fn fhe_keys_exist(
+    pub async fn ensure_fhe_keys_exist(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<(), StorageError> {
         let priv_types = vec![PrivDataType::FhePrivateKey.to_string()];
-        let standard = self
+        // Try the uncompressed (standard) layout first.
+        if self
             .data_exists_at_epoch(
                 key_id,
                 epoch_id,
@@ -250,9 +239,10 @@ where
                 ],
                 &priv_types,
             )
-            .await?;
-        if standard {
-            return Ok(true);
+            .await
+            .is_ok()
+        {
+            return Ok(());
         }
         // Fallback: check for the current compressed layout.
         self.data_exists_at_epoch(
@@ -268,7 +258,11 @@ where
     }
 
     /// Check if CRS exists
-    pub async fn crs_exists(&self, crs_id: &RequestId, epoch_id: &EpochId) -> anyhow::Result<bool> {
+    pub async fn ensure_crs_exists(
+        &self,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> Result<(), StorageError> {
         self.data_exists_at_epoch(
             crs_id,
             epoch_id,
@@ -276,12 +270,6 @@ where
             &[PrivDataType::CrsInfo.to_string()],
         )
         .await
-    }
-
-    /// Get signing key from private storage
-    pub async fn get_signing_key(&self) -> anyhow::Result<PrivateSigKey> {
-        let priv_storage = self.private_storage.lock().await;
-        super::utils::get_core_signing_key(&*priv_storage).await
     }
 
     /// Note that this method must not be executed by multiple threads in parallel to avoid an inconsistent storage state.

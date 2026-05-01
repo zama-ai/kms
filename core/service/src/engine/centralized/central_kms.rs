@@ -1574,14 +1574,12 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert!(
-                inner
-                    .crypto_storage
-                    .inner
-                    .fhe_keys_exist(key_id, epoch_id)
-                    .await
-                    .unwrap()
-            );
+            inner
+                .crypto_storage
+                .inner
+                .ensure_fhe_keys_exist(key_id, epoch_id)
+                .await
+                .unwrap();
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
             }
@@ -1805,14 +1803,12 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            assert!(
-                inner
-                    .crypto_storage
-                    .inner
-                    .fhe_keys_exist(key_id, epoch_id)
-                    .await
-                    .unwrap()
-            );
+            inner
+                .crypto_storage
+                .inner
+                .ensure_fhe_keys_exist(key_id, epoch_id)
+                .await
+                .unwrap();
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_id, epoch_id, keys.params).await;
             }

@@ -360,14 +360,12 @@ where
     )
     .await
     {
-        Ok(true) => {
+        Ok(()) => {
             log_data_exists(priv_storage.info(), Some(pub_storage.info()), crs_id, "CRS");
             return false;
         }
-        Ok(false) => {} // Continue with generation
         Err(e) => {
-            tracing::warn!("Error checking if CRS exists: {}", e);
-            // Continue with generation, assuming data doesn't exist
+            tracing::info!("CRS not found or check failed, proceeding with generation: {e}");
         }
     }
 
@@ -1249,16 +1247,11 @@ where
         )
         .await
         {
-            Ok(true) => {
-                continue; // Data exists for this party, check next
-            }
-            Ok(false) => {
-                all_data_exists = false;
-                break;
-            }
+            Ok(()) => continue,
             Err(e) => {
-                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-                // Continue with generation, assuming data doesn't exist
+                tracing::info!(
+                    "Threshold CRS not found or check failed, proceeding with generation: {e}"
+                );
                 all_data_exists = false;
                 break;
             }
