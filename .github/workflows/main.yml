@@ -258,14 +258,8 @@ jobs:
         run: |
           MATRIX_JSON=$(jq -nc '{
             include: [
-              {
-                "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_concurrent_crs",
-                generate_default_material: true
-              },
-              {
-                "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example",
-                generate_default_material: false
-              }
+              { "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_concurrent_crs" },
+              { "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example" }
             ]
           }')
           echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
@@ -301,7 +295,6 @@ jobs:
     with:
       crate-names: '-p kms-core-client'
       args-tests: ${{ matrix.args-tests }}
-      generate-default-material: ${{ matrix.generate_default_material }}
       nextest-test-threads: "6"
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -340,7 +333,6 @@ jobs:
       args-tests: >-
         --features threshold_tests -- --skip k8s_ --skip isolated_test_example
         --skip test_threshold_mpc_context_switch_6_docker
-      generate-default-material: true
       nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
@@ -621,7 +613,6 @@ jobs:
       # test (`test_new_epoch_with_reshare`, ~13min), so going past 6 is
       # diminishing returns.
       nextest-test-threads: "6"
-      enable-shared-material: true  # Use shared material mode (no copying)
     secrets: inherit
 
   # threshold-flavored tests with `slow_tests`.
@@ -648,7 +639,6 @@ jobs:
       rust-log-level: 'info'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
-      enable-shared-material: true
       lfs: true  # picks up backward_compatibility_threshold_fhe via the `threshold` filter
     secrets: inherit
 

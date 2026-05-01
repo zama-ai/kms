@@ -289,7 +289,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -342,7 +342,7 @@ async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -362,7 +362,7 @@ async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -382,7 +382,7 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -422,7 +422,7 @@ async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -449,7 +449,7 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -476,7 +476,7 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
 /// Per-party `compose_*.toml` server configs are built from typed `CoreConfig` structs
 /// to ensure compile-time schema compatibility.
 fn generate_threshold_cli_config(
-    material_dir: &kms_lib::testing::material::TestMaterialHandle,
+    material_dir: &tempfile::TempDir,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
     fhe_params: FheParameter,
@@ -556,7 +556,7 @@ async fn setup_isolated_threshold_cli_test_impl(
     with_custodian_keychain: bool,
     fhe_params: FheParameter,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -582,7 +582,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
     fhe_params: FheParameter,
     material_spec: Option<kms_lib::testing::material::TestMaterialSpec>,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
 )> {
@@ -642,7 +642,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 /// that surviving servers change their MPC party roles between contexts.
 ///
 /// Returns:
-/// - TestMaterialHandle with test material
+/// - TempDir with test material
 /// - HashMap of server handles
 /// - Config path for context 1 (servers 1,2,3,4)
 /// - Config path for context 2 (servers 5,6,4,3)
@@ -651,7 +651,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 async fn setup_party_resharing_servers(
     test_name: &str,
 ) -> Result<(
-    kms_lib::testing::material::TestMaterialHandle,
+    tempfile::TempDir,
     HashMap<u32, ServerHandle>,
     PathBuf,
     PathBuf,
@@ -668,7 +668,7 @@ async fn setup_party_resharing_servers(
     // Servers 1-4 form context 1, servers 5,6,3,4 form context 2 (party resharing)
     // Use threshold_signing_only since this test generates FHE keys dynamically
     let spec = TestMaterialSpec::threshold_signing_only(4);
-    let material_dir = manager.setup_test_material_auto(&spec, test_name).await?;
+    let material_dir = manager.setup_test_material_temp(&spec, test_name).await?;
 
     // Create storage for each of the 6 servers
     let pub_prefixes = [

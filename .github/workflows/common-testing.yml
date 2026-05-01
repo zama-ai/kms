@@ -53,15 +53,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: ''  # Empty = let nextest decide (respects #[serial] attribute)
-      enable-shared-material:
-        type: boolean
-        required: false
-        default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
-      generate-default-material:
-        type: boolean
-        required: false
-        default: false  # If true, generate Default test material (includes pre-generated PRSS)
+        default: ''  # Empty = use nextest's default (~ num-CPUs).
     secrets:
       GHCR_READ_TOKEN:
         required: true
@@ -194,17 +186,11 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
-      # Generate test material. Subcommand is `all` (testing + default) when
-      # the job uses slow_tests or explicitly requests default; otherwise
-      # `testing` only.
-      #
+      # Generate the full `all` test material set (testing + default).
       # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
       # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
         if: ${{ ! inputs.skip-test-material }}
-        env:
-          GENERATE_DEFAULT: ${{ inputs.generate-default-material }}
-          ARGS_TESTS: ${{ inputs.args-tests }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq btrfs-progs
@@ -224,20 +210,13 @@ jobs:
           # preamble didn't take effect.
           findmnt /mnt/cow-scratch
 
-          if [[ "${GENERATE_DEFAULT}" == "true" ]] || [[ "${ARGS_TESTS}" == *slow_tests* ]]; then
-            SUBCOMMAND=all
-          else
-            SUBCOMMAND=testing
-          fi
           # Build the generator in Cargo's built-in `test` profile so nextest
           # can reuse more of the same optimized artifacts later in the job.
-          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose ${SUBCOMMAND}"
-          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose "${SUBCOMMAND}"
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose all"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose all
 
           # TODO(dp): keep?
-          # Confirms material landed on the btrfs mount (via the symlink) rather
-          # than on workspace ext4. Expect ~200MB for `testing` only, ~20-80GB
-          # for `all`.
+          # Confirms material landed on the btrfs mount (via the symlink). Expect ~20-80GB.
           du -sh /mnt/cow-scratch/test-material
 
       # Build kms-custodian binary required by integration tests.
@@ -273,7 +252,6 @@ jobs:
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
-          ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
           RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
@@ -287,17 +265,6 @@ jobs:
             echo "NEXTEST_TEST_THREADS set to: ${NEXTEST_TEST_THREADS_INPUT}"
           else
             echo "NEXTEST_TEST_THREADS not set (using nextest default)"
-          fi
-
-          # Enable shared test material mode if requested to save disk space.
-          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1).
-          # Shared mode uses material in-place without copying to temp directories.
-          if [[ "${ENABLE_SHARED_MATERIAL}" == "true" ]]; then
-            CMD_ENV="${CMD_ENV} KMS_TEST_SHARED_MATERIAL=1"
-            echo "KMS_TEST_SHARED_MATERIAL=1 (using shared material in-place, no copying)"
-            echo "This saves ~80GB+ disk space by avoiding material duplication"
-          else
-            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying to temp dirs)"
           fi
 
           mkdir -p ~/.aws/ &&

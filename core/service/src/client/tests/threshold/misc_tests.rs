@@ -39,7 +39,6 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
-        .force_isolated()
         .build()
         .await?;
 
@@ -159,7 +158,6 @@ async fn test_threshold_close_after_drop() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS data to the shared test-material source
         .build()
         .await?;
 
@@ -232,7 +230,6 @@ async fn test_threshold_shutdown() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 
@@ -344,7 +341,6 @@ async fn test_ratelimiter() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss() // Need PRSS for CRS gen
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .with_rate_limiter(rate_limiter_conf)
         .build()
         .await?;
@@ -448,7 +444,6 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 

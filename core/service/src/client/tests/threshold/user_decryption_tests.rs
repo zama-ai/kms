@@ -407,8 +407,7 @@ pub(crate) async fn user_decryption_threshold(
         .with_party_count(amount_parties)
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)
-        .with_prss()
-        .force_isolated();
+        .with_prss();
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);
     }
@@ -736,7 +735,7 @@ async fn get_server_private_keys(
     let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
     for (i, prefix) in storage_prefixes.iter().enumerate() {
-        // Read from the per-test isolated material path populated by `builder().force_isolated()`
+        // Read from the per-test isolated material path populated by the builder.
         let priv_storage =
             FileStorage::new(Some(material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
         let sk = get_core_signing_key(&priv_storage)

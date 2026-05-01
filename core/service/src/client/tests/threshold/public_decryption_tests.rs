@@ -237,8 +237,7 @@ pub async fn decryption_threshold(
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)
         .with_rate_limiter(rate_limiter_conf)
-        .with_prss()
-        .force_isolated();
+        .with_prss();
     if let Some(mode) = decryption_mode {
         builder = builder.with_decryption_mode(mode);
     }

@@ -50,7 +50,6 @@ async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
         .with_threshold(1)
         .with_material_spec(spec)
         .with_prss()
-        .force_isolated()
         .build()
         .await?;
 
@@ -97,7 +96,6 @@ async fn secure_threshold_crs() -> anyhow::Result<()> {
         .with_threshold(1)
         .with_material_spec(spec)
         .with_prss()
-        .force_isolated()
         .build()
         .await?;
 
@@ -144,7 +142,6 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
         .with_threshold(1)
         .with_material_spec(spec)
         .with_prss()
-        .force_isolated()
         .build()
         .await?;
 

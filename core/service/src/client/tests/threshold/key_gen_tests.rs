@@ -197,7 +197,6 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::
         .with_threshold(max_threshold(amount_parties) as u8)
         .with_material_spec(spec)
         .with_prss()
-        .force_isolated()
         .build()
         .await?;
 
@@ -1399,7 +1398,6 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1455,7 +1453,6 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_material_spec(spec)
         .build()
         .await?;
@@ -1511,7 +1508,6 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1571,7 +1567,6 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1681,7 +1676,6 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1797,7 +1791,6 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent fixed request IDs from colliding with shared/generated material
         .build()
         .await?;
 
@@ -2036,7 +2029,6 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 

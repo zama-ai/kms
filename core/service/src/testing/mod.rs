@@ -39,9 +39,7 @@ pub mod utils;
 /// Convenient re-exports for test files
 pub mod prelude {
     // Material management
-    pub use super::material::{
-        KeyType, MaterialType, TestMaterialHandle, TestMaterialManager, TestMaterialSpec,
-    };
+    pub use super::material::{KeyType, MaterialType, TestMaterialManager, TestMaterialSpec};
 
     // Setup utilities
     pub use super::setup::{

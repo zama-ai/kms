@@ -68,9 +68,8 @@ jobs:
 
       # Required by `test_user_decryption_*_and_write_transcript`: the helpers
       # they call (`user_decryption_threshold` / `user_decryption_centralized`)
-      # use `ThresholdTestEnv` / `CentralizedTestEnv` with `force_isolated()`,
-      # which populates per-test tempdirs by copying from the workspace's
-      # `test-material/` directory.
+      # use `ThresholdTestEnv` / `CentralizedTestEnv`, which populate per-test
+      # tempdirs by copying from the workspace's `test-material/` directory.
       - name: Generate test material
         run: |
           cargo run -p generate-test-material -- --output ./test-material --verbose testing
