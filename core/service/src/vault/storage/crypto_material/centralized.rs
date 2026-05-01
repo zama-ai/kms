@@ -78,6 +78,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 PrivDataType::FhePrivateKey,
                 fhe_key_set,
                 Arc::clone(&self.fhe_keys),
+                true,
                 op_metric_tag,
             )
             .await;

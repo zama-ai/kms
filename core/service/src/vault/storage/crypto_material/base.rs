@@ -306,7 +306,7 @@ where
             .await
             .map_err(|e| StorageError::MetaStoreError(e.to_string()))?;
         let res = self
-            .handle_all_storage(req_id, epoch_id, pub_data, priv_data, op_metric_tag)
+            .handle_all_storage(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
         update_meta_store(res, req_id, meta_data, meta_store, op_metric_tag).await
     }
@@ -322,6 +322,7 @@ where
         epoch_id: Option<&EpochId>,
         pub_data: Option<(&'a PubData, PubDataType)>,
         priv_data: Option<(&'a PrivData, PrivDataType)>,
+        update_backup: bool,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
@@ -334,10 +335,12 @@ where
             .write_data_pair(req_id, epoch_id, pub_data, priv_data)
             .await
         {
-            // If storage is ok, then update the backup
-            if !self.update_backup_vault(false, op_metric_tag).await {
-                // Observe that even if backup fails, we do not want to purge the material
-                return Err(StorageError::BackupError);
+            if update_backup {
+                // If storage is ok, then update the backup
+                if !self.update_backup_vault(false, op_metric_tag).await {
+                    // Observe that even if backup fails, we do not want to purge the material
+                    return Err(StorageError::BackupError);
+                }
             }
         } else {
             // If storage write failed then purge
@@ -590,22 +593,24 @@ where
         priv_data_type: PrivDataType,
         fhe_key_set: PublicKeySet,
         cache: Arc<RwLock<HashMap<(RequestId, EpochId), PrivKeyData>>>,
+        update_backup: bool,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError>
     where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
         // First try to store the special key (server key or compressed keyset).
-        let first_res = match &fhe_key_set {
+        match &fhe_key_set {
             PublicKeySet::Standard(keys) => {
                 self.handle_all_storage::<tfhe::ServerKey, tfhe::ServerKey>(
                     key_id,
                     Some(epoch_id),
                     Some((&keys.server_key, PubDataType::ServerKey)),
                     None,
+                    false, // Defer backup
                     op_metric_tag,
                 )
-                .await
+                .await?;
             }
             PublicKeySet::Compressed {
                 compressed_keyset, ..
@@ -616,19 +621,12 @@ where
                         Some(epoch_id),
                         Some((compressed_keyset, PubDataType::CompressedXofKeySet)),
                         None,
+                        false, // Defer backup
                         op_metric_tag,
                     )
-                    .await
+                    .await?;
             }
         };
-        // For any error other than BackupError, the data was purged inside
-        // handle_all_storage and there is no point continuing.
-        if let Err(e) = &first_res
-            && e != &StorageError::BackupError
-        {
-            return first_res;
-        }
-
         let pk_to_store = match &fhe_key_set {
             PublicKeySet::Standard(keys) => &keys.public_key,
             PublicKeySet::Compressed {
@@ -636,20 +634,17 @@ where
             } => compact_public_key,
         };
         // Store the public key and private state.
-        let second_res = self
+        let res = self
             .handle_all_storage(
                 key_id,
                 Some(epoch_id),
                 Some((pk_to_store, PubDataType::PublicKey)),
                 Some((&priv_fhe_data, priv_data_type)),
+                update_backup,
                 op_metric_tag,
             )
             .await;
-        if second_res.is_ok()
-            || second_res
-                .as_ref()
-                .is_err_and(|e| e == &StorageError::BackupError)
-        {
+        if res.is_ok() || res.as_ref().is_err_and(|e| e == &StorageError::BackupError) {
             // Update cache
             let mut guarded_fhe_keys = cache.write().await;
             let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), priv_fhe_data);
@@ -660,7 +655,7 @@ where
                 );
             }
         }
-        second_res
+        res
     }
 
     /// Write the CRS to the storage backend.
@@ -703,6 +698,7 @@ where
                 None,
                 Some((&decompression_key, PubDataType::DecompressionKey)),
                 None,
+                false, // No private data to back up
                 OP_DECOMPRESSION_KEYGEN,
             )
             .await;
@@ -751,6 +747,7 @@ where
                 None,
                 Some((&recovery_material, PubDataType::RecoveryMaterial)),
                 None,
+                true,
                 OP_NEW_CUSTODIAN_CONTEXT,
             )
             .await;
@@ -930,6 +927,7 @@ where
             None,
             None,
             Some((context_info, PrivDataType::ContextInfo)),
+            true,
             op_metric_tag,
         )
         .await

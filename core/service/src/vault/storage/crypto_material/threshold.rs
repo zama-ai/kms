@@ -88,6 +88,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 None,
                 None, // no public data for PRSS info
                 Some((prss_info, PrivDataType::PrssSetupCombined)),
+                true,
                 OP_NEW_EPOCH,
             )
             .await
@@ -103,6 +104,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Write the CRS to the storage backend (for use in connection with resharing).
+    /// Unlike the normal CRS writing this one does not update the meta store, nor the backup.
+    ///
     /// Returns true if the write was successful, false otherwise.
     pub(crate) async fn resharing_crs_write(
         &self,
@@ -117,6 +120,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 Some(epoch_id),
                 Some((&pp, PubDataType::CRS)),
                 Some((&crs_info.clone(), PrivDataType::CrsInfo)),
+                false,
                 OP_NEW_EPOCH,
             )
             .await
@@ -128,6 +132,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Write the keys to the storage backend (for use in connection with resharing).
+    /// Unlike the normal fhe writing this one does not update the meta store, nor the backup.
+    ///
     /// Returns true if the write was successful, false otherwise.
     pub(crate) async fn resharing_fhe_write(
         &self,
@@ -144,6 +150,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 PrivDataType::FheKeyInfo,
                 fhe_key_set,
                 Arc::clone(&self.fhe_keys),
+                false,
                 OP_NEW_EPOCH,
             )
             .await
@@ -172,6 +179,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 PrivDataType::FheKeyInfo,
                 fhe_key_set,
                 Arc::clone(&self.fhe_keys),
+                true,
                 op_metric_tag,
             )
             .await;

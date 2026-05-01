@@ -749,6 +749,11 @@ impl<
             );
         }
 
+        crypto_storage
+            .inner
+            .update_backup_vault(false, OP_NEW_EPOCH)
+            .await;
+
         // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
         let res = join_all(storage_tasks).await;
         let mut err_msgs = Vec::new();
