@@ -347,7 +347,6 @@ where
     PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-
     use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
 
     match check_data_exists_at_epoch(
@@ -360,12 +359,15 @@ where
     )
     .await
     {
-        Ok(()) => {
-            log_data_exists(priv_storage.info(), Some(pub_storage.info()), crs_id, "CRS");
+        Ok(true) => {
             return false;
         }
+        Ok(false) => {
+            // continue with generation
+            tracing::warn!("CRS does not exist, proceeding with generation.");
+        }
         Err(e) => {
-            tracing::info!("CRS not found or check failed, proceeding with generation: {e}");
+            tracing::warn!("Failed to check if CRS exists, proceeding with generation anyway: {e}");
         }
     }
 
@@ -1247,10 +1249,14 @@ where
         )
         .await
         {
-            Ok(()) => continue,
+            Ok(true) => continue,
+            Ok(false) => {
+                all_data_exists = false;
+                break;
+            }
             Err(e) => {
-                tracing::info!(
-                    "Threshold CRS not found or check failed, proceeding with generation: {e}"
+                tracing::warn!(
+                    "Failed to check if threshold CRS exists, proceeding with generation anyway: {e}"
                 );
                 all_data_exists = false;
                 break;

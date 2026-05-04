@@ -70,19 +70,27 @@ pub async fn user_decrypt_impl<
     }
     // Observe we accept any epoch ID
 
-    service
+    let keys_exist = service
         .crypto_storage
         .inner
-        .ensure_fhe_keys_exist(&key_id.into(), &epoch_id)
+        .fhe_keys_exists(&key_id.into(), &epoch_id)
         .await
         .map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(request_id),
-                anyhow::anyhow!("Key ID {} not found: {}", key_id, e),
-                tonic::Code::NotFound,
+                anyhow::anyhow!("Failed to check FHE key existence for key_id={key_id}: {e}"),
+                tonic::Code::Internal,
             )
         })?;
+    if !keys_exist {
+        return Err(MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Key ID {key_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
@@ -254,22 +262,26 @@ pub async fn public_decrypt_impl<
     }
     // Observe we accept any epoch ID
 
-    if let Err(e) = service
+    let keys_exist = service
         .crypto_storage
         .inner
-        .ensure_fhe_keys_exist(&key_id.into(), &epoch_id)
+        .fhe_keys_exists(&key_id.into(), &epoch_id)
         .await
-    {
-        tracing::error!(
-            "Error checking if keys exist for key_id={}, epoch_id={}: {}",
-            key_id,
-            epoch_id,
-            e
-        );
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!(
+                    "Failed to check FHE key existence for key_id={key_id}, epoch_id={epoch_id}: {e}"
+                ),
+                tonic::Code::Internal,
+            )
+        })?;
+    if !keys_exist {
         return Err(MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
-            anyhow::anyhow!("Key ID {} not found", key_id),
+            anyhow::anyhow!("Key ID {key_id} not found"),
             tonic::Code::NotFound,
         ));
     }

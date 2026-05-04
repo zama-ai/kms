@@ -552,6 +552,33 @@ impl<
             )
             .await?;
 
+        // Ensure that no key already exists for a given request.
+        let already_exists = self
+            .crypto_storage
+            .inner
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    op_tag,
+                    Some(req_id),
+                    format!("Could not check FHE key existence in storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if already_exists {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(req_id),
+                anyhow::anyhow!(
+                    "FHE key for request {} and epoch {} already exists in storage",
+                    req_id,
+                    epoch_id
+                ),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+
         add_req_to_meta_store(
             &mut self.dkg_pubinfo_meta_store.write().await,
             &req_id,

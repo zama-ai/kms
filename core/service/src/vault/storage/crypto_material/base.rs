@@ -54,8 +54,6 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum StorageError {
-    #[error("Existence check error: {0}")]
-    ExistenceCheckError(String),
     #[error("Writing error")]
     WritingError,
     #[error("Reading error")]
@@ -195,13 +193,16 @@ where
 
     /// Check if data exists in both public and private storage,
     /// where the private part is stored at a specific epoch.
+    ///
+    /// Returns `Ok(true)` if all entries are present, `Ok(false)` if any is
+    /// missing, or `Err(StorageError)` if the storage backend fails the check.
     async fn data_exists_at_epoch(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
         pub_data_type: &[String],
         priv_data_type: &[String],
-    ) -> Result<(), StorageError> {
+    ) -> Result<bool, StorageError> {
         // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
         let priv_storage = self.private_storage.lock().await;
@@ -222,11 +223,14 @@ where
     /// The `epoch_id` identifies the epoch that the secret key belongs to.
     /// This checks for both uncompressed keys (`CompactPublicKey` + `ServerKey`) and the current
     /// compressed layout (`CompressedXofKeySet` + `CompactPublicKey`).
-    pub async fn ensure_fhe_keys_exist(
+    ///
+    /// Returns `Ok(true)` if either layout is fully present, `Ok(false)` if
+    /// neither is, or `Err(StorageError)` on a storage backend failure.
+    pub async fn fhe_keys_exists(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> Result<(), StorageError> {
+    ) -> Result<bool, StorageError> {
         let priv_types = vec![PrivDataType::FhePrivateKey.to_string()];
         // Try the uncompressed (standard) layout first.
         if self
@@ -239,10 +243,9 @@ where
                 ],
                 &priv_types,
             )
-            .await
-            .is_ok()
+            .await?
         {
-            return Ok(());
+            return Ok(true);
         }
         // Fallback: check for the current compressed layout.
         self.data_exists_at_epoch(
@@ -257,12 +260,16 @@ where
         .await
     }
 
-    /// Check if CRS exists
-    pub async fn ensure_crs_exists(
+    /// Check if a CRS exists for `(crs_id, epoch_id)`.
+    ///
+    /// Returns `Ok(true)` if both the public CRS and the private metadata are
+    /// present, `Ok(false)` if either is missing, or `Err(StorageError)` on a
+    /// storage backend failure.
+    pub async fn crs_exists(
         &self,
         crs_id: &RequestId,
         epoch_id: &EpochId,
-    ) -> Result<(), StorageError> {
+    ) -> Result<bool, StorageError> {
         self.data_exists_at_epoch(
             crs_id,
             epoch_id,

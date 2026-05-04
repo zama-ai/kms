@@ -111,19 +111,32 @@ impl<
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
-        // Validate the request ID before proceeding
-        self.crypto_storage
+        // Ensure that no CRS already exists for a given request.
+        let already_exists = self
+            .crypto_storage
             .inner
-            .ensure_crs_exists(&verified.req_id, &verified.epoch_id)
+            .crs_exists(&verified.req_id, &verified.epoch_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
                     op_tag,
-                    None,
-                    format!("Could not check crs existence in storage: {e}"),
-                    tonic::Code::AlreadyExists,
+                    Some(verified.req_id),
+                    format!("Could not check CRS existence in storage: {e}"),
+                    tonic::Code::Internal,
                 )
             })?;
+        if already_exists {
+            return Err(MetricedError::new(
+                op_tag,
+                Some(verified.req_id),
+                anyhow::anyhow!(
+                    "CRS for request {} and epoch {} already exists in storage",
+                    verified.req_id,
+                    verified.epoch_id
+                ),
+                tonic::Code::AlreadyExists,
+            ));
+        }
 
         add_req_to_meta_store(
             &mut self.crs_meta_store.write().await,

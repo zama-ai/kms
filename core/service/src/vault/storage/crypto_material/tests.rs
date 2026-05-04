@@ -3,7 +3,7 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, gen_sig_keys},
     dummy_domain,
     engine::base::{KeyGenMetadata, derive_request_id},
-    vault::storage::crypto_material::{PublicKeySet, base::StorageError},
+    vault::storage::crypto_material::PublicKeySet,
 };
 use aes_prng::AesRng;
 use kms_grpc::{
@@ -854,11 +854,14 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
         .await
         .unwrap();
 
-    crypto_storage
-        .inner
-        .ensure_fhe_keys_exist(&req_id, &epoch_id)
-        .await
-        .expect("sanity check: complete compressed layout should be considered present");
+    assert!(
+        crypto_storage
+            .inner
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .expect("sanity check: existence query should not fail"),
+        "complete compressed layout should be considered present"
+    );
 
     {
         let mut guard = crypto_storage.inner.public_storage.lock().await;
@@ -868,14 +871,11 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
     }
 
     assert!(
-        matches!(
-            crypto_storage
-                .inner
-                .ensure_fhe_keys_exist(&req_id, &epoch_id)
-                .await
-                .unwrap_err(),
-            StorageError::ExistenceCheckError(_)
-        ),
+        !crypto_storage
+            .inner
+            .fhe_keys_exists(&req_id, &epoch_id)
+            .await
+            .expect("storage should still be queryable after deleting PublicKey"),
         "compressed keys should be treated as missing when the standalone PublicKey is absent"
     );
 }
