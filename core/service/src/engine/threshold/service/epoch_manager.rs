@@ -749,12 +749,6 @@ impl<
             );
         }
 
-        crypto_storage
-            .inner
-            .update_backup_vault(false, OP_NEW_EPOCH)
-            .await;
-
-        // Only if we have been able to prepare the storage of ALL keys, we proceed with storing them and updating the meta store.
         let res = join_all(storage_tasks).await;
         let mut err_msgs = Vec::new();
         let agg_res = if res.iter().any(|r| r.is_err()) {
@@ -765,8 +759,14 @@ impl<
             err_msgs.push(storage_err_msg.clone());
             Err(storage_err_msg)
         } else {
+            // If the resharing went well, then update the backup
+            crypto_storage
+                .inner
+                .update_backup_vault(false, OP_NEW_EPOCH)
+                .await;
             Ok(EpochOutput::Reshare((fhe_key_infos, crs_metadatas)))
         };
+        // Finally update the meta store
         if !update_req_in_meta_store(
             &mut meta_store.write().await,
             &new_epoch_id.into(),
