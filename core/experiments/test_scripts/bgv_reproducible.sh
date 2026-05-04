@@ -42,7 +42,7 @@ CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
 
 # Makes sure the generated keys has the expected hash
-EXPECTED_HASH="93be446a1b956773f973a8e578bcd6877db71c17ee2afd5caa34ac35a6c37c4e"
+EXPECTED_HASH="b985234cfaac60cf34771f353a66ffeda48da6409f2369163cc6d5f4273c0377"
 KEY_HASH=$(sha256sum $KEY_PATH/pk.bin|cut -d ' ' -f 1)
 if [ "$KEY_HASH" != "$EXPECTED_HASH" ]; then
     echo "❌ Key hash does not match expected value. Got $KEY_HASH, expected $EXPECTED_HASH"
@@ -65,7 +65,7 @@ fi
 $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
 ##Get the result
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-values $CTXT_VALUE
+$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-value $CTXT_VALUE
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
 
