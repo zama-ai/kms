@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::Duration;
 use strum_macros::{AsRefStr, Display, EnumString};
-use tracing::{debug, warn};
+use tracing::debug;
 use typed_builder::TypedBuilder;
 use validator::Validate;
 
