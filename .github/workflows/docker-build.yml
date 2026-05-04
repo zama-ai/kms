@@ -131,7 +131,7 @@ jobs:
           CONTENT_HASH=$(
             {
               echo "base=${BASE_DIGEST}"
-              sha256sum "${DOCKERFILE}" rust-toolchain.toml
+              cat "${DOCKERFILE}" rust-toolchain.toml
             } | sha256sum | cut -c1-12
           )
           GOLDEN_TAG="golden-${CONTENT_HASH}"
