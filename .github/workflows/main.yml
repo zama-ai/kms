@@ -239,14 +239,12 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
-      # per-entry specs. core-client never references TEST_THRESHOLD_KEY_ID_{10P,13P} — concrete needs:
-      #   threshold   : 4P testing (aka "insecure" after #543) + 4P default (aka "secure" after #543)
-      #   centralized : central testing only (no threshold material)
-      # Threshold entry: PRSS tests (sequential via #[serial]); needs default material.
-      # Centralized entry: keygen, CRS, backup/restore workflows.
-      # Both skip: full_gen_tests (nightly), nightly_* (scheduled),
-      # k8s_* (cluster tests), isolated_test_example (demo).
+      # PR matrix has two disjoint entries:
+      #   threshold   : threshold-named tests (skip full_gen_tests, nightly,
+      #                 k8s_, centralized, isolated_test_example, the docker-tls
+      #                 test, and test_threshold_concurrent_crs).
+      #   centralized : centralized-named tests (skip the same nightly/k8s
+      #                 family plus threshold).
       # The docker-tls test runs in its own dedicated job — skip it here.
       - name: Set matrix
         id: set-matrix
@@ -530,9 +528,6 @@ jobs:
       #     run in `test-core-service-slow-threshold`. Nightly-named tests run
       #     in the schedule entry below.
       # Schedule entry runs everything name-matching `nightly` in --release.
-      #
-      # TODO(dp): after https://github.com/zama-ai/kms/pull/543 lands, pass
-      # per-entry specs instead of regenerating everything.
       - name: Set matrix
         id: set-matrix
         run: |
