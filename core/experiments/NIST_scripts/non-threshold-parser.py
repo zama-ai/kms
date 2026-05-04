@@ -376,7 +376,7 @@ def parse_zk_size_line(line):
             entry = ZK_RESULT_MAP[key]
             if name.endswith("_verify_load"):
                 entry.proof_size_load_verify = size_kb
-            elif name.endswith("_prood_load"):
+            elif name.endswith("_proof_load"):
                 entry.proof_size_load_proof = size_kb
             else:
                 print("Unknown proof size line with name {}: {}".format(name, line))
