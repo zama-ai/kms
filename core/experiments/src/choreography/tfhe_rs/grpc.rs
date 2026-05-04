@@ -168,10 +168,15 @@ struct KeyBucket<const EXTENSION_DEGREE: usize> {
     pub_keyset: Arc<Option<CompressedXofKeySet>>,
     pub_keyset_decompressed: Arc<FhePubKeySet>,
     priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    priv_keyset_modswitched_z64: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
     params: DKGParams,
 }
 
-impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
     pub fn new_compressed(
         keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
         params: DKGParams,
@@ -183,7 +188,8 @@ impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
                 public_key,
                 server_key,
             }),
-            priv_keyset: Arc::new(keys.1),
+            priv_keyset: Arc::new(keys.1.clone()),
+            priv_keyset_modswitched_z64: Arc::new(keys.1.lift_to_z64()),
             params,
         }
     }
@@ -192,7 +198,8 @@ impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
         Self {
             pub_keyset: Arc::new(None),
             pub_keyset_decompressed: Arc::new(keys.0),
-            priv_keyset: Arc::new(keys.1),
+            priv_keyset: Arc::new(keys.1.clone()),
+            priv_keyset_modswitched_z64: Arc::new(keys.1.lift_to_z64()),
             params,
         }
     }
@@ -1923,7 +1930,7 @@ where
                                                 >(
                                                     &mut base_session,
                                                     &mut inner_preprocessings,
-                                                    key_ref.priv_keyset.as_ref(),
+                                                    key_ref.priv_keyset_modswitched_z64.as_ref(),
                                                     &ks,
                                                     inner_blocks_ctxt,
                                                 )
@@ -2132,7 +2139,7 @@ where
                                         task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, u64>(
                                             &mut session,
                                             &mut inner_preprocessings,
-                                            &key_share.priv_keyset,
+                                            &key_share.priv_keyset_modswitched_z64,
                                             &ksk,
                                             ctxts_blocks,
                                         )
@@ -2689,7 +2696,8 @@ where
                 Arc::new(KeyBucket {
                     pub_keyset: public_key_set,
                     pub_keyset_decompressed: public_key_set_decompressed,
-                    priv_keyset: Arc::new(new_private_key_set),
+                    priv_keyset: Arc::new(new_private_key_set.clone()),
+                    priv_keyset_modswitched_z64: Arc::new(new_private_key_set.lift_to_z64()),
                     params,
                 }),
             );

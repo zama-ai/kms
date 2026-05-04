@@ -6,7 +6,6 @@ MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="./temp/tfhe-key"
 CTXT_PATH="./temp/tfhe-ctxt"
-NUM_CTXTS=10
 PARAMS="params-test-bk-sns"
 SEED=42
 INIT_VALUE=1
