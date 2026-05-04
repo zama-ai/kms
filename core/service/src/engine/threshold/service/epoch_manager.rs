@@ -1530,8 +1530,7 @@ pub(crate) mod tests {
         const PRSS_AMOUNT_PARTIES: usize = 4;
         const PRSS_THRESHOLD: usize = 1;
 
-        // Use an isolated tempdir so this test doesn't race against any other
-        // test (previously enforced via `#[serial_test::serial]`).
+        // Use an isolated tempdir so this test doesn't race against any other test.
         let material_dir = tempfile::TempDir::new().expect("tempdir creation failed");
         let material_path = material_dir.path();
 

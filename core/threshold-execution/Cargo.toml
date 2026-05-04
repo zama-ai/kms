@@ -63,7 +63,6 @@ futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
 rstest.workspace = true
-serial_test.workspace = true
 sha3.workspace = true
 test-utils.workspace = true
 tempfile.workspace = true

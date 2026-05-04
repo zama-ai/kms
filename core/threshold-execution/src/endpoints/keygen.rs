@@ -1277,13 +1277,11 @@ pub mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn keygen_params_test_bk_sns_f4() {
         keygen_params_test_bk_sns::<4>(false).await
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn keygen_params_test_compressed_bk_sns_f4() {
         keygen_params_test_bk_sns::<4>(true).await
     }
@@ -1326,14 +1324,12 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn integration_keygen_params_test_bk_sns_f4() {
         integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn integration_keygen_params_test_compressed_bk_sns_f4() {
         integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), true).await
     }
@@ -1532,7 +1528,6 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
@@ -2750,14 +2745,12 @@ pub mod tests {
     }
 
     // #[tokio::test]
-    // #[serial_test::serial]
     // #[cfg(feature = "slow_tests")]
     // async fn keygen_from_existing_private_keyset_bk_sns_f4() {
     //     keygen_from_existing_test_bk_sns::<4>(false).await
     // }
 
     #[tokio::test]
-    #[serial_test::serial]
     #[cfg(feature = "slow_tests")]
     async fn integration_compressed_keygen_from_existing_private_keyset_bk_sns_f4() {
         integration_keygen_from_existing_test_bk_sns::<4>(true).await
@@ -2840,7 +2833,6 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    #[serial_test::serial]
     async fn homprf_bsk_gen_and_oprf_correctness_f4() {
         use crate::tfhe_internals::parameters::AugmentedCiphertextParameters;
         use crate::tfhe_internals::test_feature::{
