@@ -509,4 +509,74 @@ pub(crate) mod tests {
             }
         }
     }
+
+    /// Verifies that the dedicated OPRF server key embedded in `server_key` is
+    /// consistent with the OPRF private key in `client_key` by running the
+    /// encrypted PRF for several seeds and comparing each output to the
+    /// independently computed cleartext reference.
+    pub(crate) fn check_oprf_correctness(
+        server_key: &tfhe::ServerKey,
+        client_key: &tfhe::ClientKey,
+    ) {
+        use tfhe_csprng::seeders::Seed;
+        use threshold_execution::tfhe_internals::test_feature::oprf_expected_plaintext;
+
+        #[cfg(not(feature = "slow_tests"))]
+        const NUM_SEEDS: u128 = 2;
+        #[cfg(feature = "slow_tests")]
+        const NUM_SEEDS: u128 = 50;
+
+        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _) =
+            server_key.clone().into_raw_parts();
+        let Some(oprf_server_key) = oprf_server_key else {
+            panic!("expected oprf_server_key")
+        };
+        let target_shortint_server_key = integer_server_key.into_raw_parts();
+
+        let (
+            integer_client_key,
+            _compact_client_key,
+            _compression_key,
+            _noise_squashing_key,
+            _noise_squashing_compression_key,
+            _rerand_parameters,
+            oprf_private_key,
+            _tag,
+        ) = client_key.clone().into_raw_parts();
+        let Some(oprf_private_key) = oprf_private_key else {
+            panic!("expected oprf_private_key")
+        };
+
+        let shortint_ck = tfhe::shortint::ClientKey {
+            atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
+        };
+
+        let prf_lwe_sk = match oprf_private_key.into_raw_parts().into_raw_parts() {
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(sk) => sk,
+            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
+                panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
+            }
+        };
+
+        let shortint_params = shortint_ck.parameters();
+        let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
+        let oprf_server_key = oprf_server_key.into_raw_parts();
+
+        for s in 0u128..NUM_SEEDS {
+            let seed = Seed(s);
+            let img = oprf_server_key.generate_oblivious_pseudo_random(
+                seed,
+                random_bits_count,
+                &target_shortint_server_key,
+            );
+            let actual = shortint_ck.decrypt_message_and_carry(&img);
+            let expected = oprf_expected_plaintext(
+                &prf_lwe_sk.as_view(),
+                seed,
+                shortint_params,
+                random_bits_count,
+            );
+            assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
+        }
+    }
 }

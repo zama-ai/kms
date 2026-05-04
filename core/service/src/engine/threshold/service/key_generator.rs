@@ -953,6 +953,7 @@ impl<
                     None,
                     dummy_sns_secret_key,
                     None,
+                    None,
                 )?
                 .into_raw_parts();
 

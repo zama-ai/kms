@@ -318,6 +318,7 @@ pub async fn run_key_gen_centralized(
             "centralized full keygen must embed a dedicated OPRF server key"
         );
 
+        crate::client::key_gen::tests::check_oprf_correctness(&server_key, &client_key);
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     };
 

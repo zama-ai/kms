@@ -145,6 +145,7 @@ impl TestKeyGenResult {
             }
         };
 
+        crate::client::key_gen::tests::check_oprf_correctness(&server_key, client_key);
         check_conformance(server_key.clone(), client_key.clone());
 
         let pt1 = 27u8;
@@ -658,6 +659,7 @@ pub(crate) async fn preproc_and_keygen(
         assert_eq!(&tag, client_key.tag());
         assert_eq!(&tag, public_key.tag());
         assert_eq!(&tag, server_key.tag());
+        crate::client::key_gen::tests::check_oprf_correctness(&server_key, &client_key);
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     }
 
@@ -1068,6 +1070,7 @@ async fn poll_key_gen_preproc_result(
     resp_response_vec
 }
 
+#[expect(clippy::type_complexity)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn try_reconstruct_shares(
     param: DKGParams,
@@ -1078,6 +1081,7 @@ fn try_reconstruct_shares(
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
     Option<NoiseSquashingCompressionPrivateKey>,
+    Option<tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>>,
 ) {
     use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
     use threshold_execution::tfhe_internals::{
@@ -1200,11 +1204,33 @@ fn try_reconstruct_shares(
             None
         };
 
+    let oprf_lwe_shares = all_threshold_fhe_keys
+        .iter()
+        .filter_map(|(k, v)| {
+            v.private_keys
+                .oprf_secret_key_share
+                .clone()
+                .map(|share| (*k, share.convert_to_z64().data))
+        })
+        .collect::<HashMap<_, _>>();
+    let oprf_lwe_secret_key = if oprf_lwe_shares.len() == all_threshold_fhe_keys.len() {
+        Some(
+            tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
+                oprf_lwe_shares,
+                param_handle.lwe_dimension().0,
+                threshold,
+            )),
+        )
+    } else {
+        None
+    };
+
     (
         lwe_secret_key,
         glwe_sk,
         sns_glwe_sk,
         sns_compression_private_key,
+        oprf_lwe_secret_key,
     )
 }
 
@@ -1329,7 +1355,7 @@ pub(crate) async fn verify_keygen_responses(
     }
 
     let threshold = total_num_parties.div_ceil(3) - 1;
-    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) = try_reconstruct_shares(
+    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk, oprf_lwe_sk) = try_reconstruct_shares(
         internal_client.params,
         threshold,
         all_threshold_fhe_keys.clone(),
@@ -1344,6 +1370,7 @@ pub(crate) async fn verify_keygen_responses(
         None,
         Some(sns_glwe_sk),
         sns_compression_sk,
+        oprf_lwe_sk,
     )
     .unwrap();
 

@@ -594,13 +594,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
-        //Need public seeds for the full keygen XOF and, in standard keygen,
-        //the dedicated OPRF keygen XOF.
-        //as we always work in huge rings
-        let num_randomness_needed = match keyset_config {
-            KeySetConfig::Standard(_) => 2,
-            KeySetConfig::DecompressionOnly => 1,
-        };
+        let num_randomness_needed = 1;
 
         self.total_bits_required(keyset_config) + num_randomness_needed
     }
@@ -948,11 +942,14 @@ impl DKGParamsBasics for DKGParamsRegular {
                 KeyGenSecretKeyConfig::GenerateAll => {
                     self.lwe_sk_num_bits_to_sample()
                         + self.lwe_hat_sk_num_bits_to_sample()
-                        + self.lwe_sk_num_bits_to_sample()
+                        + self.lwe_sk_num_bits_to_sample() // second sk is for oprf
                         + self.glwe_sk_num_bits_to_sample()
                         + self.compression_sk_num_bits_to_sample()
                 }
-                KeyGenSecretKeyConfig::UseExisting => self.lwe_sk_num_bits_to_sample(),
+                KeyGenSecretKeyConfig::UseExisting => {
+                    // need extra since we *might* be generating oprf sk shares
+                    self.lwe_sk_num_bits_to_sample()
+                }
             },
             KeySetConfig::DecompressionOnly => 0,
         }
@@ -1007,8 +1004,8 @@ impl DKGParamsBasics for DKGParamsRegular {
         match keyset_config {
             KeySetConfig::Standard(_) => {
                 let noises = &[
-                    self.num_needed_noise_bk(),
-                    self.num_needed_noise_bk(),
+                    self.num_needed_noise_bk(), // first is for regular bk
+                    self.num_needed_noise_bk(), // second is for oprf bk
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
                     self.num_needed_noise_rerand_ksk(),
@@ -1301,10 +1298,7 @@ impl DKGParamsBasics for DKGParamsSnS {
     }
 
     fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
-        let num_randomness_needed = match keyset_config {
-            KeySetConfig::Standard(_) => 2,
-            KeySetConfig::DecompressionOnly => 1,
-        };
+        let num_randomness_needed = 1;
 
         self.total_bits_required(keyset_config) + num_randomness_needed
     }
@@ -2182,7 +2176,7 @@ mod tests {
         let h = param.get_params_basics_handle();
         let sk_total = h.lwe_dimension().0
             + h.lwe_hat_dimension().0
-            + h.lwe_dimension().0 // the homomorphic PRF sk
+            + h.lwe_dimension().0 // oprf sk
             + h.glwe_sk_num_bits()
             + h.compression_sk_num_bits();
         assert_eq!(sk_total, h.num_raw_bits(keyset_config));
@@ -2205,7 +2199,7 @@ mod tests {
         let h = param.get_params_basics_handle();
         let sk_total = h.lwe_dimension().0
             + h.lwe_hat_dimension().0
-            + h.lwe_dimension().0
+            + h.lwe_dimension().0 // oprf sk
             + h.glwe_sk_num_bits()
             + h.compression_sk_num_bits()
             + sns_param.glwe_sk_num_bits_sns()
@@ -2257,7 +2251,7 @@ mod tests {
             h.total_bits_required(keyset_config)
         );
         assert_eq!(
-            2,
+            1,
             h.total_randomness_required(keyset_config) - h.total_bits_required(keyset_config)
         );
         let compression_bk_triples = h
