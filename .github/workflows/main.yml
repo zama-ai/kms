@@ -581,7 +581,6 @@ jobs:
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       crate-names: '-p kms'
-      # slab-backend: 'big-instance-service'
       runner-volume: '400gb'
       rust-log-level: 'info'
       lfs: true  # backward_compatibility_*.rs tests need the LFS fixtures
@@ -764,7 +763,7 @@ jobs:
     uses: ./.github/workflows/common-testing.yml
     with:
       # --no-tests=pass: no tests is not an error, but to nexttest it is and this is the fix.
-      args-tests: '--no-tests=pass ${{ matrix.features }} ${{ matrix.crates }}'
+      args-tests: '--no-tests=pass ${{ matrix.features }}'
       crate-names: ${{ matrix.crates }}
       nextest-test-threads: ${{ matrix.threads }}
       skip-test-material: true

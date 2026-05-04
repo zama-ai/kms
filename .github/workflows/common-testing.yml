@@ -279,9 +279,9 @@ jobs:
           cat ~/.aws/config
           # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
 
       # TODO(dp): keep?
       # Did reflinks actually happen? Compare the logical size of all per-test
