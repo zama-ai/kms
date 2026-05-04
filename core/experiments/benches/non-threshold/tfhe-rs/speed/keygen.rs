@@ -6,7 +6,7 @@ use crate::utilities::set_plan;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use threshold_execution::tfhe_internals::parameters::DKGParams;
-use utilities::ALL_PARAMS;
+use utilities::{ALL_PARAMS, SAMPLE_SIZE};
 
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     c.bench_function("keygen", |b| {
@@ -17,7 +17,9 @@ fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
 fn main() {
     set_plan();
     for (name, params) in ALL_PARAMS {
-        let mut c = Criterion::default().sample_size(10).configure_from_args();
+        let mut c = Criterion::default()
+            .sample_size(SAMPLE_SIZE)
+            .configure_from_args();
 
         let bench_name = format!("non-threshold_keygen_{name}");
         // FheUint64 latency

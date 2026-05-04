@@ -20,7 +20,7 @@ use experiments::zk_utils::{
     nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched, nist_verify_two_steps,
 };
 use threshold_execution::tfhe_internals::parameters::DKGParams;
-use utilities::ALL_PARAMS;
+use utilities::{ALL_PARAMS, SAMPLE_SIZE};
 
 /// Benchmark CRS generation.
 fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
@@ -144,7 +144,9 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 fn main() {
     for (params_name, params) in ALL_PARAMS {
         let bench_name = format!("non-threshold_zk-pok_{params_name}");
-        let mut c = Criterion::default().sample_size(10).configure_from_args();
+        let mut c = Criterion::default()
+            .sample_size(SAMPLE_SIZE)
+            .configure_from_args();
 
         {
             let mut group = c.benchmark_group(&bench_name);

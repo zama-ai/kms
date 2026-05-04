@@ -10,6 +10,8 @@ use threshold_bgv::bgv::basics::*;
 use threshold_bgv::bgv::utils::XofWrapper;
 use threshold_bgv::constants::*;
 
+use utilities::SAMPLE_SIZE;
+
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>) {
     let mut seeder = new_seeder();
     let seed = seeder.seed().0;
@@ -25,7 +27,9 @@ fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>) {
 }
 
 fn main() {
-    let mut c = Criterion::default().sample_size(10).configure_from_args();
+    let mut c = Criterion::default()
+        .sample_size(SAMPLE_SIZE)
+        .configure_from_args();
 
     {
         let bench_name = "non-threshold_keygen_bgv".to_string();

@@ -12,6 +12,9 @@ use threshold_execution::tfhe_internals::parameters::{
     NIST_PARAMS_P32_SNS_LWE,
 };
 
+#[allow(unused)]
+pub const SAMPLE_SIZE: usize = 100;
+
 #[cfg(feature = "measure_memory")]
 fn print_memory_usage(bench_name: String, results: Vec<usize>) {
     let num_runs = results.len();
