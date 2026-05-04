@@ -8,6 +8,7 @@
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow
 
+use crate::client::tests::common::wait_for_storage;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
@@ -374,13 +375,20 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     // Delete CRS metadata from private storage on all parties
     let crs_info_type = PrivDataType::CrsInfo.to_string();
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
-    for prefix in priv_storage_prefixes {
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for (priv_prefix, backup_prefix) in priv_storage_prefixes.iter().zip(backup_storage_prefixes) {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            prefix.as_deref(),
+            priv_prefix.as_deref(),
+        )?;
+        let backup_storage = FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::BACKUP,
+            backup_prefix.as_deref(),
         )?;
 
+        wait_for_storage(&backup_storage, &req_id, &epoch_id, &crs_info_type).await?;
         assert!(
             priv_storage
                 .data_exists_at_epoch(&req_id, &epoch_id, &crs_info_type)
@@ -416,7 +424,6 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     }
 
     // Verify backup still exists and CRS was restored
-    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
     for (backup_prefix, priv_prefix) in backup_storage_prefixes.iter().zip(priv_storage_prefixes) {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
