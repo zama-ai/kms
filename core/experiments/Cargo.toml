@@ -223,6 +223,11 @@ path = "benches/non-threshold/tfhe-zk-pok/memory.rs"
 required-features = ["measure_memory"]
 harness = false
 
+[[bench]]
+name = "non-threshold_tfhe-zk-pok_size"
+path = "benches/non-threshold/tfhe-zk-pok/size.rs"
+harness = false
+
 
 
 [features]
