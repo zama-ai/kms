@@ -200,6 +200,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         epoch_id: &EpochId,
         key_info: KmsFheKeyHandles,
         compressed_keyset: &CompressedXofKeySet,
+        compact_public_key: &tfhe::CompactPublicKey,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> anyhow::Result<()> {
         self.inner
@@ -209,6 +210,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 key_info,
                 PrivDataType::FhePrivateKey,
                 compressed_keyset,
+                compact_public_key,
                 meta_store,
                 Arc::clone(&self.fhe_keys),
             )

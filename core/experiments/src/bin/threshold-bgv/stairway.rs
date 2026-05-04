@@ -1,5 +1,7 @@
 //! MPC party binary for the BGV threshold network.
 //! Uses the experimental BGV/BFV choreography routing helper.
+use std::num::NonZero;
+
 use clap::Parser;
 use experiments::choreography;
 use experiments::choreography::bgv::strategies::ExperimentalChoreoRoutingHelper;
@@ -25,10 +27,32 @@ pub struct Cli {
     /// Disable telemetry (tracing and metrics).
     #[clap(long)]
     no_telemetry: bool,
+
+    /// Gives the expected number of parties, used to pre-compute the Lagrange basis.
+    #[clap(long)]
+    expected_num_parties: Option<usize>,
+
+    /// Gives the expected number of threshold, used to pre-compute the Lagrange basis.
+    #[clap(long)]
+    expected_threshold: Option<usize>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let (Some(num_parties), Some(threshold)) = (
+        Cli::parse().expected_num_parties,
+        Cli::parse().expected_threshold,
+    ) {
+        // Pre-compute the Lagrange basis for the expected number of parties and threshold
+        threshold_bgv::algebra::levels::init_lagrange_cache_all_fields(
+            NonZero::new(num_parties).expect("Number of parties must be non-zero"),
+            threshold,
+        )?;
+    } else {
+        println!(
+            "Expected number of parties or threshold not provided, skipping pre-computation of Lagrange basis"
+        );
+    }
     default_provider().install_default().unwrap();
     #[cfg(feature = "measure_memory")]
     experiments::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);

@@ -1,8 +1,10 @@
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::base::safe_serialize_hash_element_versioned;
+use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::StorageReader;
@@ -33,6 +35,10 @@ impl Client {
     /// We need to reference the preprocessing we want to consume via
     /// its [`RequestId`]. In theory this is not needed in the centralized case
     /// but we still require it so that it is consistent with the threshold case.
+    ///
+    /// `context_id` and `epoch_id` are optional: when the caller does not
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
+    /// these will then be used in the `extra_data` the KMS will sign.
     #[allow(clippy::too_many_arguments)]
     pub fn key_gen_request(
         &self,
@@ -60,6 +66,9 @@ impl Client {
             )));
         }
 
+        let context_id = context_id.copied().unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.copied().unwrap_or(*DEFAULT_EPOCH_ID);
+
         Ok(KeyGenRequest {
             params: Some(parsed_param),
             preproc_id: Some((*preproc_id).into()),
@@ -67,12 +76,15 @@ impl Client {
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
             keyset_added_info,
-            context_id: context_id.map(|id| (*id).into()),
-            epoch_id: epoch_id.map(|id| (*id).into()),
-            extra_data: vec![],
+            context_id: Some(context_id.into()),
+            epoch_id: Some(epoch_id.into()),
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
         })
     }
 
+    /// `context_id` and `epoch_id` are optional: when the caller does not
+    /// supply them we fall back to [`DEFAULT_MPC_CONTEXT`] / [`DEFAULT_EPOCH_ID`]
+    /// these will then be used in the `extra_data` the KMS will sign.
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
@@ -89,14 +101,17 @@ impl Client {
         }
 
         let domain = alloy_to_protobuf_domain(domain)?;
+        let context_id = context_id.copied().unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.copied().unwrap_or(*DEFAULT_EPOCH_ID);
 
         Ok(KeyGenPreprocRequest {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
-            context_id: context_id.map(|id| (*id).into()),
+            context_id: Some(context_id.into()),
             domain: Some(domain),
-            epoch_id: epoch_id.map(|id| (*id).into()),
+            epoch_id: Some(epoch_id.into()),
+            extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
         })
     }
 
@@ -139,6 +154,7 @@ impl Client {
             epoch_id: Some((*to_epoch_id).into()),
             previous_epoch,
             domain: domain.map(alloy_to_protobuf_domain).transpose()?,
+            extra_data: make_extra_data(2, Some(to_context_id), Some(to_epoch_id))?,
         })
     }
 
@@ -147,8 +163,9 @@ impl Client {
         preproc_id: &RequestId,
         domain: &Eip712Domain,
         resp: &KeyGenPreprocResult,
+        extra_data: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let sol_type = PrepKeygenVerification::new(preproc_id);
+        let sol_type = PrepKeygenVerification::new(preproc_id, extra_data);
         let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
@@ -172,7 +189,7 @@ impl Client {
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
     ) -> anyhow::Result<(ServerKey, CompactPublicKey)> {
         let req_id = parse_optional_grpc_request_id(
@@ -257,8 +274,7 @@ impl Client {
             key_id,
             server_key_digest,
             public_key_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
@@ -269,53 +285,34 @@ impl Client {
         Ok((server_key, public_key))
     }
 
-    /// Retrieve a compressed keyset based on the result from storage.
-    /// This method retrieves the `CompressedXofKeySet`, verifies its digest matches
-    /// the one in `key_gen_result.key_digests`, and verifies the EIP712 signature.
+    /// Retrieve a compressed keyset and its associated CompactPublicKey from storage.
+    /// This method retrieves the `CompressedXofKeySet` and the `CompactPublicKey`, verifies
+    /// that both digests match those in `key_gen_result.key_digests`, and verifies the
+    /// EIP712 signature over both digests.
+    ///
+    /// Note: when the compressed keyset was produced by a migration keygen (UseExisting),
+    /// the stored CompactPublicKey is the OLD one from the prior keyset rather than the one
+    /// obtained by decompressing the new compressed keyset. Callers that want the signed
+    /// public key should use the one returned here, not one derived from the keyset.
     pub async fn retrieve_compressed_keyset<R: StorageReader>(
         &self,
         preproc_id: &RequestId,
         key_id: &RequestId,
         key_gen_result: &KeyGenResult,
         domain: &Eip712Domain,
-        _extra_data: Vec<u8>,
+        extra_data: Vec<u8>,
         storage: &R,
-    ) -> anyhow::Result<Option<tfhe::xof_key_set::CompressedXofKeySet>> {
-        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = match self
+    ) -> anyhow::Result<(tfhe::xof_key_set::CompressedXofKeySet, CompactPublicKey)> {
+        let (compressed_keyset, compressed_keyset_digest): (
+            tfhe::xof_key_set::CompressedXofKeySet,
+            Vec<u8>,
+        ) = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::CompressedXofKeySet, storage)
-            .await?
-        {
-            Some(keyset) => keyset,
-            None => {
-                tracing::warn!(
-                    "Compressed keyset not found with request ID {:?}",
-                    key_gen_result.request_id
-                );
-                return Ok(None);
-            }
-        };
+            .await?;
 
-        let compressed_keyset_digest =
-            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?;
-
-        let expected_digest = key_gen_result
-            .key_digests
-            .iter()
-            .find(|kd| kd.key_type == PubDataType::CompressedXofKeySet.to_string())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Compressed keyset digest not found in key generation result for key ID {}",
-                    key_id
-                )
-            })?;
-
-        if compressed_keyset_digest != *expected_digest.digest {
-            return Err(anyhow::anyhow!(
-                "Computed compressed keyset digest {} does not match expected digest {}",
-                hex::encode(&compressed_keyset_digest),
-                hex::encode(&expected_digest.digest),
-            ));
-        }
+        let (compact_public_key, public_key_digest): (CompactPublicKey, Vec<u8>) = self
+            .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
+            .await?;
 
         let actual_preproc_id: RequestId = some_or_err(
             key_gen_result.preprocessing_id.clone(),
@@ -345,25 +342,24 @@ impl Client {
             preproc_id,
             key_id,
             compressed_keyset_digest,
-            // TODO: reenable for RFC005
-            // extra_data,
+            public_key_digest,
+            extra_data,
         );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
-        Ok(Some(compressed_keyset))
+        Ok((compressed_keyset, compact_public_key))
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
+    /// Returns an error if the stored key's digest does not match the digest in
+    /// `key_gen_result.key_digests`.
     pub async fn retrieve_decompression_key<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<tfhe::integer::compression_keys::DecompressionKey>> {
-        let decompression_key = self
+    ) -> anyhow::Result<tfhe::integer::compression_keys::DecompressionKey> {
+        let (decompression_key, _digest) = self
             .retrieve_key_no_verification(key_gen_result, PubDataType::DecompressionKey, storage)
             .await?;
         Ok(decompression_key)
@@ -382,7 +378,7 @@ impl Client {
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
         storage: &R,
-    ) -> anyhow::Result<Option<S>> {
+    ) -> anyhow::Result<(S, Vec<u8>)> {
         let mut key_digests = key_gen_result.key_digests.clone();
         let key_type_s = key_type.to_string();
         let key_digest = key_digests
@@ -402,14 +398,13 @@ impl Client {
         let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &key)?;
 
         if actual_digest != *key_digest.digest {
-            tracing::warn!(
-                "Computed key handle {} of retrieved key does not match expected key handle {}",
+            return Err(anyhow::anyhow!(
+                "Computed {key_type} digest {} does not match expected digest {}",
                 hex::encode(&actual_digest),
                 hex::encode(&key_digest.digest),
-            );
-            return Ok(None);
+            ));
         }
-        Ok(Some(key))
+        Ok((key, actual_digest))
     }
 
     /// Get a key from a public storage depending on the data type

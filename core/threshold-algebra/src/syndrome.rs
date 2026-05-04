@@ -1,6 +1,7 @@
 use super::{
     bivariate::compute_powers_list,
     poly::Poly,
+    sharing::shamir::ShamirFieldPoly,
     structure_traits::{Field, Ring},
 };
 use std::ops::Neg;
@@ -165,6 +166,17 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     sanity_check_decoding(sigma, omega, r, &bs, &e, &lagrange_polys, x_alpha);
 
     e
+}
+
+/// Decodes a syndrome over a binary extension field using party indices as evaluation points.
+pub fn syndrome_decoding_z2<F: Field + From<u8>>(
+    parties: &[usize],
+    syndrome: &ShamirFieldPoly<F>,
+    threshold: usize,
+) -> Vec<F> {
+    let xs: Vec<F> = parties.iter().map(|s| F::from(*s as u8)).collect();
+    let r = parties.len() - (threshold + 1);
+    decode_syndrome(syndrome, &xs, r)
 }
 
 #[cfg(test)]

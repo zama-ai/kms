@@ -5,7 +5,7 @@ cfg_if::cfg_if! {
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::engine::base::{
-            compute_info_compressed_keygen_from_digest, compute_info_crs_from_digest,
+            compute_info_compressed_keygen_from_digests, compute_info_crs_from_digest,
             CrsGenMetadata,
         };
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, safe_serialize_hash_element_versioned};
@@ -561,13 +561,25 @@ where
     .await
     .expect("FHE keygen task panicked");
 
-    let (compressed_keyset_1, key_info_1) = fhekey1.expect("Key generation expected to work");
-    let (compressed_keyset_2, key_info_2) = fhekey2.expect("Key generation expected to work");
+    let (compressed_keyset_1, public_key_1, key_info_1) = match fhekey1 {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate first set of FHE keys: {}", e);
+            return false;
+        }
+    };
+    let (compressed_keyset_2, public_key_2, key_info_2) = match fhekey2 {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate second set of FHE keys: {}", e);
+            return false;
+        }
+    };
 
     let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
     let pub_fhe_map = HashMap::from([
-        (*key_id, compressed_keyset_1),
-        (*other_key_id, compressed_keyset_2),
+        (*key_id, (compressed_keyset_1, public_key_1)),
+        (*other_key_id, (compressed_keyset_2, public_key_2)),
     ]);
 
     // Store private key data
@@ -615,8 +627,8 @@ where
         }
     }
 
-    // Store compressed keyset as public key data
-    for (req_id, compressed_keyset) in pub_fhe_map {
+    // Store compressed keyset and the public key derived from it as public key data
+    for (req_id, (compressed_keyset, public_key)) in pub_fhe_map {
         tracing::info!("Storing compressed keyset");
         if let Err(e) = store_versioned_at_request_id(
             pub_storage,
@@ -634,6 +646,23 @@ where
             continue; // Skip this key but try others
         }
         log_storage_success(req_id, pub_storage.info(), "compressed keyset", true, false);
+
+        if let Err(e) = store_versioned_at_request_id(
+            pub_storage,
+            &req_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        {
+            tracing::error!(
+                "Failed to store public key for request ID {}: {}",
+                req_id,
+                e
+            );
+            continue;
+        }
+        log_storage_success(req_id, pub_storage.info(), "public key", true, false);
     }
     true
 }
@@ -1091,8 +1120,29 @@ where
             }
         };
 
-    // Wrap the compressed keyset and per-party shares once; futures hold cheap Arc clones.
+    // Derive the CompactPublicKey from the compressed keyset once; store and sign it
+    // along with the compressed keyset for each party.
+    let compact_public_key = match compressed_keyset.decompress() {
+        Ok(ks) => ks.into_raw_parts().0,
+        Err(e) => {
+            tracing::error!("Failed to decompress compressed keyset: {}", e);
+            return false;
+        }
+    };
+
+    // Hash the compact public key once; reuse per party.
+    let public_key_digest =
+        match safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &compact_public_key) {
+            Ok(digest) => digest,
+            Err(e) => {
+                tracing::error!("Failed to hash compact public key: {}", e);
+                return false;
+            }
+        };
+
+    // Wrap the compressed keyset, public key, and per-party shares once; futures hold cheap Arc clones.
     let compressed_keyset = Arc::new(compressed_keyset);
+    let compact_public_key = Arc::new(compact_public_key);
     let key_shares: Vec<_> = key_shares.into_iter().map(Arc::new).collect();
 
     let domain = dummy_domain();
@@ -1105,15 +1155,18 @@ where
         .map(|(idx, (((pub_s, priv_s), sk), share))| {
             let party = idx + 1;
             let compressed_digest = compressed_digest.clone();
+            let public_key_digest = public_key_digest.clone();
             let compressed_keyset = compressed_keyset.clone();
+            let compact_public_key = compact_public_key.clone();
             let domain = &domain;
 
             async move {
-                let info = match compute_info_compressed_keygen_from_digest(
+                let info = match compute_info_compressed_keygen_from_digests(
                     sk,
                     &INSECURE_PREPROCESSING_ID,
                     key_id,
                     compressed_digest,
+                    public_key_digest,
                     domain,
                     vec![],
                 ) {
@@ -1148,6 +1201,24 @@ where
                     return;
                 }
                 log_storage_success(key_id, pub_s.info(), "compressed keyset", true, true);
+
+                // Store the compact public key alongside the compressed keyset
+                if let Err(store_err) = store_versioned_at_request_id(
+                    pub_s,
+                    key_id,
+                    &*compact_public_key,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to store public key for party {}: {}",
+                        party,
+                        store_err
+                    );
+                    return;
+                }
+                log_storage_success(key_id, pub_s.info(), "public key", true, true);
 
                 if let Err(store_err) = store_versioned_at_request_and_epoch_id(
                     priv_s,

@@ -56,7 +56,7 @@ pub async fn preprocessing_impl<
         .start();
     let inner = request.into_inner();
 
-    let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain) =
+    let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain, extra_data) =
         validate_preproc_request(inner)?;
 
     add_req_to_meta_store(
@@ -73,8 +73,9 @@ pub async fn preprocessing_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
-    let external_signature = compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain)
-        .map_err(|e| e.to_string());
+    let external_signature =
+        compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain, extra_data)
+            .map_err(|e| e.to_string());
 
     let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
         external_signature,
@@ -177,6 +178,7 @@ mod tests {
             context_id: None,
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             epoch_id: None,
+            extra_data: vec![],
         };
         let result = preprocessing_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_ok());
@@ -184,8 +186,10 @@ mod tests {
             get_preprocessing_res_impl(&kms, Request::new(preproc_req_id.into())).await;
         assert!(get_result.is_ok());
         let inner_res = get_result.unwrap().into_inner();
-        let sol_struct =
-            PrepKeygenVerification::new(&inner_res.preprocessing_id.unwrap().try_into().unwrap());
+        let sol_struct = PrepKeygenVerification::new(
+            &inner_res.preprocessing_id.unwrap().try_into().unwrap(),
+            vec![],
+        );
         assert_eq!(
             recover_address_from_ext_signature(&sol_struct, &domain, &inner_res.external_signature)
                 .unwrap(),
@@ -208,6 +212,7 @@ mod tests {
             context_id: None,
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             epoch_id: None,
+            extra_data: vec![],
         };
         let err = preprocessing_impl(&kms, Request::new(preproc_req))
             .await
@@ -228,6 +233,7 @@ mod tests {
             context_id: None,
             domain: Some(domain.clone()),
             epoch_id: None,
+            extra_data: vec![],
         };
         // First call should succeed
         let result1 = preprocessing_impl(&kms, Request::new(preproc_req.clone())).await;
@@ -256,6 +262,7 @@ mod tests {
                 context_id: None,
                 domain: None, // Missing domain
                 epoch_id: None,
+                extra_data: vec![],
             };
             let result = preprocessing_impl(&kms, Request::new(preproc_req))
                 .await
@@ -273,6 +280,7 @@ mod tests {
                 context_id: None,
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let result = preprocessing_impl(&kms, Request::new(preproc_req))
                 .await
@@ -292,6 +300,7 @@ mod tests {
                 context_id: None,
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let result = preprocessing_impl(&kms, Request::new(preproc_req))
                 .await
@@ -302,15 +311,17 @@ mod tests {
 
         // wrong context ID should lead to InvalidArgument
         {
+            let context_id = kms_grpc::kms::v1::RequestId {
+                request_id: "xyz".to_string(),
+            };
             let preproc_req = KeyGenPreprocRequest {
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some(preproc_req_id.into()),
-                context_id: Some(kms_grpc::kms::v1::RequestId {
-                    request_id: "xyz".to_string(),
-                }),
+                context_id: Some(context_id),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 epoch_id: None,
+                extra_data: vec![],
             };
             let result = preprocessing_impl(&kms, Request::new(preproc_req))
                 .await
