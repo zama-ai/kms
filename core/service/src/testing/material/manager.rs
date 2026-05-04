@@ -876,18 +876,10 @@ mod tests {
         assert!(
             base_path
                 .join("PUB-p1")
-                .join(PubDataType::PublicKey.to_string())
+                .join(PubDataType::CompressedXofKeySet.to_string())
                 .join(&key_id)
                 .exists(),
-            "expected copied threshold public key for key id {key_id}"
-        );
-        assert!(
-            base_path
-                .join("PUB-p1")
-                .join(PubDataType::ServerKey.to_string())
-                .join(&key_id)
-                .exists(),
-            "expected copied threshold server key for key id {key_id}"
+            "expected copied threshold compressed keyset for key id {key_id}"
         );
     }
 }

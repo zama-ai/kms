@@ -157,7 +157,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling [decrypt] in a thread
             let mut req_tasks = JoinSet::new();
 
-            for (_party_id, ce) in core_endpoints_req.iter() {
+            for ce in core_endpoints_req.values() {
                 let req_cloned = dec_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {

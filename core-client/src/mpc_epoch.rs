@@ -395,7 +395,7 @@ pub(crate) async fn do_destroy_mpc_epoch(
     epoch_id: &EpochId,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let epoch_cloned = (*epoch_id).into();
         req_tasks.spawn(async move {
