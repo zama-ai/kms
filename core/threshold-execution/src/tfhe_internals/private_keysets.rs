@@ -1046,7 +1046,6 @@ mod test {
     mod test_definalizable {
         use super::super::{
             Definalizable, GlweSecretKeyShareEnum, LweSecretKeyShareEnum, PrivateKeySet,
-            PrivateKeySetV2,
         };
         use crate::tfhe_internals::{
             glwe_key::GlweSecretKeyShare,
@@ -1059,7 +1058,6 @@ mod test {
             sharing::share::Share,
         };
         use std::num::Wrapping;
-        use tfhe_versionable::Upgrade;
         use threshold_types::role::Role;
 
         #[test]
@@ -1223,30 +1221,6 @@ mod test {
                 .expect("to_generic should succeed with non-empty data");
             let refinalized = generic.finalize_keyset(params_handle.to_classic_pbs_parameters());
             assert_eq!(keyset, refinalized);
-        }
-
-        #[test]
-        fn test_private_keyset_v2_upgrade_sets_missing_oprf_share_to_none() {
-            let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
-            let legacy = PrivateKeySetV2::<4> {
-                lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
-                    data: vec![],
-                }),
-                lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
-                    data: vec![],
-                }),
-                glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
-                    data: vec![],
-                    polynomial_size: params_handle.polynomial_size(),
-                }),
-                glwe_secret_key_share_sns_as_lwe: None,
-                glwe_secret_key_share_compression: None,
-                glwe_sns_compression_key_as_lwe: None,
-                parameters: params_handle.to_classic_pbs_parameters(),
-            };
-
-            let upgraded = legacy.upgrade().unwrap();
-            assert!(upgraded.oprf_secret_key_share.is_none());
         }
     }
 }

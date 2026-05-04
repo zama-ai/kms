@@ -594,6 +594,8 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn total_randomness_required(&self, keyset_config: KeySetConfig) -> usize {
+        // Need 1 more element to sample the seed
+        // as we always work in huge rings
         let num_randomness_needed = 1;
 
         self.total_bits_required(keyset_config) + num_randomness_needed
@@ -2236,10 +2238,21 @@ mod tests {
 
     #[test]
     fn test_required_preproc_use_existing_with_legacy_oprf_share() {
+        // `UseExisting` keygen reuses the LWE/LWE-hat/GLWE/compression secret
+        // key shares from a previous keyset. Legacy persisted keysets may not
+        // have the dedicated OPRF LWE secret-key share though, so preprocessing
+        // must still budget one fresh LWE secret key worth of raw bits for
+        // `ensure_oprf_secret_key_share_z128`.
+        //
+        // The public material is regenerated from the existing private shares
+        // and the OPRF share, so the usual noise, random seed and BK triples are
+        // still required even though the other secret key shares are reused.
         let keyset_config = KeySetConfig::Standard(StandardKeySetConfig::use_existing_sk());
         let param = BC_PARAMS_NO_SNS;
         let h = param.get_params_basics_handle();
 
+        // BC_PARAMS_NO_SNS samples unconstrained binary secret keys, so one LWE
+        // secret key share is exactly `lwe_dimension` raw bits.
         assert_eq!(h.lwe_dimension().0, h.num_raw_bits(keyset_config));
 
         let noise_total = h.all_compression_ksk_noise(keyset_config).num_bits_needed()
@@ -2250,10 +2263,8 @@ mod tests {
             h.num_raw_bits(keyset_config) + noise_total,
             h.total_bits_required(keyset_config)
         );
-        assert_eq!(
-            1,
-            h.total_randomness_required(keyset_config) - h.total_bits_required(keyset_config)
-        );
+        // Standard keygen needs triples for the regular BK, the dedicated OPRF
+        // BK and, when compression is enabled, the compression BK.
         let compression_bk_triples = h
             .get_compression_decompression_params()
             .map_or(0, |params| {

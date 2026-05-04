@@ -138,7 +138,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated).
 - **CRS** — `CRSGen` for ZK-proof common reference strings.
-- **Reshare** — `Reshare` to rotate parties / refresh secret shares.
+- **Reshare** — `Reshare` to rotate parties / refresh secret shares. When
+  resharing legacy key material that has no dedicated OPRF secret-key share,
+  the OPRF sub-protocol is skipped and the reshared private keyset keeps that
+  field absent.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 

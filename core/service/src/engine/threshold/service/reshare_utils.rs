@@ -48,6 +48,27 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
     }
 }
 
+impl VerifiedPublicMaterial {
+    // TODO: is there no better way to find if a particular key exists? we want to avoid the cloning
+    pub(crate) fn has_oprf_key(&self) -> anyhow::Result<bool> {
+        let server_key = match self {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => fhe_pubkeys.server_key.clone(),
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => compressed_keyset
+                .clone()
+                .decompress()
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to decompress verified compressed keyset while checking OPRF key: {e}"
+                    )
+                })?
+                .into_raw_parts()
+                .1,
+        };
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        Ok(oprf_key.is_some())
+    }
+}
+
 async fn fetch_context_from_storage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,

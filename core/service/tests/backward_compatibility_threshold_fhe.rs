@@ -29,7 +29,14 @@ use threshold_execution::{
         prss::{PRSSSetup, PrssSet, PrssSetV0},
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
-    tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet},
+    tfhe_internals::{
+        glwe_key::GlweSecretKeyShare,
+        lwe_key::LweSecretKeyShare,
+        parameters::BC_PARAMS_NO_SNS,
+        private_keysets::{
+            GlweSecretKeyShareEnum, LweSecretKeyShareEnum, PrivateKeySet, PrivateKeySetV2,
+        },
+    },
 };
 use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
@@ -314,4 +321,33 @@ fn test_backward_compatibility_threshold_fhe() {
     if results.iter().any(|r| r.is_failure()) {
         panic!("Backward compatibility tests for the threshold fhe module failed")
     }
+}
+
+/// Verifies that the V2 -> V3 `PrivateKeySet` upgrade path leaves the new
+/// `oprf_secret_key_share` field as `None` for legacy material that predates
+/// the dedicated OPRF share.
+#[test]
+fn test_private_keyset_v2_upgrade_sets_missing_oprf_share_to_none() {
+    use tfhe_versionable::Upgrade;
+
+    let params_handle = BC_PARAMS_NO_SNS.get_params_basics_handle();
+    let legacy = PrivateKeySetV2::<4> {
+        lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+            data: vec![],
+        }),
+        lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+            data: vec![],
+        }),
+        glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+            data: vec![],
+            polynomial_size: params_handle.polynomial_size(),
+        }),
+        glwe_secret_key_share_sns_as_lwe: None,
+        glwe_secret_key_share_compression: None,
+        glwe_sns_compression_key_as_lwe: None,
+        parameters: params_handle.to_classic_pbs_parameters(),
+    };
+
+    let upgraded = legacy.upgrade().unwrap();
+    assert!(upgraded.oprf_secret_key_share.is_none());
 }
