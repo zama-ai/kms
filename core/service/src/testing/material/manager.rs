@@ -3,14 +3,13 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
+use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
-    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_4P,
-    DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P,
-    DEFAULT_THRESHOLD_KEY_ID_10P, DEFAULT_THRESHOLD_KEY_ID_13P, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID,
-    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_CRS_ID_10P,
-    TEST_THRESHOLD_KEY_ID_4P, TEST_THRESHOLD_KEY_ID_10P, TMP_PATH_PREFIX,
+    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
+    OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
 };
+use crate::engine::base::derive_request_id;
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{Either, ready};
@@ -107,23 +106,21 @@ impl TestMaterialManager {
         };
 
         // Determine subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            MaterialType::Testing => "testing",
-            MaterialType::Default => "default",
-        };
-
-        let material_path = source_path.join(material_subdir);
+        let material_path = source_path.join(material_subdir(spec.material_type));
 
         if !material_path.exists() {
+            let generation_hint = match spec.material_type {
+                MaterialType::Testing => "generate-test-material --profile insecure --parties 4,10",
+                MaterialType::Default => {
+                    "generate-test-material --profile secure --parties 4,10,13"
+                }
+            };
             return Err(anyhow!(
                 "Material not found for {:?} at: {}\n\
-                 Run: make generate-test-material-{}",
+                 Run: {}",
                 spec.material_type,
                 material_path.display(),
-                match spec.material_type {
-                    MaterialType::Testing => "testing",
-                    MaterialType::Default => "all",
-                }
+                generation_hint
             ));
         }
 
@@ -183,12 +180,10 @@ impl TestMaterialManager {
     #[cfg(any(test, feature = "testing"))]
     async fn copy_material(&self, temp_dir: &TempDir, spec: &TestMaterialSpec) -> Result<()> {
         // Determine source subdirectory based on material type
-        let material_subdir = match spec.material_type {
-            MaterialType::Testing => "testing",
-            MaterialType::Default => "default",
-        };
-
-        let source_base = self.source_path.as_ref().map(|p| p.join(material_subdir));
+        let source_base = self
+            .source_path
+            .as_ref()
+            .map(|p| p.join(material_subdir(spec.material_type)));
         let source_base_ref = source_base.as_deref();
         let dest_base = temp_dir.path();
 
@@ -571,19 +566,19 @@ impl TestMaterialManager {
                         TEST_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_TEST_ID.to_string(),
                     ],
-                    4 => vec![TEST_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![TEST_THRESHOLD_KEY_ID_10P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Testing material: {n}. Supported: 1 (centralized), 4, 10"
-                    ),
+                    n => vec![
+                        derive_request_id(&threshold_key_id_name(MaterialType::Testing, n))
+                            .expect("threshold testing key fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
-                    4 => vec![TEST_THRESHOLD_CRS_ID_4P.to_string()],
-                    10 => vec![TEST_THRESHOLD_CRS_ID_10P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Testing CRS: {n}. Supported: 1 (centralized), 4, 10"
-                    ),
+                    n => vec![
+                        derive_request_id(&threshold_crs_id_name(MaterialType::Testing, n))
+                            .expect("threshold testing CRS fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
             },
             MaterialType::Default => KeyIds {
@@ -592,21 +587,19 @@ impl TestMaterialManager {
                         DEFAULT_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_DEFAULT_ID.to_string(),
                     ],
-                    4 => vec![DEFAULT_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![DEFAULT_THRESHOLD_KEY_ID_10P.to_string()],
-                    13 => vec![DEFAULT_THRESHOLD_KEY_ID_13P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Default material: {n}. Supported: 1 (centralized), 4, 10, 13"
-                    ),
+                    n => vec![
+                        derive_request_id(&threshold_key_id_name(MaterialType::Default, n))
+                            .expect("threshold default key fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
                 crs_keys: match spec.party_count() {
                     1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
-                    4 => vec![DEFAULT_THRESHOLD_CRS_ID_4P.to_string()],
-                    10 => vec![DEFAULT_THRESHOLD_CRS_ID_10P.to_string()],
-                    13 => vec![DEFAULT_THRESHOLD_CRS_ID_13P.to_string()],
-                    n => panic!(
-                        "Unsupported party count for Default CRS: {n}. Supported: 1 (centralized), 4, 10, 13"
-                    ),
+                    n => vec![
+                        derive_request_id(&threshold_crs_id_name(MaterialType::Default, n))
+                            .expect("threshold default CRS fixture ID must derive")
+                            .to_string(),
+                    ],
                 },
             },
         }
@@ -622,7 +615,7 @@ struct KeyIds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::DEFAULT_EPOCH_ID;
+    use crate::consts::{DEFAULT_EPOCH_ID, TEST_THRESHOLD_KEY_ID_4P};
     use crate::testing::helpers::create_test_material_manager;
 
     #[tokio::test]
@@ -713,5 +706,17 @@ mod tests {
                     .exists()
             );
         }
+
+        let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))
+            .unwrap()
+            .to_string();
+        assert!(
+            base_path
+                .join("PUB-p1")
+                .join(PubDataType::CompressedXofKeySet.to_string())
+                .join(&key_id)
+                .exists(),
+            "expected copied threshold compressed keyset for key id {key_id}"
+        );
     }
 }

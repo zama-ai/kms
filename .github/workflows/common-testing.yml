@@ -186,7 +186,7 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
-      # Generate the full `all` test material set (testing + default).
+      # Generate the full insecure+secure test material set for parties 4, 10, 13.
       # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
       # into per-test tempdirs as reflinks (CoW) instead of byte copies.
       - name: Generate Test Material
@@ -212,8 +212,8 @@ jobs:
 
           # Build the generator in Cargo's built-in `test` profile so nextest
           # can reuse more of the same optimized artifacts later in the job.
-          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose all"
-          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose all
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,10,13"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,10,13
 
           # TODO(dp): keep?
           # Confirms material landed on the btrfs mount (via the symlink). Expect ~20-80GB.

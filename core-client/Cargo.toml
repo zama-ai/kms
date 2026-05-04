@@ -102,8 +102,9 @@ ignored = ["kms", "strum"]
 # Material requirements:
 # - Test params: missing PRSS can be initialized live at server startup.
 # - Default params: pre-generated PRSS is required in `test-material/default`
-#   (run `make generate-test-material-default`); missing PRSS is a hard error.
-# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss)
+#   (run `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,10,13`);
+#   missing PRSS is a hard error.
+# - Some tests generate PRSS during the test itself (via NewEpoch/new_prss_isolated)
 #   and therefore do not require pre-generated startup PRSS.
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
 threshold_tests = ["testing"]
