@@ -243,7 +243,7 @@ pub(crate) async fn do_new_mpc_context(
     let context_id = new_context.context_id;
 
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
         req_tasks.spawn(async move {
@@ -270,7 +270,7 @@ pub(crate) async fn do_destroy_mpc_context(
     context_id: &ContextId,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let context_cloned = (*context_id).into();
         req_tasks.spawn(async move {
