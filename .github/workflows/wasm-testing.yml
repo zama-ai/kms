@@ -72,7 +72,7 @@ jobs:
       # tempdirs by copying from the workspace's `test-material/` directory.
       - name: Generate test material
         run: |
-          cargo run -p generate-test-material -- --output ./test-material --verbose testing
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
 
       - name: Generate wasm test files
         working-directory: ./core/service
