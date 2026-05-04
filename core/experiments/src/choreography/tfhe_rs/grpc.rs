@@ -415,17 +415,17 @@ where
         let line = '─'.to_string().repeat(content_width + 2).to_string();
         format!(
             "┌{}┐\n│ {:^width$} │\n├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}└{}┘",
-            &line,
+            line,
             header,
-            &line,
+            line,
             format_section("PRSSInit:", &prss_desc),
-            &line,
+            line,
             format_section("SmallOffline:", &small_desc),
-            &line,
+            line,
             format_section("LargeOfflineZ64:", &large_z64_desc),
-            &line,
+            line,
             format_section("LargeOfflineZ128:", &large_z128_desc),
-            &line,
+            line,
             width = content_width
         )
     }

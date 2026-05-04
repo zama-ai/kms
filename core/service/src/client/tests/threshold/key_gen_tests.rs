@@ -969,7 +969,7 @@ pub(crate) async fn run_preproc(
             .unwrap();
 
         // Execute partial preprocessing
-        for (_, cur_client) in kms_clients.iter() {
+        for cur_client in kms_clients.values() {
             let mut cur_client = cur_client.clone();
             let req_clone = preproc_request.clone();
             tasks_gen.spawn(async move {
@@ -992,7 +992,7 @@ pub(crate) async fn run_preproc(
             .unwrap();
 
         // Execute preprocessing
-        for (_, cur_client) in kms_clients.iter() {
+        for cur_client in kms_clients.values() {
             let mut cur_client = cur_client.clone();
             let req_clone = preproc_request.clone();
             tasks_gen.spawn(async move {
@@ -1031,7 +1031,7 @@ async fn poll_key_gen_preproc_result(
     max_iter: usize,
 ) -> Vec<kms_grpc::kms::v1::KeyGenPreprocResult> {
     let mut resp_tasks = JoinSet::new();
-    for (_, client) in kms_clients.iter() {
+    for client in kms_clients.values() {
         let mut client = client.clone();
         let req_id_clone = request.request_id.as_ref().unwrap().clone();
 
@@ -1421,8 +1421,9 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 /// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
 /// **Requires:**
 /// - `insecure` feature flag
-/// - `slow_tests` feature flag (for default material generation)
-/// - Pre-generated default material: `make generate-test-material-all`
+/// - `slow_tests` feature flag (to run this slow default-parameter test)
+/// - Pre-generated secure material:
+///   `generate-test-material --profile secure --parties 4,10,13`
 #[tokio::test]
 #[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
