@@ -257,7 +257,7 @@ fn unpack_user_decrypt_req(
         .map_err(|e| {
         anyhow::anyhow!(
             "Error parsing checksummed client address: {} - {e}",
-            &req.client_address
+            req.client_address
         )
     })?;
 

@@ -117,9 +117,9 @@ fn validate_user_decrypt_meta_data_and_signature(
             anyhow::bail!(
                 "{}: pivot is has verification key {:?} with type {:?}, other has verification key {:?} with type {:?}",
                 ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
-                &pivot_resp.verification_key,
+                pivot_resp.verification_key,
                 pivot_type[i],
-                &other_resp.verification_key,
+                other_resp.verification_key,
                 check_type[i],
             );
         }
