@@ -221,7 +221,7 @@ impl StorageReader for S3Storage {
             .list_objects_v2()
             .bucket(&self.bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/", &self.prefix, data_type))
+            .prefix(format!("{}/{}/", self.prefix, data_type))
             .send()
             .await?;
         for cur_res in result.contents() {
@@ -283,7 +283,7 @@ impl StorageReaderExt for S3Storage {
             .list_objects_v2()
             .bucket(&self.bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/{}/", &self.prefix, data_type, epoch_id))
+            .prefix(format!("{}/{}/{}/", self.prefix, data_type, epoch_id))
             .send()
             .await?;
         for cur_res in result.contents() {
@@ -306,7 +306,7 @@ impl StorageReaderExt for S3Storage {
             .list_objects_v2()
             .bucket(&self.bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/", &self.prefix, data_type))
+            .prefix(format!("{}/{}/", self.prefix, data_type))
             .send()
             .await?;
         // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,

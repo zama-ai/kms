@@ -26,7 +26,7 @@ pub(crate) async fn do_get_operator_pub_keys(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<String>> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -80,7 +80,7 @@ pub(crate) async fn do_new_custodian_context(
         custodian_context_id: Some(custodian_context_id.into()),
         threshold,
     };
-    for (_party_id, ce) in core_endpoints.iter() {
+    for ce in core_endpoints.values() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
         let mpc_context_id_cloned = mpc_context_id;
@@ -195,7 +195,7 @@ pub(crate) async fn do_restore_from_backup(
     core_endpoints: &mut HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for ce in core_endpoints.values_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client

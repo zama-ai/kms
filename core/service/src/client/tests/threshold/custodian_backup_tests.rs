@@ -418,7 +418,7 @@ async fn test_decrypt_after_recovery_threshold_negative() {
 #[cfg(feature = "insecure")]
 fn corrupt_custodian_outputs(cus_out: &mut HashMap<Address, (u32, CustodianRecoveryRequest)>) {
     // Change a bit in two of the custodians contribution to the recover requests to make them invalid
-    for (_cur_op_idx, (_, cur_payload)) in cus_out.iter_mut() {
+    for (_, cur_payload) in cus_out.values_mut() {
         // First custodian 1
         cur_payload
             .custodian_recovery_outputs
@@ -701,7 +701,7 @@ async fn test_mpc_context_backup_threshold() {
             .new_mpc_context_request(new_context)
             .unwrap();
         let mut req_tasks = JoinSet::new();
-        for (_, client) in env.kms_clients().iter() {
+        for client in env.kms_clients().values() {
             let req_clone = req.clone();
             let mut client = client.clone();
             req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
@@ -841,7 +841,7 @@ async fn test_backup_after_reshare_threshold() {
 
     // Execute the reshare on all parties
     let mut tasks = JoinSet::new();
-    for (_, client) in env.kms_clients().iter() {
+    for client in env.kms_clients().values() {
         let req = epoch_request.clone();
         let mut client = client.clone();
         tasks.spawn(async move { client.new_mpc_epoch(tonic::Request::new(req)).await });
@@ -852,7 +852,7 @@ async fn test_backup_after_reshare_threshold() {
 
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
-    for (_, client) in env.kms_clients().iter() {
+    for client in env.kms_clients().values() {
         let mut client = client.clone();
         let req_id = new_epoch_req_id;
         let mut ctr = 0_usize;
@@ -1011,7 +1011,7 @@ async fn run_custodian_backup_recovery(
 ) -> Vec<Empty> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
-    for (_addr, (client_id, req)) in reqs.iter() {
+    for (client_id, req) in reqs.values() {
         let mut cur_client = kms_clients.get(client_id).unwrap().clone();
         let req_clone = req.clone();
         tasks_gen.spawn(async move {

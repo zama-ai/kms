@@ -147,7 +147,7 @@ impl Broadcast for MaliciousBroadcastSender {
         cast_threshold_vote::<Z, B>(session, &my_role, &registered_votes, 1).await?;
 
         //Keep track of which instances of bcast we already voted for so we don't vote twice
-        for ((role, _), _) in registered_votes.iter() {
+        for (role, _) in registered_votes.keys() {
             let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
                 anyhow_error_and_log(format!("Can't retrieve whether I ({role}) casted a vote"))
             })?;
