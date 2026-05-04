@@ -162,7 +162,6 @@ jobs:
     name: docker-build/golden-image (bpr)
     needs: [golden-image-tag]
     if: |
-      needs.golden-image-tag.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@478ee7de5baeab4fd49edfc42c9b81a56f6cfb03 # v1.0.5
