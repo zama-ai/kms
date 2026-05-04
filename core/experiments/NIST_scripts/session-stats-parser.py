@@ -9,11 +9,14 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 
-TFHE_RUN_NAME = "tfhe-bench-run"
+TFHE_RUN_4P_NAME = "tfhe-bench-run-4p"
+TFHE_RUN_5P_NAME = "tfhe-bench-run-5p"
+TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_5P_NAME]
 BGV_RUN_NAME = "bgv-bench-run"
 
 EXPECTED_LINES_PER_RUN = {
-    TFHE_RUN_NAME: 28,
+    TFHE_RUN_4P_NAME: 28,
+    TFHE_RUN_5P_NAME: 28,
     BGV_RUN_NAME: 7,
 }
 
@@ -33,7 +36,8 @@ def build_tfhe_operation_labels() -> List[str]:
 
 
 OPERATION_LABELS = {
-    TFHE_RUN_NAME: build_tfhe_operation_labels(),
+    TFHE_RUN_4P_NAME: build_tfhe_operation_labels(),
+    TFHE_RUN_5P_NAME: build_tfhe_operation_labels(),
     BGV_RUN_NAME: [
         "PRSS_INIT_LEVEL_ONE",
         "PRSS_INIT_LEVEL_KSW",
@@ -79,13 +83,24 @@ def parse_metric_line(raw_line: str) -> MetricLine:
         raise ValueError(f"Missing expected key {exc} in line: {raw_line.strip()}") from exc
 
 
-def parse_session_stats_file(path: str) -> Dict[str, List[List[MetricLine]]]:
-    runs: Dict[str, List[List[MetricLine]]] = {
-        TFHE_RUN_NAME: [],
-        BGV_RUN_NAME: [],
-    }
+def split_run_marker(marker: str) -> Tuple[str, str]:
+    for run_name in TFHE_RUN_NAMES + [BGV_RUN_NAME]:
+        if marker == run_name:
+            return run_name, ""
+        run_prefix = f"{run_name} "
+        if marker.startswith(run_prefix):
+            return run_name, marker[len(run_prefix) :].strip()
+    return "", ""
 
-    current_run_name = None
+
+def parse_session_stats_file(path: str) -> Tuple[Dict[str, List[List[MetricLine]]], Dict[str, List[str]]]:
+    runs: Dict[str, List[List[MetricLine]]] = {run_name: [] for run_name in TFHE_RUN_NAMES}
+    runs[BGV_RUN_NAME] = []
+    run_ids: Dict[str, List[str]] = {run_name: [] for run_name in TFHE_RUN_NAMES}
+    run_ids[BGV_RUN_NAME] = []
+
+    current_run_name = ""
+    current_run_id = ""
     current_run_lines: List[MetricLine] = []
 
     with open(path, "r", encoding="utf-8") as file_handle:
@@ -97,8 +112,10 @@ def parse_session_stats_file(path: str) -> Dict[str, List[List[MetricLine]]]:
             if line.startswith("NEW_RUN:"):
                 if current_run_name in runs:
                     runs[current_run_name].append(current_run_lines)
+                    run_ids[current_run_name].append(current_run_id)
                 current_run_lines = []
-                current_run_name = line.split(":", 1)[1].strip()
+                run_marker = line.split(":", 1)[1].strip()
+                current_run_name, current_run_id = split_run_marker(run_marker)
                 continue
 
             if line.startswith("name="):
@@ -108,8 +125,9 @@ def parse_session_stats_file(path: str) -> Dict[str, List[List[MetricLine]]]:
 
     if current_run_name in runs:
         runs[current_run_name].append(current_run_lines)
+        run_ids[current_run_name].append(current_run_id)
 
-    return runs
+    return runs, run_ids
 
 
 def average(values: List[int]) -> float:
@@ -156,9 +174,17 @@ def warn_if_large_spread(
 
 def collect_complete_run_indexes(
     all_party_runs: Dict[str, Dict[str, List[List[MetricLine]]]],
+    all_party_run_ids: Dict[str, Dict[str, List[str]]],
     run_name: str,
     party_files: List[str],
 ) -> List[int]:
+    if not party_files:
+        print(
+            f"WARNING: Skipping run={run_name} because no party files were selected for this run",
+            file=sys.stderr,
+        )
+        return []
+
     complete_indexes: List[int] = []
     expected_len = EXPECTED_LINES_PER_RUN[run_name]
     max_runs = max(len(all_party_runs[path][run_name]) for path in party_files)
@@ -167,12 +193,24 @@ def collect_complete_run_indexes(
         run_is_complete_for_all = True
         for party_file in party_files:
             runs_for_party = all_party_runs[party_file][run_name]
+            run_ids_for_party = all_party_run_ids[party_file][run_name]
             if run_idx >= len(runs_for_party):
                 run_is_complete_for_all = False
                 print(
                     (
                         "WARNING: Skipping run={run}, run_index={run_idx} because party file {path} "
                         "does not contain this run index"
+                    ).format(run=run_name, run_idx=run_idx + 1, path=party_file),
+                    file=sys.stderr,
+                )
+                continue
+
+            if run_idx >= len(run_ids_for_party):
+                run_is_complete_for_all = False
+                print(
+                    (
+                        "WARNING: Skipping run={run}, run_index={run_idx} because party file {path} "
+                        "does not contain run ID metadata for this run index"
                     ).format(run=run_name, run_idx=run_idx + 1, path=party_file),
                     file=sys.stderr,
                 )
@@ -196,9 +234,55 @@ def collect_complete_run_indexes(
                 )
 
         if run_is_complete_for_all:
+            run_ids_at_index = [all_party_run_ids[party_file][run_name][run_idx] for party_file in party_files]
+            non_empty_run_ids = [run_id for run_id in run_ids_at_index if run_id]
+            if non_empty_run_ids and len(set(non_empty_run_ids)) > 1:
+                run_is_complete_for_all = False
+                print(
+                    (
+                        "WARNING: Skipping run={run}, run_index={run_idx} because run IDs differ across parties: {ids}"
+                    ).format(run=run_name, run_idx=run_idx + 1, ids=run_ids_at_index),
+                    file=sys.stderr,
+                )
+
+        if run_is_complete_for_all:
             complete_indexes.append(run_idx)
 
     return complete_indexes
+
+
+def expected_party_count_for_run(run_name: str) -> int:
+    if run_name.endswith("-4p"):
+        return 4
+    if run_name.endswith("-5p"):
+        return 5
+    return 0
+
+
+def select_party_files_for_run(
+    all_party_runs: Dict[str, Dict[str, List[List[MetricLine]]]],
+    run_name: str,
+    party_files: List[str],
+) -> List[str]:
+    selected_party_files = [
+        party_file for party_file in party_files if len(all_party_runs[party_file][run_name]) > 0
+    ]
+
+    expected_party_count = expected_party_count_for_run(run_name)
+    if expected_party_count and len(selected_party_files) != expected_party_count:
+        print(
+            (
+                "WARNING: run={run} expected {expected} participating party files based on run name but found {found}: {files}"
+            ).format(
+                run=run_name,
+                expected=expected_party_count,
+                found=len(selected_party_files),
+                files=selected_party_files,
+            ),
+            file=sys.stderr,
+        )
+
+    return selected_party_files
 
 
 def aggregate_run(
@@ -396,32 +480,54 @@ def main() -> None:
 
     num_parties = len(party_files)
     all_party_runs: Dict[str, Dict[str, List[List[MetricLine]]]] = {}
+    all_party_run_ids: Dict[str, Dict[str, List[str]]] = {}
     for party_file in party_files:
-        all_party_runs[party_file] = parse_session_stats_file(party_file)
+        runs, run_ids = parse_session_stats_file(party_file)
+        all_party_runs[party_file] = runs
+        all_party_run_ids[party_file] = run_ids
 
-    tfhe_complete_runs = collect_complete_run_indexes(
-        all_party_runs=all_party_runs,
-        run_name=TFHE_RUN_NAME,
-        party_files=party_files,
+    tfhe_complete_runs_by_name: Dict[str, List[int]] = {}
+    tfhe_party_files_by_name: Dict[str, List[str]] = {}
+    for tfhe_run_name in TFHE_RUN_NAMES:
+        tfhe_party_files = select_party_files_for_run(
+            all_party_runs=all_party_runs,
+            run_name=tfhe_run_name,
+            party_files=party_files,
+        )
+        tfhe_party_files_by_name[tfhe_run_name] = tfhe_party_files
+        tfhe_complete_runs_by_name[tfhe_run_name] = collect_complete_run_indexes(
+            all_party_runs=all_party_runs,
+            all_party_run_ids=all_party_run_ids,
+            run_name=tfhe_run_name,
+            party_files=tfhe_party_files,
+        )
+
+    tfhe_complete_runs_count = sum(
+        len(tfhe_complete_runs_by_name[tfhe_run_name]) for tfhe_run_name in TFHE_RUN_NAMES
     )
     bgv_complete_runs = collect_complete_run_indexes(
         all_party_runs=all_party_runs,
+        all_party_run_ids=all_party_run_ids,
         run_name=BGV_RUN_NAME,
         party_files=party_files,
     )
 
     tfhe_rows: List[List[object]] = []
-    for complete_idx, run_idx in enumerate(tfhe_complete_runs, start=1):
-        tfhe_rows.extend(
-            aggregate_run(
-                run_name=TFHE_RUN_NAME,
-                source_run_index=run_idx,
-                complete_run_index=complete_idx,
-                party_files=party_files,
-                all_party_runs=all_party_runs,
-                spread_warn_threshold=args.spread_warning_threshold,
+    tfhe_complete_run_index = 1
+    for tfhe_run_name in TFHE_RUN_NAMES:
+        tfhe_party_files = tfhe_party_files_by_name[tfhe_run_name]
+        for run_idx in tfhe_complete_runs_by_name[tfhe_run_name]:
+            tfhe_rows.extend(
+                aggregate_run(
+                    run_name=tfhe_run_name,
+                    source_run_index=run_idx,
+                    complete_run_index=tfhe_complete_run_index,
+                    party_files=tfhe_party_files,
+                    all_party_runs=all_party_runs,
+                    spread_warn_threshold=args.spread_warning_threshold,
+                )
             )
-        )
+            tfhe_complete_run_index += 1
 
     bgv_rows: List[List[object]] = []
     for complete_idx, run_idx in enumerate(bgv_complete_runs, start=1):
@@ -444,7 +550,7 @@ def main() -> None:
     write_csv(bgv_output_path, bgv_rows)
 
     print(f"Parsed {num_parties} party files.")
-    print(f"Complete TFHE runs: {len(tfhe_complete_runs)}")
+    print(f"Complete TFHE runs: {tfhe_complete_runs_count}")
     print(f"Complete BGV runs: {len(bgv_complete_runs)}")
     print(f"Wrote TFHE CSV: {tfhe_output_path}")
     print(f"Wrote BGV CSV: {bgv_output_path}")

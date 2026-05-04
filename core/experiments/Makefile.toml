@@ -144,9 +144,10 @@ mkdir -p temp/telemetry
 echo "" > temp/telemetry/export.json
 chmod o+w temp/telemetry/export.json
 mkdir -p temp/session_stats
+RUN_DATE="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 for i in $(seq 1 ${NUM_PARTIES}); do
     touch temp/session_stats/session_stats_$i.txt
-    echo "\nNEW_RUN: ${EXPERIMENT_NAME}" >> temp/session_stats/session_stats_$i.txt
+    echo "\nNEW_RUN: ${EXPERIMENT_NAME} ${RUN_DATE}" >> temp/session_stats/session_stats_$i.txt
     chmod o+w temp/session_stats/session_stats_$i.txt
 done
 '''
@@ -180,8 +181,12 @@ args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.tom
 env = {MOBY_STRATEGY = "secure"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
-[tasks.tfhe-bench-run]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run"}
+[tasks.tfhe-bench-run-4p]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run-4p"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
+
+[tasks.tfhe-bench-run-5p]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run-5p"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
 [tasks.bgv-bench-run]
