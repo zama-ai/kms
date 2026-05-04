@@ -5,7 +5,6 @@ STAIRWAYCTL_EXEC="${ROOT_DIR}/target/debug/stairwayctl"
 CURR_SID=1
 KEY_PATH="./temp/bgv-key"
 CTXT_PATH="./temp/bgv-ctxt"
-NUM_CTXTS=10
 SEED=42
 CTXT_VALUE=12345
 
@@ -63,7 +62,7 @@ else
 fi
 
 ###DDEC
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt --path-pubkey $KEY_PATH/pk.bin --num-ctxt-per-session $NUM_CTXTS --num-parallel-sessions $NUM_PARALLEL_SESSIONS --sid $CURR_SID --seed $SEED
+$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
 ##Get the result
 $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-values $CTXT_VALUE
