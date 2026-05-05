@@ -253,7 +253,6 @@ debug = "line-tables-only"
 
 [profile.bench]
 debug = "line-tables-only"
-lto = "off"
 
 # actual release profile
 [profile.release]

@@ -3,10 +3,14 @@ echo "Running test script on config file $1".
 ROOT_DIR=$(cargo locate-project --workspace -q --message-format plain|grep -o '.*/')
 STAIRWAYCTL_EXEC="${ROOT_DIR}/target/debug/stairwayctl"
 CURR_SID=1
-KEY_PATH="./temp/bgv-key"
-CTXT_PATH="./temp/bgv-ctxt"
+MAIN_PATH="./temp/bgv-reproducible"
+KEY_PATH="${MAIN_PATH}/key"
+CTXT_PATH="${MAIN_PATH}/ctxt"
 SEED=42
 CTXT_VALUE=12345
+
+mkdir -p $KEY_PATH
+mkdir -p $CTXT_PATH
 
 exec 2>&1
 set -x
@@ -16,6 +20,7 @@ set -e
 cargo build --bin stairwayctl
 
 #Init the PRSS
+echo "Initializing PRSS"
 $STAIRWAYCTL_EXEC -c $1 prss-init --ring level-one --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
 CURR_SID=$(( CURR_SID + 1 ))
@@ -27,6 +32,7 @@ SEED=$(( SEED + 1 ))
 
 
 ##KEY GEN
+echo "Generating keys"
 #Create preproc for dkg
 $STAIRWAYCTL_EXEC -c $1 preproc-key-gen --num-sessions 5 --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 30
@@ -62,6 +68,7 @@ else
 fi
 
 ###DDEC
+echo "Decrypting ctxt"
 $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED
 $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
 ##Get the result

@@ -76,7 +76,7 @@ tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 tonic-prost-build.workspace = true
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "gen-experiment"
