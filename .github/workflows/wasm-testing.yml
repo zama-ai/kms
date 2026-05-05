@@ -2,14 +2,6 @@ name: wasm-testing
 
 on:
   workflow_call:
-    inputs:
-      working-directory:
-        type: string
-        required: true
-      wasm-test-feature:
-        type: string
-        required: false
-        default: '-F wasm_tests'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -31,10 +23,6 @@ jobs:
       contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - name: Checkout Project
@@ -63,23 +51,30 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm with tests
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
+        working-directory: ./core/service
+        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
 
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
 
-      - name: Generate wasm test files
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
+      # Required by `test_user_decryption_*_and_write_transcript`: the helpers
+      # they call (`user_decryption_threshold` / `user_decryption_centralized`)
+      # use `ThresholdTestEnv` / `CentralizedTestEnv`, which populate per-test
+      # tempdirs by copying from the workspace's `test-material/` directory.
+      - name: Generate test material
         run: |
-          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
+          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+
+      - name: Generate wasm test files
+        working-directory: ./core/service
+        run: |
+          cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --lib
+          cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
+        working-directory: ./core/service
         run: node --test tests/js
 
       # NPM package handling

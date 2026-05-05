@@ -245,7 +245,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[serial_test::parallel]
     fn test_party_conf_with_real_file() {
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_test")
@@ -306,7 +305,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::parallel]
     fn test_party_conf_no_peers() {
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_no_peers")
@@ -331,7 +329,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::parallel]
     fn test_party_conf_error_conf() {
         let r = Settings::builder()
             .path("src/tests/config/error_conf")
@@ -341,9 +338,9 @@ mod tests {
         assert!(r.is_err());
     }
 
-    //Can't run this test in parallel with others as env variable take precedence over config files
+    // Sets process-wide env vars; safe under nextest because each test runs
+    // in its own process, so the mutations are not visible to siblings.
     #[test]
-    #[serial_test::serial]
     fn test_party_conf_with_env() {
         unsafe {
             env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");

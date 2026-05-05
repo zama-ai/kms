@@ -5,54 +5,171 @@ cfg_if::cfg_if! {
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::CrsGenRequest;
     use kms_grpc::kms::v1::{Empty, FheParameter};
     use kms_grpc::kms::v1::CrsInfo;
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::RequestId;
-    use serial_test::serial;
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Arc;
     use threshold_execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
+    use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+}}
+
+cfg_if::cfg_if! {
+   if #[cfg(feature = "slow_tests")] {
+    use std::sync::Arc;
     use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+    use crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL;
+    use crate::util::key_setup::test_tools::purge;
 }}
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_crs_gen_threshold() {
-    crs_gen(
-        4,
-        FheParameter::Test,
-        Some(16),
+async fn test_insecure_crs_gen_threshold() -> anyhow::Result<()> {
+    use crate::consts::TEST_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Test;
+    let max_bits = Some(16);
+
+    // Signing keys (request auth) + PRSS (distributed ceremony). FHE keys unused.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("insecure_crs_gen_threshold")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "insecure_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
         true, // insecure
-        1,
-        false, // not concurrent
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
     )
     .await;
+
+    Ok(())
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_crs() {
-    crs_gen(4, FheParameter::Default, Some(2048), false, 1, false).await;
+async fn secure_threshold_crs() -> anyhow::Result<()> {
+    use crate::consts::DEFAULT_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Default;
+    let max_bits = Some(2048);
+
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_default(amount_parties);
+        s.required_keys.remove(&KeyType::FheKeys);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("secure_threshold_crs")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&DEFAULT_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "secure_threshold_crs_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
+        false, // secure
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
+    )
+    .await;
+
+    Ok(())
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_crs_gen_threshold() {
-    crs_gen(4, FheParameter::Test, Some(2048), false, 1, false).await;
+async fn test_crs_gen_threshold() -> anyhow::Result<()> {
+    use crate::consts::TEST_PARAM;
+    use crate::testing::prelude::{KeyType, TestMaterialSpec, ThresholdTestEnv};
+
+    let amount_parties = 4;
+    let parameter = FheParameter::Test;
+    let max_bits = Some(2048);
+
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_crs_gen_threshold")
+        .with_party_count(amount_parties)
+        .with_threshold(1)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (clients, _servers, material_path, _guards) = env.into_parts();
+
+    let crs_req_id: RequestId = derive_request_id(&format!(
+        "test_crs_gen_threshold_{amount_parties}_{max_bits:?}_{parameter:?}"
+    ))?;
+
+    let _ = run_crs(
+        parameter,
+        &clients,
+        &internal_client,
+        false, // secure
+        &crs_req_id,
+        max_bits,
+        Some(&material_path),
+    )
+    .await;
+
+    Ok(())
 }
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+// TODO(dp): legacy global-storage path — only `nightly_tests.rs` callers
+// (slow_tests-gated) still use this. Port them to `ThresholdTestEnv::builder()`
+// and delete this helper.
+#[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
     parameter: FheParameter,

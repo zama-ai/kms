@@ -1,15 +1,21 @@
+// TODO(dp): the imports here are a noisy mess — two `cfg_if!` blocks plus
+// dozens of individually `#[cfg(...)]`-gated `use` lines. Consolidate into
+// a single `cfg_if!` per feature combo (or pull the shared imports up out
+// of the gates) on a dedicated cleanup pass.
 cfg_if::cfg_if! {
    if #[cfg(feature = "slow_tests")] {
+    use crate::client::tests::threshold::common::threshold_handles;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::engine::base::KeyGenMetadata;
+    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::read_versioned_at_request_and_epoch_id;
+
     use kms_grpc::rpc_types::PrivDataType;
 }}
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::key_gen::tests::check_conformance;
     use crate::client::tests::common::{OptKeySetConfigAccessor};
-    use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
@@ -17,14 +23,12 @@ cfg_if::cfg_if! {
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
-    use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
-    use serial_test::serial;
     use std::collections::HashMap;
     use std::str::FromStr;
     use tfhe::integer::compression_keys::DecompressionKey;
@@ -58,10 +62,12 @@ use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_
 use crate::engine::utils::make_extra_data;
 #[cfg(feature = "slow_tests")]
 use crate::testing::helpers::domain_to_msg;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
-use crate::testing::material::TestMaterialSpec;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::testing::material::{KeyType, TestMaterialSpec};
 #[cfg(any(feature = "insecure", feature = "slow_tests"))]
 use crate::testing::setup::threshold::ThresholdTestEnv;
+#[cfg(any(feature = "insecure", feature = "slow_tests"))]
+use crate::util::key_setup::max_threshold;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
@@ -163,28 +169,40 @@ impl TestKeyGenResult {
 /// Test insecure compressed keygen with Test parameters.
 /// This tests the insecure `initialize_compressed_key_material` code path where
 /// party 1 generates compressed keys locally and shares private key shares with other parties.
+// TODO(dp): the migrated tests in this file (and in mpc_context_tests.rs,
+// crs_gen_tests.rs, public_decryption_tests.rs, user_decryption_tests.rs)
+// share a heavy `ThresholdTestEnv::builder()...build()` + spec-construction
+// preamble. A second sweep should factor that out — e.g. a `with_test_setup!`
+// macro or a `ThresholdTestEnv::for_test(name, parties, spec_kind)` helper —
+// to shrink each test back down to the part that actually varies.
 #[cfg(feature = "insecure")]
 #[rstest::rstest]
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) -> anyhow::Result<()> {
     let key_id: RequestId = derive_request_id(&format!(
         "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    ))?;
+
+    // Test generates its own FHE keys; only signing material + PRSS are needed pre-generated.
+    let spec = {
+        let mut s = TestMaterialSpec::threshold_signing_only(amount_parties);
+        s.required_keys.insert(KeyType::PrssSetup);
+        s
+    };
+
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("test_insecure_compressed_dkg")
+        .with_party_count(amount_parties)
+        .with_threshold(max_threshold(amount_parties) as u8)
+        .with_material_spec(spec)
+        .with_prss()
+        .build()
+        .await?;
+
+    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
+    let (kms_clients, _kms_servers, material_path, _guards) = env.into_parts();
+
     let (keyset_config, keyset_added_info) = keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
@@ -195,7 +213,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
         keyset_config,
         keyset_added_info,
         true,
-        None,
+        Some(&material_path),
         0,
     )
     .await
@@ -209,6 +227,8 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
+
+    Ok(())
 }
 
 /// Test compressed keygen with test parameters and 4 parties.
@@ -216,7 +236,6 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
 /// using XOF-seeded compression instead of the standard keygen.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn secure_threshold_compressed_keygen_test() {
     preproc_and_keygen(
         4,
@@ -1379,7 +1398,6 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1436,7 +1454,6 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss() // PRSS is required for threshold key generation even in insecure mode
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_material_spec(spec)
         .build()
         .await?;
@@ -1492,7 +1509,6 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1552,7 +1568,6 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1662,7 +1677,6 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 
@@ -1778,7 +1792,6 @@ async fn secure_threshold_compressed_keygen_from_existing() -> anyhow::Result<()
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent fixed request IDs from colliding with shared/generated material
         .build()
         .await?;
 
@@ -2017,7 +2030,6 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .build()
         .await?;
 

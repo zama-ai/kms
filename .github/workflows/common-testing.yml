@@ -3,14 +3,6 @@ name: common-testing
 on:
   workflow_call:
     inputs:
-      working-directory:
-        type: string
-        required: false
-        default: '.'
-      build-publish-docs:
-        type: boolean
-        required: false
-        default: false
       runs-on:
         type: string
         required: false
@@ -35,36 +27,22 @@ on:
         type: boolean
         required: false
         default: false
-      run-wasm:
-        type: boolean
-        required: false
-        default: false
-      wasm-test-feature:
-        type: string
-        required: false
-        default: '-F wasm_tests'
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
-        # Injected verbatim into `cargo clippy` (and effectively into nextest
-        # via `args-tests`).
+        # Injected verbatim into cargo invocations that need explicit package
+        # scoping (`cargo clippy`, `cargo nextest`).
         type: string
         required: true
       skip-test-material:
-        # When true, skip LFS pull, test-material generation, and the
-        # kms-custodian build. Useful for light unit-test-only jobs on
-        # crates that don't need integration test fixtures.
+        # When true, skip test-material generation and the kms-custodian
+        # build. Useful for light unit-test-only jobs on crates that don't
+        # need integration test fixtures.
         type: boolean
         required: false
         default: false
-      test-coverage:
-        type: boolean
-        required: false
-        default: false
-      test-minimum-coverage:
-        type: string
-        required: false
-        default: 0
-      npm-release:
+      lfs:
+        # When true, pull LFS objects on checkout. Only `-p kms`
+        # backward_compatibility_*.rs tests need them (~24MB).
         type: boolean
         required: false
         default: false
@@ -75,29 +53,9 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: ''  # Empty = let nextest decide (respects #[serial] attribute)
-      enable-shared-material:
-        type: boolean
-        required: false
-        default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
-      use-pregenerated-material:
-        type: boolean
-        required: false
-        default: false  # If true, download test material from artifacts instead of generating
-      generate-default-material:
-        type: boolean
-        required: false
-        default: false  # If true, generate Default test material (includes pre-generated PRSS)
+        default: ''  # Empty = use nextest's default (~ num-CPUs).
     secrets:
-      CODECOV_TOKEN:
-        required: false
       GHCR_READ_TOKEN:
-        required: true
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      AWS_ACCESS_KEY_S3_USER:
-        required: true
-      AWS_SECRET_KEY_S3_USER:
         required: true
       SLACK_CHANNEL:
         required: true
@@ -115,7 +73,6 @@ env:
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
-  NPM_TAG: ''
 
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
@@ -132,15 +89,6 @@ jobs:
       contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=${{ inputs.runner-volume }}/extras=s3-cache
-    services:
-      redis:
-        image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7' || '' }}
-        ports:
-          - 6379:6379
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - name: Setup Runs-on
@@ -151,9 +99,8 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: true
+          lfs: ${{ inputs.lfs }}
+          persist-credentials: false
 
       - name: Get Rust version
         env:
@@ -161,19 +108,6 @@ jobs:
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      # LFS files are needed for backward compatibility tests
-      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
-      # need to do it right after and then manually pull LFS files
-      - name: setup gitlfs from binary
-        if: ${{ ! inputs.skip-test-material }}
-        env:
-          GIT_LFS_VERSION: '3.6.1'
-        run: |
-          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
-          git lfs pull
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
@@ -207,17 +141,16 @@ jobs:
         with:
           save-if: false
 
-      - name: Install nextest and grcov
+      - name: Install nextest
         run: |
-          # Force reinstall nextest to ensure we have the required version (0.9.124+)
-          # The cache may contain an older version that doesn't support test-groups
-          cargo install cargo-nextest@0.9.124 --locked --force
-          cargo install grcov --locked
+          cargo install cargo-nextest@0.9.133 --locked --force
 
-      - name: Setup usage of private repo
-        env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+      # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
+      - name: Setup Redis
+        if: ${{ inputs.run-redis }}
+        run: |
+          docker run -d -p 6379:6379 --name redis \
+            redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7
 
       - name: Setup minio
         if: ${{ inputs.run-minio }}
@@ -253,83 +186,73 @@ jobs:
           mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
 
-      # Download pre-generated default test material if available (for slow_tests jobs)
-      - name: Download Test Material (Default)
-        if: ${{ inputs.use-pregenerated-material }}
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
-        with:
-          name: test-material-default-${{ github.run_id }}
-          path: .
-
-      - name: Decompress Test Material (Default)
-        if: ${{ inputs.use-pregenerated-material }}
-        working-directory: .
-        run: |
-          echo "Decompressing default test material..."
-          mkdir -p ./test-material
-          tar -xzf test-material-default.tar.gz -C ./test-material
-          rm test-material-default.tar.gz
-          ls -la ./test-material/
-
-      # Generate insecure test material (always needed, small and fast to generate).
-      # Centralized fixtures are always included. Must run from workspace root.
-      - name: Generate Test Material (Testing)
+      # Generate the full insecure+secure test material set for parties 4, 10, 13.
+      # As a CoW optimization we put the material on a btrfs loopback disk so tests can `tokio::fs::copy`
+      # into per-test tempdirs as reflinks (CoW) instead of byte copies.
+      - name: Generate Test Material
         if: ${{ ! inputs.skip-test-material }}
-        working-directory: .
         run: |
-          echo "Generating insecure test material..."
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10"
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4,10
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq btrfs-progs
+          sudo truncate -s 110G /tmp/cow-scratch.img
+          sudo mkfs.btrfs -q /tmp/cow-scratch.img
+          sudo mkdir -p /mnt/cow-scratch
+          sudo mount -o loop /tmp/cow-scratch.img /mnt/cow-scratch
+          sudo chown "$USER" /mnt/cow-scratch
+          mkdir -p /mnt/cow-scratch/test-material /mnt/cow-scratch/tmp
+          rm -rf ./test-material
+          ln -s /mnt/cow-scratch/test-material ./test-material
+          echo "TMPDIR=/mnt/cow-scratch/tmp" >> "$GITHUB_ENV"
 
-      # Generate secure test material when explicitly requested or for slow_tests,
-      # and only when not using pre-generated artifacts.
-      - name: Generate Test Material (Default)
-        if: ${{ ! inputs.skip-test-material && ! inputs.use-pregenerated-material && (inputs.generate-default-material || contains(inputs.args-tests, 'slow_tests')) }}
-        working-directory: .
-        run: |
-          echo "Generating secure test material..."
-          echo "EXECUTING: cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13"
-          cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,10,13
+          # TODO(dp): keep?
+          # Confirms btrfs is mounted at /mnt/cow-scratch (vs falling back to ext4
+          # silently). If this line is missing or shows a non-btrfs FS, the
+          # preamble didn't take effect.
+          findmnt /mnt/cow-scratch
 
-      # Build kms-custodian binary required by integration tests
+          # Build the generator in Cargo's built-in `test` profile so nextest
+          # can reuse more of the same optimized artifacts later in the job.
+          echo "EXECUTING: cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,10,13"
+          cargo run --profile test -p generate-test-material -- --output ./test-material --verbose --profile insecure,secure --parties 4,10,13
+
+          # TODO(dp): keep?
+          # Confirms material landed on the btrfs mount (via the symlink). Expect ~20-80GB.
+          du -sh /mnt/cow-scratch/test-material
+
+      # Build kms-custodian binary required by integration tests.
+      # TODO(dp): retire this step. Only two test files use the binary:
+      #   - core/service/tests/integration_test.rs (`sunshine_*` in
+      #     `kms_custodian_binary_tests`) — same-package, `cargo_bin()` works
+      #     without the explicit pre-build because nextest auto-builds [[bin]]s.
+      #   - core-client/tests/integration/integration_test.rs (custodian
+      #     backup tests) — cross-package, currently needs the explicit
+      #     build. Migrate to `escargot::CargoBuild::new().bin("kms-custodian").package("kms").run()?`
+      #     so the test builds the binary on demand. See per-test TODOs in
+      #     core-client/tests/integration/integration_test.rs.
+      # Once retired, this step (and the `skip-test-material` gating below)
+      # can go away. Need a specific step/test for the kms-binary though?
       - name: Build kms-custodian binary
         if: ${{ ! inputs.skip-test-material }}
         run: |
-          echo "EXECUTING: cargo build --package kms --bin kms-custodian"
-          cargo build --package kms --bin kms-custodian
+          # Cargo's built-in `test` profile still emits into `target/debug`, so
+          # integration tests can keep resolving the sibling binary there.
+          echo "EXECUTING: cargo build --profile test --package kms --bin kms-custodian"
+          cargo build --profile test --package kms --bin kms-custodian
 
       # Test execution
       # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
         id: tests
-        if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
-          # some integration tests run docker compose
-          # which builds images which need git access
-          # building images in every integration test run is bad
-          #
-          # If we want to enable the coverage again we can use the snippets below:
-          # COVERAGE
-          # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
-          #   export RUSTFLAGS="-Cinstrument-coverage"
-          #   export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          #   ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${RUNNER_TEMP}/lcov" -t lcov
-          # else
-          #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
-          # fi
           AWS_ACCESS_KEY_ID: 'minioadmin'
           AWS_SECRET_ACCESS_KEY: 'minioadmin'
           AWS_DEFAULT_REGION: 'eu-north-1'
           AWS_ENDPOINT: 'http://127.0.0.1:9000'
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
-          NEXTEST_RETRIES: 3
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
-          ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
-          RUNNER_TEMP: ${{ runner.temp }}
           RUST_LOG: ${{ inputs.rust-log-level }}
         run: |
           # Build the env-var prefix for the nextest invocation so the printed
@@ -344,17 +267,6 @@ jobs:
             echo "NEXTEST_TEST_THREADS not set (using nextest default)"
           fi
 
-          # Enable shared test material mode if requested to save disk space.
-          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1).
-          # Shared mode uses material in-place without copying to temp directories.
-          if [[ "${ENABLE_SHARED_MATERIAL}" == "true" ]]; then
-            CMD_ENV="${CMD_ENV} KMS_TEST_SHARED_MATERIAL=1"
-            echo "KMS_TEST_SHARED_MATERIAL=1 (using shared material in-place, no copying)"
-            echo "This saves ~80GB+ disk space by avoiding material duplication"
-          else
-            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying to temp dirs)"
-          fi
-
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
           echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
@@ -365,11 +277,24 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config
-          # Intentional word-splitting on CMD_ENV and ARGS_TESTS.
+          # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest --profile ${NEXTEST_PROFILE} run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest --profile "${NEXTEST_PROFILE}" run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+
+      # TODO(dp): keep?
+      # Did reflinks actually happen? Compare the logical size of all per-test
+      # tempdirs (apparent) against the disk blocks used on the btrfs mount.
+      # If reflinks worked, apparent >> used (e.g., 200 GB logical / 25 GB used).
+      # If they didn't, apparent ≈ used and we got byte copies for nothing.
+      - name: Verify CoW reflinks
+        if: ${{ always() && ! inputs.skip-test-material }}
+        run: |
+          echo "--- logical size of per-test tempdirs (apparent) ---"
+          du -sh --apparent-size /mnt/cow-scratch/tmp 2>/dev/null || echo "no tempdirs (tests didn't run?)"
+          echo "--- actual blocks used on the btrfs mount ---"
+          df -h /mnt/cow-scratch
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
@@ -396,15 +321,6 @@ jobs:
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
-      # COVERAGE
-      # - name: Upload coverage to Codecov
-      #   if: github.event_name == 'schedule'
-      #   uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
-      #     files: '${{ runner.temp }}/lcov'
-      #     fail_ci_if_error: true
 
       - name: Set Slack color
         id: slack_color
@@ -455,19 +371,6 @@ jobs:
           path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore
-
-      # Documentation
-      - name: Build Documentation
-        if: ${{ inputs.build-publish-docs }}
-        run: cargo doc --no-deps
-
-      - name: Deploy to GitHub Pages
-        if: ${{ inputs.build-publish-docs }}
-        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc
-          destination_dir: ${{ inputs.working-directory }}
 
       - name: Remove aws credentials file
         run: |

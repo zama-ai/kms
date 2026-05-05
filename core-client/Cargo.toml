@@ -82,7 +82,6 @@ test-utils-cc = { path = "./test-utils-cc" }
 futures.workspace = true
 # Self-import for integration tests
 kms-core-client = { workspace = true, features = ["testing"] }
-serial_test.workspace = true
 test-context.workspace = true
 toml.workspace = true
 

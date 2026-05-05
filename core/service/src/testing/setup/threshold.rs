@@ -7,7 +7,7 @@ use crate::consts::{
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
 use crate::testing::helpers::create_test_material_manager;
-use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMaterialSpec};
+use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
 use crate::util::key_setup::{
@@ -17,20 +17,28 @@ use crate::vault::storage::{StorageType, file::FileStorage};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
+use tempfile::TempDir;
 use tonic::transport::Channel;
 
 /// Threshold KMS test environment
 ///
 /// Provides an isolated multi-party KMS setup with automatic cleanup.
-/// The environment is automatically cleaned up when dropped (for isolated mode)
-/// or kept intact (for shared mode when KMS_TEST_SHARED_MATERIAL=1).
+/// The environment is automatically cleaned up when dropped.
 pub struct ThresholdTestEnv {
-    /// Test material directory handle (isolated or shared)
-    pub material_dir: TestMaterialHandle,
+    /// Per-test isolated material directory (auto-deleted on drop)
+    pub material_dir: TempDir,
     /// Running KMS server handles (keyed by party ID)
     pub servers: HashMap<u32, ServerHandle>,
     /// gRPC clients for communicating with servers (keyed by party ID)
     pub clients: HashMap<u32, CoreServiceEndpointClient<Channel>>,
+}
+
+/// Lifetime guard returned by [`ThresholdTestEnv::into_parts`].
+///
+/// Owns the tempdir handle. Must be held until the test body finishes — dropping it deletes the tempdir the servers
+/// were reading from.
+pub struct TestMaterialGuard {
+    _material_dir: TempDir,
 }
 
 impl ThresholdTestEnv {
@@ -62,6 +70,25 @@ impl ThresholdTestEnv {
     /// Consume and iterate over all servers with their party IDs (for shutdown)
     pub fn into_servers_with_id(self) -> impl Iterator<Item = (u32, ServerHandle)> {
         self.servers.into_iter()
+    }
+
+    /// Destructure the [`ThresholdTestEnv`] into parts.
+    ///
+    /// Returns `(clients, servers, material_path, guards)`. Tests that also need an `internal_client` should build it
+    /// via [`create_internal_client`](Self::create_internal_client) before calling `into_parts`.
+    pub fn into_parts(
+        self,
+    ) -> (
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
+        HashMap<u32, ServerHandle>,
+        std::path::PathBuf,
+        TestMaterialGuard,
+    ) {
+        let material_path = self.material_dir.path().to_path_buf();
+        let guards = TestMaterialGuard {
+            _material_dir: self.material_dir,
+        };
+        (self.clients, self.servers, material_path, guards)
     }
 
     /// Get client for a specific party ID
@@ -177,7 +204,6 @@ pub struct ThresholdTestEnvBuilder {
     with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
     decryption_mode: Option<threshold_execution::endpoints::decryption::DecryptionMode>,
-    force_isolated: bool,
 }
 
 impl Default for ThresholdTestEnvBuilder {
@@ -193,7 +219,6 @@ impl Default for ThresholdTestEnvBuilder {
             with_custodian_keychain: false,
             rate_limiter_conf: None,
             decryption_mode: None,
-            force_isolated: false,
         }
     }
 }
@@ -263,14 +288,6 @@ impl ThresholdTestEnvBuilder {
         self
     }
 
-    /// Force isolated (temp dir) material even when KMS_TEST_SHARED_MATERIAL=1.
-    /// Use this for tests that require specific material to be absent (e.g. no PRSS),
-    /// since shared mode exposes all pre-generated material.
-    pub fn force_isolated(mut self) -> Self {
-        self.force_isolated = true;
-        self
-    }
-
     /// Build the test environment
     pub async fn build(self) -> Result<ThresholdTestEnv> {
         let test_name = self
@@ -283,15 +300,7 @@ impl ThresholdTestEnvBuilder {
             .material_spec
             .unwrap_or_else(|| TestMaterialSpec::threshold_basic(self.party_count));
 
-        // Setup material (isolated or shared based on KMS_TEST_SHARED_MATERIAL env var).
-        // force_isolated bypasses shared mode — needed when the test requires specific
-        // material to be absent (e.g. no PRSS), since shared mode exposes everything.
-        let material_dir = if self.force_isolated {
-            let temp_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
-            TestMaterialHandle::Isolated(temp_dir)
-        } else {
-            manager.setup_test_material_auto(&spec, &test_name).await?
-        };
+        let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
 
         // Create storage for each party
         let mut pub_storages = Vec::new();

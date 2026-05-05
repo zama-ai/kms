@@ -8,11 +8,12 @@
 //! - Auto-backup after server restart
 //! - CRS backup and restore flow
 
+use crate::client::tests::common::wait_for_storage;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_insecure_key_gen;
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
 };
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -48,7 +49,6 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
         .with_test_name("threshold_dkg_backup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -261,7 +261,6 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<(
         .with_test_name("threshold_autobackup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -326,7 +325,6 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
         .with_test_name("threshold_crs_backup")
         .with_party_count(4)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/keygen data to shared test-material source
         .with_backup_vault()
         .build()
         .await?;
@@ -348,7 +346,7 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),
             domain: Some(domain_msg.clone()),
-            extra_data: vec![],
+            extra_data: default_extra_data(),
             context_id: None,
             epoch_id: Some(epoch_id.into()),
         };
@@ -377,13 +375,20 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     // Delete CRS metadata from private storage on all parties
     let crs_info_type = PrivDataType::CrsInfo.to_string();
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
-    for prefix in priv_storage_prefixes {
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for (priv_prefix, backup_prefix) in priv_storage_prefixes.iter().zip(backup_storage_prefixes) {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            prefix.as_deref(),
+            priv_prefix.as_deref(),
+        )?;
+        let backup_storage = FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::BACKUP,
+            backup_prefix.as_deref(),
         )?;
 
+        wait_for_storage(&backup_storage, &req_id, &epoch_id, &crs_info_type).await?;
         assert!(
             priv_storage
                 .data_exists_at_epoch(&req_id, &epoch_id, &crs_info_type)
@@ -419,7 +424,6 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     }
 
     // Verify backup still exists and CRS was restored
-    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
     for (backup_prefix, priv_prefix) in backup_storage_prefixes.iter().zip(priv_storage_prefixes) {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
