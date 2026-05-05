@@ -364,7 +364,7 @@ where
         }
         Ok(false) => {
             // continue with generation
-            tracing::warn!("CRS does not exist, proceeding with generation.");
+            tracing::info!("CRS does not exist, proceeding with generation.");
         }
         Err(e) => {
             tracing::warn!("Failed to check if CRS exists, proceeding with generation anyway: {e}");
@@ -1251,6 +1251,7 @@ where
         {
             Ok(true) => continue,
             Ok(false) => {
+                tracing::info!("CRS does not exist, proceeding with generation.");
                 all_data_exists = false;
                 break;
             }
