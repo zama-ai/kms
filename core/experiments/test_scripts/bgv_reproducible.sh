@@ -7,6 +7,7 @@ MAIN_PATH="./temp/bgv-reproducible"
 KEY_PATH="${MAIN_PATH}/key"
 CTXT_PATH="${MAIN_PATH}/ctxt"
 SEED=42
+NUM_CTXTS=10
 CTXT_VALUE=12345
 
 mkdir -p $KEY_PATH
@@ -69,12 +70,15 @@ fi
 
 ###DDEC
 echo "Decrypting ctxt"
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED
-$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
-##Get the result
-$STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-value $CTXT_VALUE
-CURR_SID=$(( CURR_SID + 1 ))
-SEED=$(( SEED + 1 ))
+for NUM_PARALLEL_SESSIONS in 1 2 4 8 16 32 64
+do
+    $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-from-file --path-pubkey $KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${CTXT_VALUE}.bin --sid $CURR_SID --seed $SEED --num-parallel-sessions $NUM_PARALLEL_SESSIONS --num-ctxt-per-session $NUM_CTXTS
+    $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
+    ##Get the result
+    $STAIRWAYCTL_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-value $CTXT_VALUE
+    CURR_SID=$(( CURR_SID + 1 ))
+    SEED=$(( SEED + 1 ))
+done
 
 printf "Press enter to shutdown experiment\n"
 read _

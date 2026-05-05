@@ -132,6 +132,14 @@ struct ThresholdDecryptFromFileArgs {
     #[clap(long = "sid")]
     session_id: Option<u128>,
 
+    /// Number of Ciphertexts to decrypt per session (Note the provided ctxt will be copied this many times on server side)
+    #[clap(long = "num-ctxt-per-session")]
+    num_ctxt_per_session: u128,
+
+    /// Number of session to spawn in parallel (Note the provided ctxt will be copied for each session on client side)
+    #[clap(long = "num-parallel-sessions")]
+    num_parallel_sessions: u128,
+
     /// Optional argument to set the master seed used by the parties.
     /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
@@ -351,8 +359,8 @@ async fn threshold_decrypt_from_file_command(
         .bgv_initiate_threshold_decrypt(
             SessionId::from(session_id),
             SessionId::from(key_sid),
-            vec![ctxt],
-            1,
+            vec![ctxt; params.num_parallel_sessions as usize],
+            params.num_ctxt_per_session as usize,
             choreo_conf.threshold_topology.threshold,
             params.seed,
         )

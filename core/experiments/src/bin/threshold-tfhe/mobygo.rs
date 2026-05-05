@@ -191,6 +191,10 @@ struct ThresholdDecryptFromFileArgs {
     #[clap(long = "preproc-sid")]
     session_id_preproc: Option<u128>,
 
+    /// Number of ciphertexts to create must match with the preprocessing (default to 1)
+    #[clap(long = "num-ctxts", default_value = "1")]
+    num_ctxts: usize,
+
     /// Optional argument to set the master seed used by the parties.
     /// Parties will then add their party index to the seed.
     /// Sampled at random if nothing is given
@@ -670,7 +674,7 @@ async fn threshold_decrypt_from_file_command(
             params
                 .session_id_preproc
                 .map_or_else(|| None, |id| Some(SessionId::from(id))),
-            vec![ctxt],
+            vec![ctxt; params.num_ctxts],
             None,
             tfhe_type,
             choreo_conf.threshold_topology.threshold,

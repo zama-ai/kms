@@ -79,7 +79,7 @@ if [ $2 = "GEN" ]; then
     mkdir -p $CTXT_PATH
     ### Generate all ctxts
     VALUE=$INIT_VALUE
-    for CTXT_TYPE in bool u4 u8 u16 u32 u64
+    for CTXT_TYPE in bool u4 u8 u16 u32 u64 u128
     do
         echo "#TYPE $CTXT_TYPE#"
         # Encrypt the type
@@ -130,15 +130,15 @@ for DDEC_MODE in $DDEC_MODES
  do
     VALUE=$INIT_VALUE
     echo "### STARTING REQUESTS ON DDEC MODE $DDEC_MODE ###"
-    for CTXT_TYPE in bool u4 u8 u16 u32 u64
+    for CTXT_TYPE in bool u4 u8 u16 u32 u64 u128
     do
         echo "#TYPE $CTXT_TYPE#"
         #Create preproc
-        $MOBYGO_EXEC -c $1 preproc-decrypt --decryption-mode $DDEC_MODE --path-pubkey $RESHARED_KEY_PATH/pk.bin --tfhe-type $CTXT_TYPE --sid $CURR_SID
+        $MOBYGO_EXEC -c $1 preproc-decrypt --decryption-mode $DDEC_MODE --path-pubkey $RESHARED_KEY_PATH/pk.bin --tfhe-type $CTXT_TYPE --num-ctxts $NUM_CTXTS --sid $CURR_SID
         $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true
         CURR_SID=$(( CURR_SID + 1 ))
         #Send ctxt and ask for decryption using the produced preproc
-        $MOBYGO_EXEC -c $1 threshold-decrypt-from-file --decryption-mode $DDEC_MODE --path-pubkey $RESHARED_KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${VALUE}_${CTXT_TYPE}.bin --sid $CURR_SID  --preproc-sid $(( CURR_SID - 1))
+        $MOBYGO_EXEC -c $1 threshold-decrypt-from-file --decryption-mode $DDEC_MODE --path-pubkey $RESHARED_KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${VALUE}_${CTXT_TYPE}.bin --sid $CURR_SID  --preproc-sid $(( CURR_SID - 1)) --num-ctxts $NUM_CTXTS
         $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true
         #Get the result
         $MOBYGO_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-values $VALUE
