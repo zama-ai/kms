@@ -289,8 +289,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         let span = tracing::Span::current();
-        span.record("sid", format!("{:?}", &sessions.0.session_id()));
-        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+        span.record("sid", format!("{:?}", sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsSet2<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),
@@ -325,8 +325,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         let span = tracing::Span::current();
-        span.record("sid", format!("{:?}", &sessions.0.session_id()));
-        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+        span.record("sid", format!("{:?}", sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),

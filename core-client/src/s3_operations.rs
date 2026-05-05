@@ -231,7 +231,7 @@ async fn generic_fetch_element(
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow::anyhow!(
                 "Failed to read bytes from file at {:?} with error: {e}",
-                &key_path
+                key_path
             )
         })?;
         let res = Bytes::from(byte_res);
@@ -256,7 +256,7 @@ async fn write_bytes_to_file(
     tokio::fs::write(&path, data).await.map_err(|e| {
         anyhow::anyhow!(
             "Failed to write bytes to file at {:?} with error: {e}",
-            &path
+            path
         )
     })?;
     Ok(())

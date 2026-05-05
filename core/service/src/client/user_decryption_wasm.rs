@@ -314,13 +314,13 @@ impl Client {
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(format!(
                                     "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    &cur_block_shares.shares.len()
+                                    cur_block_shares.shares.len()
                                 )));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
                                     "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    &cur_block_shares.shares.len()
+                                    cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -371,13 +371,13 @@ impl Client {
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(format!(
                                     "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    &cur_block_shares.shares.len()
+                                    cur_block_shares.shares.len()
                                 )));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
                                     "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    &cur_block_shares.shares.len()
+                                    cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -539,13 +539,13 @@ impl Client {
                     Ok(None) => {
                         return Err(anyhow_error_and_log(format!(
                             "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}",
-                            &cur_block_shares.shares.len()
+                            cur_block_shares.shares.len()
                         )));
                     }
                     Err(e) => {
                         return Err(anyhow_error_and_log(format!(
                             "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}",
-                            &cur_block_shares.shares.len()
+                            cur_block_shares.shares.len()
                         )));
                     }
                 }

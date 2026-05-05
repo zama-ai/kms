@@ -393,7 +393,7 @@ async fn run_new_epoch(
 
     // Execute reshare
     let mut tasks_reshare = JoinSet::new();
-    for (_, cur_client) in kms_clients.iter() {
+    for cur_client in kms_clients.values() {
         let req = reshare_request.clone();
         let mut client = cur_client.clone();
         tasks_reshare.spawn(async move { client.new_mpc_epoch(req).await });
