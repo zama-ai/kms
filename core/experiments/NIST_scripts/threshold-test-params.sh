@@ -16,11 +16,26 @@
 # We note that the key generation and the CRS and resahre (when applicable) are checked against a
 # known hash to ensure they were done correctly.
 
+# Function to stop and rm docker containers if any is still running
+function cleanup_docker {
+    if [ "$(docker ps -a -q)" ]; then
+        echo "Cleaning up docker containers..."
+        docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+    fi
+}
+
 # Scripts are in test_scripts folder
-PATH_TO_SCRIPTS="$(cd "$(dirname "$0")/.." && pwd)/test_scripts"
+PATH_TO_HERE="$(cd "$(dirname "$0")" && pwd)"
+PATH_TO_ROOT="$PATH_TO_HERE/.."
+PATH_TO_SCRIPTS="$PATH_TO_ROOT/test_scripts"
+
+echo "Running reproducible tests. Will look for scripts in $PATH_TO_SCRIPTS"
+
+# Set current workdirectory as root of experiments
+cd "$PATH_TO_ROOT"
 
 # Start with cleaning up all docker things
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+cleanup_docker
 
 ### TFHE
 # Prepare the tfhe docker image
@@ -32,7 +47,7 @@ cargo make tfhe-bench-run-4p
 # Run the test script
 ./$PATH_TO_SCRIPTS/tfhe_reproducible_small_session.sh temp/tfhe-bench-run-4p.toml GEN
 # Teardown docker
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+cleanup_docker
 
 ## large session
 # Create the test setup and starts the docker containers
@@ -40,7 +55,7 @@ cargo make tfhe-bench-run-5p
 # Run the test script
 ./$PATH_TO_SCRIPTS/tfhe_reproducible_large_session.sh temp/tfhe-bench-run-5p.toml GEN
 # Teardown docker
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+cleanup_docker
 
 ## small session with malicious party
 # Create the test setup and starts the docker containers
@@ -48,7 +63,7 @@ cargo make tfhe-bench-run-4p-malicious-bcast
 # Run the test script
 ./$PATH_TO_SCRIPTS/tfhe_reproducible_small_session_malicious.sh temp/tfhe-bench-run-4p-malicious-bcast.toml GEN
 # Teardown docker
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+cleanup_docker
 
 ### BGV
 # Prepare the bgv docker image
@@ -59,11 +74,11 @@ cargo make bgv-bench-run
 # Run the test script
 ./$PATH_TO_SCRIPTS/bgv_reproducible.sh temp/bgv-bench-run.toml GEN
 # Teardown docker
-docker stop $(docker ps -a -q) && docker rm $(docker ps -a -q)
+cleanup_docker
 
 
 ### Run stats parser
-python3 session_parser.py --output-dir NIST_scripts/threshold temp/session_stats TestParams
+python3 "$PATH_TO_HERE/session_parser.py --output-dir $PATH_TO_HERE/threshold $PATH_TO_ROOT/temp/session_stats TestParams"
 
 
 
