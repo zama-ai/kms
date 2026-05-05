@@ -49,21 +49,16 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
 }
 
 impl VerifiedPublicMaterial {
+    // TODO: is there no better way to find if a particular key exists? we want to avoid the cloning
     pub(crate) fn has_oprf_key(&self) -> bool {
-        match self {
-            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                fhe_pubkeys.server_key.supports_oprf()
-            }
+        let server_key = match self {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => fhe_pubkeys.server_key.clone(),
             VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                compressed_keyset
-                    // TODO: is there no better way to find if a particular key exists? we want to avoid the cloning
-                    .clone()
-                    .into_raw_parts()
-                    .2
-                    .decompress()
-                    .supports_oprf()
+                compressed_keyset.clone().into_raw_parts().2.decompress()
             }
-        }
+        };
+        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        oprf_key.is_some()
     }
 }
 
