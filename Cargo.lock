@@ -4284,6 +4284,7 @@ dependencies = [
  "test-utils",
  "test-utils-service",
  "tfhe",
+ "tfhe-csprng",
  "tfhe-versionable",
  "thiserror 2.0.12",
  "thread-handles",
