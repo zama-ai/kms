@@ -789,6 +789,7 @@ async fn threshold_decrypt_result_command(
                 "❌ Plaintext for session ID {} does NOT match expected value: {:?} (got {:?})",
                 params.session_id_decrypt, expected_values, ptxts
             );
+            std::process::exit(1);
         }
     } else {
         println!(
