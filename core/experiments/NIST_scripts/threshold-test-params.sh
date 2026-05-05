@@ -15,6 +15,9 @@
 #
 # We note that the key generation and the CRS and resahre (when applicable) are checked against a
 # known hash to ensure they were done correctly.
+#
+# At the end of the scripts, the timing resulsts are parsed and put in the threshold folder with the tag "TestParams".
+# We do not perform a memory benchmark on top of these tests as memory benchmark are much slower.
 
 # Function to stop and rm docker containers if any is still running
 function cleanup_docker {

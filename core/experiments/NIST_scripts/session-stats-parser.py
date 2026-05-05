@@ -15,9 +15,9 @@ TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_5P_NAME]
 BGV_RUN_NAME = "bgv-bench-run"
 
 EXPECTED_LINES_PER_RUN = {
-    TFHE_RUN_4P_NAME: 28,
-    TFHE_RUN_5P_NAME: 28,
-    BGV_RUN_NAME: 7,
+    TFHE_RUN_4P_NAME: 34,
+    TFHE_RUN_5P_NAME: 34,
+    BGV_RUN_NAME: 11,
 }
 
 
@@ -27,9 +27,11 @@ def build_tfhe_operation_labels() -> List[str]:
         "PRSS_INIT_Z128",
         "DKG_PREPROC",
         "DKG",
+        "CRS_GEN",
+        "RESHARE",
     ]
     for mode in ["NOISE_FLOOD_SMALL", "BIT_DEC_SMALL"]:
-        for tfhe_type in ["bool", "u4", "u8", "u16", "u32", "u64"]:
+        for tfhe_type in ["bool", "u4", "u8", "u16", "u32", "u64", "u128"]:
             labels.append(f"{mode}_{tfhe_type}_PREPROC")
             labels.append(f"{mode}_{tfhe_type}_DDEC")
     return labels
@@ -46,6 +48,10 @@ OPERATION_LABELS = {
         "DDEC_PARALLEL_1",
         "DDEC_PARALLEL_2",
         "DDEC_PARALLEL_4",
+        "DDEC_PARALLEL_8",
+        "DDEC_PARALLEL_16",
+        "DDEC_PARALLEL_32",
+        "DDEC_PARALLEL_64",
     ],
 }
 
