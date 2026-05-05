@@ -8,7 +8,6 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-use serial_test::serial;
 use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
@@ -51,7 +50,6 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread")]
-#[serial]
 async fn test_new_epoch_with_reshare() {
     new_epoch_with_reshare_and_crs(4, 3, 2, FheParameter::Test, None).await;
 }

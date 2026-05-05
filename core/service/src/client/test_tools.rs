@@ -15,10 +15,10 @@ use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
+use crate::vault::storage::StorageExt;
 use crate::vault::storage::{
     Storage, StorageType, crypto_material::get_core_signing_key, file::FileStorage,
 };
-use crate::vault::storage::{StorageExt, make_storage};
 use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -804,51 +804,8 @@ pub(crate) async fn setup_centralized<
     (server_handle, client)
 }
 
-/// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
-/// server, client end-point connection (which is needed to communicate with the server) and
-/// an internal client (for constructing requests and validating responses).
-pub async fn central_handle_w_vault(
-    param: &DKGParams,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    backup_vault: Option<Vault>,
-    test_data_path: Option<&Path>,
-) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let priv_storage = FileStorage::new(test_data_path, StorageType::PRIV, None).unwrap();
-    let pub_storage = FileStorage::new(test_data_path, StorageType::PUB, None).unwrap();
-
-    ensure_testing_material_exists(test_data_path).await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
-    let (kms_server, kms_client) =
-        setup_centralized(pub_storage, priv_storage, backup_vault, rate_limiter_conf).await;
-    let pub_storage = HashMap::from_iter([(
-        1,
-        FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),
-    )]);
-    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
-    let internal_client = Client::new_client(client_storage, pub_storage, param, None)
-        .await
-        .unwrap();
-    (kms_server, kms_client, internal_client)
-}
-
-/// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
-/// server, client end-point connection (which is needed to communicate with the server) and
-/// an internal client (for constructing requests and validating responses).
-pub async fn centralized_handles(
-    param: &DKGParams,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None).unwrap();
-    let backup_vault = Vault {
-        storage: backup_proxy_storage,
-        keychain: None,
-    };
-    // Use default location for storage
-    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), None).await
-}
-
+/// Spin up a centralized KMS server with the custodian-flavored backup vault and
+/// return the server handle, gRPC client, and internal client.
 pub async fn centralized_custodian_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -864,7 +821,30 @@ pub async fn centralized_custodian_handles(
         backup_storage_prefix,
     )
     .await;
-    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), test_data_path).await
+
+    let priv_storage = FileStorage::new(test_data_path, StorageType::PRIV, None).unwrap();
+    let pub_storage = FileStorage::new(test_data_path, StorageType::PUB, None).unwrap();
+
+    ensure_testing_material_exists(test_data_path).await;
+    #[cfg(feature = "slow_tests")]
+    ensure_default_material_exists().await;
+
+    let (kms_server, kms_client) = setup_centralized(
+        pub_storage,
+        priv_storage,
+        Some(backup_vault),
+        rate_limiter_conf,
+    )
+    .await;
+    let pub_storage = HashMap::from_iter([(
+        1,
+        FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),
+    )]);
+    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
+    let internal_client = Client::new_client(client_storage, pub_storage, param, None)
+        .await
+        .unwrap();
+    (kms_server, kms_client, internal_client)
 }
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
 /// Note that this method may panic if the server does not become ready within a certain time frame.

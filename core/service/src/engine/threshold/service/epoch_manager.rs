@@ -1455,7 +1455,7 @@ pub(crate) mod tests {
         client::test_tools::{self},
         consts::{
             DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
         engine::{
@@ -1463,7 +1463,13 @@ pub(crate) mod tests {
             threshold::service::session::PRSSSetupCombined,
             utils::make_extra_data,
         },
-        util::rate_limiter::RateLimiterConfig,
+        util::{
+            key_setup::{
+                ThresholdSigningKeyConfig, ensure_client_keys_exist,
+                ensure_threshold_server_signing_keys_exist,
+            },
+            rate_limiter::RateLimiterConfig,
+        },
         vault::storage::{
             StorageType,
             file::FileStorage,
@@ -1517,13 +1523,16 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn prss_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
         // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
         const PRSS_AMOUNT_PARTIES: usize = 4;
         const PRSS_THRESHOLD: usize = 1;
+
+        // Use an isolated tempdir so this test doesn't race against any other test.
+        let material_dir = tempfile::TempDir::new().expect("tempdir creation failed");
+        let material_path = material_dir.path();
 
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
@@ -1536,47 +1545,40 @@ pub(crate) mod tests {
             .iter()
             .zip(pub_storage_prefixes.iter())
         {
-            let cur_pub = FileStorage::new(None, StorageType::PUB, pub_prefix.as_deref()).unwrap();
-            pub_storage.push(cur_pub);
-            let mut cur_priv =
-                FileStorage::new(None, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-
-            // Note that migration will move legacy prss (whose ID depends on amount of parties) to the new type, which does not
-            // this means that when mixing tests of different amount of parties using the same storage, we need to redo PRSS
-            // Since migation is only done for the 13/4 configuration this is the only legacy PRSS we need to clear
-            let req_z64 =
-                derive_request_id(&format!("PRSSSetup_Z64_ID_{}_13_4", *DEFAULT_EPOCH_ID)).unwrap();
-            let req_z128 =
-                derive_request_id(&format!("PRSSSetup_Z128_ID_{}_13_4", *DEFAULT_EPOCH_ID))
+            let cur_pub =
+                FileStorage::new(Some(material_path), StorageType::PUB, pub_prefix.as_deref())
                     .unwrap();
-            #[allow(deprecated)]
-            delete_at_request_id(
-                &mut cur_priv,
-                &req_z64,
-                &PrivDataType::PrssSetup.to_string(),
+            pub_storage.push(cur_pub);
+            let cur_priv = FileStorage::new(
+                Some(material_path),
+                StorageType::PRIV,
+                priv_prefix.as_deref(),
             )
-            .await
             .unwrap();
-            #[allow(deprecated)]
-            delete_at_request_id(
-                &mut cur_priv,
-                &req_z128,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await
-            .unwrap();
-            delete_at_request_id(
-                &mut cur_priv,
-                &(*DEFAULT_EPOCH_ID).into(),
-                &PrivDataType::PrssSetupCombined.to_string(),
-            )
-            .await
-            .unwrap();
-
+            // Tempdir starts empty, so no legacy PRSS to delete here.
             priv_storage.push(cur_priv);
             vaults.push(None);
             vaults2.push(None);
         }
+
+        // `setup_threshold_no_client` unconditionally loads a core signing key
+        // from each private storage and panics if it's missing. Populate the
+        // tempdir with signing + client keys (same calls `ThresholdTestEnv`
+        // makes internally via `setup_test_material_temp`).
+        let _ = ensure_threshold_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true, // deterministic
+            ThresholdSigningKeyConfig::AllParties(
+                (1..=PRSS_AMOUNT_PARTIES)
+                    .map(|i| format!("party-{i}"))
+                    .collect(),
+            ),
+            false,
+        )
+        .await;
+        ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
 
         // create parties and run PrssSetup
         let server_handles = test_tools::setup_threshold_no_client(
