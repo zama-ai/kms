@@ -27,22 +27,15 @@ spec:
           image: {{ .Values.kmsCoreClient.image.name }}:{{ .Values.kmsCoreClient.image.tag }}
           command:
             - /app/core-client-gen-keys.sh
-          {{- if not .Values.minio.enabled }}
           envFrom:
             - configMapRef:
                 name: {{ .Values.kmsCoreClient.envFrom.configmap.name }}
-          {{- end }}
           env:
-            {{- if .Values.minio.enabled }}
-            - name: S3_ENDPOINT
-              value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}{{- $path := default "" .Values.kmsCore.publicVault.s3.path }}{{- if ne $path "" }}/{{ $path }}{{- end }}"
-            {{- else }}
             - name: CORE_CLIENT__S3_ENDPOINT
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
-            {{- end }}
             - name: NUM_MAJORITY
               value: '{{ .Values.kmsCoreClient.num_majority | int }}'
             - name: NUM_RECONSTRUCT

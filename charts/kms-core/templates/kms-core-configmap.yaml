@@ -15,20 +15,16 @@ data:
   aws.toml: |
     [aws]
     region = "${AWS_REGION}"
-    {{- if .Values.minio.enabled }}
-    s3_endpoint = "{{ .Values.minio.endpoint }}"
-    {{- else }}
     role_arn = "${AWS_ROLE_ARN}"
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+      {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
     imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
+      {{- end }}
+      {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
     sts_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.sts }}"
-        {{- end }}
+      {{- end }}
     s3_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.s3 }}"
     awskms_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.awskms }}"
-      {{- end }}
     {{- end }}
   vaults.toml: |
     {{- if .Values.kmsCore.publicVault.s3.enabled }}

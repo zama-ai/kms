@@ -152,17 +152,11 @@ export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BAC
 {{- end }}
 {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
 # Fetch CA certificates for all peers (needed for peer verification)
-# In minio/localstack context: CORE_CLIENT__S3_ENDPOINT is just the endpoint, need to add bucket
-# In AWS context: CORE_CLIENT__S3_ENDPOINT already contains the bucket path
-{{- if $.Values.minio.enabled }}
-S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}/{{ .Values.kmsCore.publicVault.s3.bucket }}"
-{{- else }}
 S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
-{{- end }}
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
-# For minio/localstack or non-enclave threshold: use direct path to cert.pem
+{{- if not $.Values.kmsCore.nitroEnclave.enabled }}
+# For non-enclave threshold: use direct path to cert.pem
 CERT_PATH="PUB-p{{ .id }}/CACert/cert.pem"
 echo "Fetching CA cert for party {{ .id }} from: ${S3_BASE_URL}/${CERT_PATH}"
 # Retry logic: wait for certificate to appear (for parallel deployments)
@@ -199,8 +193,8 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
-# For minio/localstack or non-enclave threshold: use direct path to key.pem
+{{- if not $.Values.kmsCore.nitroEnclave.enabled }}
+# For non-enclave threshold: use direct path to key.pem
 KEY_PATH="PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/key.pem"
 echo "Fetching private key from: ${S3_BASE_URL}/${KEY_PATH}"
 # Retry logic: wait for private key to appear (for parallel deployments)

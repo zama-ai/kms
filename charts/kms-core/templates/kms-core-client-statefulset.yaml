@@ -23,13 +23,8 @@ spec:
       - name: kms-core-client
         image: {{ .Values.kmsCoreClient.image.name }}:{{ .Values.kmsCoreClient.image.tag }}
         env:
-          {{- if .Values.minio.enabled }}
-          - name: S3_ENDPOINT
-            value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}"
-          {{- else }}
           - name: S3_ENDPOINT
             value: "https://{{ .Values.kmsCore.publicVault.s3.bucket }}.s3.{{ .Values.kmsCore.aws.region }}.amazonaws.com"
-          {{- end }}
           - name: NUM_MAJORITY
             value: '{{ .Values.kmsCoreClient.num_majority | int }}'
           - name: NUM_RECONSTRUCT
@@ -40,11 +35,9 @@ spec:
             value: '{{ .Values.kmsCoreClient.fhe_parameter | quote }}'
         command:
           - /app/load-core-client-config.sh
-        {{- if not .Values.minio.enabled }}
         envFrom:
           - configMapRef:
               name: {{ .Values.kmsCoreClient.envFrom.configmap.name }}
-        {{- end }}
         volumeMounts:
           - mountPath: /app/load-core-client-config.sh
             subPath: load-core-client-config.sh

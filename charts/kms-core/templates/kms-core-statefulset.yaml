@@ -78,7 +78,7 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-            {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: CORE_CLIENT__S3_ENDPOINT
               valueFrom:
                 configMapKeyRef:
@@ -135,12 +135,6 @@ spec:
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
             {{- end }}
             {{- else }}
-            - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
-            - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
-            - name: CORE_CLIENT__S3_ENDPOINT
-              value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- if .Values.kmsCore.privateVault.s3.prefix }}
@@ -316,9 +310,6 @@ spec:
               env
               echo "generating keys"
               kms-gen-keys --cmd signing-keys \
-            {{- if .Values.minio.enabled }}
-              --aws-s3-endpoint {{ .Values.minio.endpoint }} \
-            {{- end }}
               --aws-region {{ .Values.kmsCore.aws.region }} \
             {{- if .Values.kmsCore.publicVault.s3.enabled }}
               --public-storage s3 \
@@ -379,7 +370,7 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+          {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
@@ -431,12 +422,6 @@ spec:
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
             {{- end }}
             {{- else }}
-            - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
-            - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
-            - name: CORE_CLIENT__S3_ENDPOINT
-              value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- if .Values.kmsCore.privateVault.s3.prefix }}
@@ -513,15 +498,6 @@ spec:
           args:
             - -c
             - |
-              {{- if .Values.minio.enabled }}
-              mkdir -p ~/.aws/
-              cat > ~/.aws/credentials <<EOF
-              [default]
-              aws_access_key_id=${AWS_ACCESS_KEY_ID}
-              aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}
-              EOF
-              cat ~/.aws/credentials
-              {{- end }}
               env
               kms-server --config-file=kms-server.toml
           {{- end }}
@@ -544,7 +520,7 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-            {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
@@ -600,12 +576,6 @@ spec:
                   optional: true
             {{- end }}
             {{- else }}
-            - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
-            - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
-            - name: AWS_ENDPOINT_URL_S3
-              value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- if .Values.kmsCore.privateVault.s3.prefix }}
