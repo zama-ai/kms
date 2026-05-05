@@ -103,6 +103,7 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
+tfhe-csprng.workspace = true
 tfhe-versionable.workspace = true
 thiserror.workspace = true
 thread-handles = { workspace = true, optional = true }
