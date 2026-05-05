@@ -1839,9 +1839,11 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
 ) -> anyhow::Result<()> {
     use crate::client::tests::common::keygen_config_from_existing;
 
+    const NUM_PARTIES: usize = 4;
+
     let env = ThresholdTestEnv::builder()
         .with_test_name("compressed_from_existing_keygen")
-        .with_party_count(4)
+        .with_party_count(NUM_PARTIES)
         .with_threshold(1)
         .with_prss()
         .build()
@@ -1880,10 +1882,11 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         for (_, server) in old_servers {
             server.assert_shutdown().await;
         }
-        remove_oprf_from_existing_keyset(&material_path, &keygen_id_1, &preproc_id_1).await?;
+        remove_oprf_from_existing_keyset(NUM_PARTIES, &material_path, &keygen_id_1, &preproc_id_1)
+            .await?;
 
         let (restarted_servers, restarted_clients) =
-            restart_threshold_servers_from_material(&material_path).await?;
+            restart_threshold_servers_from_material(NUM_PARTIES, &material_path).await?;
         servers = restarted_servers;
         clients = restarted_clients;
     }
@@ -1892,7 +1895,7 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
     let preproc_id_2 = derive_request_id("compressed_existing_preproc_2")?;
     let keygen_id_2 = derive_request_id("compressed_existing_keygen_2")?;
 
-    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true);
+    let (keyset_config, keyset_added_info) = keygen_config_from_existing(&keygen_id_1, true, true);
 
     threshold_key_gen_secure(
         &clients,
@@ -1918,7 +1921,7 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
     // Do distributed decryption to verify the generated key is ok
     // TODO this could be refactored
     let material_path = material_path.as_path();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..NUM_PARTIES];
 
     // Create internal client for decryption
     let mut pub_storage_map = std::collections::HashMap::new();
@@ -2060,7 +2063,7 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
 
     // Run ddec with the new keyset
     run_decryption_threshold(
-        4,
+        NUM_PARTIES,
         &mut servers,
         &mut clients,
         &mut internal_client,
@@ -2079,15 +2082,17 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
     )
     .await;
 
-    // Run ddec by encrypting using the old public key but
-    // still the new shares from the new keyset
+    // Run ddec under keygen_id_1 to verify the migration: after
+    // copy_compressed_key_to_original, keygen_id_1 holds the new compressed
+    // keyset and the migrated private shares, so encryption + decryption can
+    // both use the post-migration compressed material.
     run_decryption_threshold(
-        4,
+        NUM_PARTIES,
         &mut servers,
         &mut clients,
         &mut internal_client,
-        Some(&keygen_id_1),
-        &keygen_id_2,
+        None,
+        &keygen_id_1,
         None,
         vec![TestingPlaintext::U32(55)],
         EncryptionConfig {
@@ -2097,7 +2102,7 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
         None,
         1,
         Some(material_path),
-        true, // encryption uses keygen_id_1, which is stored as an uncompressed keyset
+        false, // encryption uses keygen_id_1's migrated compressed keyset
     )
     .await;
 
@@ -2110,6 +2115,7 @@ async fn run_secure_threshold_compressed_keygen_from_existing(
 
 #[cfg(feature = "slow_tests")]
 async fn restart_threshold_servers_from_material(
+    num_parties: usize,
     material_path: &Path,
 ) -> anyhow::Result<(
     HashMap<u32, crate::testing::types::ServerHandle>,
@@ -2117,9 +2123,9 @@ async fn restart_threshold_servers_from_material(
 )> {
     let mut pub_storages = Vec::new();
     let mut priv_storages = Vec::new();
-    for (pub_prefix, priv_prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4]
+    for (pub_prefix, priv_prefix) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties]
         .iter()
-        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4].iter())
+        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties].iter())
     {
         pub_storages.push(FileStorage::new(
             Some(material_path),
@@ -2133,7 +2139,7 @@ async fn restart_threshold_servers_from_material(
         )?);
     }
 
-    let vaults: Vec<Option<crate::vault::Vault>> = (0..4).map(|_| None).collect();
+    let vaults: Vec<Option<crate::vault::Vault>> = (0..num_parties).map(|_| None).collect();
     Ok(crate::client::test_tools::setup_threshold(
         1,
         pub_storages,
@@ -2148,13 +2154,15 @@ async fn restart_threshold_servers_from_material(
 
 #[cfg(feature = "slow_tests")]
 async fn remove_oprf_from_existing_keyset(
+    num_parties: usize,
     material_path: &Path,
     key_id: &RequestId,
     preproc_id: &RequestId,
 ) -> anyhow::Result<()> {
-    for (party_idx, (pub_prefix, priv_prefix)) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4]
+    for (party_idx, (pub_prefix, priv_prefix)) in PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL
+        [0..num_parties]
         .iter()
-        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4].iter())
+        .zip(PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..num_parties].iter())
         .enumerate()
     {
         let party_id = party_idx + 1;
