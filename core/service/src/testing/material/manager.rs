@@ -291,8 +291,13 @@ impl TestMaterialManager {
             MaterialType::Default => "default",
         };
 
-        let source_base = self.source_path.as_ref().map(|p| p.join(material_subdir));
-        let source_base_ref = source_base.as_deref();
+        // If no source path is configured we have nothing to copy (mirrors
+        // `verify_material_exists`).
+        let source_base = match self.source_path.as_ref() {
+            Some(path) => path.join(material_subdir),
+            None => return Ok(()),
+        };
+        let source_base_ref = Some(source_base.as_path());
         let dest_base = temp_dir.path();
 
         // Copy client keys if required
