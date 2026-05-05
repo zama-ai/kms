@@ -2,11 +2,6 @@ name: wasm-testing
 
 on:
   workflow_call:
-    inputs:
-      wasm-test-feature:
-        type: string
-        required: false
-        default: '-F wasm_tests'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -57,9 +52,7 @@ jobs:
 
       - name: Build wasm with tests
         working-directory: ./core/service
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
+        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
 
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
@@ -76,11 +69,9 @@ jobs:
 
       - name: Generate wasm test files
         working-directory: ./core/service
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: |
-          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
+          cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --lib
+          cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
         working-directory: ./core/service

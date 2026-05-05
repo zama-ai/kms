@@ -43,7 +43,7 @@ jobs:
       # Each output indicates if files in a specific component were modified
       changes-ci: ${{ steps.filter.outputs.ci }}
       changes-core-client: ${{ steps.filter.outputs.core-client }}
-      changes-core-client-k8s-tests: ${{ steps.filter.outputs.core-client-k8s-tests }}
+      changes-core-client-nightly-tests: ${{ steps.filter.outputs.core-client-nightly-tests }}
       changes-core-grpc: ${{ steps.filter.outputs.core-grpc }}
       changes-core-service: ${{ steps.filter.outputs.core-service }}
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
@@ -67,6 +67,7 @@ jobs:
             core-client:
               - 'core-client/src/**'
               - 'core-client/config/**'
+              - 'core-client/tests/**'
               - 'core-client/tests-utils/**'
               - 'core-client/test-utils-cc/**'
               - 'observability/**'
@@ -74,9 +75,9 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
-            core-client-k8s-tests:
+            core-client-nightly-tests:
               - 'core-client/tests/kind-testing/**'
-              - 'rust-toolchain.toml'
+              - 'core-client/tests/integration/**'
             core-grpc:
               - 'core/grpc/**'
               - 'Cargo.toml'
@@ -98,6 +99,11 @@ jobs:
               - 'core/threshold-*/**'
               - 'core/thread-handles/**'
               - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+            tools:
+              - 'tools/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -241,8 +247,8 @@ jobs:
     steps:
       # PR matrix has two disjoint entries:
       #   threshold   : threshold-named tests (skip full_gen_tests, nightly,
-      #                 k8s_, centralized, isolated_test_example, the docker-tls
-      #                 test, and test_threshold_concurrent_crs).
+      #                 k8s_, centralized, isolated_test_example, and the
+      #                 docker-tls test).
       #   centralized : centralized-named tests (skip the same nightly/k8s
       #                 family plus threshold).
       # The docker-tls test runs in its own dedicated job — skip it here.
@@ -251,7 +257,7 @@ jobs:
         run: |
           MATRIX_JSON=$(jq -nc '{
             include: [
-              { "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker --skip test_threshold_concurrent_crs" },
+              { "args-tests": "--features threshold_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker" },
               { "args-tests": "--features testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example" }
             ]
           }')
@@ -302,7 +308,7 @@ jobs:
     secrets: inherit
 
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
-  # Triggered by scheduled runs, or by PRs touching core-client/tests/kind-testing/**.
+  # Triggered by scheduled runs, or by PRs touching core-client/tests/{kind-testing,integration}/**.
   test-core-client-nightly:
     name: main/test-core-client-nightly
     # job permissions
@@ -316,7 +322,7 @@ jobs:
     needs: check-changes
     if: >-
       github.event_name == 'schedule' ||
-      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-k8s-tests == 'true')
+      (github.event_name == 'pull_request' && needs.check-changes.outputs.changes-core-client-nightly-tests == 'true')
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms-core-client'
