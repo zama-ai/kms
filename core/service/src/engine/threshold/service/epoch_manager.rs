@@ -853,7 +853,7 @@ impl<
                 // `oprf_key_present` from the verified public `ServerKey`.
                 // The protocol assumes both derivations yield the same value
                 // — see the comment in `reshare_as_set_1`.
-                let oprf_key_present = verified_material.has_oprf_key()?;
+                let oprf_key_present = verified_material.has_oprf_key();
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,
                     key_info.key_parameters,

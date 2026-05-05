@@ -1273,9 +1273,8 @@ impl DKGParamsBasics for DKGParamsSnS {
         match keyset_config {
             KeySetConfig::Standard(_) => {
                 num_triples_needed +=
-                // Raw triples necessary for the 2 BK
-                self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
-                num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
+                // Raw triples necessary for the regular BK, the OPRF BK and the SnS BK
+                self.lwe_dimension().0 * (2 * self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
 
                 // Required for the compression BK
                 if let Some(comp_params) = self.regular_params.compression_decompression_parameters

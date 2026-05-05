@@ -2392,7 +2392,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         use crate::tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet};
-        use crate::tfhe_internals::test_feature::oprf_expected_plaintext;
+        use crate::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
         use crate::tfhe_internals::utils::reconstruct_bit_vec;
         use std::collections::HashMap;
         use tfhe::shortint::oprf::{
@@ -2440,9 +2440,7 @@ pub mod tests {
         let (target_shortint_server_key, _, _, _, _, _, _, oprf_server_key, _) =
             pk.server_key.clone().into_raw_parts();
         let target_shortint_server_key = target_shortint_server_key.into_raw_parts();
-        let oprf_server_key = oprf_server_key
-            .expect("OPRF server key missing from pk.server_key")
-            .into_raw_parts();
+        let oprf_server_key = oprf_server_key.expect("OPRF server key missing from pk.server_key");
 
         #[cfg(not(feature = "slow_tests"))]
         const NUM_SEEDS: u128 = 2;
@@ -2450,22 +2448,13 @@ pub mod tests {
         const NUM_SEEDS: u128 = 50;
 
         // Positive: encrypted PRF output must match the cleartext reference.
-        for s in 0u128..NUM_SEEDS {
-            let seed = Seed(s);
-            let img = oprf_server_key.generate_oblivious_pseudo_random(
-                seed,
-                random_bits_count,
-                &target_shortint_server_key,
-            );
-            let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = oprf_expected_plaintext(
-                &prf_lwe_sk.as_view(),
-                seed,
-                shortint_params,
-                random_bits_count,
-            );
-            assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
-        }
+        assert_oprf_matches_plaintext(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &oprf_server_key,
+            &prf_lwe_sk,
+            NUM_SEEDS,
+        );
 
         // Negative: a fresh OPRF server key built from a one-bit-flipped LWE
         // key under the same shortint client key must disagree with the
@@ -2493,7 +2482,7 @@ pub mod tests {
                 &target_shortint_server_key,
             );
             let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = oprf_expected_plaintext(
+            let expected = crate::tfhe_internals::test_feature::oprf_expected_plaintext(
                 &prf_lwe_sk.as_view(),
                 seed,
                 shortint_params,

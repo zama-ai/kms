@@ -518,8 +518,7 @@ pub(crate) mod tests {
         server_key: &tfhe::ServerKey,
         client_key: &tfhe::ClientKey,
     ) {
-        use tfhe_csprng::seeders::Seed;
-        use threshold_execution::tfhe_internals::test_feature::oprf_expected_plaintext;
+        use threshold_execution::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
 
         #[cfg(not(feature = "slow_tests"))]
         const NUM_SEEDS: u128 = 2;
@@ -558,25 +557,12 @@ pub(crate) mod tests {
             }
         };
 
-        let shortint_params = shortint_ck.parameters();
-        let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
-        let oprf_server_key = oprf_server_key.into_raw_parts();
-
-        for s in 0u128..NUM_SEEDS {
-            let seed = Seed(s);
-            let img = oprf_server_key.generate_oblivious_pseudo_random(
-                seed,
-                random_bits_count,
-                &target_shortint_server_key,
-            );
-            let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = oprf_expected_plaintext(
-                &prf_lwe_sk.as_view(),
-                seed,
-                shortint_params,
-                random_bits_count,
-            );
-            assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
-        }
+        assert_oprf_matches_plaintext(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &oprf_server_key,
+            &prf_lwe_sk,
+            NUM_SEEDS,
+        );
     }
 }

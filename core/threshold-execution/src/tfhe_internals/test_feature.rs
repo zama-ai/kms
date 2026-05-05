@@ -240,6 +240,36 @@ pub fn oprf_expected_plaintext(
     )
 }
 
+/// Verifies that an OPRF server key agrees with the cleartext PRF for a range
+/// of seeds.
+pub fn assert_oprf_matches_plaintext(
+    shortint_ck: &tfhe::shortint::ClientKey,
+    target_shortint_server_key: &tfhe::shortint::ServerKey,
+    oprf_server_key: &tfhe::shortint::oprf::OprfServerKey,
+    prf_lwe_sk: &LweSecretKey<Vec<u64>>,
+    num_seeds: u128,
+) {
+    let shortint_params = shortint_ck.parameters();
+    let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
+
+    for s in 0u128..num_seeds {
+        let seed = tfhe_csprng::seeders::Seed(s);
+        let img = oprf_server_key.generate_oblivious_pseudo_random(
+            seed,
+            random_bits_count,
+            target_shortint_server_key,
+        );
+        let actual = shortint_ck.decrypt_message_and_carry(&img);
+        let expected = oprf_expected_plaintext(
+            &prf_lwe_sk.as_view(),
+            seed,
+            shortint_params,
+            random_bits_count,
+        );
+        assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
+    }
+}
+
 pub fn gen_uncompressed_key_set<R>(params: DKGParams, tag: tfhe::Tag, rng: &mut R) -> KeySet
 where
     R: Rng + CryptoRng,
