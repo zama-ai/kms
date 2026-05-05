@@ -6,18 +6,13 @@ use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::send_dec_reqs;
+use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::engine::utils::make_extra_data;
-use crate::vault::storage::file::FileStorage;
-cfg_if::cfg_if! {
-    if #[cfg(feature = "slow_tests")] {
-        use serial_test::serial;
-    }
-}
-use crate::client::tests::common::send_dec_reqs;
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::testing::prelude::*;
+use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use threshold_networking::grpc::GrpcServer;
@@ -44,7 +39,6 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_material_spec(spec)
-        .force_isolated()
         .build()
         .await?;
 
@@ -164,7 +158,6 @@ async fn test_threshold_close_after_drop() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS data to the shared test-material source
         .build()
         .await?;
 
@@ -237,7 +230,6 @@ async fn test_threshold_shutdown() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1)
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 
@@ -349,7 +341,6 @@ async fn test_ratelimiter() -> Result<()> {
         .with_party_count(4)
         .with_threshold(1)
         .with_prss() // Need PRSS for CRS gen
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .with_rate_limiter(rate_limiter_conf)
         .build()
         .await?;
@@ -408,7 +399,6 @@ async fn test_ratelimiter() -> Result<()> {
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-#[serial]
 async fn nightly_test_complete_session_notification() -> Result<()> {
     use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
@@ -454,7 +444,6 @@ async fn nightly_test_complete_session_notification() -> Result<()> {
         .with_party_count(amount_parties)
         .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_prss()
-        .force_isolated() // Prevent writing PRSS/context data to shared test-material source
         .build()
         .await?;
 

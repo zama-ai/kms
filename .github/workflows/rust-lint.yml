@@ -23,9 +23,7 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Get Rust version
         env:
@@ -47,11 +45,6 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Setup usage of private repo
-        env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 
       - name: Formatting
         run: |
