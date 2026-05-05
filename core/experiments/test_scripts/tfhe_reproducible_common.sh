@@ -141,7 +141,8 @@ for DDEC_MODE in $DDEC_MODES
         $MOBYGO_EXEC -c $1 threshold-decrypt-from-file --decryption-mode $DDEC_MODE --path-pubkey $RESHARED_KEY_PATH/pk.bin --input-file ${CTXT_PATH}/ctxt_${VALUE}_${CTXT_TYPE}.bin --sid $CURR_SID  --preproc-sid $(( CURR_SID - 1)) --num-ctxts $NUM_CTXTS
         $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true
         #Get the result
-        $MOBYGO_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-values $VALUE
+        EXPECTED_VALUES=$(printf ",$VALUE%.0s" $(seq 1 $NUM_CTXTS) | cut -c2-)
+        $MOBYGO_EXEC -c $1 threshold-decrypt-result --sid $CURR_SID --expected-values $EXPECTED_VALUES
         CURR_SID=$(( CURR_SID + 1 ))
         VALUE=$(( VALUE * 2 ))
     done

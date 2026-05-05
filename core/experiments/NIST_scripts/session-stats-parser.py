@@ -14,6 +14,8 @@ TFHE_RUN_5P_NAME = "tfhe-bench-run-5p"
 TFHE_RUN_NAMES = [TFHE_RUN_4P_NAME, TFHE_RUN_5P_NAME]
 BGV_RUN_NAME = "bgv-bench-run"
 
+NUM_CTXTS = 10
+
 EXPECTED_LINES_PER_RUN = {
     TFHE_RUN_4P_NAME: 34,
     TFHE_RUN_5P_NAME: 34,
@@ -54,6 +56,19 @@ OPERATION_LABELS = {
         "DDEC_PARALLEL_64",
     ],
 }
+
+
+def num_ctxts_for_label(label: str) -> int:
+    """Return the number of ciphertexts processed by an operation.
+
+    Decrypt-related operations (PREPROC, DDEC, DDEC_PARALLEL) each process
+    NUM_CTXTS ciphertexts.  All other operations return 1.
+    """
+    if "PREPROC" in label and "DKG" not in label:
+        return NUM_CTXTS
+    if "DDEC" in label:
+        return NUM_CTXTS
+    return 1
 
 
 @dataclass
@@ -400,6 +415,7 @@ def aggregate_run(
             threshold=spread_warn_threshold,
         )
 
+        num_ctxts = num_ctxts_for_label(operation_labels[op_idx])
         rows.append(
             [
                 complete_run_index,
@@ -411,7 +427,7 @@ def aggregate_run(
                 average(num_rounds_values),
                 average(network_sent_values),
                 average(network_received_values),
-                average(time_active_values),
+                average(time_active_values) / num_ctxts,
             ]
         )
 

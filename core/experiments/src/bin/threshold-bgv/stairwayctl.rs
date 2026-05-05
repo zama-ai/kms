@@ -181,6 +181,7 @@ struct ThresholdDecryptResultArgs {
 
     /// Optional argument to check the received plaintext against an expected value.
     /// The expected plaintext polynomial is value, value+1, value+2, ...
+    /// If more than one plaintext were decrypted, we make sure they are all equal to this epxectect plaintext polynomial.
     #[clap(long = "expected-value")]
     expected_value: Option<u64>,
 }
@@ -435,7 +436,7 @@ async fn threshold_decrypt_result_command(
             .map(|i| ((expected_value + i as u64) % PLAINTEXT_MODULUS.get().0) as u32)
             .collect();
         // ptxts is Vec<Vec<u32>>, check each decrypted plaintext
-        let all_match = ptxts.len() == 1 && ptxts[0] == expected;
+        let all_match = ptxts.into_iter().all(|ptxt| ptxt == expected);
         if all_match {
             println!(
                 "✅ Plaintext for session ID {} matches expected value",

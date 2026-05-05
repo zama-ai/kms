@@ -254,7 +254,7 @@ struct ThresholdDecryptResultArgs {
     session_id_decrypt: u128,
 
     /// Optional argument to check the received value against expected plaintexts.
-    #[clap(long = "expected-values")]
+    #[clap(long = "expected-values", value_delimiter = ',')]
     expected_values: Option<Vec<u64>>,
 }
 
